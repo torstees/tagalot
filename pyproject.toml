@@ -1,0 +1,38 @@
+[project]
+name = "tagalot"
+version = "0.1.0"
+description = "Tag-based file browser organized into keeps"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Eric Torstenson" }]
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.7",
+    "SQLAlchemy>=2.0",
+    "Pillow>=10.0",
+    "mutagen>=1.47",
+    "py7zr>=0.21",
+    "rarfile>=4.2",
+    "platformdirs>=4.0",
+    "tomli-w>=1.0",
+]
+
+[project.scripts]
+tagalot = "tagalot.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+# Keep the hand-aligned examples in docs/*.md as written.
+[tool.ruff.format]
+exclude = ["*.md"]
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13"]
+build-backend = "uv_build"
