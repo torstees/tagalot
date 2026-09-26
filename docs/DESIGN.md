@@ -94,12 +94,14 @@ exclude = ["**/.DS_Store", "**/Thumbs.db", "**/@eaDir/**"]
 
 ### Per-user settings (not in the keep)
 
-Stored under `platformdirs.user_config_dir("tagalot")/settings.toml`:
+Stored in `platformdirs.user_config_dir("tagalot", appauthor=False)/settings.toml` (on Windows `%LOCALAPPDATA%\tagalot\settings.toml`; deliberately not a roaming location, since the contents are machine-specific):
 
-- Recent keeps.
-- Per-machine root path overrides.
-- File-handler overrides (§11), because application paths differ by machine.
-- Extra theme search directories.
+- Recent keeps: keep folders, most recent first, at most 10, compared case-insensitively on Windows.
+- Per-machine root path overrides: `[root_overrides.<keep id>]` tables mapping root id → local path.
+- File-handler overrides (§11), because application paths differ by machine: `[[handlers]]` tables with `ext`, optional `role`, and `command`. A rule for an extension and role wins over one for the extension alone. Commands may only use the `{path}`, `{dir}`, and `{name}` placeholders.
+- Extra theme search directories (`theme_dirs`).
+
+Settings never block startup: a missing file means defaults; a file that cannot be parsed is renamed to `settings.toml.invalid` and defaults are used; individual invalid entries are skipped. Every problem is logged.
 
 ## 5. Data model
 
@@ -521,4 +523,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Closure maintenance recomputes the ancestors of affected nodes (descendants of each changed edge's child) from `entity_contains` with a recursive CTE, for both additions and removals. Path counting was rejected because it cannot maintain minimum depth. `rebuild_all()` serves as the repair action and test oracle (§6). |
 | 2026-09 | Theme entity classes are plain declarations (annotated fields, no SQLAlchemy). When a keep opens, the core builds the theme's tables as Core `Table` objects in a fresh `MetaData`. Themes access data only through `ctx` with `EntityRef` handles, and relationships are declared with `related()`. This isolates themes (a broken theme affects only its keeps), allows reloading, and keeps SQLAlchemy out of the public API. Rejected: theme classes as ORM subclasses in a shared registry, because mapping at import lets one broken theme break every keep. Added `entity.ingest_key` for idempotent re-ingest (§5, §9). |
 | 2026-09 | keep.toml: strings are written as TOML literal strings where possible so Windows and UNC paths stay hand-editable; root paths are stored as raw strings; unknown keys are ignored with a warning and dropped on rewrite; writes are atomic (§4). |
+| 2026-09 | Per-user settings live in a non-roaming config dir and never block startup: unparseable files are set aside as `settings.toml.invalid`, bad entries are skipped with a warning (§4). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
