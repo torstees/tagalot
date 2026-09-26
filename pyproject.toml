@@ -60,7 +60,7 @@ files = ["src"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
 # QT_QPA_PLATFORM=offscreen is set in tests/conftest.py, before Qt is imported.
 qt_api = "pyside6"
 markers = [
