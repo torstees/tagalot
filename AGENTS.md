@@ -56,7 +56,9 @@ Do not add a dependency without a clear need. When you add one, note it and the 
 src/tagalot/
   __main__.py            # entry point
   core/                  # no Qt imports allowed here
-    keep.py              # open/create keep, keep.toml, settings
+    keep.py              # open/create keep, keep.toml
+    settings.py          # per-user settings.toml (recent keeps, overrides)
+    tomlio.py            # hand-editable TOML output, atomic writes
     db.py                # engine/session setup, WAL, schema versioning
     models.py            # core tables (resource, entity, tag, links, closure…)
     scanner.py           # walking, diffing, move detection

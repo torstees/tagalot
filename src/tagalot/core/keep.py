@@ -1,8 +1,6 @@
-"""Open and create keeps; ``keep.toml`` and per-user settings."""
+"""Open and create keeps; ``keep.toml``."""
 
 import logging
-import os
-import tempfile
 import tomllib
 import uuid
 from collections.abc import Mapping
@@ -10,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import tomli_w
+from tagalot.core.tomlio import toml_list, toml_str, write_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -75,47 +73,31 @@ def load_keep_config(path: Path) -> KeepConfig:
 
 def save_keep_config(config: KeepConfig, path: Path) -> None:
     """Write ``config`` to ``path`` atomically (write a temp file, then replace)."""
-    text = dump_keep_config(config)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".keep-", suffix=".toml.tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-        tmp.replace(path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+    write_atomic(path, dump_keep_config(config))
 
 
 def dump_keep_config(config: KeepConfig) -> str:
     """Serialize ``config`` as TOML, preferring literal strings so paths stay hand-editable."""
     lines = [
         "[keep]",
-        f"id = {_str(str(config.id))}",
-        f"name = {_str(config.name)}",
+        f"id = {toml_str(str(config.id))}",
+        f"name = {toml_str(config.name)}",
         f"format_version = {config.format_version}",
         "",
         "[theme]",
-        f"id = {_str(config.theme.id)}",
+        f"id = {toml_str(config.theme.id)}",
         f"version = {config.theme.version}",
     ]
     for root in config.roots:
         lines += [
             "",
             "[[roots]]",
-            f"id = {_str(root.id)}",
-            f"name = {_str(root.name)}",
-            f"path = {_str(root.path)}",
-            f"exclude = [{', '.join(_str(p) for p in root.exclude)}]",
+            f"id = {toml_str(root.id)}",
+            f"name = {toml_str(root.name)}",
+            f"path = {toml_str(root.path)}",
+            f"exclude = {toml_list(root.exclude)}",
         ]
     return "\n".join(lines) + "\n"
-
-
-def _str(value: str) -> str:
-    """Format a TOML string: a literal string if possible, else an escaped basic string."""
-    if "'" not in value and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
-        return f"'{value}'"
-    return tomli_w.dumps({"v": value}).removeprefix("v = ").rstrip("\n")
 
 
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
