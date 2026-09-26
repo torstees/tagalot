@@ -109,13 +109,19 @@ Settings never block startup: a missing file means defaults; a file that cannot 
 
 All core tables are created and owned by the core. Theme tables are prefixed with the theme id (`music_song`, `movies_actor`).
 
+Conventions for core tables:
+
+- **Timestamps** are stored in UTC and read back as timezone-aware datetimes; naive datetimes are rejected.
+- **Enumerated columns** (`resource.kind`, `resource.status`, `field_provenance.source`) are stored as text with a CHECK constraint on the allowed values.
+- **Deletes:** link rows (`entity_resource`, `entity_contains`, `entity_ancestor`, `entity_tag`, `field_provenance`, `tag_alias`) cascade with the entity, resource, or tag they link. Deleting a resource clears any `entity.thumb_resource_id` that pointed at it. Deleting a tag that has children, or a root that still has resources, is refused by the database; the tag delete operation (§7) and root removal handle those explicitly. Deleting an entity never deletes a resource.
+
 ### Core tables
 
 **root** — mirrors keep.toml for joins and status.
 `id (text pk)`, `name`, `online (bool)`, `last_scan_at`, `last_error`.
 
 **resource** — a file or directory under a root.
-`id (int pk)`, `root_id`, `relpath` (POSIX), `kind` (`file`/`dir`), `ext` (lowercase), `size`, `mtime`, `fingerprint` (nullable), `status` (`ok`/`offline`/`missing`), `first_seen_at`, `last_seen_at`, `parent_resource_id` (nullable; reserved for archive members, §14).
+`id (int pk)`, `root_id`, `relpath` (POSIX), `kind` (`file`/`dir`), `ext` (lowercase), `size`, `mtime_ns` (integer nanoseconds, compared exactly when diffing), `fingerprint` (nullable), `status` (`ok`/`offline`/`missing`), `first_seen_at`, `last_seen_at`, `parent_resource_id` (nullable; reserved for archive members, §14).
 Unique `(root_id, relpath)`. Index on `fingerprint`.
 
 **entity** — base table for every theme entity (joined-table layout: each theme type's table shares its `id`).
@@ -528,4 +534,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Per-user settings live in a non-roaming config dir and never block startup: unparseable files are set aside as `settings.toml.invalid`, bad entries are skipped with a warning (§4). |
 | 2026-09 | Keep creation requires a new or empty folder and refuses a keep and root that contain each other. Network detection for the keep-location warning uses UNC/`GetDriveTypeW` on Windows and mount file-system types on Linux/macOS, and fails open (§4). |
 | 2026-09 | Network keeps use `journal_mode=DELETE` instead of WAL. Read-only engines set `query_only`. The pysqlite driver's own transaction handling is disabled so DDL runs inside transactions (§4). |
+| 2026-09 | Core schema conventions: `resource.mtime_ns` as integer nanoseconds; UTC-aware timestamps; enum columns as text with CHECK constraints; link rows cascade on delete, while deleting a tag with children or a root with resources is refused (§5). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
