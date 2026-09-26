@@ -8,16 +8,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from tagalot.core.fsinfo import is_network_path
 from tagalot.core.tomlio import toml_list, toml_str, write_atomic
 
 logger = logging.getLogger(__name__)
 
 KEEP_TOML = "keep.toml"
+KEEP_DB = "keep.db"
+THUMBS_DB = "thumbs.db"
+UI_STATE_JSON = "ui_state.json"
 KEEP_FORMAT_VERSION = 1
 """Core format version written to new keeps (DESIGN.md §4)."""
 
+NETWORK_WARNING = (
+    "This keep is on a network drive. SQLite locking over network shares is unreliable, "
+    "so the keep's database could be damaged. Keep it on a local disk if you can."
+)
 
-class KeepConfigError(Exception):
+
+class KeepError(Exception):
+    """A keep cannot be created or opened. The message is suitable for showing to the user."""
+
+
+class KeepConfigError(KeepError):
     """A ``keep.toml`` file is missing, unreadable, or invalid."""
 
     def __init__(self, path: Path, message: str) -> None:
@@ -178,3 +191,96 @@ class _Reader:
     def warn_unknown(self, data: Mapping[str, Any], known: set[str], where: str) -> None:
         for key in sorted(set(data) - known):
             logger.warning("%s: ignoring unknown key %r in %s", self.path, key, where)
+
+
+@dataclass(frozen=True)
+class Keep:
+    """An open keep: its folder, its configuration, and where its files live."""
+
+    dir: Path
+    config: KeepConfig
+    on_network: bool
+    """The keep folder is on a network share; the UI should show :data:`NETWORK_WARNING`."""
+
+    @property
+    def toml_path(self) -> Path:
+        return self.dir / KEEP_TOML
+
+    @property
+    def db_path(self) -> Path:
+        return self.dir / KEEP_DB
+
+    @property
+    def thumbs_path(self) -> Path:
+        return self.dir / THUMBS_DB
+
+    @property
+    def ui_state_path(self) -> Path:
+        return self.dir / UI_STATE_JSON
+
+
+def create_keep(
+    keep_dir: Path, name: str, theme: ThemeRef, roots: list[RootConfig] | None = None
+) -> Keep:
+    """Create a new keep in ``keep_dir``, which must be missing or empty.
+
+    Writes ``keep.toml`` with a fresh keep id. Raises :class:`KeepError` if the folder is
+    unusable, the configuration is invalid, or the keep folder and a root contain each other
+    (the scanner would index the keep's own files, and Tagalot never writes under a root).
+    """
+    keep_dir = keep_dir.absolute()
+    if not name.strip():
+        raise KeepError("A keep needs a name.")
+    if keep_dir.exists():
+        if not keep_dir.is_dir():
+            raise KeepError(f"{keep_dir} exists and is not a folder.")
+        if any(keep_dir.iterdir()):
+            raise KeepError(f"{keep_dir} is not empty. Choose a new or empty folder.")
+    config = KeepConfig(id=uuid.uuid4(), name=name, theme=theme, roots=list(roots or []))
+    _validate(config, keep_dir / KEEP_TOML)
+    for root in config.roots:
+        if _nested(keep_dir, Path(root.path)):
+            raise KeepError(
+                f"The keep folder {keep_dir} and root {root.name!r} ({root.path}) are inside "
+                "one another. Put the keep somewhere outside its roots."
+            )
+    try:
+        keep_dir.mkdir(parents=True, exist_ok=True)
+        save_keep_config(config, keep_dir / KEEP_TOML)
+    except OSError as e:
+        raise KeepError(f"Cannot create keep in {keep_dir}: {e.strerror or e}") from e
+    logger.info("Created keep %r (%s) in %s", name, config.id, keep_dir)
+    return _opened(keep_dir, config)
+
+
+def open_keep(keep_dir: Path) -> Keep:
+    """Open the keep in ``keep_dir``. Raises :class:`KeepError` if it is not a valid keep."""
+    keep_dir = keep_dir.absolute()
+    if not keep_dir.is_dir():
+        raise KeepError(f"{keep_dir} does not exist or is not a folder.")
+    if not (keep_dir / KEEP_TOML).is_file():
+        raise KeepError(f"{keep_dir} is not a keep: it has no {KEEP_TOML}.")
+    config = load_keep_config(keep_dir / KEEP_TOML)
+    logger.info("Opened keep %r (%s) in %s", config.name, config.id, keep_dir)
+    return _opened(keep_dir, config)
+
+
+def _opened(keep_dir: Path, config: KeepConfig) -> Keep:
+    on_network = is_network_path(keep_dir)
+    if on_network:
+        logger.warning("%s: %s", keep_dir, NETWORK_WARNING)
+    return Keep(dir=keep_dir, config=config, on_network=on_network)
+
+
+def _validate(config: KeepConfig, path: Path) -> None:
+    """Apply the same checks as loading, before anything is written."""
+    _parse(path, tomllib.loads(dump_keep_config(config)))
+
+
+def _nested(a: Path, b: Path) -> bool:
+    """Whether either path is inside (or equal to) the other, compared as the OS would."""
+    try:
+        ra, rb = a.resolve(), b.resolve()
+    except OSError:
+        ra, rb = a.absolute(), b.absolute()
+    return ra == rb or ra.is_relative_to(rb) or rb.is_relative_to(ra)
