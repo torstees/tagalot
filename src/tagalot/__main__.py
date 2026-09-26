@@ -10,7 +10,11 @@ def main() -> int:
     """Start Tagalot and return the process exit code."""
     logging.basicConfig(level=logging.INFO)
     logger.info("Tagalot starting")
-    return 0
+
+    # Imported here so that importing this module does not load Qt.
+    from tagalot.ui import app
+
+    return app.run(sys.argv)
 
 
 if __name__ == "__main__":
