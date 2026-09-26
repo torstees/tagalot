@@ -151,6 +151,8 @@ activemq-data/
 .env
 .envrc
 .venv
+# Per-platform uv environments, e.g. UV_PROJECT_ENVIRONMENT=.venv-linux under WSL
+.venv-*/
 env/
 venv/
 ENV/
