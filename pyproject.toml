@@ -29,9 +29,44 @@ dev = [
     "mypy>=1.11",
 ]
 
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplifications
+    "PT",  # pytest style
+    "RUF", # ruff-specific
+]
+
 # Keep the hand-aligned examples in docs/*.md as written.
 [tool.ruff.format]
 exclude = ["*.md"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+# QT_QPA_PLATFORM=offscreen is set in tests/conftest.py, before Qt is imported.
+qt_api = "pyside6"
+markers = [
+    "gui: needs a QApplication (runs headless via the offscreen Qt platform)",
+    "slow: benchmarks and other long-running tests",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13"]
