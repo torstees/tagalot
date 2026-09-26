@@ -1,0 +1,3 @@
+# Store text files with LF line endings and check them out with LF on every
+# platform, so Windows, WSL, macOS, and Linux checkouts match.
+* text=auto eol=lf
