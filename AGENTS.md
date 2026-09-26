@@ -16,6 +16,16 @@ Tagalot is a Python desktop app: a tag-based file browser organized into **keeps
 4. Close completed issues from the commit or PR (`Closes #<n>`). File newly discovered work as a new issue and add it as a sub-issue of the right milestone. Close a milestone issue when all its sub-issues are closed.
 5. If you deviate from the design or make a decision it doesn't cover, update `docs/DESIGN.md` (the relevant section and the Decisions log) in the same change. Don't let code and design drift apart.
 6. Keep changes focused: one milestone item (or a coherent part of one) per change.
+7. Land every change through a branch and pull request, never a direct commit to `main` (see Pull requests below).
+
+## Pull requests
+
+- Branch from an up-to-date `main`, named `<milestone>/<topic>` (for example `m1/keep-toml`), or `docs/<topic>` for documentation-only changes.
+- Reference the issue in the commit and PR body with `Closes #<n>` so merging closes it.
+- The PR body has these sections:
+  - **What:** the changes, and any decision made along the way (with the `docs/DESIGN.md` update, if one was needed).
+  - **Checks:** the automated checks that were run and their results.
+  - **Manual testing:** a checklist for the reviewer, using `- [ ]` checkboxes, whenever the change has behavior a person can try: anything in the UI, launching the app, scanning real folders or network shares, opening files. Each item gives the steps and the expected result, for example `- [ ] Run uv run tagalot; an empty main window titled "Tagalot" opens`. Cover the platform-specific cases the change touches (Windows paths, UNC shares, an offline root). When there is nothing to try by hand, write "None: covered by automated tests."
 
 ## Commands
 
