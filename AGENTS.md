@@ -59,6 +59,7 @@ src/tagalot/
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)
     tomlio.py            # hand-editable TOML output, atomic writes
+    fsinfo.py            # file-system facts, e.g. network-share detection
     db.py                # engine/session setup, WAL, schema versioning
     models.py            # core tables (resource, entity, tag, links, closure…)
     scanner.py           # walking, diffing, move detection
