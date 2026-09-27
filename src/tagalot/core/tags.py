@@ -43,6 +43,32 @@ def _display_order(node: TagNode) -> tuple[int, str, int]:
     return (node.sort_order, name_key(node.name), node.id)
 
 
+@dataclass(frozen=True)
+class TagSuggestion:
+    """A tag offered for ``text`` by :meth:`TagTree.suggest`; ``alias`` is set when the
+    match came through an alias rather than the name."""
+
+    tag_id: int
+    alias: str | None = None
+
+
+_WORD_START = re.compile(r"\w+")
+
+
+def _match_rank(needle: str, name: str) -> int | None:
+    """0 whole name, 1 prefix, 2 start of a word, 3 anywhere; ``None`` if absent."""
+    key = name_key(name)
+    if needle not in key:
+        return None
+    if key == needle:
+        return 0
+    if key.startswith(needle):
+        return 1
+    if any(key.startswith(needle, m.start()) for m in _WORD_START.finditer(key)):
+        return 2
+    return 3
+
+
 class TagTree:
     """An immutable snapshot of the tag tree with its aliases."""
 
@@ -160,6 +186,36 @@ class TagTree:
             if needle in name_key(node.name)
             or any(needle in name_key(a) for a in self._aliases.get(tag_id, ()))
         )
+
+    def suggest(self, text: str, limit: int = 20) -> list["TagSuggestion"]:
+        """Tags for an autocomplete box, best first (the filter bar's tag box, §12).
+
+        A tag matches when its name or an alias contains ``text`` (ignoring case). Matches
+        rank: the whole name, the start of the name, the start of a word in it, anywhere in
+        it, then the same four through an alias; ties go by name, then tree position. Blank
+        text suggests nothing.
+        """
+        needle = name_key(text)
+        if not needle:
+            return []
+        ranked: list[tuple[tuple[int, str, tuple[str, ...]], TagSuggestion]] = []
+        for tag_id, node in self._nodes.items():
+            rank = _match_rank(needle, node.name)
+            alias: str | None = None
+            if rank is None:
+                alias_ranks = [
+                    (r, a)
+                    for a in self._aliases.get(tag_id, ())
+                    if (r := _match_rank(needle, a)) is not None
+                ]
+                if not alias_ranks:
+                    continue
+                best, alias = min(alias_ranks, key=lambda ra: (ra[0], name_key(ra[1])))
+                rank = best + 4
+            key = (rank, name_key(node.name), tuple(name_key(n) for n in self.path(tag_id)))
+            ranked.append((key, TagSuggestion(tag_id, alias)))
+        ranked.sort(key=lambda item: item[0])
+        return [suggestion for _, suggestion in ranked[:limit]]
 
     def with_ancestors(self, tag_ids: Iterable[int]) -> frozenset[int]:
         """``tag_ids`` plus every ancestor, so filtered matches stay visible in the tree (§12)."""

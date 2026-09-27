@@ -1,12 +1,13 @@
-"""Search view: a heading, the result count, and the results (DESIGN.md §12).
+"""Search view: a heading, the result count, the filter bar, and the results (DESIGN.md §12).
 
-Results use the list layout (columns) for now; the grid and tree layouts, and the filter bar
-(#56), come later. A search page is created once per navigation target and re-runs its
-search after a scan.
+Results use the list layout (columns) for now; the grid and tree layouts come later. A search
+page is created once per navigation target and re-runs its search after a scan.
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 
+import shiboken6
 from PySide6.QtCore import QThreadPool
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -22,8 +23,11 @@ from PySide6.QtWidgets import (
 from tagalot.core.search_fields import scope_fields, scoped_tables, type_labels
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
+from tagalot.core.tags import TagTree
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.models.results import ResultColumn, ResultsModel
+from tagalot.ui.workers import run_in_pool
 
 TITLE_MIN_WIDTH = 200
 COLUMN_WIDTH = 140
@@ -51,7 +55,11 @@ def count_text(total: int) -> str:
 
 
 class SearchPage(QWidget):
-    """One search: ``title`` above a list of the entities ``spec`` finds."""
+    """One search: ``title``, a filter bar, and a list of the entities ``spec`` finds.
+
+    ``spec`` is the page's starting point (a theme view's types, toggles, and sort); the
+    filter bar's tags and text are applied on top of it.
+    """
 
     def __init__(
         self,
@@ -64,6 +72,7 @@ class SearchPage(QWidget):
     ) -> None:
         super().__init__(parent)
         self.session = session
+        self._pool = pool
         self._showing_sort = False  # true while the page itself moves the sort indicator
         self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
         self.model.setParent(self)
@@ -78,6 +87,9 @@ class SearchPage(QWidget):
         header_row.addWidget(heading)
         header_row.addStretch(1)
         header_row.addWidget(self.status)
+
+        self.filter_bar = FilterBar()
+        self.filter_bar.changed.connect(self._filters_changed)
 
         self.table = QTableView()
         self.table.setModel(self.model)
@@ -100,6 +112,7 @@ class SearchPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(header_row)
+        layout.addWidget(self.filter_bar)
         layout.addWidget(self.table, 1)
 
         self.model.counted.connect(self._counted)
@@ -114,10 +127,35 @@ class SearchPage(QWidget):
             else:
                 self.table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else COLUMN_WIDTH)
         self.table.setMinimumWidth(TITLE_MIN_WIDTH)
+        self._load_tags()
 
     def refresh(self) -> None:
-        """Run the search again (after a scan), keeping the list until new rows arrive."""
+        """Run the search again (after a scan), keeping the list until new rows arrive, and
+        reload the tag tree for the filter bar."""
         self.model.refresh()
+        self._load_tags()
+
+    def _load_tags(self) -> None:
+        """Load the tag tree in a worker (the cache may need to read it from the keep)."""
+
+        def loaded(tree: TagTree) -> None:
+            if shiboken6.isValid(self.filter_bar):  # the page may have closed meanwhile
+                self.filter_bar.set_tree(tree)
+
+        run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
+
+    def _filters_changed(self, filters: Filters) -> None:
+        spec = self.model.spec
+        assert spec is not None
+        self.model.set_search(
+            replace(
+                spec,
+                include=filters.include,
+                exclude=filters.exclude,
+                text=filters.text or None,
+            )
+        )
+        self.status.setText("Searching…")
 
     def _counted(self, total: int) -> None:
         self.status.setText(count_text(total) if total else "Nothing found")

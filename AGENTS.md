@@ -48,7 +48,7 @@ GUI tests use pytest-qt and must run headless: `QT_QPA_PLATFORM=offscreen` is se
 `scratch/` (gitignored) is local scratch space for demo keeps, sample files, and experimental themes. Manual-testing checklists start from the demo keep, so every reviewer begins from the same place:
 
 ```bash
-uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.keep and scratch/demo-files
+uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.keep (scanned and tagged) and scratch/demo-files
 uv run tagalot scratch/Demo.keep
 ```
 

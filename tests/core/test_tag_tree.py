@@ -192,3 +192,41 @@ def test_cache_is_safe_across_threads(engine: Engine) -> None:
     for t in threads:
         t.join()
     assert errors == []
+
+
+def _suggest_tree() -> TagTree:
+    return TagTree([TagNode(i, p, n, None, o) for i, p, n, o in TAGS], ALIASES)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Whole name (both Rocks, Genre's first by path), a word in a name, then an alias.
+        ("rock", [(2, None), (11, None), (4, None), (3, "punk rock")]),
+        ("ROCK ", [(2, None), (11, None), (4, None), (3, "punk rock")]),
+        ("ch", [(10, None), (8, "chill")]),  # a name's start beats an alias's start
+        ("hard", [(3, "hardcore")]),
+        ("ärg", [(12, None)]),
+        ("ÄRGER", [(12, None)]),
+        ("bop", [(6, None)]),  # anywhere in the name
+        ("zebra", []),
+        ("", []),
+        ("   ", []),
+    ],
+)
+def test_suggest(text: str, expected: list[tuple[int, str | None]]) -> None:
+    assert [(s.tag_id, s.alias) for s in _suggest_tree().suggest(text)] == expected
+
+
+def test_suggest_ranks_prefix_before_word_before_anywhere() -> None:
+    tree = TagTree(
+        [
+            TagNode(1, None, "Rebel", None, 0),  # "el" anywhere
+            TagNode(2, None, "Old Elm", None, 1),  # start of a word
+            TagNode(3, None, "Elephant", None, 2),  # start of the name
+            TagNode(4, None, "El", None, 3),  # the whole name
+        ],
+        {},
+    )
+    assert [s.tag_id for s in tree.suggest("el")] == [4, 3, 2, 1]
+    assert [s.tag_id for s in tree.suggest("el", limit=2)] == [4, 3]
