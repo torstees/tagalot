@@ -15,14 +15,13 @@ from sqlalchemy import (
     Connection,
     Select,
     and_,
-    exists,
     func,
     literal_column,
     or_,
     select,
     true,
 )
-from sqlalchemy.orm import InstrumentedAttribute, aliased
+from sqlalchemy.orm import InstrumentedAttribute
 
 from tagalot.core.models import Entity, EntityAncestor, EntityTag, entity_fts
 from tagalot.core.search_spec import (
@@ -68,13 +67,12 @@ def build_query(
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
 ) -> Select[int, str, str]:
     """Return a ``SELECT id, type, title`` for ``spec``, sorted, without paging."""
-    query = select(Entity.id, Entity.type, Entity.title).where(_result_filter(spec, tree, fields))
+    query = select(Entity.id, Entity.type, Entity.title).where(_Filter(spec, tree, fields).result())
     return query.order_by(*_order_by(spec, fields))
 
 
-def text_condition(text: str, entity_id: IdColumn | None = None) -> ColumnElement[bool]:
-    """Match the search box text against ``entity_fts`` (§8), for ``entity_id``
-    (default: ``entity.id``).
+def text_ids(text: str) -> Select[int]:
+    """Ids of entities whose ``entity_fts`` row matches the search box text (§8).
 
     The text is split on whitespace and every term must match somewhere in the title or body.
     Terms of three or more characters are quoted trigram ``MATCH`` terms, so quotes, ``AND``,
@@ -95,7 +93,7 @@ def text_condition(text: str, entity_id: IdColumn | None = None) -> ColumnElemen
                 entity_fts.c.body.icontains(term, autoescape=True),
             )
         )
-    return (entity_id if entity_id is not None else Entity.id).in_(matching)
+    return matching
 
 
 def run_search(
@@ -119,108 +117,122 @@ def count_matches(
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
 ) -> int:
     """How many entities the search lists (for "123 results")."""
-    query = select(func.count()).select_from(Entity).where(_result_filter(spec, tree, fields))
+    query = select(func.count()).select_from(Entity).where(_Filter(spec, tree, fields).result())
     return int(conn.scalar(query) or 0)
 
 
 # --- Building the filter (DESIGN.md §8 "Semantics") ---
-#
-# Tag and text conditions take the id column they test, so the same logic can test the
-# listed entity itself, one of its descendants (aggregate_up), or its ancestors (inheritance).
 
 
-def _result_filter(
-    spec: SearchSpec, tree: TagTree, fields: Mapping[str, ColumnElement[Any]]
-) -> ColumnElement[bool]:
-    """Which entities the search lists."""
-    matches = _match_filter(spec, tree, fields)
-    if not spec.show_contained:
-        return matches
-    # Matches plus every descendant of a match, whatever its type; descendants still have to
-    # pass exclusion. The matches are computed in a CTE so they aren't re-evaluated per row.
-    matched = select(Entity.id).where(matches).cte("matched")
-    contained = exists().where(
-        EntityAncestor.entity_id == Entity.id,
-        EntityAncestor.depth > 0,
-        EntityAncestor.ancestor_id.in_(select(matched.c.id)),
-    )
-    return and_(
-        or_(Entity.id.in_(select(matched.c.id)), contained),
-        _not_excluded(spec, tree, Entity.id),
-    )
+class _Filter:
+    """Builds one search's ``WHERE`` clause (DESIGN.md §8 "Semantics").
 
+    Conditions take the id column they test, so the same logic serves the listed entity, one
+    of its descendants (aggregation), or its ancestors (inheritance). Each distinct set (a tag
+    group, the exclusion set, the text matches) becomes one ``MATERIALIZED`` CTE, computed
+    once per query however many conditions use it, and every test against a set is an
+    uncorrelated ``IN``, so SQLite builds the set from an index instead of probing per row.
+    """
 
-def _match_filter(
-    spec: SearchSpec, tree: TagTree, fields: Mapping[str, ColumnElement[Any]]
-) -> ColumnElement[bool]:
-    """Entities that match in their own right (or via a descendant, with aggregate_up)."""
-    where: list[ColumnElement[bool]] = []
-    if spec.types:
-        where.append(Entity.type.in_(spec.types))
-    if spec.within is not None:
-        where.append(
-            exists().where(
-                EntityAncestor.entity_id == Entity.id,
-                EntityAncestor.ancestor_id == spec.within,
-                EntityAncestor.depth > 0,
+    def __init__(
+        self, spec: SearchSpec, tree: TagTree, fields: Mapping[str, ColumnElement[Any]]
+    ) -> None:
+        self.spec = spec
+        self.tree = tree
+        self.fields = fields
+        self._sets: dict[object, Select[int]] = {}
+        excluded = frozenset().union(*(_subtree(tree, t) for t in spec.exclude))
+        self._excluded = excluded
+
+    def result(self) -> ColumnElement[bool]:
+        """Which entities the search lists."""
+        matches = self._matches()
+        if not self.spec.show_contained:
+            return matches
+        # Matches plus every descendant of a match, whatever its type; descendants still
+        # have to pass exclusion.
+        matched = self._materialize(("matched",), select(Entity.id).where(matches))
+        contained = select(EntityAncestor.entity_id).where(
+            EntityAncestor.ancestor_id.in_(matched), EntityAncestor.depth > 0
+        )
+        return and_(
+            or_(Entity.id.in_(matched), Entity.id.in_(contained)),
+            self._not_excluded(Entity.id),
+        )
+
+    def _matches(self) -> ColumnElement[bool]:
+        """Entities that match in their own right (or via a descendant, with aggregate_up)."""
+        spec = self.spec
+        where: list[ColumnElement[bool]] = []
+        if spec.types:
+            where.append(Entity.type.in_(spec.types))
+        if spec.within is not None:
+            where.append(
+                Entity.id.in_(
+                    select(EntityAncestor.entity_id).where(
+                        EntityAncestor.ancestor_id == spec.within, EntityAncestor.depth > 0
+                    )
+                )
             )
-        )
-    where.append(_not_excluded(spec, tree, Entity.id))
+        where.append(self._not_excluded(Entity.id))
+        # Field filters always apply to the listed entity: they belong to its type.
+        where.extend(_field_condition(f, self.fields) for f in spec.fields)
+        own = self._positive(Entity.id)
+        if spec.aggregate_up and own:
+            # Tags and text may instead be matched by a (non-excluded) descendant. Find those
+            # entities first (a small set), then their ancestors via the closure's key.
+            matching = self._materialize(
+                ("descendant matches",),
+                select(Entity.id).where(*own, self._not_excluded(Entity.id)),
+            )
+            containers = select(EntityAncestor.ancestor_id).where(
+                EntityAncestor.entity_id.in_(matching), EntityAncestor.depth > 0
+            )
+            where.append(or_(and_(*own), Entity.id.in_(containers)))
+        else:
+            where.extend(own)
+        return and_(true(), *where)
 
-    # Field filters always apply to the listed entity: they belong to its type.
-    where.extend(_field_condition(f, fields) for f in spec.fields)
-    own = _positive(spec, tree, Entity.id)
-    if spec.aggregate_up and own:
-        # Tags and text may instead be matched by a (non-excluded) descendant.
-        descendant = EntityAncestor.entity_id
-        via_descendant = exists().where(
-            EntityAncestor.ancestor_id == Entity.id,
-            EntityAncestor.depth > 0,
-            *_positive(spec, tree, descendant),
-            _not_excluded(spec, tree, descendant),
-        )
-        where.append(or_(and_(*own), via_descendant))
-    else:
-        where.extend(own)
-    return and_(true(), *where)
+    def _positive(self, entity_id: IdColumn) -> list[ColumnElement[bool]]:
+        """Include groups and text, for the entity in ``entity_id``."""
+        conditions: list[ColumnElement[bool]] = [
+            entity_id.in_(self._tagged(_subtree(self.tree, tag))) for tag in self.spec.include
+        ]
+        if self.spec.text:
+            text = self.spec.text
+            conditions.append(entity_id.in_(self._materialize(("text", text), text_ids(text))))
+        return conditions
 
+    def _not_excluded(self, entity_id: IdColumn) -> ColumnElement[bool]:
+        if not self._excluded:
+            return true()
+        return entity_id.not_in(self._tagged(self._excluded))
 
-def _positive(spec: SearchSpec, tree: TagTree, entity_id: IdColumn) -> list[ColumnElement[bool]]:
-    """Include groups and text, for the entity in ``entity_id``."""
-    conditions = [
-        _has_any_tag(entity_id, _subtree(tree, tag), spec.inherit_tags) for tag in spec.include
-    ]
-    if spec.text:
-        conditions.append(text_condition(spec.text, entity_id))
-    return conditions
+    def _tagged(self, tag_ids: frozenset[int]) -> Select[int]:
+        """Ids of entities carrying any of ``tag_ids``: directly, or with inheritance also
+        via any ancestor (the closure's depth-0 self row covers an entity's own tags)."""
+        if not self.spec.inherit_tags:
+            query = select(EntityTag.entity_id).where(EntityTag.tag_id.in_(tag_ids))
+        else:
+            query = (
+                select(EntityAncestor.entity_id)
+                .join(EntityTag, EntityTag.entity_id == EntityAncestor.ancestor_id)
+                .where(EntityTag.tag_id.in_(tag_ids))
+            )
+        return self._materialize(("tags", tag_ids), query)
 
-
-def _not_excluded(spec: SearchSpec, tree: TagTree, entity_id: IdColumn) -> ColumnElement[bool]:
-    excluded = frozenset().union(*(_subtree(tree, t) for t in spec.exclude))
-    if not excluded:
-        return true()
-    return ~_has_any_tag(entity_id, excluded, spec.inherit_tags)
+    def _materialize(self, key: object, query: Select[int]) -> Select[int]:
+        """``SELECT id FROM <one MATERIALIZED CTE per distinct key>``."""
+        if key not in self._sets:
+            cte = query.cte(f"set{len(self._sets)}").prefix_with("MATERIALIZED")
+            self._sets[key] = select(cte.c[0])
+        return self._sets[key]
 
 
 def _subtree(tree: TagTree, tag_id: int) -> frozenset[int]:
     """A tag's subtree; a tag no longer in the tree (e.g. from a saved search) is just itself,
     so including it matches nothing and excluding it excludes nothing."""
     return tree.descendants(tag_id) if tag_id in tree else frozenset({tag_id})
-
-
-def _has_any_tag(
-    entity_id: IdColumn, tag_ids: frozenset[int], inherit: bool
-) -> ColumnElement[bool]:
-    """Whether the entity carries any of ``tag_ids``: directly, or with ``inherit`` also via
-    any ancestor (the closure's depth-0 self row covers its own tags, §8 "Query shape")."""
-    if not inherit:
-        return exists().where(EntityTag.entity_id == entity_id, EntityTag.tag_id.in_(tag_ids))
-    lineage = aliased(EntityAncestor)
-    return exists().where(
-        lineage.entity_id == entity_id,
-        EntityTag.entity_id == lineage.ancestor_id,
-        EntityTag.tag_id.in_(tag_ids),
-    )
 
 
 def _column(name: str, fields: Mapping[str, ColumnElement[Any]]) -> ColumnElement[Any]:

@@ -97,14 +97,30 @@ def apply(
             )
         )
     result.removed = to_remove
+    # Only an edge into an entity that already has children can close a cycle (the child
+    # must reach the parent going down). During ingest most children are new leaves, so the
+    # recursive check is usually skipped; accepted edges are inserted in batches, flushed
+    # before any check so it sees them.
+    has_children: set[int] = (
+        set(conn.scalars(select(EntityContains.parent_id).distinct())) if to_add else set()
+    )
+    pending: list[Edge] = []
     for parent, child in to_add:
-        reason = _cycle_reason(conn, parent, child)
+        reason: str | None = None
+        if parent == child:
+            reason = "an entity can't contain itself"
+        elif child in has_children:
+            _insert_edges(conn, pending)
+            pending = []
+            reason = _cycle_reason(conn, parent, child)
         if reason is not None:
             result.rejected.append(((parent, child), reason))
             logger.warning("Rejected containment edge %d -> %d: %s", parent, child, reason)
             continue
-        conn.execute(insert(EntityContains).values(parent_id=parent, child_id=child))
+        pending.append((parent, child))
+        has_children.add(parent)
         result.added.append((parent, child))
+    _insert_edges(conn, pending)
 
     # 3. Rebuild the affected rows.
     result.affected = _rebuild(conn, affected)
@@ -157,6 +173,11 @@ def _with_descendants(conn: Connection, roots: set[int]) -> set[int]:
             )
         )
     return result
+
+
+def _insert_edges(conn: Connection, edges: Sequence[Edge]) -> None:
+    for batch in _chunks(edges):
+        conn.execute(insert(EntityContains), [{"parent_id": p, "child_id": c} for p, c in batch])
 
 
 def _cycle_reason(conn: Connection, parent: int, child: int) -> str | None:
