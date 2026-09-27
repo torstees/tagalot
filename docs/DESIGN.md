@@ -574,7 +574,11 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 ### Views
 
-**Keep launcher.** Recent keeps, create keep (name, location, theme, first root), open folder. Shows theme problems: theme missing, stored version newer or older (offer migration with backup).
+**Keep launcher.** Recent keeps, create keep (name, location, theme, first root), open folder. Shows theme problems: theme missing, stored version newer or older (offer migration with backup). It is a separate start dialog, shown when Tagalot starts without a keep and from Keep → Open another keep… (Ctrl+O); each keep opens in its own main window.
+
+- **Recent keeps** show name, theme, and path, read in a worker (keeps may be on slow drives); unreadable ones are greyed as "not found" and can be removed from the list (the keep itself is untouched). Double-click or Open opens one.
+- **New keep…:** name, location (the keep becomes `<location>/<name>.keep`, previewed as you type), theme, and the folder to watch; Create is enabled once the form is valid. The folder is stored exactly as typed (a UNC share such as `\nas\music` keeps its form), and the root's name and id come from its last segment (`"My Photos"` → id `my-photos`). The keep is created in a worker and then opened.
+- A "⚠ N theme files have problems (details)" line appears when any theme failed to load.
 
 **Keep configuration.** Roots: add, remove, rename, change path, per-machine override, exclude patterns, status (online, item count, last scan, last error), "Scan now". Also thumbnail size, clear thumbnail cache, theme info.
 
@@ -665,4 +669,5 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Scan ingest: `resource.ingested_at` tracks pending resources so failures retry next scan; batches of 100 per writer transaction, with per-resource retry on failure; theme file reading moves to a worker `prepare()` hook later (#176) (§6). |
 | 2026-09 | The UI works with an open keep through `KeepSession`; Qt workers deliver every result on the GUI thread via a relay object; scans report progress through a callback (§6). |
 | 2026-09 | Main window: collapsible grouped navigation (fold state per keep in `ui_state.json`), "Scan now" in a slim toolbar and Keep menu (F5), scan progress in the status bar. User theme files are always compiled from source (no `.pyc`), so a quick same-size edit can't reload stale code (§9, §12). |
+| 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

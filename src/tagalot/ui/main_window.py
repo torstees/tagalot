@@ -6,6 +6,7 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 """
 
 import logging
+from collections.abc import Callable
 
 import shiboken6
 from PySide6.QtCore import Qt
@@ -54,6 +55,7 @@ class MainWindow(QMainWindow):
         session: KeepSession | None = None,
         parent: QWidget | None = None,
         scans: ScanController | None = None,
+        on_open_other: Callable[[], object] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
@@ -84,6 +86,11 @@ class MainWindow(QMainWindow):
         keep_menu = self.menuBar().addMenu("&Keep")
         keep_menu.addAction(self.scan_action)
         keep_menu.addSeparator()
+        if on_open_other is not None:
+            self.open_other_action = QAction("Open another keep…", self)
+            self.open_other_action.setShortcut(QKeySequence.StandardKey.Open)
+            self.open_other_action.triggered.connect(on_open_other)
+            keep_menu.addAction(self.open_other_action)
         keep_menu.addAction(close_action)
 
         # Toolbar.

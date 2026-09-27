@@ -22,11 +22,11 @@ def open_keep_async(
     parent: QWidget | None,
     keep_dir: Path,
     settings: Settings,
-    on_opened: Callable[[KeepSession], None],
+    on_opened: Callable[[KeepSession], object],
     *,
     settings_path: Path | None = None,
     allow_migration: bool = False,
-    on_failed: Callable[[BaseException], None] | None = None,
+    on_failed: Callable[[BaseException], object] | None = None,
 ) -> None:
     """Open ``keep_dir`` in a worker and call ``on_opened(session)`` on the GUI thread.
 
