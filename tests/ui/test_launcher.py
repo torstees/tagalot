@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 from pytestqt.qtbot import QtBot
 
-from tagalot.core.keep import load_keep_config
+from tagalot.core.keep import DEFAULT_EXCLUDES, load_keep_config
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -201,6 +201,7 @@ def test_creating_a_keep_opens_it(
     assert [(r.id, r.name, r.path) for r in config.roots] == [
         ("my-photos", "My Photos", str(files))
     ]
+    assert config.roots[0].exclude == list(DEFAULT_EXCLUDES)  # written to keep.toml
     assert opened[0].keep.config.id == config.id
     assert load_settings(tmp_path / "settings.toml").recent_keeps == [tmp_path / "Photos.keep"]
 

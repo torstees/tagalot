@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.keep import (
+    DEFAULT_EXCLUDES,
     KeepConfig,
     KeepError,
     RootConfig,
@@ -237,7 +238,8 @@ class LauncherDialog(QDialog):
 
         def work() -> Path:
             rid = root_id_for(root)
-            create_keep(keep_dir, name, theme, [RootConfig(rid, folder_name(root) or rid, root)])
+            new_root = RootConfig(rid, folder_name(root) or rid, root, list(DEFAULT_EXCLUDES))
+            create_keep(keep_dir, name, theme, [new_root])
             return keep_dir
 
         def failed(error: BaseException) -> None:

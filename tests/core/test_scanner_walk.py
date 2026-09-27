@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tagalot.core.keep import DEFAULT_EXCLUDES
 from tagalot.core.models import ResourceKind
 from tagalot.core.scanner import WalkEntry, compile_excludes, walk_root
 
@@ -190,3 +191,33 @@ def test_empty_root(tmp_path: Path) -> None:
 def test_exclude_globs(pattern: str, path: str, matches: bool) -> None:
     regex = compile_excludes([pattern])
     assert (regex is not None and regex.match(path) is not None) is matches
+
+
+@pytest.mark.parametrize(
+    ("relpath", "skipped"),
+    [
+        (".DS_Store", True),
+        ("Photos/2004/.DS_Store", True),
+        ("Photos/2004/._IMG_0001.JPG", True),  # AppleDouble companion
+        ("._IMG_0001.jpg", True),
+        (".Spotlight-V100/Store-V2/index", True),
+        (".Trashes/501/old.jpg", True),
+        (".fseventsd/0000", True),
+        ("Photos/.AppleDouble/IMG_0001.jpg", True),
+        ("Photos/thumbs.db", True),  # case-insensitive
+        ("Music/Desktop.ini", True),
+        ("$RECYCLE.BIN/S-1-5-21/$R1.jpg", True),
+        ("System Volume Information/tracking.log", True),
+        ("Photos/@eaDir/IMG_0001.jpg/SYNOPHOTO_THUMB_M.jpg", True),
+        ("#recycle/old.jpg", True),
+        ("Photos/2004/IMG_0001.jpg", False),
+        ("Photos/my._notes.txt", False),  # "._" only at the start of a name
+        ("Photos/.hidden-but-mine.jpg", False),  # other dot files are user content
+        ("Thumbs.db.bak", False),
+        ("recycle/old.jpg", False),
+    ],
+)
+def test_default_excludes(relpath: str, skipped: bool) -> None:
+    regex = compile_excludes(DEFAULT_EXCLUDES)
+    assert regex is not None
+    assert bool(regex.match(relpath)) is skipped

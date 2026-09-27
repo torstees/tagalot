@@ -27,7 +27,8 @@ def test_creates_a_keep_that_scans_cleanly(tmp_path: Path) -> None:
     with KeepSession.open(keep_dir, Settings()) as session:
         [report] = session.scan_all()
     assert report.online
-    assert report.new == report.ingested == 9
+    assert report.new == report.ingested == 9  # the .DS_Store, ._ and Thumbs.db files are skipped
+    assert (tmp_path / "demo-files" / "Photos" / "Beach" / "._sunset.jpg").exists()
     assert report.ingest_errors == []
 
 

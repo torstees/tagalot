@@ -26,9 +26,17 @@ def toml_key(key: str) -> str:
     return key if _BARE_KEY.fullmatch(key) else toml_str(key)
 
 
+LIST_LINE_LIMIT = 80
+"""Lists longer than this on one line are written one item per line, for hand editing."""
+
+
 def toml_list(values: Iterable[str]) -> str:
-    """Format a list of strings on one line."""
-    return f"[{', '.join(toml_str(v) for v in values)}]"
+    """Format a list of strings: on one line if short, otherwise one item per line."""
+    items = [toml_str(v) for v in values]
+    one_line = f"[{', '.join(items)}]"
+    if len(one_line) <= LIST_LINE_LIMIT:
+        return one_line
+    return "[\n" + "".join(f"    {item},\n" for item in items) + "]"
 
 
 def write_atomic(path: Path, text: str) -> None:

@@ -7,7 +7,9 @@ Usage (from the repository folder):
     uv run tagalot scratch/Demo.keep
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
-it watches): a few real images, documents, nested folders, and names with accents and spaces.
+it watches): a few real images, documents, nested folders, and names with accents and spaces,
+plus operating-system leftovers (``.DS_Store``, ``._sunset.jpg``, ``Thumbs.db``) that the
+default exclude patterns skip.
 """
 
 import argparse
@@ -17,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from tagalot.core.keep import RootConfig, ThemeRef, create_keep
+from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
 
 REPO = Path(__file__).resolve().parent.parent
 SCRATCH = REPO / "scratch"
@@ -34,6 +36,12 @@ TEXT = {
     "Documents/Café receipts/März.txt": "Latte 3.40\nCroissant 2.10\n",
     "Documents/tax 2025.pdf": "%PDF-1.4\n% A placeholder, not a real PDF.\n%%EOF\n",
     "readme.md": "# Demo files\nSample files for trying Tagalot.\n",
+}
+JUNK = {
+    # Operating-system leftovers that the default excludes skip.
+    ".DS_Store": b"Bud1\x00\x00\x00\x01",
+    "Photos/Beach/._sunset.jpg": b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X",
+    "Photos/Iceland/Thumbs.db": b"\xd0\xcf\x11\xe0",
 }
 
 
@@ -56,9 +64,14 @@ def make_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         path = files / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+    for relpath, data in JUNK.items():
+        (files / relpath).write_bytes(data)
 
     create_keep(
-        keep_dir, "Demo", ThemeRef("generic", 1), [RootConfig("demo", "Demo files", str(files))]
+        keep_dir,
+        "Demo",
+        ThemeRef("generic", 1),
+        [RootConfig("demo", "Demo files", str(files), list(DEFAULT_EXCLUDES))],
     )
     return keep_dir
 

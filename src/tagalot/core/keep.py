@@ -47,6 +47,28 @@ class ThemeRef:
     version: int
 
 
+DEFAULT_EXCLUDES: tuple[str, ...] = (
+    # macOS: folder metadata, AppleDouble "._" companions, and volume housekeeping.
+    "**/.DS_Store",
+    "**/._*",
+    "**/.AppleDouble/**",
+    "**/.Spotlight-V100/**",
+    "**/.Trashes/**",
+    "**/.fseventsd/**",
+    "**/.TemporaryItems/**",
+    # Windows: thumbnail caches, folder settings, and recycle bins.
+    "**/Thumbs.db",
+    "**/desktop.ini",
+    "**/$RECYCLE.BIN/**",
+    "**/System Volume Information/**",
+    # NAS: Synology thumbnails and recycle bins.
+    "**/@eaDir/**",
+    "**/#recycle/**",
+)
+"""Exclude patterns new roots start with: operating-system and NAS leftovers, never user
+content. They are written into ``keep.toml``, where the user can edit them."""
+
+
 @dataclass
 class RootConfig:
     """A watched directory. ``path`` is kept as written: it may be a UNC or drive path."""
