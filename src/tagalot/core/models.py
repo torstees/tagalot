@@ -14,16 +14,21 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Column,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     String,
+    Table,
+    Text,
     TypeDecorator,
+    event,
     func,
 )
-from sqlalchemy.engine import Dialect
+from sqlalchemy.engine import Connection, Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -280,3 +285,37 @@ class SchemaVersion(Base):
 
     component: Mapped[str] = mapped_column(primary_key=True)
     version: Mapped[int]
+
+
+# --- Text search (DESIGN.md §5, §8) ---
+
+FTS_TOKENIZER = "trigram remove_diacritics 1"
+"""Substring matching, case-insensitive, ignoring diacritics ("bey" finds "Beyoncé")."""
+
+
+@event.listens_for(Base.metadata, "after_create")
+def _create_entity_fts(_target: MetaData, connection: Connection, **_kw: Any) -> None:
+    connection.exec_driver_sql(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts "
+        f"USING fts5(title, body, tokenize = '{FTS_TOKENIZER}')"
+    )
+
+
+@event.listens_for(Base.metadata, "before_drop")
+def _drop_entity_fts(_target: MetaData, connection: Connection, **_kw: Any) -> None:
+    connection.exec_driver_sql("DROP TABLE IF EXISTS entity_fts")
+
+
+entity_fts = Table(
+    "entity_fts",
+    MetaData(),  # not Base.metadata: SQLAlchemy can't create virtual tables; the DDL above does
+    Column("rowid", Integer, primary_key=True),
+    Column("title", Text),
+    Column("body", Text),
+)
+"""Query handle for the FTS5 table: one row per entity, ``rowid = entity.id``.
+
+``body`` holds the entity's ``search="text"`` field values and ``extra`` values. The DB
+writer keeps it in sync; there are no triggers. Search with, e.g.,
+``literal_column("entity_fts").match('"bey"')``.
+"""

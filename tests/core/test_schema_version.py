@@ -56,7 +56,8 @@ def _backups(keep: Keep) -> list[Path]:
 def test_first_open_creates_schema_and_version(tmp_path: Path) -> None:
     _, engine = open_keep_database(_keep(tmp_path))
     try:
-        assert set(inspect(engine).get_table_names()) == set(Base.metadata.tables)
+        tables = set(inspect(engine).get_table_names())
+        assert set(Base.metadata.tables) | {"entity_fts"} <= tables
         with engine.connect() as conn:
             rows = conn.execute(select(SchemaVersion.component, SchemaVersion.version)).all()
         assert rows == [(CORE, 1)]
