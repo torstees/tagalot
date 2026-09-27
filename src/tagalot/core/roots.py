@@ -10,6 +10,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import ModuleType
 
 from sqlalchemy import Connection, insert, select, update
 
@@ -78,6 +79,16 @@ def _list_one_entry(path: str) -> None:
         raise FileNotFoundError(path)
     with os.scandir(path) as entries:
         next(entries, None)
+
+
+def local_path(root_path: str, relpath: str, pathmod: ModuleType = os.path) -> str:
+    r"""Join this machine's root path and a stored POSIX relative path into a local path.
+
+    This is the boundary conversion of AGENTS.md rule 6: ``\\nas\music`` + ``A/b.flac``
+    gives ``\\nas\music\A\b.flac`` on Windows. ``pathmod`` is for tests (``ntpath``,
+    ``posixpath``).
+    """
+    return str(pathmod.join(root_path, *relpath.split("/")))
 
 
 def sync_roots(conn: Connection, roots: list[RootConfig]) -> None:

@@ -160,7 +160,7 @@ Each theme entity type has its own table whose primary key `id` is also a foreig
 
 ### Fingerprints
 
-`fingerprint = blake2b(size || first 64 KiB || last 64 KiB)`, computed lazily in background workers for files only. It is used to:
+`fingerprint = blake2b(size || first 64 KiB || last 64 KiB)`, computed lazily in background workers for files only. Precisely: a 16-byte (128-bit) blake2b digest over the size as 8 bytes little-endian, then the first and last 64 KiB; files of at most 128 KiB are hashed whole, once. Workers skip files whose size or mtime changed since they were queued, and the stored value is written only if the row's size and mtime still match what was hashed, so a fingerprint never attaches to a newer version of a file. Files are queued newest first so move detection has what it needs. It is used to:
 
 1. Reattach entities to files that were moved or renamed (a "new" resource whose fingerprint matches a "missing" one takes over its links; §6).
 2. Find exact duplicates for the dedupe view (§13).
@@ -549,4 +549,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Root reachability: a root is online if its folder can be listed within 10 s, checked on a daemon thread so a hung share can be abandoned; offline marks only `ok` resources `offline` (§6). |
 | 2026-09 | Walking: exclude globs are case-insensitive with `**` semantics and prune matching folders; symlinked folders and junctions are not followed; read errors are reported and skipped (§6). |
 | 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources currently become `missing` (issue #152) (§6). |
+| 2026-09 | Fingerprints are 16-byte blake2b digests; files up to 128 KiB are hashed whole; results are stored only if size and mtime still match (§5). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
