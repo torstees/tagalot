@@ -25,6 +25,43 @@ logger = logging.getLogger(__name__)
 BUSY_TIMEOUT_MS = 5000
 """How long a connection waits for a lock before failing with "database is locked"."""
 
+MIN_SQLITE_VERSION = (3, 45, 0)
+"""Needed for the FTS5 trigram tokenizer's ``remove_diacritics`` option (DESIGN.md §3, §8)."""
+
+
+def check_sqlite_support(
+    version_info: tuple[int, ...] = sqlite3.sqlite_version_info,
+    connect: Callable[[str], sqlite3.Connection] = sqlite3.connect,
+) -> str | None:
+    """Return a message explaining why this Python's SQLite can't run Tagalot, or ``None``.
+
+    Checks the version, then creates the kind of FTS5 table text search uses, since FTS5 can
+    be compiled out of an otherwise recent SQLite.
+    """
+    found = ".".join(str(n) for n in version_info)
+    needed = ".".join(str(n) for n in MIN_SQLITE_VERSION)
+    advice = (
+        "Tagalot uses the SQLite library built into Python. Install a Python whose SQLite "
+        "includes it, for example with `uv python install 3.12`."
+    )
+    if tuple(version_info) < MIN_SQLITE_VERSION:
+        return f"Tagalot needs SQLite {needed} or newer, but this Python has {found}. {advice}"
+    try:
+        conn = connect(":memory:")
+        try:
+            conn.execute(
+                "CREATE VIRTUAL TABLE probe USING fts5("
+                "title, tokenize = 'trigram remove_diacritics 1')"
+            )
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        return (
+            f"Tagalot needs SQLite's FTS5 full-text search with the trigram tokenizer, which "
+            f"this Python's SQLite {found} does not provide ({e}). {advice}"
+        )
+    return None
+
 
 def create_keep_engine(db_path: Path, *, network: bool = False, read_only: bool = False) -> Engine:
     """Create an engine for a keep database file; the file is created if it does not exist.

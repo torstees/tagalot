@@ -3,9 +3,10 @@
 import logging
 from collections.abc import Sequence
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 import tagalot
+from tagalot.core.db import check_sqlite_support
 from tagalot.ui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,11 @@ def run(argv: Sequence[str]) -> int:
         app = QApplication(list(argv))
     app.setApplicationName("Tagalot")
     app.setApplicationVersion(tagalot.__version__)
+
+    if problem := check_sqlite_support():
+        logger.error("Cannot start: %s", problem)
+        QMessageBox.critical(None, "Tagalot cannot start", problem)
+        return 1
 
     window = MainWindow()
     window.show()
