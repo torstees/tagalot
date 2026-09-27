@@ -8,6 +8,7 @@ and the remaining themes load normally. Validation needs no database.
 
 import hashlib
 import importlib
+import importlib.machinery
 import importlib.util
 import inspect
 import logging
@@ -18,6 +19,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import platformdirs
 
@@ -277,7 +279,9 @@ def _import_file(file: Path, source: Path) -> ModuleType | str:
     for existing in [m for m in sys.modules if m == name or m.startswith(f"{name}.")]:
         del sys.modules[existing]
     locations = [str(source)] if source.is_dir() else None
-    spec = importlib.util.spec_from_file_location(name, file, submodule_search_locations=locations)
+    spec = importlib.util.spec_from_file_location(
+        name, file, loader=_FreshSourceLoader(name, str(file)), submodule_search_locations=locations
+    )
     if spec is None or spec.loader is None:
         return "it can't be imported"
     module = importlib.util.module_from_spec(spec)
@@ -288,6 +292,19 @@ def _import_file(file: Path, source: Path) -> ModuleType | str:
         del sys.modules[name]
         return _describe_import_error()
     return module
+
+
+class _FreshSourceLoader(importlib.machinery.SourceFileLoader):
+    """Always compiles a theme from source and never reads or writes ``.pyc`` files.
+
+    Python validates cached bytecode by modification time (to the second) and size, so a
+    quick edit that keeps the file's size (``version = 1`` to ``version = 2``) could reload
+    the old code. Theme files are small; compiling them is cheap.
+    """
+
+    def get_code(self, fullname: str) -> Any:
+        path = self.get_filename(fullname)
+        return self.source_to_code(self.get_data(path), path)
 
 
 def _describe_import_error() -> str:
