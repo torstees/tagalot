@@ -239,3 +239,14 @@ def test_builtin_placeholders_are_skipped_quietly() -> None:
 def test_default_user_folder() -> None:
     path = default_user_themes_dir()
     assert (path.name, path.parent.name) == ("themes", "tagalot")
+
+
+def test_a_same_size_edit_is_not_hidden_by_cached_bytecode(tmp_path: Path) -> None:
+    # Python checks .pyc files by mtime (to the second) and size; "1" -> "2" keeps the size.
+    path = _write(tmp_path, "quick.py", _good("quick"))
+    assert _load(tmp_path).themes["quick"].theme.version == 1
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"Good", 1', '"Good", 2'), encoding="utf-8"
+    )
+    assert _load(tmp_path).themes["quick"].theme.version == 2
+    assert not (tmp_path / "__pycache__").exists()  # user themes never leave .pyc files

@@ -539,14 +539,30 @@ Case-insensitive, any of `.jpg .jpeg .png .webp`: `folder`, `cover`, `front`, `a
 
 ### Main window layout
 
-Three panes:
+```
+┌──────────────────────────────────────────────┐
+│ Keep  View                                   │
+│ [⟳ Scan now]  Photos                         │
+├──────────────┬───────────────────┬───────────┤
+│ ▾ LIBRARY    │                   │  Tags     │
+│    Dashboard │   current view    │ (dockable)│
+│    Search all│                   │           │
+│ ▾ SEARCHES   │                   │           │
+│    Files     │                   │           │
+│ ▸ SAVED (12) │                   │           │
+│ ▾ TOOLS      │                   │           │
+├──────────────┴───────────────────┴───────────┤
+│ ⟳ Ingesting 200 of 3100 in Photos…  [▬▬▬  ]  │
+└──────────────────────────────────────────────┘
+```
 
-- **Left: navigation.** Dashboard, global search, the theme's scoped searches, saved searches, triage, dedupe, tag manager.
-- **Center:** the current view (results, detail page, or manager screen).
-- **Right: tagging panel** (dockable, visible on search and detail views).
-- **Status bar:** activity indicator opening the activity panel.
+- **Toolbar:** "Scan now" (also Keep menu, F5) and the keep's name. While a scan runs the action is disabled and closing the window waits for it.
+- **Left: navigation** as a grouped list with collapsible headings: LIBRARY (Dashboard, Search all), SEARCHES (the theme's search views), SAVED (saved searches), TOOLS (Triage, Dedupe, Tag manager). Clicking a heading folds it; a folded heading shows how many items it hides (`▸ SAVED (12)`); fold state is saved per keep in `ui_state.json`. Keyboard: arrows move, Left/Right fold.
+- **Center:** the current view.
+- **Right: tagging panel**, a dock (View menu toggles it; visible on search and detail views).
+- **Status bar:** scan progress messages with a busy indicator, then a one-line summary (new, changed, missing, moved; offline roots; files that couldn't be read). It will open the activity panel (M14).
 
-Keep configuration and the keep launcher are separate windows/dialogs.
+Keep configuration and the keep launcher are separate windows/dialogs. `tagalot <keep folder>` opens a keep directly; opening always happens in a worker, asks before an upgrade, and warns if the keep is on a network drive.
 
 ### Navigation model
 
@@ -648,4 +664,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | `IngestContext` gains `update(ref, …)` and `entities_of(resource, role)` (before API v1 ships): file-based themes identify entities by their linked file, so moves keep tags and a new file at a vacated path can't take over a moved file's entity (§9). |
 | 2026-09 | Scan ingest: `resource.ingested_at` tracks pending resources so failures retry next scan; batches of 100 per writer transaction, with per-resource retry on failure; theme file reading moves to a worker `prepare()` hook later (#176) (§6). |
 | 2026-09 | The UI works with an open keep through `KeepSession`; Qt workers deliver every result on the GUI thread via a relay object; scans report progress through a callback (§6). |
+| 2026-09 | Main window: collapsible grouped navigation (fold state per keep in `ui_state.json`), "Scan now" in a slim toolbar and Keep menu (F5), scan progress in the status bar. User theme files are always compiled from source (no `.pyc`), so a quick same-size edit can't reload stale code (§9, §12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

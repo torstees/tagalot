@@ -68,6 +68,7 @@ src/tagalot/
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)
     tomlio.py            # hand-editable TOML output, atomic writes
+    ui_state.py          # ui_state.json in the keep folder
     fsinfo.py            # file-system facts, e.g. network-share detection
     db.py                # engine/session setup, WAL, schema versioning
     models.py            # core tables (resource, entity, tag, links, closure…)
@@ -100,6 +101,8 @@ src/tagalot/
     triage.py, dedupe_view.py, dashboard.py, activity.py,
     models/              # QAbstractItemModel subclasses
     workers.py           # QThreadPool jobs, signals
+    navigation.py        # the collapsible navigation pane
+    opening.py           # opening a keep in the background, with prompts
 scripts/
   make_demo_keep.py      # scratch/Demo.keep for manual testing
 tests/
