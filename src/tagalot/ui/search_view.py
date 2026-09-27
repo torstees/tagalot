@@ -15,7 +15,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
 from tagalot.core.search import CORE_FIELDS, SearchError
-from tagalot.core.search_fields import scope_fields, type_labels
+from tagalot.core.search_fields import scope_fields, type_labels, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
@@ -59,8 +59,8 @@ class SearchPage(QWidget):
         self._pool = pool
         self._generation = 0
         self._showing_sort = False  # true while the page itself moves the sort indicator
-        self._labels = type_labels(session.schema)
-        self.model = ResultsModel(session, type_labels=self._labels, pool=pool)
+        self._plurals = type_plurals(session.schema)
+        self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
         self.model.setParent(self)
 
         heading = QLabel(title)
@@ -138,7 +138,7 @@ class SearchPage(QWidget):
 
     def show_all(self, type_id: str) -> None:
         """Narrow the global search to one type (a section's "Show all")."""
-        self.filter_bar.set_only(type_id, self._labels.get(type_id, type_id))
+        self.filter_bar.set_only(type_id, self._plurals.get(type_id, type_id))
 
     def _run(self) -> None:
         self._generation += 1

@@ -144,6 +144,9 @@ class Entity:
 
     Class attributes a subclass may set:
 
+    - ``label`` / ``plural``: how the type is named in the UI ("Album" / "Albums"). The
+      defaults are the class name and a regular English plural of the label (see
+      :func:`entity_plural`); set ``plural`` for irregular words ("Series", "People").
     - ``title_label``: what the core ``title`` is called for this type (default "Title").
     - ``roles``: a list of :func:`role` declarations.
     - ``double_click``: ``"page"`` (open the detail page, the default) or ``"open_file"``.
@@ -151,11 +154,37 @@ class Entity:
       ``<theme id>.<class name>`` (lowercased).
     """
 
+    label: ClassVar[str | None] = None
+    plural: ClassVar[str | None] = None
     title_label: ClassVar[str] = "Title"
     roles: ClassVar[Sequence[Role]] = ()
     double_click: ClassVar[Literal["page", "open_file"]] = "page"
     table_name: ClassVar[str | None] = None
     type_id: ClassVar[str | None] = None
+
+
+def entity_label(entity: type[Entity]) -> str:
+    """The type's display name: its ``label``, or the class name."""
+    return entity.label or entity.__name__
+
+
+def entity_plural(entity: type[Entity]) -> str:
+    """The type's plural display name: its ``plural``, or a regular English plural of its
+    label ("Album" -> "Albums", "Box" -> "Boxes", "Category" -> "Categories"). Words the
+    rules get wrong ("Series", "Person") need an explicit ``plural``."""
+    if entity.plural:
+        return entity.plural
+    return plural_of(entity_label(entity))
+
+
+def plural_of(word: str) -> str:
+    """A regular English plural of ``word``, applied to its last letters."""
+    lower = word.lower()
+    if lower.endswith(("s", "x", "z", "ch", "sh")):
+        return word + "es"
+    if lower.endswith("y") and len(word) > 1 and lower[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
 
 
 def entity_fields(entity: type[Entity]) -> list[FieldInfo]:
@@ -513,7 +542,10 @@ __all__ = [
     "action",
     "contains",
     "entity_fields",
+    "entity_label",
+    "entity_plural",
     "field",
+    "plural_of",
     "related",
     "role",
 ]

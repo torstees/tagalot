@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.search import count_by_type, run_search
-from tagalot.core.search_fields import field_values, scoped_tables, search_fields, type_labels
+from tagalot.core.search_fields import field_values, scoped_tables, search_fields, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.models.results import PreviewModel, ResultColumn, Row
@@ -46,6 +46,7 @@ class TypeGroup:
 
     type_id: str
     label: str
+    """The plural display name, used as the section heading ("Albums")."""
     count: int
     columns: tuple[ResultColumn, ...]
     rows: tuple[Row, ...]
@@ -57,7 +58,7 @@ def load_groups(
     """Count ``spec``'s matches per type and load each type's first ``limit`` matches, in the
     theme's type order. Types without matches are left out. Runs in a worker."""
     schema = session.schema
-    labels = type_labels(schema)
+    labels = type_plurals(schema)
     tree = session.tag_cache.get()
     groups = []
     with session.reader.connect() as conn:  # one read transaction: counts and rows agree
@@ -124,7 +125,7 @@ class TypeSection(QWidget):
         self.show_all_button = QPushButton(f"Show all {group.count:,} →")
         self.show_all_button.setFlat(True)
         self.show_all_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.show_all_button.setToolTip(f"List every matching {group.label}, with sorting")
+        self.show_all_button.setToolTip(f"List all {group.count:,} {group.label}, with sorting")
         self.show_all_button.clicked.connect(lambda: self.show_all.emit(group.type_id))
         self.show_all_button.setVisible(group.count > len(group.rows))
         footer = QHBoxLayout()

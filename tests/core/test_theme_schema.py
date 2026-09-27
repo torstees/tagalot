@@ -213,3 +213,22 @@ def test_core_table_names_are_refused() -> None:
     with pytest.raises(SchemaBuildError) as info:
         build_theme_schema(T)
     assert any("used by the core" in p for p in info.value.problems)
+
+
+def test_labels_must_be_non_empty_strings() -> None:
+    class Blank(ThemeEntity):
+        label = "  "
+
+    class Wrong(ThemeEntity):
+        plural = 3  # type: ignore[assignment]
+
+    class T(Theme):
+        id, name = "labels", "Labels"
+        entities = [Blank, Wrong]
+
+    with pytest.raises(SchemaBuildError) as info:
+        build_theme_schema(T)
+    assert info.value.problems == [
+        "Blank: label must be a non-empty string or None",
+        "Wrong: plural must be a non-empty string or None",
+    ]

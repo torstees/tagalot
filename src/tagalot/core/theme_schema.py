@@ -116,6 +116,10 @@ def build_theme_schema(theme: type[Theme]) -> ThemeSchema:
             problems.append(f"{where}: table name {table_name!r} must start with '{theme_id}_'")
         if not type_id.startswith(f"{theme_id}."):
             problems.append(f"{where}: type id {type_id!r} must start with '{theme_id}.'")
+        for attribute in ("label", "plural"):
+            value = getattr(entity, attribute, None)
+            if value is not None and not (isinstance(value, str) and value.strip()):
+                problems.append(f"{where}: {attribute} must be a non-empty string or None")
         # A conflicting table name is reported, and the entity's fields are still checked,
         # but its table is not created (the name is taken).
         name_taken = table_name in core_tables or table_name in seen_tables

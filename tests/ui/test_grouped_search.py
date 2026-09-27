@@ -86,7 +86,7 @@ def _search_text(qtbot: QtBot, page: SearchPage, text: str) -> None:
 
 def test_load_groups(session: KeepSession) -> None:
     groups = load_groups(session, SearchSpec(text="love"))
-    assert [(g.label, g.count) for g in groups] == [("Artist", 2), ("Album", 10), ("Song", 1)]
+    assert [(g.label, g.count) for g in groups] == [("Artists", 2), ("Albums", 10), ("Songs", 1)]
     artists, albums, _ = groups
     assert [h.title for h, _ in artists.rows] == ["Courtney Love", "Love"]
     assert [c.label for c in artists.columns] == ["Name", "Country"]
@@ -99,7 +99,7 @@ def test_load_groups(session: KeepSession) -> None:
 def test_sections_per_type(page: SearchPage) -> None:
     assert page.showing_groups()
     sections = page.groups.sections
-    assert [s.header.text() for s in sections] == ["▾ Artist (3)", "▾ Album (11)", "▾ Song (2)"]
+    assert [s.header.text() for s in sections] == ["▾ Artists (3)", "▾ Albums (11)", "▾ Songs (2)"]
     artists, albums, songs = sections
     assert artists.model.headerData(1, Qt.Orientation.Horizontal) == "Country"
     assert artists.model.index(0, 1).data() == "UK"  # Blur, first by name
@@ -119,7 +119,7 @@ def test_show_all_narrows_to_one_type_and_the_chip_undoes_it(
     assert page.status.text() == "11 items"
     assert [c.label for c in page.model.columns] == ["Title", "Year"]
     [chip] = page.filter_bar.findChildren(ScopeChip)
-    assert chip.label.text() == "Only: Album"
+    assert chip.label.text() == "Only: Albums"
     assert page.filter_bar.filters().only == ALBUM
 
     # Sorting the full list works, and filters keep the narrowing.
@@ -179,7 +179,7 @@ def test_nothing_found(qtbot: QtBot, page: SearchPage) -> None:
 def test_folded_sections_stay_folded(qtbot: QtBot, page: SearchPage) -> None:
     page.groups.sections[0].header.click()
     assert not page.groups.sections[0].body.isVisible()
-    assert page.groups.sections[0].header.text() == "▸ Artist (3)"
+    assert page.groups.sections[0].header.text() == "▸ Artists (3)"
     _search_text(qtbot, page, "o")  # new results: every type still matches
     qtbot.waitUntil(lambda: page.status.text() != "Searching…", timeout=5000)
     assert [s.expanded for s in page.groups.sections] == [False, True, True]

@@ -26,7 +26,10 @@ from tagalot.themes.api import (
     action,
     contains,
     entity_fields,
+    entity_label,
+    entity_plural,
     field,
+    plural_of,
     related,
     role,
 )
@@ -262,3 +265,38 @@ def test_api_imports_only_the_standard_library() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module.split(".")[0])
     assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
+
+
+@pytest.mark.parametrize(
+    ("word", "plural"),
+    [
+        ("Album", "Albums"),
+        ("Box", "Boxes"),
+        ("Match", "Matches"),
+        ("Brush", "Brushes"),
+        ("Glass", "Glasses"),
+        ("Category", "Categories"),
+        ("Key", "Keys"),  # a vowel before the y
+        ("TV Show", "TV Shows"),
+        ("Y", "Ys"),
+    ],
+)
+def test_plural_of(word: str, plural: str) -> None:
+    assert plural_of(word) == plural
+
+
+def test_entity_labels_and_plurals() -> None:
+    class Series(Entity):
+        plural = "Series"
+
+    class Person(Entity):
+        label = "Actor or actress"
+        plural = "Cast"
+
+    class AudioBook(Entity):
+        label = "Audiobook"
+
+    assert (entity_label(Movie), entity_plural(Movie)) == ("Movie", "Movies")
+    assert (entity_label(Series), entity_plural(Series)) == ("Series", "Series")
+    assert (entity_label(Person), entity_plural(Person)) == ("Actor or actress", "Cast")
+    assert (entity_label(AudioBook), entity_plural(AudioBook)) == ("Audiobook", "Audiobooks")
