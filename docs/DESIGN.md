@@ -316,6 +316,7 @@ How they combine (the design above leaves these open):
 
 - **Deleted tags** (for example in a saved search) count as a subtree of just themselves: including one matches nothing, excluding one excludes nothing.
 - **Field filters** resolve field names through a mapping of columns: the core provides `title`, `created_at`, and `updated_at`; themes add theirs (§9). An unknown field is an error, never ignored.
+- **Theme fields in scope** (`core/search_fields.py`) are the fields every scoped type declares with the same value type (an empty scope means every type). Each becomes a scalar subquery on its type's table, looked up by primary key (combined with `coalesce` across several types), so filtering and sorting on it needs no join. Sorting 50k files by `modified` takes about 15 ms for the first page plus the count; a range filter on `size`, about 35 ms.
 - **Sorting** follows `sort`, compares titles case-insensitively, and always ends with the entity id, so paging never skips or repeats an item.
 
 ### Query shape
@@ -593,6 +594,10 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Search view.** Filter bar with include chips, exclude chips ("but not"), field filters (only valid ones for the scope), `Within` chip, text box, toggles for "Show contained items" and "Inherit tags" (plus advanced "Match via contents"). Results as grid (thumbnails), list (columns), or tree/grouped. Multi-select supported.
 
+- **Results model** (`ui/models/results.py`): setting a search counts the matches and loads the first page (100 rows) in a worker, in one read transaction; the row count is then the full total, so the scroll bar is right at once. Other pages load in workers when the view first asks for one of their rows, which show `…` until then; the 50 most recently used pages stay in memory. Each search has a generation number and older results are dropped. After a scan, open search pages re-run their search, keeping their rows until the new ones arrive.
+- **List layout** (the only layout until the grid and tree arrive; a view declaring another layout shows the list): the title column, named by the type's `title_label` when the scope has one; a Type column when the scope has several types; then the `card=True` fields every scoped type has. Clicking the title or a field column sorts by it (the type column doesn't sort). Column widths are fixed, never sized to contents, which would read every row.
+- The heading shows the view's name and "N items" (or "Nothing found", or the error for a search that can't run, such as one sorting by an unknown field).
+
 **Detail page.** Theme-declared sections: fields (inline edit; user edits set provenance `user`), role slots (drop files to link), galleries, related entities, and for containers an embedded search of contents with its own filter bar. Header shows breadcrumbs and actions.
 
 **Tagging panel.**
@@ -677,5 +682,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | The UI works with an open keep through `KeepSession`; Qt workers deliver every result on the GUI thread via a relay object; scans report progress through a callback (§6). |
 | 2026-09 | Main window: collapsible grouped navigation (fold state per keep in `ui_state.json`), "Scan now" in a slim toolbar and Keep menu (F5), scan progress in the status bar. User theme files are always compiled from source (no `.pyc`), so a quick same-size edit can't reload stale code (§9, §12). |
 | 2026-09 | New roots get default exclude patterns for OS and NAS leftovers (`.DS_Store`, `._*`, `Thumbs.db`, `@eaDir`…), written explicitly into `keep.toml` so they stay visible and editable (§4). |
+| 2026-09 | Search results: a lazily paged table model (count first, pages of 100 on demand, 50 kept); the list layout's columns are the title, the type for mixed scopes, and the scope's common `card` fields; theme fields enter searches as primary-key scalar subqueries, so sorting and filtering need no joins (§8, §12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

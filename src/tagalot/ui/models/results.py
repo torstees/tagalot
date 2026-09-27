@@ -1,0 +1,348 @@
+"""The search results model: one row per entity, fetched lazily in pages (DESIGN.md §8, §12).
+
+Setting a search counts the matches and loads the first page in a worker; the row count is
+then the full total, so the scroll bar is right from the start. Other pages load in workers
+when the view first asks for one of their rows; until then those rows show a placeholder.
+Only the most recently used pages stay in memory.
+
+Every search gets a new generation number, and results from an older generation are
+dropped, so a slow query never overwrites a newer one.
+"""
+
+import logging
+from collections import OrderedDict
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import date, datetime
+from typing import Any
+
+import shiboken6
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    Qt,
+    QThreadPool,
+    Signal,
+)
+from sqlalchemy import ColumnElement, Connection
+
+from tagalot.core.search import SearchError, SearchHit, count_matches, run_search
+from tagalot.core.search_fields import field_values, search_fields
+from tagalot.core.search_spec import SearchSpec, SortKey
+from tagalot.core.session import KeepSession
+from tagalot.core.tags import TagTree
+from tagalot.ui.workers import run_in_pool
+
+logger = logging.getLogger(__name__)
+
+PAGE_SIZE = 100
+MAX_PAGES = 50
+"""Pages kept in memory; the least recently used beyond this are dropped and refetched."""
+
+PLACEHOLDER = "…"
+"""Shown in the first column of a row whose page hasn't loaded yet."""
+
+Row = tuple[SearchHit, Mapping[str, Any]]
+AnyIndex = QModelIndex | QPersistentModelIndex
+
+
+@dataclass(frozen=True)
+class ResultColumn:
+    """A list column: ``key`` is ``"title"``, ``"type"``, or a theme field name."""
+
+    key: str
+    label: str
+    sortable: bool = True
+    numeric: bool = False
+
+
+def display_value(value: object) -> str:
+    """How a field value reads in a list cell."""
+    match value:
+        case None:
+            return ""
+        case bool():
+            return "Yes" if value else "No"
+        case datetime():
+            return value.astimezone().strftime("%Y-%m-%d %H:%M")
+        case date():
+            return value.isoformat()
+        case _:
+            return str(value)
+
+
+class ResultsModel(QAbstractTableModel):
+    """Search results for the list layout. Call :meth:`set_search` to run a search.
+
+    Signals: :attr:`counted` (the total, once a search has run), :attr:`failed` (a message
+    for the user, for example an unknown field).
+    """
+
+    counted = Signal(int)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        session: KeepSession,
+        *,
+        type_labels: Mapping[str, str] | None = None,
+        page_size: int = PAGE_SIZE,
+        max_pages: int = MAX_PAGES,
+        pool: QThreadPool | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.session = session
+        self.type_labels = dict(type_labels or {})
+        self.page_size = page_size
+        self.max_pages = max_pages
+        self._pool = pool
+        self._columns: list[ResultColumn] = []
+        self._spec: SearchSpec | None = None
+        self._generation = 0
+        self._total = 0
+        self._pages: OrderedDict[int, list[Row]] = OrderedDict()
+        self._loading: set[int] = set()
+        self.searching = False
+        """True from :meth:`set_search` until the count arrives (or the search fails)."""
+
+    # --- running searches ---
+
+    @property
+    def spec(self) -> SearchSpec | None:
+        return self._spec
+
+    @property
+    def columns(self) -> list[ResultColumn]:
+        return list(self._columns)
+
+    @property
+    def total(self) -> int:
+        return self._total
+
+    def set_search(self, spec: SearchSpec, columns: Sequence[ResultColumn] | None = None) -> None:
+        """Run ``spec``, clearing the current results, and show ``columns`` (default: keep
+        the current ones)."""
+        self.beginResetModel()
+        if columns is not None:
+            self._columns = list(columns)
+        self._spec = spec
+        self._total = 0
+        self._pages.clear()
+        self._loading.clear()
+        self.endResetModel()
+        self._start()
+
+    def refresh(self) -> None:
+        """Run the current search again, keeping the rows on screen until the new ones
+        arrive (for example after a scan)."""
+        if self._spec is not None:
+            self._start()
+
+    def _start(self) -> None:
+        assert self._spec is not None
+        self._generation += 1
+        self._loading.clear()
+        self.searching = True
+        generation, spec = self._generation, self._spec
+        fetch, reader = self._fetcher(spec), self.session.reader
+
+        def job() -> tuple[int, list[Row]]:
+            with reader.connect() as conn:
+                return fetch(conn, count=True, offset=0)
+
+        self._run(
+            job,
+            on_done=lambda result: self._counted(generation, *result),
+            on_error=lambda error: self._search_failed(generation, error),
+        )
+
+    def _fetcher(self, spec: SearchSpec) -> Callable[..., tuple[int, list[Row]]]:
+        """A function, safe to call in a worker, that loads one page (and maybe the count)."""
+        session, limit = self.session, self.page_size
+        names = [c.key for c in self._columns if c.key not in ("title", "type")]
+
+        def fetch(conn: Connection, *, count: bool, offset: int) -> tuple[int, list[Row]]:
+            tree: TagTree = session.tag_cache.get()
+            fields: dict[str, ColumnElement[Any]] = search_fields(session.schema, spec.types)
+            total = count_matches(conn, spec, tree, fields) if count else -1
+            hits = run_search(conn, spec, tree, offset=offset, limit=limit, fields=fields)
+            values = field_values(conn, session.schema, hits, names) if names else {}
+            return total, [(h, values.get(h.id, {})) for h in hits]
+
+        return fetch
+
+    def _run[T](
+        self,
+        job: Callable[[], T],
+        *,
+        on_done: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+    ) -> None:
+        """Run ``job`` in a worker; drop its result if this model was deleted meanwhile
+        (its page closed)."""
+
+        def done(result: T) -> None:
+            if shiboken6.isValid(self):
+                on_done(result)
+
+        def error(e: BaseException) -> None:
+            if shiboken6.isValid(self):
+                on_error(e)
+
+        run_in_pool(job, on_done=done, on_error=error, pool=self._pool)
+
+    def _counted(self, generation: int, total: int, first: list[Row]) -> None:
+        if generation != self._generation:
+            return
+        self.beginResetModel()
+        self._total = total
+        self._pages.clear()
+        self._pages[0] = first
+        self._loading.clear()
+        self.endResetModel()
+        self.searching = False
+        self.counted.emit(total)
+
+    def _search_failed(self, generation: int, error: BaseException) -> None:
+        if generation != self._generation:
+            return
+        self.searching = False
+        if isinstance(error, SearchError):
+            self.failed.emit(str(error))
+        else:
+            logger.error("Search failed", exc_info=error)
+            self.failed.emit(f"The search failed: {error}")
+
+    def _load_page(self, page: int) -> None:
+        if page in self._loading or self._spec is None:
+            return
+        self._loading.add(page)
+        generation, fetch = self._generation, self._fetcher(self._spec)
+        reader, offset = self.session.reader, page * self.page_size
+
+        def job() -> list[Row]:
+            with reader.connect() as conn:
+                return fetch(conn, count=False, offset=offset)[1]
+
+        self._run(
+            job,
+            on_done=lambda rows: self._page_loaded(generation, page, rows),
+            on_error=lambda error: self._search_failed(generation, error),
+        )
+
+    def _page_loaded(self, generation: int, page: int, rows: list[Row]) -> None:
+        if generation != self._generation:
+            return
+        self._loading.discard(page)
+        self._pages[page] = rows
+        while len(self._pages) > self.max_pages:
+            self._pages.popitem(last=False)
+        first = page * self.page_size
+        last = min(first + self.page_size, self._total) - 1
+        if last >= first and self._columns:
+            self.dataChanged.emit(self.index(first, 0), self.index(last, len(self._columns) - 1))
+
+    # --- reading rows ---
+
+    def row(self, row: int, *, load: bool = True) -> Row | None:
+        """The hit and field values at ``row``, or ``None`` if its page isn't loaded (which
+        starts loading it, unless ``load`` is false)."""
+        if not 0 <= row < self._total:
+            return None
+        page, offset = divmod(row, self.page_size)
+        rows = self._pages.get(page)
+        if rows is None:
+            if load:
+                self._load_page(page)
+            return None
+        self._pages.move_to_end(page)
+        return rows[offset] if offset < len(rows) else None  # fewer rows if the keep changed
+
+    def hit(self, row: int) -> SearchHit | None:
+        """The entity at ``row``, if its page is loaded."""
+        found = self.row(row, load=False)
+        return found[0] if found else None
+
+    def loaded_pages(self) -> list[int]:
+        return sorted(self._pages)
+
+    # --- sorting ---
+
+    def sort_column(self) -> tuple[int, Qt.SortOrder] | None:
+        """The column and order of the search's first sort key, if it is a shown column."""
+        if self._spec is None or not self._spec.sort:
+            return None
+        key = self._spec.sort[0]
+        for i, column in enumerate(self._columns):
+            if column.key == key.field:
+                order = (
+                    Qt.SortOrder.DescendingOrder if key.descending else Qt.SortOrder.AscendingOrder
+                )
+                return i, order
+        return None
+
+    def sort(self, column: int, order: Qt.SortOrder = Qt.SortOrder.AscendingOrder) -> None:
+        """Sort by a sortable column (a header click). Others are ignored."""
+        if self._spec is None or not 0 <= column < len(self._columns):
+            return
+        info = self._columns[column]
+        if not info.sortable:
+            return
+        key = SortKey(info.key, descending=order == Qt.SortOrder.DescendingOrder)
+        if self._spec.sort[:1] == (key,):
+            return
+        self.set_search(replace(self._spec, sort=(key,)))
+
+    # --- QAbstractTableModel ---
+
+    def rowCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else self._total
+
+    def columnCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self._columns)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> Any:
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self._columns):
+            return None
+        column = self._columns[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return column.label
+        if role == Qt.ItemDataRole.TextAlignmentRole and column.numeric:
+            return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        return None
+
+    def data(self, index: AnyIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid() or not 0 <= index.column() < len(self._columns):
+            return None
+        column = self._columns[index.column()]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            if column.numeric:
+                return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            return None
+        if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return None
+        found = self.row(index.row())
+        if found is None:
+            return (
+                PLACEHOLDER if index.column() == 0 and role == Qt.ItemDataRole.DisplayRole else ""
+            )
+        hit, values = found
+        if column.key == "title":
+            return hit.title
+        if column.key == "type":
+            return self.type_labels.get(hit.type, hit.type)
+        return display_value(values.get(column.key))
+
+    def flags(self, index: AnyIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return (
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemNeverHasChildren
+        )

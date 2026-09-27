@@ -42,7 +42,7 @@ CORE_FIELDS: Mapping[str, ColumnElement[Any]] = {
     "created_at": Entity.created_at.expression,
     "updated_at": Entity.updated_at.expression,
 }
-"""Fields every entity has. Themes add their own columns to this mapping (M4, M11)."""
+"""Fields every entity has. ``search_fields.search_fields`` adds the theme's."""
 
 IdColumn = ColumnElement[int] | InstrumentedAttribute[int]
 """The entity id a condition tests: the listed entity, a descendant, …"""
