@@ -67,6 +67,8 @@ markers = [
     "gui: needs a QApplication (runs headless via the offscreen Qt platform)",
     "slow: benchmarks and other long-running tests",
 ]
+# Fail on SQLAlchemy deprecations so API changes are fixed when they appear.
+filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13"]

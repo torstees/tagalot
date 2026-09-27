@@ -62,6 +62,7 @@ src/tagalot/
     fsinfo.py            # file-system facts, e.g. network-share detection
     db.py                # engine/session setup, WAL, schema versioning
     models.py            # core tables (resource, entity, tag, links, closure…)
+    roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
     fingerprint.py
     ingest.py            # drives theme ingesters, DB writer batches

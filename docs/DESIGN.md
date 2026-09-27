@@ -171,7 +171,7 @@ It is not a cryptographic identity of the whole file; when an exact match matter
 
 A scan runs per root in background workers:
 
-1. **Reachability check.** If the root is unreachable, mark the root offline and its resources `offline`, then stop.
+1. **Reachability check.** If the root is unreachable, mark the root offline and its resources `offline`, then stop. A root is reachable when its path on this machine (after per-user overrides) is a folder that can be listed within 10 seconds; an unreachable share can otherwise block for a minute. Missing paths, non-folders, permission errors, and timeouts all count as offline, each with its own `root.last_error`. Only `ok` resources become `offline`; `missing` ones stay `missing`, and nothing is deleted. When the root is reachable again, the scan's diff sets each resource back to `ok` or `missing`.
 2. **Walk** with `os.scandir`, applying root exclude patterns and the theme's accepted extensions and directory rules. Directories are recorded as resources when the theme asks for them (for example, album folders).
 3. **Diff** against the database by `(root_id, relpath)`:
    - New path → insert resource.
@@ -538,4 +538,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Network keeps use `journal_mode=DELETE` instead of WAL. Read-only engines set `query_only`. The pysqlite driver's own transaction handling is disabled so DDL runs inside transactions (§4). |
 | 2026-09 | Core schema conventions: `resource.mtime_ns` as integer nanoseconds; UTC-aware timestamps; enum columns as text with CHECK constraints; link rows cascade on delete, while deleting a tag with children or a root with resources is refused (§5). |
 | 2026-09 | Core schema versions: a newer keep is refused; an older one needs user confirmation, then is backed up with SQLite's backup API and migrated in a single transaction; `keep.toml` `format_version` tracks the database (§5). |
+| 2026-09 | Root reachability: a root is online if its folder can be listed within 10 s, checked on a daemon thread so a hung share can be abandoned; offline marks only `ok` resources `offline` (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
