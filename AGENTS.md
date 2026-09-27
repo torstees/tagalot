@@ -64,6 +64,7 @@ src/tagalot/
     models.py            # core tables (resource, entity, tag, links, closure…)
     roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
+    scanjob.py           # scan_root(): one root's full scan, in §6 order
     fingerprint.py
     ingest.py            # drives theme ingesters
     writer.py            # the single DB writer thread
