@@ -8,11 +8,11 @@ from sqlalchemy import Connection, Engine, func, insert, select
 
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity, EntityTag, Tag, TagAlias
+from tagalot.core.tag_service import TagService
 from tagalot.core.tags import (
     MAX_NAME_LENGTH,
     DeleteMode,
     TagError,
-    TagService,
     TagTree,
     TagTreeCache,
     add_alias,

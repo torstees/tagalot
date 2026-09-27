@@ -249,6 +249,8 @@ Details the table leaves open:
 
 All tag operations are single transactions and are recorded in an undo stack for the session.
 
+**Undo/redo** (`core/tag_service.py`): each operation's transaction also records the full `tag` and `tag_alias` tables before and after it (they are small, and only tag operations write them) and the `entity_tag` rows it removed and added within its scope (both subtrees for a merge, the subtree for a delete). Undo restores the "before" tables and reverses that delta; redo restores "after" and replays it. Neither re-runs the operation, so redo can't fail validation. Tagging done after an operation is kept when it is undone; the one exception is undoing the creation of a tag, which removes that tag (and so its uses) again. The history holds 100 steps and is cleared by a new operation after an undo, as usual.
+
 ## 8. Search
 
 ### The search model
@@ -571,4 +573,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | `scan_root()` orchestrates §6 steps 1–4 per root: one fingerprint pass per scan, move detection limited to the scan's new files, and a `ScanReport` for the UI (§6). |
 | 2026-09 | The tag tree is cached as an immutable snapshot, reloaded only after explicit invalidation by tag operations; tag names compare with `str.casefold()` (§7). |
 | 2026-09 | Tag merge merges clashing children recursively and is refused into a descendant; promoting children on delete is refused on name clashes; operations validate against a fresh tree inside their transaction (§7). |
+| 2026-09 | Tag undo/redo restores snapshots of the tag tables plus the operation's own `entity_tag` delta instead of computing inverse operations (§7). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
