@@ -150,6 +150,8 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 
 **schema_version** — `component` (`core` or theme id), `version`.
 
+**Core schema versions** follow the same rule as theme versions (§9). The core version is kept both in `keep.toml` (`format_version`) and in `schema_version`. On open: a newer version in either place is refused with a clear message before anything is changed; an empty database gets the core tables and a `core` row; an older database raises a distinct "needs migration" error so the launcher can ask the user. Once the user confirms, `keep.db` is copied with SQLite's backup API (safe with WAL) to `keep.db.v<old>-<timestamp>.bak`, every migration step runs in one transaction (all or nothing), and `keep.toml` is updated. The backup is kept even if the migration fails.
+
 **entity_fts** — FTS5 virtual table for text search (§8), one row per entity, `rowid = entity.id`. Columns `title` and `body` (the entity's `search="text"` field values plus `extra` values, joined with spaces). Tokenizer `trigram remove_diacritics 1`. Maintained by the DB writer, not triggers.
 
 ### Theme tables
@@ -535,4 +537,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Keep creation requires a new or empty folder and refuses a keep and root that contain each other. Network detection for the keep-location warning uses UNC/`GetDriveTypeW` on Windows and mount file-system types on Linux/macOS, and fails open (§4). |
 | 2026-09 | Network keeps use `journal_mode=DELETE` instead of WAL. Read-only engines set `query_only`. The pysqlite driver's own transaction handling is disabled so DDL runs inside transactions (§4). |
 | 2026-09 | Core schema conventions: `resource.mtime_ns` as integer nanoseconds; UTC-aware timestamps; enum columns as text with CHECK constraints; link rows cascade on delete, while deleting a tag with children or a root with resources is refused (§5). |
+| 2026-09 | Core schema versions: a newer keep is refused; an older one needs user confirmation, then is backed up with SQLite's backup API and migrated in a single transaction; `keep.toml` `format_version` tracks the database (§5). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
