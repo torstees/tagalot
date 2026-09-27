@@ -389,6 +389,15 @@ class MoviesTheme(Theme):
 
 (Exact names are illustrative; the implementation should keep this shape.)
 
+**The API module** (`tagalot/themes/api.py`, `API_VERSION = 1`) imports only the standard library, so the core and the launcher can import it without side effects. Beyond the names above it provides:
+
+- `Theme` class attributes: `id`, `name`, `version` (the theme's schema version), `api_version`, `extensions` (lowercase with the dot; empty = all), `dirs` (whether folders become resources: `bool` or a predicate on the relative path), `entities`, `containment`, `relationships`, `views`; methods `ingest(batch, ctx)` and `migrate(from_version, ctx)`; `type_id_of`, `table_name_of`, and `actions()` for the core.
+- `Entity` class attributes: `title_label`, `roles`, `double_click` (`"page"` or `"open_file"`), and optional `table_name` / `type_id` overrides. `entity_fields(cls)` resolves annotated fields (types `str`, `int`, `float`, `bool`, `date`, `datetime`, each optionally `| None`) in declaration order.
+- `Kind` (the resource kinds a role accepts: image, audio, video, font, archive, dir, any), `SortBy(field, descending)` for view defaults, and `Section.contents()` / `Section.custom(factory)` alongside the sections shown.
+- `@action(label, applies_to)` marks a theme method called as `method(entities, ctx)`; `applies_to` lists entity types or role names.
+- Values themes receive: `EntityRef(id, type)`, `Record(ref, title, fields, extra)`, `ResourceInfo(id, root_id, relpath, kind, ext, size, mtime_ns, path)`, and the `IngestContext` protocol (below).
+- Obvious mistakes (an unknown `search` kind or role kind, an unsupported field type, a missing annotation) raise `ThemeDeclarationError` at declaration; whole-theme checks happen in the loader.
+
 Theme modules do not import SQLAlchemy. Entity classes are plain declarations; table names (`movies_actor`) and type ids (`movies.actor`) are derived from the theme id and the lowercased class name, overridable with `table_name` / `type_id` class attributes.
 
 ### Mapping and isolation
@@ -599,4 +608,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Closure API: `apply` (removals first, ordered cycle checks, returns rejections), `add_entities` for self rows, and `detach` before deleting entities; affected ids use a temporary table (§6). |
 | 2026-09 | Containment search: `within` is strict; `aggregate_up` matches tags and text via non-excluded descendants while field filters and exclusion apply to the container; `show_contained` adds descendants regardless of types, subject only to exclusion (§8). |
 | 2026-09 | Search performance: set tests are uncorrelated `IN` subqueries over materialized CTEs; closure cycle checks run only for edges into entities that have children. Measured at 50.5k entities: 1–47 ms for single options, ~105 ms with every option at once (§6, §8). |
+| 2026-09 | Theme API v1: stdlib-only module; fields as annotated `field()` attributes; frozen declaration objects for roles, containment, relationships, views, sections; `IngestContext` as a protocol implemented by the core (§9). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
