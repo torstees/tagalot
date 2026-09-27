@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Connection, bindparam, delete, exists, insert, select, update
 
@@ -306,6 +307,32 @@ def apply_diff(conn: Connection, root_id: str, diff: RootDiff, when: datetime) -
         changed_ids=[rid for rid, _ in diff.changed],
         missing_ids=list(diff.missing),
     )
+
+
+def split_diff(diff: RootDiff, size: int = BATCH_SIZE) -> list[RootDiff]:
+    """Split a diff into parts of at most ``size`` changes each.
+
+    Each part can be applied in its own short transaction: the parts are independent, and
+    re-scanning after an interruption finishes the job, because the diff is recomputed.
+    """
+    parts: list[RootDiff] = []
+    for name in ("new", "changed", "restored", "missing", "unchanged"):
+        items: list[Any] = getattr(diff, name)
+        for chunk in _chunks(items, size):
+            parts.append(RootDiff(**{name: list(chunk)}))
+    return parts or [RootDiff()]
+
+
+def merge_applied(parts: Iterable[AppliedDiff]) -> AppliedDiff:
+    """Combine the results of applying the parts of a split diff."""
+    new_ids: dict[str, int] = {}
+    changed: list[int] = []
+    missing: list[int] = []
+    for part in parts:
+        new_ids.update(part.new_ids)
+        changed += part.changed_ids
+        missing += part.missing_ids
+    return AppliedDiff(new_ids=new_ids, changed_ids=changed, missing_ids=missing)
 
 
 def _chunks[T](items: Sequence[T], size: int = BATCH_SIZE) -> Iterator[Sequence[T]]:
