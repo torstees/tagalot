@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
         if target.kind == "search":
-            return SearchPage(session, target.label, SearchSpec())
+            return SearchPage(session, target.label, SearchSpec(), grouped=True)
         if target.kind == "view":
             views = [v for v in session.theme.views if isinstance(v, SearchView)]
             view = next(v for v in views if v.name == target.key)

@@ -20,6 +20,11 @@ run *args:
 demo: demo-reset
     uv run tagalot scratch/Demo.keep
 
+# (Re)create the demo keeps plus Media.keep (artists, albums, songs), and open Media.keep
+demo-media:
+    uv run python scripts/make_demo_keep.py --reset --media
+    uv run tagalot scratch/Media.keep
+
 # (Re)create scratch/Demo.keep and scratch/demo-files without opening them
 demo-reset:
     uv run python scripts/make_demo_keep.py --reset

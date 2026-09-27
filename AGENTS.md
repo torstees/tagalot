@@ -52,6 +52,8 @@ uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.kee
 uv run tagalot scratch/Demo.keep
 ```
 
+For views with several entity types, `--media` also creates `scratch/Media.keep` (artists, albums, songs) and installs its tiny theme as `tagalot_demo_media.py` in the user themes folder (`just demo-media` does both and opens it).
+
 ## Stack
 
 - Python 3.12+, managed with **uv**. `src/` layout.

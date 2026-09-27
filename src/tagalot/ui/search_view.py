@@ -1,64 +1,44 @@
 """Search view: a heading, the result count, the filter bar, and the results (DESIGN.md §12).
 
-Results use the list layout (columns) for now; the grid and tree layouts come later. A search
-page is created once per navigation target and re-runs its search after a scan.
+Results use the list layout (columns); the grid and tree layouts come later. The global
+search ("Search all") is **grouped**: one section per type with its first matches, until the
+user picks "Show all" on a section (an "Only: <type>" chip) or only one type matches, when
+it shows that type's full list. A search page is created once per navigation target and
+re-runs its search after a scan.
 """
 
-from collections.abc import Sequence
 from dataclasses import replace
 
 import shiboken6
 from PySide6.QtCore import QThreadPool
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QTableView,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
-from tagalot.core.search_fields import scope_fields, scoped_tables, type_labels
+from tagalot.core.search import CORE_FIELDS, SearchError
+from tagalot.core.search_fields import scope_fields, type_labels
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
-from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.filter_bar import FilterBar, Filters
-from tagalot.ui.models.results import ResultColumn, ResultsModel
+from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
+from tagalot.ui.models.results import ResultsModel
+from tagalot.ui.result_table import (
+    count_text,
+    list_columns,
+    make_result_table,
+    set_column_widths,
+)
 from tagalot.ui.workers import run_in_pool
 
-TITLE_MIN_WIDTH = 200
-COLUMN_WIDTH = 140
-NUMERIC_WIDTH = 100
-
-
-def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn]:
-    """The list layout's columns for a scope: the title (named as the types call it), the
-    type when several types are in scope, then the card fields every scoped type has."""
-    tables = scoped_tables(schema, types)
-    labels = {t.entity.title_label for t in tables}
-    columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
-    if len(tables) != 1:
-        columns.append(ResultColumn("type", "Type", sortable=False))
-    columns.extend(
-        ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float))
-        for f in scope_fields(schema, types)
-        if f.spec.card
-    )
-    return columns
-
-
-def count_text(total: int) -> str:
-    return f"{total:,} item" if total == 1 else f"{total:,} items"
+__all__ = ["SearchPage", "count_text", "list_columns"]
 
 
 class SearchPage(QWidget):
-    """One search: ``title``, a filter bar, and a list of the entities ``spec`` finds.
+    """One search: ``title``, a filter bar, and the entities ``spec`` finds.
 
     ``spec`` is the page's starting point (a theme view's types, toggles, and sort); the
-    filter bar's tags and text are applied on top of it.
+    filter bar's tags and text are applied on top of it. With ``grouped`` (the global
+    search), results are shown in sections by type.
     """
 
     def __init__(
@@ -67,14 +47,20 @@ class SearchPage(QWidget):
         title: str,
         spec: SearchSpec,
         *,
+        grouped: bool = False,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
+        self.grouped = grouped
+        self._base = spec
+        self._sort = spec.sort
         self._pool = pool
+        self._generation = 0
         self._showing_sort = False  # true while the page itself moves the sort indicator
-        self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
+        self._labels = type_labels(session.schema)
+        self.model = ResultsModel(session, type_labels=self._labels, pool=pool)
         self.model.setParent(self)
 
         heading = QLabel(title)
@@ -91,49 +77,112 @@ class SearchPage(QWidget):
         self.filter_bar = FilterBar()
         self.filter_bar.changed.connect(self._filters_changed)
 
-        self.table = QTableView()
+        self.table = make_result_table()
         self.table.setModel(self.model)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
-        self.table.setWordWrap(False)
-        self.table.verticalHeader().setVisible(False)
-        # Fixed row heights and column widths: sizing to contents would read every row.
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.table.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 8)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(False)
         header.setSortIndicatorShown(True)
         header.setSectionsClickable(True)
         header.sortIndicatorChanged.connect(self._sort_clicked)
 
+        self.groups = GroupedResults()
+        self.groups.show_all.connect(self.show_all)
+        self.results = QStackedWidget()
+        self.results.addWidget(self.table)
+        self.results.addWidget(self.groups)
+
         layout = QVBoxLayout(self)
         layout.addLayout(header_row)
         layout.addWidget(self.filter_bar)
-        layout.addWidget(self.table, 1)
+        layout.addWidget(self.results, 1)
 
         self.model.counted.connect(self._counted)
         self.model.failed.connect(self._failed)
         self.model.modelReset.connect(self._show_sort)
-        self.model.set_search(spec, list_columns(session.schema, spec.types))
-        # The title takes the remaining width; the other columns start narrow and can be resized.
-        header.setMinimumSectionSize(40)
-        for i, column in enumerate(self.model.columns):
-            if column.key == "title":
-                header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-            else:
-                self.table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else COLUMN_WIDTH)
-        self.table.setMinimumWidth(TITLE_MIN_WIDTH)
+        self._run()
         self._load_tags()
 
+    # --- running the search ---
+
+    def current_spec(self, types: tuple[str, ...] | None = None) -> SearchSpec:
+        """The page's spec with the filter bar applied, for ``types`` (default: the page's
+        types, or the "Only" type). The last sort the user chose is kept when the listed
+        types have its field; otherwise the page's default sort applies."""
+        filters = self.filter_bar.filters()
+        if types is None:
+            types = (filters.only,) if filters.only is not None else self._base.types
+        base = self._base
+        text = " ".join(t for t in (base.text, filters.text) if t)
+        # A sort chosen on one type's list (Year on albums) may not exist across types.
+        valid = set(CORE_FIELDS) | {f.name for f in scope_fields(self.session.schema, types)}
+        sort = self._sort if all(k.field in valid for k in self._sort) else base.sort
+        return replace(
+            base,
+            types=types,
+            include=base.include + tuple(t for t in filters.include if t not in base.include),
+            exclude=base.exclude + tuple(t for t in filters.exclude if t not in base.exclude),
+            text=text or None,
+            sort=sort,
+        )
+
+    def showing_groups(self) -> bool:
+        return self.results.currentWidget() is self.groups
+
     def refresh(self) -> None:
-        """Run the search again (after a scan), keeping the list until new rows arrive, and
-        reload the tag tree for the filter bar."""
-        self.model.refresh()
+        """Run the search again (after a scan), keeping the results until new ones arrive,
+        and reload the tag tree for the filter bar."""
+        if self.grouped:
+            self._run()
+        else:
+            self.model.refresh()
         self._load_tags()
+
+    def show_all(self, type_id: str) -> None:
+        """Narrow the global search to one type (a section's "Show all")."""
+        self.filter_bar.set_only(type_id, self._labels.get(type_id, type_id))
+
+    def _run(self) -> None:
+        self._generation += 1
+        spec = self.current_spec()
+        self.status.setText("Searching…")
+        if not self.grouped or spec.types:
+            self._show_list(spec)
+            return
+        generation, session = self._generation, self.session
+
+        def done(groups: list[TypeGroup]) -> None:
+            if shiboken6.isValid(self) and generation == self._generation:
+                self._groups_loaded(spec, groups)
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self) and generation == self._generation:
+                self._failed(
+                    str(error) if isinstance(error, SearchError) else f"The search failed: {error}"
+                )
+
+        run_in_pool(
+            lambda: load_groups(session, spec), on_done=done, on_error=failed, pool=self._pool
+        )
+
+    def _groups_loaded(self, spec: SearchSpec, groups: list[TypeGroup]) -> None:
+        if len(groups) == 1:
+            # One type matches (always, for a one-type theme): show its full list.
+            self._show_list(self.current_spec((groups[0].type_id,)))
+            return
+        self.groups.set_groups(groups)
+        self.results.setCurrentWidget(self.groups)
+        total = sum(g.count for g in groups)
+        self.status.setText(count_text(total) if total else "Nothing found")
+
+    def _show_list(self, spec: SearchSpec) -> None:
+        columns = list_columns(self.session.schema, spec.types)
+        if columns != self.model.columns:
+            self.model.set_search(spec, columns)
+            set_column_widths(self.table, columns)
+        elif spec != self.model.spec:
+            self.model.set_search(spec)
+        else:
+            self.model.refresh()  # the same search again: keep the rows until new ones arrive
+        self.results.setCurrentWidget(self.table)
 
     def _load_tags(self) -> None:
         """Load the tag tree in a worker (the cache may need to read it from the keep)."""
@@ -144,18 +193,10 @@ class SearchPage(QWidget):
 
         run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
 
-    def _filters_changed(self, filters: Filters) -> None:
-        spec = self.model.spec
-        assert spec is not None
-        self.model.set_search(
-            replace(
-                spec,
-                include=filters.include,
-                exclude=filters.exclude,
-                text=filters.text or None,
-            )
-        )
-        self.status.setText("Searching…")
+    def _filters_changed(self, _filters: Filters) -> None:
+        self._run()
+
+    # --- the list's count and sorting ---
 
     def _counted(self, total: int) -> None:
         self.status.setText(count_text(total) if total else "Nothing found")
@@ -167,6 +208,8 @@ class SearchPage(QWidget):
         if self._showing_sort:
             return
         self.model.sort(column, self.table.horizontalHeader().sortIndicatorOrder())
+        if self.model.spec is not None:
+            self._sort = self.model.spec.sort  # kept when the filters change
         self._show_sort()  # a column that can't sort puts the indicator back
 
     def _show_sort(self) -> None:

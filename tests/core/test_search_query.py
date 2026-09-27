@@ -9,7 +9,7 @@ from sqlalchemy import Engine, insert
 
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity, EntityTag, Tag, entity_fts
-from tagalot.core.search import SearchError, count_matches, run_search
+from tagalot.core.search import SearchError, count_by_type, count_matches, run_search
 from tagalot.core.search_spec import (
     ChoiceFilter,
     RangeFilter,
@@ -202,6 +202,24 @@ def test_paging_and_count(engine: Engine, tree: TagTree) -> None:
         assert count_matches(conn, spec, tree) == 9
         assert count_matches(conn, SearchSpec(include=(ROCK,), exclude=(XMAS,)), tree) == 3
         assert count_matches(conn, SearchSpec(text="miles"), tree) == 2
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (SearchSpec(), {SONG: 7, ALBUM: 2}),
+        (SearchSpec(text="miles"), {SONG: 1, ALBUM: 1}),
+        (SearchSpec(include=(CALM,), types=(ALBUM,)), {ALBUM: 1}),
+        (SearchSpec(include=(PUNK,)), {SONG: 2}),  # types with no matches are left out
+        (SearchSpec(text="zebra"), {}),
+    ],
+)
+def test_count_by_type(
+    engine: Engine, tree: TagTree, spec: SearchSpec, expected: dict[str, int]
+) -> None:
+    with engine.connect() as conn:
+        assert count_by_type(conn, spec, tree) == expected
+        assert sum(expected.values()) == count_matches(conn, spec, tree)
 
 
 def test_hits_carry_type_and_title(engine: Engine, tree: TagTree) -> None:

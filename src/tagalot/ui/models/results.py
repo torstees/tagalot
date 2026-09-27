@@ -73,6 +73,72 @@ def display_value(value: object) -> str:
             return str(value)
 
 
+def cell_text(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
+    """The text of one cell of a result row."""
+    hit, values = row
+    if column.key == "title":
+        return hit.title
+    if column.key == "type":
+        return type_labels.get(hit.type, hit.type)
+    return display_value(values.get(column.key))
+
+
+class PreviewModel(QAbstractTableModel):
+    """A few fixed result rows (a section of the grouped global search). Not sortable."""
+
+    def __init__(
+        self,
+        columns: Sequence[ResultColumn],
+        rows: Sequence[Row],
+        type_labels: Mapping[str, str] | None = None,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.columns = list(columns)
+        self.rows = list(rows)
+        self.type_labels = dict(type_labels or {})
+
+    def hit(self, row: int) -> SearchHit | None:
+        return self.rows[row][0] if 0 <= row < len(self.rows) else None
+
+    def rowCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.rows)
+
+    def columnCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.columns)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> Any:
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self.columns):
+            return None
+        column = self.columns[section]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return column.label
+        if role == Qt.ItemDataRole.TextAlignmentRole and column.numeric:
+            return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        return None
+
+    def data(self, index: AnyIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid() or not 0 <= index.row() < len(self.rows):
+            return None
+        column = self.columns[index.column()]
+        if role == Qt.ItemDataRole.TextAlignmentRole and column.numeric:
+            return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return cell_text(column, self.rows[index.row()], self.type_labels)
+        return None
+
+    def flags(self, index: AnyIndex) -> Qt.ItemFlag:
+        if not index.isValid():
+            return Qt.ItemFlag.NoItemFlags
+        return (
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemNeverHasChildren
+        )
+
+
 class ResultsModel(QAbstractTableModel):
     """Search results for the list layout. Call :meth:`set_search` to run a search.
 
@@ -331,12 +397,7 @@ class ResultsModel(QAbstractTableModel):
             return (
                 PLACEHOLDER if index.column() == 0 and role == Qt.ItemDataRole.DisplayRole else ""
             )
-        hit, values = found
-        if column.key == "title":
-            return hit.title
-        if column.key == "type":
-            return self.type_labels.get(hit.type, hit.type)
-        return display_value(values.get(column.key))
+        return cell_text(column, found, self.type_labels)
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
         if not index.isValid():

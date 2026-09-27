@@ -16,7 +16,7 @@ from sqlalchemy import Engine, func, select
 
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity
-from tagalot.core.search import count_matches, run_search
+from tagalot.core.search import count_by_type, count_matches, run_search
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.tags import TagTree
 from tests.core.bench_data import BenchKeep, build
@@ -105,5 +105,7 @@ def test_first_page_and_count(
         tree = TagTree.load(conn)
         page_ms = _median_ms(lambda: run_search(conn, spec, tree, limit=100))
         count_ms = _median_ms(lambda: count_matches(conn, spec, tree))
+        by_type_ms = _median_ms(lambda: count_by_type(conn, spec, tree))
     assert page_ms < BOUND_MS, f"first page took {page_ms:.0f} ms"
     assert count_ms < BOUND_MS, f"count took {count_ms:.0f} ms"
+    assert by_type_ms < BOUND_MS, f"count by type took {by_type_ms:.0f} ms"
