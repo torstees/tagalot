@@ -255,22 +255,27 @@ All tag operations are single transactions and are recorded in an undo stack for
 
 ### The search model
 
-A search is a value object, serializable to JSON (used for saved searches and view state):
+A search is an immutable, hashable value object, serializable to JSON (used for saved searches and view state). Tuples rather than lists keep it hashable, so it can key result caches.
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class SearchSpec:
-    types: list[str]                  # entity types in scope; empty = all
-    include: list[int]                # tag ids; each must match (AND)
-    exclude: list[int]                # tag ids; any match removes the item
-    fields: list[FieldFilter]         # typed filters, only for fields every scoped type has
-    within: int | None                # entity id: restrict to its descendants
-    text: str | None                  # matches title and text-search fields
-    inherit_tags: bool                # tags on ancestors count
-    show_contained: bool              # also list descendants of matching containers
-    aggregate_up: bool                # containers match if any descendant matches (default off)
-    sort: list[SortKey]
+    types: tuple[str, ...] = ()           # entity types in scope; empty = all
+    include: tuple[int, ...] = ()         # tag ids; each must match (AND)
+    exclude: tuple[int, ...] = ()         # tag ids; any match removes the item
+    fields: tuple[FieldFilter, ...] = ()  # typed filters, only for fields every scoped type has
+    within: int | None = None             # entity id: restrict to its descendants
+    text: str | None = None               # matches title and text-search fields (trimmed; blank = None)
+    inherit_tags: bool = False            # tags on ancestors count
+    show_contained: bool = False          # also list descendants of matching containers
+    aggregate_up: bool = False            # containers match if any descendant matches
+    sort: tuple[SortKey, ...] = (SortKey("title"),)
+
+FieldFilter = TextFilter(field, contains) | RangeFilter(field, low, high) | ChoiceFilter(field, values)
+SortKey(field, descending=False)
 ```
+
+One filter kind per `field(search=...)` kind (§9): `TextFilter` is a case-insensitive "contains"; `RangeFilter` bounds are inclusive and either may be open (`None`); `ChoiceFilter` matches any of its values. The JSON form carries `"version": 1`; dates and datetimes are tagged (`{"$date": "1997-09-22"}`) so they round-trip as dates; missing keys take defaults and unknown keys are ignored; a newer version is refused with a clear message.
 
 ### Semantics
 
@@ -574,4 +579,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | The tag tree is cached as an immutable snapshot, reloaded only after explicit invalidation by tag operations; tag names compare with `str.casefold()` (§7). |
 | 2026-09 | Tag merge merges clashing children recursively and is refused into a descendant; promoting children on delete is refused on name clashes; operations validate against a fresh tree inside their transaction (§7). |
 | 2026-09 | Tag undo/redo restores snapshots of the tag tables plus the operation's own `entity_tag` delta instead of computing inverse operations (§7). |
+| 2026-09 | `SearchSpec` is frozen and uses tuples (hashable); field filters are `TextFilter`/`RangeFilter`/`ChoiceFilter`; its JSON is versioned with tagged dates (§8). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
