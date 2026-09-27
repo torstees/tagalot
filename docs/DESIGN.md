@@ -202,7 +202,7 @@ A scan runs per root in background workers:
 2. **Apply the edge changes** to `entity_contains`.
 3. **Recompute** the affected nodes' rows: delete them, then rebuild them with one recursive CTE that walks `entity_contains` upward and keeps `min(depth)` per `(entity_id, ancestor_id)`. The CTE has a depth cap (64) as a guard against corrupt data.
 
-Because recomputation reads edges, not the closure, the order of changes within a batch does not matter. The DB writer calls `closure.apply(added, removed)` once per batch, in the same transaction as the edge changes. Containment is shallow, so affected sets are small (one song, or an album plus its tracks). An incremental upsert for additions is a possible later optimization, not part of v1.
+Because recomputation reads edges, not the closure, the order of changes within a batch does not matter. Performance: an edge into an entity with no children can't close a cycle, so the recursive cycle check runs only when the child already has children; accepted edges are inserted in batches. During ingest most children are new leaves, which took adding 52k edges from 20 s to 0.7 s. The DB writer calls `closure.apply(added, removed)` once per batch, in the same transaction as the edge changes. Containment is shallow, so affected sets are small (one song, or an album plus its tracks). An incremental upsert for additions is a possible later optimization, not part of v1.
 
 - **Cycle check:** an added edge `p → c` is rejected if `p == c` or `c` is already an ancestor of `p`; edges in a batch are checked in order, each against the graph including the previously accepted ones. A rejected edge (a theme ingester bug) is logged with the resource path, surfaced in the activity panel, and skipped; the scan continues.
 - **`rebuild_all()`** recomputes the whole table. It is exposed as a repair action and is the oracle for tests: randomized sequences of adds and removes must leave the incrementally maintained table identical to a full rebuild. **`verify()`** computes the correct table with the same query and reports missing and extra rows without changing anything. **`maintenance.repair_indexes()`** is the one repair action for derived data: it checks, then rebuilds, both the closure and the search index, and reports what was wrong.
@@ -331,6 +331,10 @@ The search box uses the `entity_fts` table (§5) with the FTS5 **trigram** token
 ### Performance target
 
 Tag + field searches over 50,000 entities return the first page in under 100 ms on a local SSD. Results are paged/lazily fetched by the Qt model.
+
+Measured (2026-09, dev machine, `tests/core/test_search_benchmark.py`, 50,500 entities: 500 artists × 10 albums × 9 songs, 300 tags applied at every level, a DAG via compilations), median first page: everything by title 6 ms; a 90-tag subtree 12 ms; two groups 17 ms; excluding a subtree 17 ms; text 5 ms (2-letter `LIKE` 35 ms); inherited include/exclude 38/47 ms; within 1 ms; aggregate 5 ms; show contained 20 ms; all options at once ~105 ms. Counts cost about the same as a page. The benchmark asserts five times the target, so CI runners don't flake but real regressions fail.
+
+What makes it fast: every test against a set (a tag group, the exclusion set, the text matches, the closure) is an uncorrelated `IN (subquery)`, so SQLite builds the set once from the `(tag_id, entity_id)` and `(ancestor_id, entity_id)` indexes; each distinct set is a `MATERIALIZED` CTE computed once per query; and aggregation first finds the (small) set of matching descendants, then their ancestors through the closure's key. The first version used correlated `EXISTS` and took 3.3 s for show-contained and 6.1 s for everything at once.
 
 ## 9. Theme API
 
@@ -594,4 +598,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Search: a deleted tag in a spec is a subtree of itself (include matches nothing, exclude excludes nothing); field names resolve through a column mapping (core: title/created_at/updated_at); results always tie-break on entity id (§8). |
 | 2026-09 | Closure API: `apply` (removals first, ordered cycle checks, returns rejections), `add_entities` for self rows, and `detach` before deleting entities; affected ids use a temporary table (§6). |
 | 2026-09 | Containment search: `within` is strict; `aggregate_up` matches tags and text via non-excluded descendants while field filters and exclusion apply to the container; `show_contained` adds descendants regardless of types, subject only to exclusion (§8). |
+| 2026-09 | Search performance: set tests are uncorrelated `IN` subqueries over materialized CTEs; closure cycle checks run only for edges into entities that have children. Measured at 50.5k entities: 1–47 ms for single options, ~105 ms with every option at once (§6, §8). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
