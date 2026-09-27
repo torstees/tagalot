@@ -447,6 +447,8 @@ Themes read and write keep data only through the context object `ctx` passed to 
 - `ctx.contain(parent, child)`, `ctx.uncontain(parent, child)`.
 - `ctx.relate(name, a, b)`, `ctx.unrelate(name, a, b)`.
 - `ctx.find(Type, **equals) -> list[EntityRef]` and `ctx.get(entity) -> Record` (read-only field values) for lookups.
+- `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
+- `ctx.entities_of(resource, role=None) -> list[EntityRef]`: the entities linked to a resource. Because move detection (§6) carries links to a file's new path, this is how a file-based theme finds "the entity for this file"; keying such entities by path would let a new file at a vacated path take over a moved file's entity.
 - `ctx.warn(resource, message)`: report a problem with a file to the activity panel.
 
 Batch items are read-only `ResourceInfo` values: root id, relative path, kind, extension, size, mtime, and a readable local path. Themes may open files for reading; they must never write under a root.
@@ -481,7 +483,7 @@ Details (`core/theme_db.py`, `open_theme()`, run after the core schema is open):
 
 ### Built-in themes
 
-1. **generic** — one entity per file, no containment. Reference implementation and fallback; lets the core be built and tested before any rich theme exists.
+1. **generic** — one entity per file, no containment. Reference implementation and fallback; lets the core be built and tested before any rich theme exists. A `File` entity is titled with the file name and has `extension` (choice), `folder` (text), `size` and `modified` (range); its primary `file` role accepts any kind, and double-click opens the file. Views: "Files" and "Recently modified" (list layout). Ingest updates the entity already linked to a file, or creates one with a never-reused key.
 2. **assets2d** — Artist ⊃ Asset. Asset kinds: images, PSD, fonts, archives.
 3. **music** — Artist ⊃ Album ⊃ Song. Albums map to directories (role `folder`), songs to files (role `audio`, many for versions). Extraction via mutagen.
 4. **movies** — Collection ⊃ Movie, Actor ↔ Movie.
@@ -636,4 +638,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Theme loading never raises: unique module names per file, per-file problems, first duplicate id wins, built-in placeholders skipped, full declaration validation plus a trial table build (§9). |
 | 2026-09 | Theme versions mirror core versions (keep.toml + `schema_version`, backup, one-transaction migrate). The core applies additive schema changes on every open, so `Theme.migrate()` now defaults to a no-op (API change) and is only for data changes (§9). |
 | 2026-09 | Ingest context: provenance-respecting upserts (title included), `IngestError` for theme mistakes, single-valued roles and `many=False` relationships replace, containment and index updates batched until `flush()` (§9). |
+| 2026-09 | `IngestContext` gains `update(ref, …)` and `entities_of(resource, role)` (before API v1 ships): file-based themes identify entities by their linked file, so moves keep tags and a new file at a vacated path can't take over a moved file's entity (§9). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

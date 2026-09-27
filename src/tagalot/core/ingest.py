@@ -103,23 +103,35 @@ class IngestSession:
             self._mark_extracted(entity_id, ([TITLE] if title is not None else []) + list(fields))
         else:
             entity_id = existing
-            user_owned = self._user_fields(entity_id)
-            if title is not None and TITLE not in user_owned:
-                self.conn.execute(update(Entity).where(Entity.id == entity_id).values(title=title))
-                self._mark_extracted(entity_id, [TITLE])
-            writable = {k: v for k, v in fields.items() if k not in user_owned}
-            if writable:
-                self.conn.execute(
-                    update(entity_table.table)
-                    .where(entity_table.table.c.id == entity_id)
-                    .values(**writable)
-                )
-                self._mark_extracted(entity_id, writable)
-                self.conn.execute(
-                    update(Entity).where(Entity.id == entity_id).values(updated_at=utcnow())
-                )
+            self._apply_extracted(entity_id, entity_table, title, fields)
         self._dirty.add(entity_id)
         return EntityRef(entity_id, type_id)
+
+    def update(self, entity: EntityRef, *, title: str | None = None, **fields: Any) -> None:
+        """Set extracted values on a known entity; user-edited values are left alone."""
+        entity_table = self._table_of(entity)
+        unknown = sorted(set(fields) - {f.name for f in entity_table.fields})
+        if unknown:
+            raise IngestError(f"{entity_table.entity.__name__} has no field {', '.join(unknown)}")
+        if self.conn.scalar(select(Entity.id).where(Entity.id == entity.id)) is None:
+            raise IngestError(f"entity {entity.id} no longer exists")
+        self._apply_extracted(entity.id, entity_table, title, fields)
+        self._dirty.add(entity.id)
+
+    def entities_of(self, resource: ResourceInfo | int, role: str | None = None) -> list[EntityRef]:
+        """Entities linked to a resource (in ``role``, if given), of this theme's types."""
+        resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        query = (
+            select(Entity.id, Entity.type)
+            .join(EntityResource, EntityResource.entity_id == Entity.id)
+            .where(EntityResource.resource_id == resource_id)
+            .distinct()
+            .order_by(Entity.id)
+        )
+        if role is not None:
+            query = query.where(EntityResource.role == role)
+        types = {t.type_id for t in self.schema.entities.values()}
+        return [EntityRef(i, t) for i, t in self.conn.execute(query) if t in types]
 
     def find(self, type: type[ThemeEntity], **equals: Any) -> list[EntityRef]:
         """Entities of ``type`` whose fields (or ``title``, ``ingest_key``) equal the values."""
@@ -292,6 +304,29 @@ class IngestSession:
                 f"not {a.type} to {b.type}"
             )
         return rel_table.table, rel
+
+    def _apply_extracted(
+        self,
+        entity_id: int,
+        entity_table: EntityTable,
+        title: str | None,
+        fields: Mapping[str, Any],
+    ) -> None:
+        user_owned = self._user_fields(entity_id)
+        if title is not None and TITLE not in user_owned:
+            self.conn.execute(update(Entity).where(Entity.id == entity_id).values(title=title))
+            self._mark_extracted(entity_id, [TITLE])
+        writable = {k: v for k, v in fields.items() if k not in user_owned}
+        if writable:
+            self.conn.execute(
+                update(entity_table.table)
+                .where(entity_table.table.c.id == entity_id)
+                .values(**writable)
+            )
+            self._mark_extracted(entity_id, writable)
+            self.conn.execute(
+                update(Entity).where(Entity.id == entity_id).values(updated_at=utcnow())
+            )
 
     def _user_fields(self, entity_id: int) -> set[str]:
         return set(
