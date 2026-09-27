@@ -15,6 +15,7 @@ from tagalot.core.search import (
     SearchSpecError,
     SortKey,
     TextFilter,
+    TextMatch,
 )
 
 FULL = SearchSpec(
@@ -23,6 +24,7 @@ FULL = SearchSpec(
     exclude=(40,),
     fields=(
         TextFilter("country", "Ice"),
+        TextFilter("artist", "The", TextMatch.STARTS_WITH),
         RangeFilter("year", 1990, None),
         RangeFilter("released", date(1997, 9, 22), date(1999, 12, 31)),
         RangeFilter("added", datetime(2026, 1, 1, 12, 30, tzinfo=UTC), None),
@@ -59,8 +61,8 @@ def test_json_round_trip(spec: SearchSpec) -> None:
 
 def test_dates_come_back_as_dates() -> None:
     back = SearchSpec.loads(FULL.dumps())
-    released = back.fields[2]
-    added = back.fields[3]
+    released = back.fields[3]
+    added = back.fields[4]
     assert isinstance(released, RangeFilter)
     assert isinstance(added, RangeFilter)
     assert type(released.low) is date
@@ -71,7 +73,13 @@ def test_json_is_versioned_and_readable() -> None:
     data = json.loads(FULL.dumps())
     assert data["version"] == SPEC_VERSION
     assert data["text"] == "björk"  # not escaped
-    assert data["fields"][0] == {"kind": "text", "field": "country", "contains": "Ice"}
+    assert data["fields"][0] == {
+        "kind": "text",
+        "field": "country",
+        "text": "Ice",
+        "match": "contains",
+    }
+    assert data["fields"][1]["match"] == "starts_with"
 
 
 def test_specs_are_hashable_and_comparable() -> None:
@@ -109,7 +117,11 @@ def test_missing_keys_take_defaults_and_unknown_keys_are_ignored() -> None:
         ({"fields": [{"kind": "range", "field": "d", "low": {"$date": "31/12"}}]}, "invalid date"),
         ({"fields": [{"kind": "fuzzy", "field": "x"}]}, "unknown kind 'fuzzy'"),
         ({"fields": [{"kind": "text"}]}, "Invalid field filter"),
-        ({"fields": [{"kind": "text", "field": "x"}]}, "'contains' must be text"),
+        ({"fields": [{"kind": "text", "field": "x"}]}, "'text' must be text"),
+        (
+            {"fields": [{"kind": "text", "field": "x", "text": "a", "match": "ends"}]},
+            "unknown match 'ends'",
+        ),
         ({"fields": [{"kind": "choice", "field": "x", "values": [None]}]}, "can't be empty"),
         ({"sort": [{"descending": True}]}, "Invalid sort key"),
     ],
@@ -130,3 +142,14 @@ def test_direct_construction_is_validated_too() -> None:
         SearchSpec(include=(-1,))
     with pytest.raises(SearchSpecError):
         SearchSpec(within=0)
+
+
+def test_text_filters_default_to_contains() -> None:
+    assert TextFilter("title", "road").match is TextMatch.CONTAINS
+    back = SearchSpec.from_json({"fields": [{"kind": "text", "field": "title", "text": "road"}]})
+    assert back.fields == (TextFilter("title", "road", TextMatch.CONTAINS),)
+
+
+def test_starts_with_round_trips() -> None:
+    spec = SearchSpec(fields=(TextFilter("artist", "The", TextMatch.STARTS_WITH),))
+    assert SearchSpec.loads(spec.dumps()) == spec

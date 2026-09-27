@@ -4,6 +4,7 @@ A :class:`SearchSpec` is an immutable value: tuples rather than lists, so it is 
 can key result caches. Its JSON form (used by saved searches and view state) is versioned.
 """
 
+import enum
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -20,12 +21,22 @@ class SearchSpecError(ValueError):
     """A search definition is invalid; the message is suitable for showing to the user."""
 
 
+class TextMatch(enum.Enum):
+    """How a :class:`TextFilter` compares; both ignore case."""
+
+    CONTAINS = "contains"
+    """Anywhere in the value: "road" matches "Abbey Road"."""
+    STARTS_WITH = "starts_with"
+    """At the start of the whole value: "the" matches "The Beatles", not "Abbey Road: The"."""
+
+
 @dataclass(frozen=True)
 class TextFilter:
-    """The field contains ``contains`` (case-insensitively). For ``search="text"`` fields."""
+    """Compare a ``search="text"`` field with ``text``, ignoring case."""
 
     field: str
-    contains: str
+    text: str
+    match: TextMatch = TextMatch.CONTAINS
 
 
 @dataclass(frozen=True)
@@ -182,7 +193,7 @@ def _scalar_from_json(value: Any, where: str) -> Scalar | None:
 def _filter_to_json(f: FieldFilter) -> dict[str, Any]:
     match f:
         case TextFilter():
-            return {"kind": "text", "field": f.field, "contains": f.contains}
+            return {"kind": "text", "field": f.field, "text": f.text, "match": f.match.value}
         case RangeFilter():
             return {
                 "kind": "range",
@@ -204,10 +215,14 @@ def _filter_from_json(data: Any) -> FieldFilter:
     name, kind = data["field"], data.get("kind")
     where = f"filter on {name!r}"
     if kind == "text":
-        contains = data.get("contains")
-        if not isinstance(contains, str):
-            raise SearchSpecError(f"{where}: 'contains' must be text")
-        return TextFilter(name, contains)
+        text = data.get("text")
+        if not isinstance(text, str):
+            raise SearchSpecError(f"{where}: 'text' must be text")
+        try:
+            match = TextMatch(data.get("match", TextMatch.CONTAINS.value))
+        except ValueError as e:
+            raise SearchSpecError(f"{where}: unknown match {data.get('match')!r}") from e
+        return TextFilter(name, text, match)
     if kind == "range":
         return RangeFilter(
             name,
