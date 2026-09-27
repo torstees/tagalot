@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -49,7 +49,13 @@ _COMING = {
 
 
 class MainWindow(QMainWindow):
-    """The top-level window, for an open keep or (with no session) an empty placeholder."""
+    """The top-level window, for an open keep or (with no session) an empty placeholder.
+
+    Emits :attr:`closed` once the window has actually closed (not when a close was refused
+    because a scan is running), so its owner can close the keep.
+    """
+
+    closed = Signal()
 
     def __init__(
         self,
@@ -225,6 +231,8 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         super().closeEvent(event)
+        if event.isAccepted():
+            self.closed.emit()
 
 
 def scan_summary(reports: list[ScanReport]) -> str:
