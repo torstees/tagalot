@@ -21,6 +21,7 @@ from sqlalchemy import (
     Connection,
     Integer,
     MetaData,
+    Select,
     Table,
     delete,
     func,
@@ -170,16 +171,74 @@ def _cycle_reason(conn: Connection, parent: int, child: int) -> str | None:
     return None
 
 
+def rebuild_all(conn: Connection) -> int:
+    """Recompute the whole closure from ``entity_contains`` (the repair action, and the
+    reference the incremental :func:`apply` is tested against). Returns the row count."""
+    conn.execute(delete(EntityAncestor))
+    _load_affected(conn, None)
+    conn.execute(insert(EntityAncestor).from_select(_COLUMNS, _correct_rows()))
+    conn.execute(delete(_affected))
+    count = int(conn.scalar(select(func.count()).select_from(EntityAncestor)) or 0)
+    logger.info("Rebuilt the containment closure (%d rows)", count)
+    return count
+
+
+@dataclass(frozen=True)
+class ClosureCheck:
+    """Differences between the stored closure and the one the edges imply."""
+
+    missing: frozenset[tuple[int, int, int]]
+    """Rows that should exist (entity, ancestor, depth) but don't, or have another depth."""
+    extra: frozenset[tuple[int, int, int]]
+    """Rows that exist but shouldn't, or have the wrong depth."""
+
+    @property
+    def ok(self) -> bool:
+        return not self.missing and not self.extra
+
+
+def verify(conn: Connection) -> ClosureCheck:
+    """Compare the stored closure with a fresh computation, without changing anything."""
+    _load_affected(conn, None)
+    correct = {(e, a, d) for e, a, d in conn.execute(_correct_rows())}
+    conn.execute(delete(_affected))
+    stored = {
+        (e, a, d)
+        for e, a, d in conn.execute(
+            select(EntityAncestor.entity_id, EntityAncestor.ancestor_id, EntityAncestor.depth)
+        )
+    }
+    return ClosureCheck(missing=frozenset(correct - stored), extra=frozenset(stored - correct))
+
+
+_COLUMNS = ["entity_id", "ancestor_id", "depth"]
+
+
 def _rebuild(conn: Connection, entity_ids: set[int]) -> int:
     """Recompute every ``entity_ancestor`` row of these entities from ``entity_contains``."""
     if not entity_ids:
         return 0
+    _load_affected(conn, entity_ids)
+    conn.execute(delete(EntityAncestor).where(EntityAncestor.entity_id.in_(select(_affected.c.id))))
+    conn.execute(insert(EntityAncestor).from_select(_COLUMNS, _correct_rows()))
+    conn.execute(delete(_affected))
+    return len(entity_ids)
+
+
+def _load_affected(conn: Connection, entity_ids: set[int] | None) -> None:
+    """Fill the temporary table with these ids, or with every entity for ``None``."""
     _affected.create(conn, checkfirst=True)
     conn.execute(delete(_affected))
+    if entity_ids is None:
+        conn.execute(insert(_affected).from_select(["id"], select(Entity.id)))
+        return
     for batch in _chunks(sorted(entity_ids)):
         conn.execute(insert(_affected), [{"id": i} for i in batch])
 
-    conn.execute(delete(EntityAncestor).where(EntityAncestor.entity_id.in_(select(_affected.c.id))))
+
+def _correct_rows() -> Select[int, int, int]:
+    """``(entity_id, ancestor_id, min depth)`` for every entity in the temporary table,
+    walking ``entity_contains`` upward with a recursive CTE."""
     up = (
         select(
             _affected.c.id.label("entity_id"),
@@ -194,16 +253,9 @@ def _rebuild(conn: Connection, entity_ids: set[int]) -> int:
         .join(EntityContains, EntityContains.child_id == up.c.ancestor_id)
         .where(up.c.depth < MAX_DEPTH)
     )
-    conn.execute(
-        insert(EntityAncestor).from_select(
-            ["entity_id", "ancestor_id", "depth"],
-            select(up.c.entity_id, up.c.ancestor_id, func.min(up.c.depth)).group_by(
-                up.c.entity_id, up.c.ancestor_id
-            ),
-        )
+    return select(up.c.entity_id, up.c.ancestor_id, func.min(up.c.depth)).group_by(
+        up.c.entity_id, up.c.ancestor_id
     )
-    conn.execute(delete(_affected))
-    return len(entity_ids)
 
 
 def _chunks[T](items: Sequence[T], size: int = BATCH_SIZE) -> Iterator[Sequence[T]]:

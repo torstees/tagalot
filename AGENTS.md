@@ -69,6 +69,7 @@ src/tagalot/
     ingest.py            # drives theme ingesters
     writer.py            # the single DB writer thread
     closure.py           # entity_ancestor maintenance
+    maintenance.py       # repair actions for derived data (closure, search index)
     tags.py              # tag tree ops: add/rename/reparent/merge/delete
     tag_service.py       # tag ops through the writer, with undo/redo
     search_spec.py       # SearchSpec and its JSON form
