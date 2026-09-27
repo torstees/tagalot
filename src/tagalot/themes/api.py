@@ -446,8 +446,13 @@ class Theme:
         """Turn new and changed resources into entities, links, containment, and fields."""
 
     def migrate(self, from_version: int, ctx: IngestContext) -> None:
-        """Upgrade this theme's data from ``from_version`` to :attr:`version`."""
-        raise NotImplementedError(f"{type(self).__name__} can't migrate from v{from_version}")
+        """Upgrade this theme's *data* from ``from_version`` to :attr:`version`.
+
+        Runs after the user confirms, with ``keep.db`` backed up, in one transaction. Additive
+        schema changes (new entity types, new fields) are applied by the core before this is
+        called, so a theme that only adds things needs no ``migrate`` at all; the default does
+        nothing.
+        """
 
     # --- Introspection (used by the core) ---
 
