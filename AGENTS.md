@@ -25,7 +25,7 @@ Tagalot is a Python desktop app: a tag-based file browser organized into **keeps
 - The PR body has these sections:
   - **What:** the changes, and any decision made along the way (with the `docs/DESIGN.md` update, if one was needed).
   - **Checks:** the automated checks that were run and their results.
-  - **Manual testing:** a checklist for the reviewer, using `- [ ]` checkboxes, whenever the change has behavior a person can try: anything in the UI, launching the app, scanning real folders or network shares, opening files. Each item gives the steps and the expected result, for example `- [ ] Run uv run tagalot; an empty main window titled "Tagalot" opens`. Cover the platform-specific cases the change touches (Windows paths, UNC shares, an offline root). When there is nothing to try by hand, write "None: covered by automated tests."
+  - **Manual testing:** a checklist for the reviewer, starting from the demo keep (see below), using `- [ ]` checkboxes, whenever the change has behavior a person can try: anything in the UI, launching the app, scanning real folders or network shares, opening files. Each item gives the steps and the expected result, for example `- [ ] Run uv run tagalot; an empty main window titled "Tagalot" opens`. Cover the platform-specific cases the change touches (Windows paths, UNC shares, an offline root). When there is nothing to try by hand, write "None: covered by automated tests."
 
 ## Commands
 
@@ -40,6 +40,15 @@ uv run mypy src                  # type-check
 ```
 
 GUI tests use pytest-qt and must run headless: `QT_QPA_PLATFORM=offscreen` is set in the pytest config. All four checks (pytest, ruff check, ruff format --check, mypy) must pass before a task is done.
+
+## Trying it by hand
+
+`scratch/` (gitignored) is local scratch space for demo keeps, sample files, and experimental themes. Manual-testing checklists start from the demo keep, so every reviewer begins from the same place:
+
+```bash
+uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.keep and scratch/demo-files
+uv run tagalot scratch/Demo.keep
+```
 
 ## Stack
 
@@ -94,6 +103,8 @@ src/tagalot/
     workers.py           # QThreadPool jobs, signals
     navigation.py        # the collapsible navigation pane
     opening.py           # opening a keep in the background, with prompts
+scripts/
+  make_demo_keep.py      # scratch/Demo.keep for manual testing
 tests/
   fixtures/              # tiny sample files (images, zips, audio)
   core/, themes/, ui/

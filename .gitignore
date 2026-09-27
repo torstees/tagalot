@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Tagalot: local scratch space for demo keeps, sample files, and experimental themes
+/scratch/
