@@ -65,7 +65,8 @@ src/tagalot/
     roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
     fingerprint.py
-    ingest.py            # drives theme ingesters, DB writer batches
+    ingest.py            # drives theme ingesters
+    writer.py            # the single DB writer thread
     closure.py           # entity_ancestor maintenance
     tags.py              # tag tree ops: add/rename/reparent/merge/delete
     search.py            # SearchSpec -> SQLAlchemy query

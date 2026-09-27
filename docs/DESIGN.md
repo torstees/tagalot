@@ -214,6 +214,7 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 
 - Workers (a `QThreadPool`) do file-system I/O, hashing, metadata extraction, archive reading, and image decoding.
 - Workers never write to the database directly. They send result batches to a single **DB writer** that applies them in short transactions, which avoids SQLite write contention.
+  The writer (`core/writer.py`) is one thread that owns the write engine. A job is a function taking a connection; each runs in its own transaction, in submission order, and the submitter gets a `Future` for its result (the UI converts these to signals). A failed job rolls back only itself. Large scans are split into parts of at most 500 changes, each its own transaction; an interrupted scan is completed by the next one because the diff is recomputed.
 - Read queries for the UI use their own connection. Anything that may take more than a few milliseconds (large searches, counts for the dashboard) runs off the GUI thread and posts results back via signals.
 - The GUI thread must never block on file-system or network I/O.
 
@@ -555,4 +556,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources currently become `missing` (issue #152) (§6). |
 | 2026-09 | Fingerprints are 16-byte blake2b digests; files up to 128 KiB are hashed whole; results are stored only if size and mtime still match (§5). |
 | 2026-09 | Move detection matches unlinked new files to missing files by fingerprint across roots with no time window; ambiguous groups pair only by unique file name, never by guess (§6). |
+| 2026-09 | The DB writer is a dedicated thread applying `Callable[[Connection], T]` jobs in their own transactions and returning futures; scans are applied in parts of at most 500 changes (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
