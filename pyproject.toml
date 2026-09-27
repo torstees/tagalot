@@ -33,6 +33,7 @@ dev = [
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+extend-exclude = ["scratch"]
 
 [tool.ruff.lint]
 select = [
