@@ -26,10 +26,13 @@ from sqlalchemy import select
 
 from tagalot.core.models import SavedSearch
 from tagalot.core.scanjob import ScanReport
+from tagalot.core.search_fields import view_spec
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
+from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController, run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -38,8 +41,6 @@ WINDOW_TITLE = "Tagalot"
 
 _COMING = {
     "dashboard": "The dashboard arrives in M15.",
-    "search": "Search arrives with the results view (#55).",
-    "view": "Search views arrive with the results view (#55).",
     "saved": "Saved searches arrive in M18.",
     "triage": "Triage arrives in M14.",
     "dedupe": "Dedupe arrives in M16.",
@@ -151,11 +152,27 @@ class MainWindow(QMainWindow):
         """Show the page for ``target``, creating it on first use."""
         page = self._pages.get(target)
         if page is None:
-            page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
-            page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            page = self._make_page(target)
             self._pages[target] = page
             self.stack.addWidget(page)
         self.stack.setCurrentWidget(page)
+
+    def _make_page(self, target: NavTarget) -> QWidget:
+        session = self.session
+        assert session is not None
+        if target.kind == "search":
+            return SearchPage(session, target.label, SearchSpec())
+        if target.kind == "view":
+            views = [v for v in session.theme.views if isinstance(v, SearchView)]
+            view = next(v for v in views if v.name == target.key)
+            return SearchPage(session, target.label, view_spec(session.schema, view))
+        page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
+        page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return page
+
+    def search_pages(self) -> list[SearchPage]:
+        """The search pages created so far."""
+        return [p for p in self._pages.values() if isinstance(p, SearchPage)]
 
     def _save_folded(self, folded: list[str]) -> None:
         assert self.session is not None
@@ -194,6 +211,8 @@ class MainWindow(QMainWindow):
         self.scan_action.setEnabled(True)
         self.busy.setVisible(False)
         self.statusBar().showMessage(scan_summary(reports))
+        for page in self.search_pages():
+            page.refresh()
 
     def _scan_failed(self, error: BaseException) -> None:
         self.scan_action.setEnabled(True)

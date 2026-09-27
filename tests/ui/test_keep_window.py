@@ -13,12 +13,14 @@ from sqlalchemy import insert
 from tagalot.core.keep import KeepError, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import SavedSearch
 from tagalot.core.scanjob import ScanReport
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.core.ui_state import load_ui_state
 from tagalot.ui.main_window import MainWindow, scan_summary
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.opening import open_keep_async
+from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController
 
 pytestmark = pytest.mark.gui
@@ -61,8 +63,8 @@ def test_layout(qtbot: QtBot, session: KeepSession) -> None:
         "Tag manager",
     ]
     page = window.stack.currentWidget()
-    assert isinstance(page, QLabel)
-    assert page.text().startswith("Search all")  # the default page
+    assert isinstance(page, SearchPage)  # "Search all" is the default page
+    assert page.model.spec == SearchSpec()
     assert window.tags_dock.isVisible()
 
 
