@@ -343,3 +343,39 @@ def test_flushed_entities_are_searchable(env: Env) -> None:
         tree = TagTree([], {})
         assert [h.title for h in run_search(conn, SearchSpec(text="icelandic"), tree)] == ["Björk"]
         assert [h.title for h in run_search(conn, SearchSpec(text="homog"), tree)] == ["Homogenic"]
+
+
+# --- update and entities_of ---
+
+
+def test_update_a_known_entity_respects_user_edits(env: Env) -> None:
+    with env.engine.begin() as conn:
+        ctx = env.session(conn)
+        ref = ctx.upsert(Album, "k", title="Old", year=1990)
+        conn.execute(
+            update(FieldProvenance)
+            .where(FieldProvenance.entity_id == ref.id, FieldProvenance.field == "year")
+            .values(source=FieldSource.USER)
+        )
+        ctx.update(ref, title="New", year=2000)
+        record = ctx.get(ref)
+        assert (record.title, record.fields["year"]) == ("New", 1990)
+        with pytest.raises(IngestError, match="Album has no field tempo"):
+            ctx.update(ref, tempo=1)
+        with pytest.raises(IngestError, match="no longer exists"):
+            ctx.update(EntityRef(999, "music.album"), title="x")
+
+
+def test_entities_of_a_resource(env: Env) -> None:
+    folder, cover, *_ = env.resources
+    with env.engine.begin() as conn:
+        ctx = env.session(conn)
+        album = ctx.upsert(Album, "a")
+        other = ctx.upsert(Album, "b")
+        ctx.link(album, folder, "folder")
+        ctx.link(album, cover, "cover")
+        ctx.link(other, cover, "scan")
+        assert ctx.entities_of(folder) == [album]
+        assert ctx.entities_of(cover.id) == [album, other]
+        assert ctx.entities_of(cover, "scan") == [other]
+        assert ctx.entities_of(folder, "cover") == []
