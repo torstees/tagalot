@@ -38,6 +38,16 @@ def test_toml_key(key: str, expected: str) -> None:
 
 def test_toml_list() -> None:
     assert tomllib.loads(f"v = {toml_list(['a', 'b\\c', ''])}")["v"] == ["a", "b\\c", ""]
+    assert toml_list(["a", "b"]) == "['a', 'b']"
+    assert toml_list([]) == "[]"
+
+
+def test_long_lists_are_written_one_item_per_line() -> None:
+    values = [f"**/pattern-{i}/**" for i in range(6)] + ["it's"]
+    text = toml_list(values)
+    assert text.splitlines()[:2] == ["[", "    '**/pattern-0/**',"]
+    assert text.endswith("\n]")
+    assert tomllib.loads(f"v = {text}")["v"] == values
 
 
 def test_write_atomic_failure_keeps_old_file(tmp_path: Path) -> None:

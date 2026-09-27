@@ -79,7 +79,13 @@ version = 1                                 # theme schema version
 id = "nas-music"                            # stable, referenced by resources
 name = "NAS music share"
 path = '\\nas\music'
-exclude = ["**/.DS_Store", "**/Thumbs.db", "**/@eaDir/**"]
+exclude = [                                # new roots start with DEFAULT_EXCLUDES
+    '**/.DS_Store',
+    '**/._*',
+    '**/Thumbs.db',
+    '**/@eaDir/**',
+    # …
+]
 ```
 
 ### Rules
@@ -92,6 +98,7 @@ exclude = ["**/.DS_Store", "**/Thumbs.db", "**/@eaDir/**"]
 - **Creating a keep** requires a new or empty folder and writes `keep.toml` with a fresh UUID; the databases are created on first open.
 - SQLite runs in **WAL mode** with a `busy_timeout` for local keeps. Keeps on a network path use the rollback journal (`journal_mode=DELETE`, `synchronous=FULL`) instead, because WAL needs shared memory on one host and does not work over network file systems. Every connection turns foreign keys on. Connections for UI queries set `query_only`, so only the DB writer can write. SQLAlchemy, not Python's `sqlite3` module, issues `BEGIN`, so DDL is transactional and a failed migration rolls back cleanly.
 - **keep.toml is hand-editable.** Tagalot writes strings as TOML literal strings (`'\\nas\music'`) so paths need no escaping, falling back to escaped basic strings only when a value contains `'` or a control character. Root paths are kept exactly as written (a string, not a parsed path), because a keep written on Windows may be read on another OS. Writes are atomic (temp file, then replace).
+- **Default excludes.** New roots start with `core.keep.DEFAULT_EXCLUDES`, operating-system and NAS leftovers that are never user content: macOS `.DS_Store`, AppleDouble `._*` companions (which carry the real file's extension, so they would otherwise look like photos), `.AppleDouble`, `.Spotlight-V100`, `.Trashes`, `.fseventsd`, `.TemporaryItems`; Windows `Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, `System Volume Information`; Synology `@eaDir` and `#recycle`. They are written into `keep.toml` rather than applied implicitly, so they are visible and can be edited or removed. Other dot files are left alone. Existing keeps are not changed. Lists too long for one line are written one item per line.
 - **Unknown keys in keep.toml are ignored with a logged warning**, so an older build can still open a keep written by a newer one. They are not preserved when Tagalot rewrites the file.
 
 ### Per-user settings (not in the keep)
@@ -669,5 +676,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Scan ingest: `resource.ingested_at` tracks pending resources so failures retry next scan; batches of 100 per writer transaction, with per-resource retry on failure; theme file reading moves to a worker `prepare()` hook later (#176) (§6). |
 | 2026-09 | The UI works with an open keep through `KeepSession`; Qt workers deliver every result on the GUI thread via a relay object; scans report progress through a callback (§6). |
 | 2026-09 | Main window: collapsible grouped navigation (fold state per keep in `ui_state.json`), "Scan now" in a slim toolbar and Keep menu (F5), scan progress in the status bar. User theme files are always compiled from source (no `.pyc`), so a quick same-size edit can't reload stale code (§9, §12). |
+| 2026-09 | New roots get default exclude patterns for OS and NAS leftovers (`.DS_Store`, `._*`, `Thumbs.db`, `@eaDir`…), written explicitly into `keep.toml` so they stay visible and editable (§4). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
