@@ -185,7 +185,11 @@ A scan runs per root in background workers:
    - Paths at or under a folder the walk could not read are left as they are, not marked `missing`: not being able to look is not the same as the file being gone.
    - `last_seen_at` moves only for resources the walk actually saw; `root.last_scan_at` records the completed scan. Nothing is deleted.
    - The diff itself is a pure function of the stored rows and the walk; the DB writer applies it in batches and gets back the new resource ids for move detection and ingest.
-4. **Move detection.** For new resources whose fingerprint matches a resource marked missing in the same scan (or recently), transfer entity links to the new resource and delete the stale row. Fingerprints are computed for new files first so this step has what it needs.
+4. **Move detection.** For new resources whose fingerprint matches a resource marked missing, transfer entity links to the new resource and delete the stale row. Fingerprints are computed for new files first so this step has what it needs. Rules:
+   - A *new* resource is an `ok` file with a fingerprint and no entity links yet; a new file that already has links is a copy, not a move, and is left for dedupe (§13).
+   - Missing resources in any root match, with no time limit (a file restored from a backup months later is still the same file). A missing file that was never fingerprinted cannot be matched.
+   - When several missing and new resources share a fingerprint, they are paired only where the file name decides uniquely; anything still ambiguous is logged and left alone rather than guessed.
+   - Role links, `entity.thumb_resource_id`, archive members, and the original `first_seen_at` move to the new resource.
 5. **Ingest.** New and changed resources are passed to the theme's ingester in batches. The ingester creates or updates entities, role links, containment edges, and extracted field values (respecting provenance).
 6. **Closure maintenance.** The core updates `entity_ancestor` for changed containment edges.
 7. **Thumbnail queue.** Affected entities are queued for thumbnail resolution (§10).
@@ -550,4 +554,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Walking: exclude globs are case-insensitive with `**` semantics and prune matching folders; symlinked folders and junctions are not followed; read errors are reported and skipped (§6). |
 | 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources currently become `missing` (issue #152) (§6). |
 | 2026-09 | Fingerprints are 16-byte blake2b digests; files up to 128 KiB are hashed whole; results are stored only if size and mtime still match (§5). |
+| 2026-09 | Move detection matches unlinked new files to missing files by fingerprint across roots with no time window; ambiguous groups pair only by unique file name, never by guess (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

@@ -2,14 +2,16 @@
 
 import logging
 import os
+import posixpath
 import re
+from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import Connection, bindparam, insert, select, update
+from sqlalchemy import Connection, bindparam, delete, exists, insert, select, update
 
-from tagalot.core.models import Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
 
 logger = logging.getLogger(__name__)
 
@@ -309,3 +311,121 @@ def apply_diff(conn: Connection, root_id: str, diff: RootDiff, when: datetime) -
 def _chunks[T](items: Sequence[T], size: int = BATCH_SIZE) -> Iterator[Sequence[T]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
+
+
+# --- Move detection (DESIGN.md §6 step 4) ---
+
+
+@dataclass(frozen=True)
+class Move:
+    """A missing resource recognized at a new path; its links now belong to ``new_id``."""
+
+    old_id: int
+    new_id: int
+    old_path: str
+    new_path: str
+
+
+@dataclass(frozen=True)
+class _Candidate:
+    id: int
+    path: str
+    """``root_id:relpath``, for messages and name matching."""
+
+
+def detect_moves(conn: Connection, candidate_ids: Collection[int] | None = None) -> list[Move]:
+    """Reattach missing resources to new paths with the same fingerprint. Called by the writer.
+
+    A *new* resource is an ``ok`` file with a fingerprint and no entity links (optionally
+    limited to ``candidate_ids``); a linked one is a copy, left for dedupe. It pairs with a
+    ``missing`` resource with the same fingerprint, in any root. When several share a
+    fingerprint, pairs are made only where the file name decides uniquely; the rest are left
+    alone. For each pair, role links, thumbnails, archive members, and ``first_seen_at`` move
+    to the new resource, and the stale row is deleted.
+    """
+    linked = exists().where(EntityResource.resource_id == Resource.id)
+    new_query = select(Resource.id, Resource.root_id, Resource.relpath, Resource.fingerprint).where(
+        Resource.status == ResourceStatus.OK,
+        Resource.kind == ResourceKind.FILE,
+        Resource.fingerprint.is_not(None),
+        ~linked,
+    )
+    if candidate_ids is not None:
+        if not candidate_ids:
+            return []
+        new_query = new_query.where(Resource.id.in_(list(candidate_ids)))
+    new_by_fp: dict[bytes, list[_Candidate]] = defaultdict(list)
+    for rid, root_id, relpath, fp in conn.execute(new_query):
+        if fp is not None:  # guaranteed by the query; narrows the type
+            new_by_fp[fp].append(_Candidate(rid, f"{root_id}:{relpath}"))
+    if not new_by_fp:
+        return []
+
+    missing_by_fp: dict[bytes, list[_Candidate]] = defaultdict(list)
+    fps = list(new_by_fp)
+    for batch in _chunks(fps):
+        rows = conn.execute(
+            select(Resource.id, Resource.root_id, Resource.relpath, Resource.fingerprint).where(
+                Resource.status == ResourceStatus.MISSING, Resource.fingerprint.in_(batch)
+            )
+        )
+        for rid, root_id, relpath, fp in rows:
+            if fp is not None:
+                missing_by_fp[fp].append(_Candidate(rid, f"{root_id}:{relpath}"))
+
+    moves: list[Move] = []
+    for fp, olds in missing_by_fp.items():
+        for old, new in _pair(olds, new_by_fp[fp]):
+            _transfer(conn, old.id, new.id)
+            moves.append(Move(old.id, new.id, old.path, new.path))
+            logger.info("Moved: %s -> %s", old.path, new.path)
+    return moves
+
+
+def _pair(olds: list[_Candidate], news: list[_Candidate]) -> list[tuple[_Candidate, _Candidate]]:
+    """Pair missing and new resources with one fingerprint, without guessing."""
+    if len(olds) == 1 and len(news) == 1:
+        return [(olds[0], news[0])]
+    old_names: dict[str, list[_Candidate]] = defaultdict(list)
+    new_names: dict[str, list[_Candidate]] = defaultdict(list)
+    for c in olds:
+        old_names[_file_name(c)].append(c)
+    for c in news:
+        new_names[_file_name(c)].append(c)
+    pairs = [
+        (old_names[n][0], new_names[n][0])
+        for n in old_names
+        if len(old_names[n]) == 1 and len(new_names.get(n, [])) == 1
+    ]
+    if len(pairs) < max(len(olds), len(news)):
+        logger.info(
+            "Ambiguous move: %d missing and %d new files share a fingerprint; paired %d by name",
+            len(olds),
+            len(news),
+            len(pairs),
+        )
+    return pairs
+
+
+def _file_name(c: _Candidate) -> str:
+    return posixpath.basename(c.path).casefold()
+
+
+def _transfer(conn: Connection, old_id: int, new_id: int) -> None:
+    conn.execute(
+        update(EntityResource)
+        .where(EntityResource.resource_id == old_id)
+        .values(resource_id=new_id)
+        .prefix_with("OR IGNORE")  # a link that already exists on the new row wins
+    )
+    conn.execute(
+        update(Entity).where(Entity.thumb_resource_id == old_id).values(thumb_resource_id=new_id)
+    )
+    conn.execute(
+        update(Resource)
+        .where(Resource.parent_resource_id == old_id)
+        .values(parent_resource_id=new_id)
+    )
+    first_seen = select(Resource.first_seen_at).where(Resource.id == old_id).scalar_subquery()
+    conn.execute(update(Resource).where(Resource.id == new_id).values(first_seen_at=first_seen))
+    conn.execute(delete(Resource).where(Resource.id == old_id))  # leftover links cascade
