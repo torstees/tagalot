@@ -62,6 +62,7 @@ src/tagalot/
     fsinfo.py            # file-system facts, e.g. network-share detection
     db.py                # engine/session setup, WAL, schema versioning
     models.py            # core tables (resource, entity, tag, links, closure…)
+    theme_schema.py      # theme declarations -> Core tables, per keep
     roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
     scanjob.py           # scan_root(): one root's full scan, in §6 order

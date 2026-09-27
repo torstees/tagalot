@@ -48,9 +48,9 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Themes declare roles, entities, views, etc. as class-level lists by design (DESIGN.md §9).
+# Themes (built-in, and ones declared in tests) use class-level lists by design (DESIGN.md §9).
 "src/tagalot/builtin_themes/*" = ["RUF012"]
-"tests/themes/*" = ["RUF012"]
+"tests/**" = ["RUF012"]
 
 # Keep the hand-aligned examples in docs/*.md as written.
 [tool.ruff.format]

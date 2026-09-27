@@ -158,6 +158,14 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 
 Each theme entity type has its own table whose primary key `id` is also a foreign key to `entity.id` (joined-table layout). Its columns are real, typed columns (dates, numbers, strings) so they sort, index, and range-filter correctly. Theme classes are plain declarations; the core builds these tables as SQLAlchemy Core `Table` objects when a keep is opened (§9 Mapping and isolation). They are not ORM-mapped classes. Core tables are ordinary module-level ORM models. Relationship link tables declared with `related()` (§9) are built the same way, named `<theme id>_<relationship name>`.
 
+Building them (`core/theme_schema.py`, `build_theme_schema(theme)`):
+
+- **Types:** `str` → TEXT, `int` → INTEGER, `float` → REAL, `bool` → BOOLEAN, `date` → DATE, `datetime` → UTC-aware timestamp (like core tables); `| None` makes a column nullable.
+- **Missing values:** ingest may create an entity without every field, so non-nullable `str`/`int`/`float`/`bool` columns have database defaults (`''`, `0`, `0.0`, false). A non-nullable `date` or `datetime` has no sensible default and is rejected: declare it `| None`.
+- **Keys and indexes:** each entity table's `id` is its primary key and references `entity.id` with `ON DELETE CASCADE`. Link tables have `(a_id, b_id)` as the primary key, both cascading, plus an index on `b_id`; `many=False` adds a unique constraint on `b_id`. Fields with `search="range"` or `"choice"` are indexed; `"text"` fields rely on `entity_fts`.
+- **Namespacing:** table names must start with `<theme id>_` and type ids with `<theme id>.` (overrides included), and may not reuse core table names; the theme id must be a lowercase identifier. Field names `id` and names starting with `_` are reserved.
+- **Errors:** every problem found in a theme is collected into one `SchemaBuildError`, so its author sees them all at once; an entity with a conflicting table name still has its fields checked but gets no table.
+
 ### Fingerprints
 
 `fingerprint = blake2b(size || first 64 KiB || last 64 KiB)`, computed lazily in background workers for files only. Precisely: a 16-byte (128-bit) blake2b digest over the size as 8 bytes little-endian, then the first and last 64 KiB; files of at most 128 KiB are hashed whole, once. Workers skip files whose size or mtime changed since they were queued, and the stored value is written only if the row's size and mtime still match what was hashed, so a fingerprint never attaches to a newer version of a file. Files are queued newest first so move detection has what it needs. It is used to:
@@ -609,4 +617,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Containment search: `within` is strict; `aggregate_up` matches tags and text via non-excluded descendants while field filters and exclusion apply to the container; `show_contained` adds descendants regardless of types, subject only to exclusion (§8). |
 | 2026-09 | Search performance: set tests are uncorrelated `IN` subqueries over materialized CTEs; closure cycle checks run only for edges into entities that have children. Measured at 50.5k entities: 1–47 ms for single options, ~105 ms with every option at once (§6, §8). |
 | 2026-09 | Theme API v1: stdlib-only module; fields as annotated `field()` attributes; frozen declaration objects for roles, containment, relationships, views, sections; `IngestContext` as a protocol implemented by the core (§9). |
+| 2026-09 | Theme tables: non-nullable scalar fields get database defaults, non-nullable dates are rejected, range/choice fields are indexed, names are namespaced by theme id, and all problems are reported together (§5). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
