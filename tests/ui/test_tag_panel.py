@@ -190,6 +190,8 @@ def test_filtering_opens_matches_and_clearing_restores_folds(qtbot: QtBot, panel
 def test_filtering_by_alias_and_no_matches(qtbot: QtBot, panel: TagPanel) -> None:
     QTest.keyClicks(panel.filter_edit, "finance")
     assert _shown(panel) == ["Topics", "  Money (finance)"]
+    panel.filter_edit.setText("isl")  # the alias is "Ísland": accents are ignored
+    assert _shown(panel) == ["Places", "  Iceland (Ísland)"]
     panel.filter_edit.setText("zebra")
     assert _shown(panel) == []
     assert panel.message.isVisible()

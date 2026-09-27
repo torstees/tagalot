@@ -12,7 +12,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, QPersistentModelIndex, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 
-from tagalot.core.tags import PATH_SEPARATOR, TagTree, name_key
+from tagalot.core.tags import PATH_SEPARATOR, TagTree, search_key
 
 TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 """The tag id of an index."""
@@ -48,7 +48,7 @@ class TagTreeModel(QAbstractItemModel):
 
     @property
     def filtering(self) -> bool:
-        return bool(name_key(self.filter_text))
+        return bool(search_key(self.filter_text))
 
     def matches(self) -> frozenset[int]:
         """The tags the filter matched (empty when not filtering)."""
@@ -89,12 +89,12 @@ class TagTreeModel(QAbstractItemModel):
             if self.filtering:
                 self._matches = tree.matching(self.filter_text)
                 self._visible = tree.with_ancestors(self._matches)
-                needle = name_key(self.filter_text)
+                needle = search_key(self.filter_text)
                 self._alias_hits = {}
                 for tag_id in self._matches:
-                    if needle in name_key(tree.node(tag_id).name):
+                    if needle in search_key(tree.node(tag_id).name):
                         continue
-                    aliases = [a for a in tree.aliases(tag_id) if needle in name_key(a)]
+                    aliases = [a for a in tree.aliases(tag_id) if needle in search_key(a)]
                     if aliases:
                         self._alias_hits[tag_id] = aliases[0]
             else:
