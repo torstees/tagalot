@@ -33,6 +33,7 @@ from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
+from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.workers import ScanController, run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -125,13 +126,11 @@ class MainWindow(QMainWindow):
         splitter.setSizes([220, 980])
         self.setCentralWidget(splitter)
 
-        # The tagging panel (M6) as a dock.
+        # The tagging panel as a dock.
         self.tags_dock = QDockWidget("Tags", self)
         self.tags_dock.setObjectName("tags_dock")
-        tags_placeholder = QLabel("The tagging panel arrives in M6.")
-        tags_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tags_placeholder.setWordWrap(True)
-        self.tags_dock.setWidget(tags_placeholder)
+        self.tag_panel = TagPanel(session)
+        self.tags_dock.setWidget(self.tag_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tags_dock)
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
         view_menu = self.menuBar().addMenu("&View")
