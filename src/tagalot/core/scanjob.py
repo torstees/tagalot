@@ -1,9 +1,8 @@
-"""One complete scan of a root, in the order of DESIGN.md §6 steps 1-4.
+"""One complete scan of a root, in the order of DESIGN.md §6 steps 1-6.
 
 :func:`scan_root` runs in a worker: file-system work happens on the calling thread, reads use
 a read-only engine, and every write goes through the :class:`~tagalot.core.writer.DbWriter`.
-Ingest, closure maintenance, and thumbnails (steps 5-7) arrive with themes (M4) and
-thumbnails (M8).
+Thumbnails (step 7) arrive in M8.
 """
 
 import logging
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, select, update
 
 from tagalot.core.fingerprint import (
     FingerprintJob,
@@ -21,7 +20,9 @@ from tagalot.core.fingerprint import (
     pending_fingerprints,
     store_fingerprints,
 )
+from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.keep import RootConfig
+from tagalot.core.models import Resource, ResourceStatus
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
     BATCH_SIZE,
@@ -37,9 +38,15 @@ from tagalot.core.scanner import (
     split_diff,
     walk_root,
 )
+from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
+from tagalot.themes.api import ResourceInfo, Theme
 
 logger = logging.getLogger(__name__)
+
+INGEST_BATCH = 100
+"""Resources per ingest transaction: the theme's ingest runs inside the writer's transaction,
+so batches stay small to keep the write lock short."""
 
 
 @dataclass
@@ -59,6 +66,11 @@ class ScanReport:
     moves: list[Move] = field(default_factory=list)
     read_errors: list[tuple[str, str]] = field(default_factory=list)
     """``(relative path, message)`` for folders and files that could not be read."""
+    ingested: int = 0
+    """Resources the theme ingested successfully."""
+    ingest_errors: list[tuple[str, str]] = field(default_factory=list)
+    """``(relative path, message)`` for resources whose ingest failed; they stay pending."""
+    ingest_warnings: list[IngestWarning] = field(default_factory=list)
 
 
 def scan_root(
@@ -71,14 +83,23 @@ def scan_root(
     dirs: DirRule = False,
     when: datetime | None = None,
     check: Callable[[str], RootCheck] = check_root,
+    theme: type[Theme] | None = None,
+    schema: ThemeSchema | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
     An unreachable root is recorded as offline and its resources marked offline; nothing is
     deleted and the scan stops there. Otherwise the root is walked, diffed, and applied in
     short transactions; this root's unfingerprinted files are hashed (once each, so an
-    unreadable file can't loop); and moves among the new files are reattached.
+    unreadable file can't loop); moves among the new files are reattached; and, with a
+    ``theme`` (and its ``schema``), every pending resource is ingested. The theme's
+    extensions and directory rule then replace ``extensions`` and ``dirs``.
     """
+    if (theme is None) != (schema is None):
+        raise ValueError("pass both theme and schema, or neither")
+    if theme is not None:
+        extensions = theme.extensions or None
+        dirs = theme.dirs
     when = when or datetime.now(UTC)
     writer.run(partial(_sync_one, root))
 
@@ -130,8 +151,11 @@ def scan_root(
         report.fingerprinted += writer.run(partial(_store, batch))
 
     report.moves = writer.run(partial(_moves, applied))
+    if theme is not None and schema is not None:
+        _ingest_pending(writer, reader, root, path, theme, schema, when, report)
     logger.info(
-        "Scanned %s: %d new, %d changed, %d restored, %d missing, %d moved, %d fingerprinted",
+        "Scanned %s: %d new, %d changed, %d restored, %d missing, %d moved, %d fingerprinted, "
+        "%d ingested, %d ingest errors",
         root.id,
         report.new,
         report.changed,
@@ -139,6 +163,8 @@ def scan_root(
         report.missing,
         len(report.moves),
         report.fingerprinted,
+        report.ingested,
+        len(report.ingest_errors),
     )
     return report
 
@@ -164,3 +190,81 @@ def _store(results: list[FingerprintResult], conn: Connection) -> int:
 
 def _moves(applied: AppliedDiff, conn: Connection) -> list[Move]:
     return detect_moves(conn, applied.new_ids.values())
+
+
+# --- Ingest (DESIGN.md §6 step 5) ---
+
+
+def _ingest_pending(
+    writer: DbWriter,
+    reader: Engine,
+    root: RootConfig,
+    path: str,
+    theme: type[Theme],
+    schema: ThemeSchema,
+    when: datetime,
+    report: ScanReport,
+) -> None:
+    """Hand every pending resource of the root to the theme, in batches.
+
+    A batch that fails rolls back and each of its resources is retried alone, so one bad
+    file can't cost the rest; resources that still fail stay pending for the next scan.
+    """
+    with reader.connect() as conn:
+        rows = conn.execute(
+            select(
+                Resource.id,
+                Resource.relpath,
+                Resource.kind,
+                Resource.ext,
+                Resource.size,
+                Resource.mtime_ns,
+            )
+            .where(
+                Resource.root_id == root.id,
+                Resource.status == ResourceStatus.OK,
+                Resource.ingested_at.is_(None),
+                Resource.parent_resource_id.is_(None),
+            )
+            .order_by(Resource.relpath)
+        ).all()
+    pending = [
+        ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
+        for rid, rel, kind, ext, size, mtime in rows
+    ]
+    ingester = theme()
+    for start in range(0, len(pending), INGEST_BATCH):
+        batch = pending[start : start + INGEST_BATCH]
+        try:
+            _record(report, writer.run(partial(_ingest, ingester, schema, batch, when)), batch)
+        except Exception:
+            for info in batch:
+                try:
+                    _record(
+                        report, writer.run(partial(_ingest, ingester, schema, [info], when)), [info]
+                    )
+                except Exception as e:
+                    report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
+                    logger.warning("Ingest of %s in root %s failed: %s", info.relpath, root.id, e)
+
+
+def _record(report: ScanReport, warnings: list[IngestWarning], batch: list[ResourceInfo]) -> None:
+    report.ingested += len(batch)
+    report.ingest_warnings.extend(warnings)
+
+
+def _ingest(
+    ingester: Theme,
+    schema: ThemeSchema,
+    batch: list[ResourceInfo],
+    when: datetime,
+    conn: Connection,
+) -> list[IngestWarning]:
+    """One ingest transaction: the theme's ingest, its flush, and marking the batch done."""
+    ctx = IngestSession(conn, schema)
+    ingester.ingest(batch, ctx)
+    flushed = ctx.flush()
+    conn.execute(
+        update(Resource).where(Resource.id.in_([r.id for r in batch])).values(ingested_at=when)
+    )
+    return flushed.warnings

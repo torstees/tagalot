@@ -284,6 +284,7 @@ def apply_diff(conn: Connection, root_id: str, diff: RootDiff, when: datetime) -
                 size=bindparam("size"),
                 mtime_ns=bindparam("mtime_ns"),
                 fingerprint=None,
+                ingested_at=None,
             ),
             [
                 {"rid": rid, "kind": e.kind, "ext": e.ext, "size": e.size, "mtime_ns": e.mtime_ns}

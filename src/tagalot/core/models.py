@@ -136,6 +136,9 @@ class Resource(Base):
     mtime_ns: Mapped[int | None]
     """Modification time in integer nanoseconds (``os.stat().st_mtime_ns``) for exact diffing."""
     fingerprint: Mapped[bytes | None]
+    ingested_at: Mapped[datetime | None]
+    """When the theme last ingested this resource; ``None`` = pending (new, changed, or its
+    ingest failed), so the next scan hands it to the theme again."""
     status: Mapped[ResourceStatus] = mapped_column(_enum(ResourceStatus), default=ResourceStatus.OK)
     first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -198,7 +198,11 @@ A scan runs per root in background workers:
    - Missing resources in any root match, with no time limit (a file restored from a backup months later is still the same file). A missing file that was never fingerprinted cannot be matched.
    - When several missing and new resources share a fingerprint, they are paired only where the file name decides uniquely; anything still ambiguous is logged and left alone rather than guessed.
    - Role links, `entity.thumb_resource_id`, archive members, and the original `first_seen_at` move to the new resource.
-5. **Ingest.** New and changed resources are passed to the theme's ingester in batches. The ingester creates or updates entities, role links, containment edges, and extracted field values (respecting provenance).
+5. **Ingest.** New and changed resources are passed to the theme's ingester in batches. The ingester creates or updates entities, role links, containment edges, and extracted field values (respecting provenance). Details:
+   - `resource.ingested_at` marks what the theme has handled; it is cleared when a file changes and set only when its ingest commits. Every scan ingests all *pending* resources (new, changed, or whose ingest failed before), so a failure is retried by the next scan.
+   - Batches of 100 run as one DB-writer transaction each: the theme's `ingest()`, `ctx.flush()` (containment, search index), and marking the batch ingested. A batch that raises is rolled back and each resource retried alone; resources that still fail stay pending and are listed in the scan report with the error.
+   - With a theme, the walk uses the theme's `extensions` and `dirs`.
+   - Known trade-off: `ingest()` runs inside the write transaction, so file reading in it holds the write lock for the batch. A worker-side `prepare()` hook is planned for themes that read files (issue #176, M12).
 6. **Closure maintenance.** The core updates `entity_ancestor` for changed containment edges.
 7. **Thumbnail queue.** Affected entities are queued for thumbnail resolution (§10).
 
@@ -639,4 +643,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Theme versions mirror core versions (keep.toml + `schema_version`, backup, one-transaction migrate). The core applies additive schema changes on every open, so `Theme.migrate()` now defaults to a no-op (API change) and is only for data changes (§9). |
 | 2026-09 | Ingest context: provenance-respecting upserts (title included), `IngestError` for theme mistakes, single-valued roles and `many=False` relationships replace, containment and index updates batched until `flush()` (§9). |
 | 2026-09 | `IngestContext` gains `update(ref, …)` and `entities_of(resource, role)` (before API v1 ships): file-based themes identify entities by their linked file, so moves keep tags and a new file at a vacated path can't take over a moved file's entity (§9). |
+| 2026-09 | Scan ingest: `resource.ingested_at` tracks pending resources so failures retry next scan; batches of 100 per writer transaction, with per-resource retry on failure; theme file reading moves to a worker `prepare()` hook later (#176) (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
