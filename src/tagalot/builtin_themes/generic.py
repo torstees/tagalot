@@ -33,8 +33,8 @@ class File(Entity):
     title_label = "Name"
     double_click = "open_file"
     extension: str = field("Extension", card=True, search="choice")
-    folder: str = field("Folder", search="text")
-    size: int | None = field("Size (bytes)", search="range")
+    folder: str = field("Folder", card=True, search="text")
+    size: int | None = field("Size (bytes)", card=True, search="range")
     modified: datetime | None = field("Modified", card=True, search="range")
     roles = [role("file", kinds={"any"}, primary=True, thumbnail=True)]
 

@@ -25,8 +25,9 @@ from tagalot.core.session import KeepSession
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.models.results import ResultColumn, ResultsModel
 
-TITLE_WIDTH = 360
-COLUMN_WIDTH = 130
+TITLE_MIN_WIDTH = 200
+COLUMN_WIDTH = 140
+NUMERIC_WIDTH = 100
 
 
 def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn]:
@@ -92,7 +93,7 @@ class SearchPage(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 8)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
         header.setSortIndicatorShown(True)
         header.setSectionsClickable(True)
         header.sortIndicatorChanged.connect(self._sort_clicked)
@@ -105,8 +106,14 @@ class SearchPage(QWidget):
         self.model.failed.connect(self._failed)
         self.model.modelReset.connect(self._show_sort)
         self.model.set_search(spec, list_columns(session.schema, spec.types))
+        # The title takes the remaining width; the other columns start narrow and can be resized.
+        header.setMinimumSectionSize(40)
         for i, column in enumerate(self.model.columns):
-            self.table.setColumnWidth(i, TITLE_WIDTH if column.key == "title" else COLUMN_WIDTH)
+            if column.key == "title":
+                header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
+            else:
+                self.table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else COLUMN_WIDTH)
+        self.table.setMinimumWidth(TITLE_MIN_WIDTH)
 
     def refresh(self) -> None:
         """Run the search again (after a scan), keeping the list until new rows arrive."""

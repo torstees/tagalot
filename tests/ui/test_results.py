@@ -227,9 +227,12 @@ def test_list_columns(session: KeepSession) -> None:
     assert [(c.key, c.label, c.numeric) for c in columns] == [
         ("title", "Name", False),  # the type's title_label
         ("extension", "Extension", False),
+        ("folder", "Folder", False),
+        ("size", "Size (bytes)", True),  # right-aligned
         ("modified", "Modified", False),
-    ]  # card fields only
-    assert [c.key for c in list_columns(session.schema, ())] == ["title", "extension", "modified"]
+    ]  # the card fields, in declaration order
+    everything = [c.key for c in list_columns(session.schema, ())]
+    assert everything == ["title", "extension", "folder", "size", "modified"]
 
 
 def test_search_page(qtbot: QtBot, session: KeepSession, pool: QThreadPool) -> None:
@@ -264,7 +267,7 @@ def test_the_window_shows_searches_and_refreshes_them_after_a_scan(
     assert isinstance(page, SearchPage)
     qtbot.waitUntil(lambda: page.status.text() == "10 items", timeout=5000)
     assert page.model.index(0, 0).data() == "file07.txt"
-    assert page.model.sort_column() == (2, Qt.SortOrder.DescendingOrder)
+    assert page.model.sort_column() == (4, Qt.SortOrder.DescendingOrder)
 
     (files / "new.txt").write_bytes(b"new")
     with qtbot.waitSignal(window.scans.finished, timeout=10_000):
