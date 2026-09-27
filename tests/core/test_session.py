@@ -1,5 +1,8 @@
 """Tests for KeepSession: opening a keep with its theme and services, and scanning it."""
 
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -75,3 +78,46 @@ def test_opening_errors_are_keep_errors(tmp_path: Path, files: Path) -> None:
         KeepSession.open(tmp_path, Settings())
     with pytest.raises(KeepThemeError, match="'movies' theme, which isn't available"):
         KeepSession.open(_keep(tmp_path, files, theme="movies"), Settings())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows locks open files")
+def test_a_query_running_during_close_does_not_keep_the_keep_open(tmp_path: Path) -> None:
+    keep = create_keep(tmp_path / "K.keep", "K", ThemeRef("generic", 1))
+    session = KeepSession.open(keep.dir, Settings())
+    started, release = threading.Event(), threading.Event()
+
+    def slow_reader() -> None:
+        with session.reader.connect() as conn:
+            conn.execute(select(Entity.id)).all()
+            started.set()
+            release.wait(5)  # still using its connection while the keep closes
+
+    worker = threading.Thread(target=slow_reader)
+    worker.start()
+    started.wait(5)
+    session.close()
+    release.set()
+    worker.join(5)
+    keep.dir.rename(tmp_path / "moved.keep")  # refused while any connection is open
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows locks open files")
+def test_closed_is_only_true_once_the_files_are_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keep = create_keep(tmp_path / "K.keep", "K", ThemeRef("generic", 1))
+    session = KeepSession.open(keep.dir, Settings())
+    close_writer = session.writer.close
+
+    def slow_close(timeout: float | None = None) -> None:
+        time.sleep(0.3)  # a slow machine, or a long write still queued
+        close_writer(timeout)
+
+    monkeypatch.setattr(session.writer, "close", slow_close)
+    closer = threading.Thread(target=session.close)
+    closer.start()
+    deadline = time.monotonic() + 5
+    while not session.closed and time.monotonic() < deadline:
+        time.sleep(0.005)
+    keep.dir.rename(tmp_path / "moved.keep")  # the moment closed is True
+    closer.join(5)

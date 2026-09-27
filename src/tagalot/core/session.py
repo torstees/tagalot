@@ -5,6 +5,7 @@ worker. It never imports Qt.
 """
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,6 +41,8 @@ class KeepSession:
     settings: Settings
     catalog: ThemeCatalog
     closed: bool = field(default=False, init=False)
+    """True once :meth:`close` has finished: the database files are no longer open."""
+    _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def open(
@@ -111,12 +114,14 @@ class KeepSession:
         return reports
 
     def close(self) -> None:
-        """Finish queued writes and release the database. Safe to call twice."""
-        if self.closed:
-            return
-        self.closed = True
-        self.writer.close()
-        self.reader.dispose()
+        """Finish queued writes and release the database. Safe to call twice, and from two
+        threads: the second call waits for the first to finish."""
+        with self._closing:
+            if self.closed:
+                return
+            self.writer.close()
+            self.reader.dispose()
+            self.closed = True  # only now are the files released
         logger.info("Closed keep %r", self.keep.config.name)
 
     def __enter__(self) -> "KeepSession":

@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy import Engine, create_engine, event, insert, inspect, select, update
 from sqlalchemy.engine import URL, Connection
+from sqlalchemy.pool import NullPool
 
 from tagalot.core.keep import (
     KEEP_FORMAT_VERSION,
@@ -71,14 +72,17 @@ def create_keep_engine(db_path: Path, *, network: bool = False, read_only: bool 
     WAL needs shared memory on one host and does not work over network file systems.
 
     ``read_only`` engines refuse writes (``PRAGMA query_only``), for UI query connections;
-    only the DB writer writes (AGENTS.md rule 5).
+    only the DB writer writes (AGENTS.md rule 5). They don't pool connections: each one closes
+    when its query is done. Otherwise a query still running in a worker when the keep closes
+    would return its connection to the discarded pool, and the file would stay open (on
+    Windows, locked) until that pool was garbage-collected.
 
     Transactions are issued by SQLAlchemy rather than Python's ``sqlite3`` module. Otherwise
     ``sqlite3`` commits before DDL, so rolling back a failed schema migration would leave
     tables half-created.
     """
     url = URL.create("sqlite+pysqlite", database=str(db_path))
-    engine = create_engine(url)
+    engine = create_engine(url, poolclass=NullPool) if read_only else create_engine(url)
     journal_mode = "delete" if network else "wal"
 
     @event.listens_for(engine, "connect")
