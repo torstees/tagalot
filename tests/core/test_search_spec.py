@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from tagalot.core.search import (
+from tagalot.core.search_spec import (
     SPEC_VERSION,
     ChoiceFilter,
     RangeFilter,
