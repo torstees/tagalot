@@ -44,6 +44,9 @@ from tagalot.themes.api import ResourceInfo, Theme
 
 logger = logging.getLogger(__name__)
 
+Progress = Callable[[str], None]
+"""Receives short, human-readable status messages ("Walking Music…") during a scan."""
+
 INGEST_BATCH = 100
 """Resources per ingest transaction: the theme's ingest runs inside the writer's transaction,
 so batches stay small to keep the write lock short."""
@@ -85,6 +88,7 @@ def scan_root(
     check: Callable[[str], RootCheck] = check_root,
     theme: type[Theme] | None = None,
     schema: ThemeSchema | None = None,
+    progress: Progress | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -100,9 +104,11 @@ def scan_root(
     if theme is not None:
         extensions = theme.extensions or None
         dirs = theme.dirs
+    say: Progress = progress or (lambda message: None)
     when = when or datetime.now(UTC)
     writer.run(partial(_sync_one, root))
 
+    say(f"Checking {root.name}…")
     reachability = check(path)
     writer.run(partial(_record_check, root.id, reachability))
     if not reachability.online:
@@ -117,6 +123,7 @@ def scan_root(
         report.read_errors.append((relpath, str(error)))
         logger.warning("Cannot read %s in root %s: %s", relpath or "(root)", root.id, error)
 
+    say(f"Walking {root.name}…")
     entries = list(
         walk_root(
             path, exclude=root.exclude, extensions=extensions, dirs=dirs, on_error=on_read_error
@@ -128,11 +135,14 @@ def scan_root(
     report.restored, report.missing = len(diff.restored), len(diff.missing)
     report.unchanged = len(diff.unchanged)
 
+    say(f"Updating {root.name}: {len(diff.new)} new, {len(diff.changed)} changed…")
     futures = [writer.submit(partial(_apply, root.id, part, when)) for part in split_diff(diff)]
     applied = merge_applied(f.result() for f in futures)
 
     with reader.connect() as conn:
         jobs = pending_fingerprints(conn, root_id=root.id, limit=None)
+    if jobs:
+        say(f"Fingerprinting {len(jobs)} files in {root.name}…")
 
     def job_path(job: FingerprintJob) -> str:
         return local_path(path, job.relpath)
@@ -152,7 +162,7 @@ def scan_root(
 
     report.moves = writer.run(partial(_moves, applied))
     if theme is not None and schema is not None:
-        _ingest_pending(writer, reader, root, path, theme, schema, when, report)
+        _ingest_pending(writer, reader, root, path, theme, schema, when, report, say)
     logger.info(
         "Scanned %s: %d new, %d changed, %d restored, %d missing, %d moved, %d fingerprinted, "
         "%d ingested, %d ingest errors",
@@ -204,6 +214,7 @@ def _ingest_pending(
     schema: ThemeSchema,
     when: datetime,
     report: ScanReport,
+    say: Progress,
 ) -> None:
     """Hand every pending resource of the root to the theme, in batches.
 
@@ -235,6 +246,7 @@ def _ingest_pending(
     ingester = theme()
     for start in range(0, len(pending), INGEST_BATCH):
         batch = pending[start : start + INGEST_BATCH]
+        say(f"Ingesting {start + len(batch)} of {len(pending)} in {root.name}…")
         try:
             _record(report, writer.run(partial(_ingest, ingester, schema, batch, when)), batch)
         except Exception:

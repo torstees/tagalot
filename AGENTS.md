@@ -67,6 +67,7 @@ src/tagalot/
     roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
     scanjob.py           # scan_root(): one root's full scan, in §6 order
+    session.py           # KeepSession: an open keep with writer, reader, theme, tags
     fingerprint.py
     ingest.py            # drives theme ingesters
     writer.py            # the single DB writer thread
