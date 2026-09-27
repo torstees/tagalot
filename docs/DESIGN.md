@@ -181,6 +181,10 @@ A scan runs per root in background workers:
    - New path → insert resource.
    - Existing path with changed `size`/`mtime` → update and clear fingerprint (recomputed later) and invalidate thumbnails.
    - Path not seen → mark `missing`.
+   - A path seen again after being `offline` or `missing` → back to `ok`, keeping its id (and its fingerprint if size and mtime are unchanged).
+   - Paths at or under a folder the walk could not read are left as they are, not marked `missing`: not being able to look is not the same as the file being gone.
+   - `last_seen_at` moves only for resources the walk actually saw; `root.last_scan_at` records the completed scan. Nothing is deleted.
+   - The diff itself is a pure function of the stored rows and the walk; the DB writer applies it in batches and gets back the new resource ids for move detection and ingest.
 4. **Move detection.** For new resources whose fingerprint matches a resource marked missing in the same scan (or recently), transfer entity links to the new resource and delete the stale row. Fingerprints are computed for new files first so this step has what it needs.
 5. **Ingest.** New and changed resources are passed to the theme's ingester in batches. The ingester creates or updates entities, role links, containment edges, and extracted field values (respecting provenance).
 6. **Closure maintenance.** The core updates `entity_ancestor` for changed containment edges.
@@ -544,4 +548,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Core schema versions: a newer keep is refused; an older one needs user confirmation, then is backed up with SQLite's backup API and migrated in a single transaction; `keep.toml` `format_version` tracks the database (§5). |
 | 2026-09 | Root reachability: a root is online if its folder can be listed within 10 s, checked on a daemon thread so a hung share can be abandoned; offline marks only `ok` resources `offline` (§6). |
 | 2026-09 | Walking: exclude globs are case-insensitive with `**` semantics and prune matching folders; symlinked folders and junctions are not followed; read errors are reported and skipped (§6). |
+| 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources currently become `missing` (issue #152) (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
