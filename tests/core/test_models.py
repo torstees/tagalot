@@ -42,6 +42,15 @@ CORE_TABLES = {
     "saved_search",
     "schema_version",
 }
+FTS_TABLES = {
+    "entity_fts",
+    # FTS5's shadow tables
+    "entity_fts_config",
+    "entity_fts_content",
+    "entity_fts_data",
+    "entity_fts_docsize",
+    "entity_fts_idx",
+}
 
 
 @pytest.fixture
@@ -80,7 +89,7 @@ def _count(session: Session, model: type[Base]) -> int:
 
 
 def test_creates_every_core_table(engine: Engine) -> None:
-    assert set(inspect(engine).get_table_names()) == CORE_TABLES
+    assert set(inspect(engine).get_table_names()) == CORE_TABLES | FTS_TABLES
 
 
 def test_documented_indexes_exist(engine: Engine) -> None:
