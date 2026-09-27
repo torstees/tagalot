@@ -6,6 +6,7 @@ can key result caches. Its JSON form (used by saved searches and view state) is 
 
 import enum
 import json
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -19,6 +20,22 @@ Scalar = str | int | float | bool | date | datetime
 
 class SearchSpecError(ValueError):
     """A search definition is invalid; the message is suitable for showing to the user."""
+
+
+def clean_search_text(text: str) -> str:
+    """Make search-box text safe to query: control characters (NUL, escapes, …) become
+    spaces, unpaired surrogates (which can't be encoded) are dropped, and the ends trimmed.
+
+    FTS5 treats NUL as the end of its query string, so an embedded NUL would otherwise make
+    the search fail.
+    """
+    cleaned = []
+    for c in text:
+        if unicodedata.category(c) == "Cc":
+            cleaned.append(" ")
+        elif not 0xD800 <= ord(c) <= 0xDFFF:
+            cleaned.append(c)
+    return "".join(cleaned).strip()
 
 
 class TextMatch(enum.Enum):
@@ -90,7 +107,7 @@ class SearchSpec:
     sort: tuple[SortKey, ...] = field(default=(SortKey("title"),))
 
     def __post_init__(self) -> None:
-        text = self.text.strip() if self.text is not None else None
+        text = clean_search_text(self.text) if self.text is not None else None
         object.__setattr__(self, "text", text or None)
         for name in ("include", "exclude"):
             ids = getattr(self, name)
