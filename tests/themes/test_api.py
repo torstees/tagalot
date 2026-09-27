@@ -235,9 +235,9 @@ def test_actions() -> None:
     assert Sub.actions()["play"].applies_to == ("folder",)
 
 
-def test_default_migrate_refuses() -> None:
-    with pytest.raises(NotImplementedError, match="can't migrate from v0"):
-        MoviesTheme().migrate(0, None)  # type: ignore[arg-type]
+def test_default_migrate_does_nothing() -> None:
+    # Additive changes are handled by the core; data migrations are opt-in.
+    assert MoviesTheme().migrate(0, None) is None  # type: ignore[arg-type,func-returns-value]
 
 
 def test_values() -> None:

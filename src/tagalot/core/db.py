@@ -128,15 +128,18 @@ class KeepVersionError(KeepError):
 
 
 class KeepNeedsMigration(KeepError):
-    """The keep's core schema is older than this Tagalot; the user should confirm migrating.
+    """The keep's core schema (or its theme's) is older than this Tagalot or theme; the user
+    should confirm migrating.
 
     Reopen with ``allow_migration=True`` to back up ``keep.db`` and upgrade it.
     """
 
-    def __init__(self, message: str, stored: int, current: int) -> None:
+    def __init__(self, message: str, stored: int, current: int, component: str = "core") -> None:
         super().__init__(message)
         self.stored = stored
         self.current = current
+        self.component = component
+        """``"core"`` or the theme id."""
 
 
 def open_keep_database(

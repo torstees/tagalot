@@ -466,6 +466,11 @@ Batch items are read-only `ResourceInfo` values: root id, relative path, kind, e
 
 On opening a keep, the core compares the stored theme version with the loaded theme's version: equal → open; older stored → run `migrate()` after backing up `keep.db`; newer stored → refuse to open with a clear message.
 
+Details (`core/theme_db.py`, `open_theme()`, run after the core schema is open):
+
+- The theme version is kept in `keep.toml` (`[theme] version`) and in `schema_version` (`component` = theme id), like the core version (§5). A newer version in either is refused before anything changes; an older stored version raises the same "needs migration" error as the core (with `component` set to the theme id) so the launcher can ask. Once confirmed, `keep.db` is backed up (`keep.db.<theme>-v<old>-<timestamp>.bak`), and in one transaction the additive changes are applied, `theme().migrate(old_version, ctx)` runs, and the version is recorded; `keep.toml` is updated afterwards. A failure rolls everything back, DDL included, and the backup is kept.
+- **Additive changes are the core's job**, on every open: missing tables, columns, and indexes are created (new non-nullable columns use the defaults from §5, which `ALTER TABLE ADD COLUMN` requires). So a theme that only adds entity types or fields needs no migration code, and `Theme.migrate()` defaults to doing nothing; it exists for data changes. Removed fields are left in place (harmless); changing a field's type is not supported.
+
 ### Built-in themes
 
 1. **generic** — one entity per file, no containment. Reference implementation and fallback; lets the core be built and tested before any rich theme exists.
@@ -621,4 +626,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Theme API v1: stdlib-only module; fields as annotated `field()` attributes; frozen declaration objects for roles, containment, relationships, views, sections; `IngestContext` as a protocol implemented by the core (§9). |
 | 2026-09 | Theme tables: non-nullable scalar fields get database defaults, non-nullable dates are rejected, range/choice fields are indexed, names are namespaced by theme id, and all problems are reported together (§5). |
 | 2026-09 | Theme loading never raises: unique module names per file, per-file problems, first duplicate id wins, built-in placeholders skipped, full declaration validation plus a trial table build (§9). |
+| 2026-09 | Theme versions mirror core versions (keep.toml + `schema_version`, backup, one-transaction migrate). The core applies additive schema changes on every open, so `Theme.migrate()` now defaults to a no-op (API change) and is only for data changes (§9). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
