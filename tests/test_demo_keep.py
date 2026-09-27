@@ -6,9 +6,14 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from sqlalchemy import select
 
+from tagalot.core.models import Entity
+from tagalot.core.search import run_search
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.tags import TagTree
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "make_demo_keep.py"
 
@@ -22,15 +27,31 @@ def _script() -> ModuleType:
     return module
 
 
-def test_creates_a_keep_that_scans_cleanly(tmp_path: Path) -> None:
+def test_creates_a_scanned_and_tagged_keep(tmp_path: Path) -> None:
     keep_dir = _script().make_demo(tmp_path)
     assert keep_dir == tmp_path / "Demo.keep"
     with KeepSession.open(keep_dir, Settings()) as session:
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            titles = set(conn.scalars(select(Entity.title)))
+            places = run_search(conn, SearchSpec(include=_ids(tree, "Places")), tree)
+            money = run_search(conn, SearchSpec(include=_ids(tree, "Money")), tree)
         [report] = session.scan_all()
-    assert report.online
-    assert report.new == report.ingested == 9  # the .DS_Store, ._ and Thumbs.db files are skipped
+    # The .DS_Store, ._ and Thumbs.db files are on disk but skipped.
+    assert len(titles) == 9
+    assert "._sunset.jpg" not in titles
     assert (tmp_path / "demo-files" / "Photos" / "Beach" / "._sunset.jpg").exists()
+    assert len(places) == 5  # Iceland's three and Beach's two, through the hierarchy
+    assert {h.title for h in money} == {"tax 2025.pdf", "März.txt"}
+    assert [s.alias for s in tree.suggest("finance")] == ["finance"]
+    assert report.online
+    assert report.new == report.ingested == 0  # already scanned
     assert report.ingest_errors == []
+
+
+def _ids(tree: TagTree, name: str) -> tuple[int, ...]:
+    [suggestion] = [s for s in tree.suggest(name) if tree.node(s.tag_id).name == name]
+    return (suggestion.tag_id,)
 
 
 def test_refuses_to_overwrite_without_reset(tmp_path: Path) -> None:
