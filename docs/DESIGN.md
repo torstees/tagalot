@@ -222,7 +222,7 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 
 ## 7. Tags
 
-- Tags form a tree. Depth is expected to be shallow (a handful of levels), and tag counts in the hundreds to low thousands. The full tree is cached in memory and invalidated on change.
+- Tags form a tree. Depth is expected to be shallow (a handful of levels), and tag counts in the hundreds to low thousands. The full tree is cached in memory and invalidated on change. The cache holds an immutable snapshot (`TagTree`: children in display order, memoized subtrees, paths, aliases, case-insensitive sibling lookup, filter-box matching); tag operations invalidate it after they commit, and readers holding an older snapshot are unaffected.
 - **Search semantics:** selecting a tag means "this tag or any of its descendants."
 - **Applying a child tag never stores its parent.** Expansion at query time makes the parent match.
 
@@ -560,4 +560,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Move detection matches unlinked new files to missing files by fingerprint across roots with no time window; ambiguous groups pair only by unique file name, never by guess (§6). |
 | 2026-09 | The DB writer is a dedicated thread applying `Callable[[Connection], T]` jobs in their own transactions and returning futures; scans are applied in parts of at most 500 changes (§6). |
 | 2026-09 | `scan_root()` orchestrates §6 steps 1–4 per root: one fingerprint pass per scan, move detection limited to the scan's new files, and a `ScanReport` for the UI (§6). |
+| 2026-09 | The tag tree is cached as an immutable snapshot, reloaded only after explicit invalidation by tag operations; tag names compare with `str.casefold()` (§7). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
