@@ -1,0 +1,264 @@
+"""Tests for the public theme API (DESIGN.md §9)."""
+
+import ast
+import sys
+from datetime import date, datetime
+from pathlib import Path
+
+import pytest
+
+import tagalot.themes.api as api
+from tagalot.themes.api import (
+    API_VERSION,
+    DetailView,
+    Entity,
+    EntityRef,
+    FieldInfo,
+    IngestContext,
+    Kind,
+    Record,
+    ResourceInfo,
+    SearchView,
+    Section,
+    SortBy,
+    Theme,
+    ThemeDeclarationError,
+    action,
+    contains,
+    entity_fields,
+    field,
+    related,
+    role,
+)
+
+# --- The DESIGN.md §9 example, as written there ---
+
+
+class Actor(Entity):
+    title_label = "Name"
+    born: date | None = field("Date of birth", search="range")
+    country: str | None = field("Country", search="choice")
+    roles = [role("photo", kinds={"image"}, many=False, thumbnail=True)]
+
+
+class Collection(Entity):
+    roles = [role("folder", kinds={"dir"}, primary=True)]
+
+
+class Movie(Entity):
+    year: int | None = field("Year", card=True, search="range")
+    roles = [
+        role("video", kinds={"video"}, many=True, primary=True),
+        role("poster", kinds={"image"}, thumbnail=True),
+        role("screenshot", kinds={"image"}, many=True),
+    ]
+
+
+class MoviesTheme(Theme):
+    id, name, version = "movies", "Movies", 1
+    extensions = {".mkv", ".mp4", ".avi", ".jpg", ".png"}
+    entities = [Actor, Collection, Movie]
+    containment = [contains(Collection, Movie)]
+    relationships = [related("cast", Actor, Movie, label="Cast", reverse_label="Filmography")]
+    views = [
+        SearchView("Movies", types=[Movie], inherit_tags=True, show_contained=False),
+        SearchView("Actors", types=[Actor]),
+        DetailView(
+            Movie,
+            sections=[
+                Section.fields(),
+                Section.role("poster"),
+                Section.related("cast"),
+                Section.gallery("screenshot"),
+            ],
+        ),
+    ]
+
+    @action("Play trailer", applies_to=[Movie])
+    def play_trailer(self, entities: list[EntityRef], ctx: IngestContext) -> None:
+        pass
+
+
+def test_design_example_declares_cleanly() -> None:
+    assert MoviesTheme.id == "movies"
+    assert MoviesTheme.api_version == API_VERSION == 1
+    assert [e.__name__ for e in MoviesTheme.entities] == ["Actor", "Collection", "Movie"]
+    assert MoviesTheme.containment[0] == contains(Collection, Movie)
+    assert MoviesTheme.relationships[0].name == "cast"
+
+
+def test_fields_are_introspected_with_types() -> None:
+    fields = {f.name: f for f in entity_fields(Actor)}
+    assert list(fields) == ["born", "country"]
+    assert (fields["born"].type, fields["born"].nullable) == (date, True)
+    assert fields["born"].spec.label == "Date of birth"
+    assert fields["born"].spec.search == "range"
+    assert fields["country"].spec.search == "choice"
+    assert entity_fields(Collection) == []
+
+
+def test_field_spec_knows_its_name() -> None:
+    assert vars(Movie)["year"].name == "year"
+
+
+def test_all_field_types() -> None:
+    class AllTypes(Entity):
+        s: str = field("S")
+        i: int = field("I")
+        f: float = field("F")
+        b: bool = field("B")
+        d: date = field("D")
+        dt: datetime = field("DT")
+        maybe: str | None = field("Maybe")
+
+    types = {f.name: (f.type, f.nullable) for f in entity_fields(AllTypes)}
+    assert types == {
+        "s": (str, False),
+        "i": (int, False),
+        "f": (float, False),
+        "b": (bool, False),
+        "d": (date, False),
+        "dt": (datetime, False),
+        "maybe": (str, True),
+    }
+
+
+def test_subclass_fields_extend_and_override() -> None:
+    class Base(Entity):
+        a: int = field("A")
+        b: int = field("B")
+
+    class Child(Base):
+        b: str = field("B as text")  # type: ignore[assignment]
+        c: int = field("C")
+
+    fields = entity_fields(Child)
+    assert [(f.name, f.type) for f in fields] == [("a", int), ("b", str), ("c", int)]
+
+
+@pytest.mark.parametrize(
+    ("annotation", "message"),
+    [
+        ("list[str]", "is not a field type"),
+        ("str | int", "is not a field type"),
+        ("dict[str, int] | None", "is not a field type"),
+    ],
+)
+def test_unsupported_field_types(annotation: str, message: str) -> None:
+    namespace: dict[str, object] = {}
+    exec(
+        f"from tagalot.themes.api import Entity, field\n"
+        f"class Bad(Entity):\n    x: {annotation} = field('X')\n",
+        namespace,
+    )
+    with pytest.raises(ThemeDeclarationError, match=message):
+        entity_fields(namespace["Bad"])  # type: ignore[arg-type]
+
+
+def test_field_without_annotation() -> None:
+    class Bad(Entity):
+        x = field("X")
+
+    with pytest.raises(ThemeDeclarationError, match="needs a type annotation"):
+        entity_fields(Bad)
+
+
+@pytest.mark.parametrize(
+    ("make", "message"),
+    [
+        (lambda: field("Year", search="fuzzy"), "search='fuzzy'"),  # type: ignore[arg-type]
+        (lambda: field("  "), "needs a label"),
+        (lambda: role("poster", kinds={"picture"}), "kinds are image, audio"),
+        (lambda: role("poster", kinds=[]), "at least one kind"),
+        (lambda: related("the cast", Actor, Movie), "must be an identifier"),
+    ],
+)
+def test_invalid_declarations_fail_immediately(make: object, message: str) -> None:
+    with pytest.raises(ThemeDeclarationError, match=message):
+        make()  # type: ignore[operator]
+
+
+def test_roles() -> None:
+    video, poster, _ = Movie.roles
+    assert video.kinds == {Kind.VIDEO}
+    assert (video.many, video.primary, video.thumbnail) == (True, True, False)
+    assert poster.thumbnail
+    assert role("art", kinds=["image", "any"]).kinds == {Kind.IMAGE, Kind.ANY}
+
+
+def test_type_ids_and_table_names() -> None:
+    assert MoviesTheme.type_id_of(Movie) == "movies.movie"
+    assert MoviesTheme.table_name_of(Collection) == "movies_collection"
+
+    class Episode(Entity):
+        type_id = "movies.tv_episode"
+        table_name = "movies_episodes"
+
+    assert MoviesTheme.type_id_of(Episode) == "movies.tv_episode"
+    assert MoviesTheme.table_name_of(Episode) == "movies_episodes"
+
+
+def test_entity_defaults() -> None:
+    assert (Movie.title_label, Movie.double_click) == ("Title", "page")
+    assert Actor.title_label == "Name"
+
+
+def test_views() -> None:
+    movies, _actors, detail = MoviesTheme.views
+    assert isinstance(movies, SearchView)
+    assert (movies.inherit_tags, movies.layout, movies.default_sort) == (
+        True,
+        "grid",
+        (SortBy("title"),),
+    )
+    assert isinstance(detail, DetailView)
+    assert [s.kind for s in detail.sections] == ["fields", "role", "related", "gallery"]
+    assert Section.contents().kind == "contents"
+
+    def factory(context: object) -> object:
+        return context
+
+    assert Section.custom(factory).factory is factory
+
+
+def test_actions() -> None:
+    assert MoviesTheme.actions() == {
+        "play_trailer": api.ActionSpec("Play trailer", (Movie,)),
+    }
+
+    class Sub(MoviesTheme):
+        @action("Play album", applies_to=["folder"])
+        def play(self, entities: list[EntityRef], ctx: IngestContext) -> None:
+            pass
+
+    assert set(Sub.actions()) == {"play_trailer", "play"}
+    assert Sub.actions()["play"].applies_to == ("folder",)
+
+
+def test_default_migrate_refuses() -> None:
+    with pytest.raises(NotImplementedError, match="can't migrate from v0"):
+        MoviesTheme().migrate(0, None)  # type: ignore[arg-type]
+
+
+def test_values() -> None:
+    ref = EntityRef(7, "movies.movie")
+    record = Record(ref, "Alien", {"year": 1979}, {"notes": "director's cut"})
+    info = ResourceInfo(3, "films", "Alien (1979)/alien.mkv", "file", ".mkv", 10, 20, "/x")
+    assert record.fields["year"] == 1979
+    assert info.relpath.endswith(".mkv")
+    with pytest.raises(AttributeError):
+        ref.id = 8  # type: ignore[misc]
+    assert isinstance(entity_fields(Movie)[0], FieldInfo)
+
+
+def test_api_imports_only_the_standard_library() -> None:
+    # The core and the launcher import the API; it must not pull in SQLAlchemy, Qt, or
+    # other tagalot modules (DESIGN.md §9 "Mapping and isolation").
+    source = Path(api.__file__).read_text(encoding="utf-8")
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
