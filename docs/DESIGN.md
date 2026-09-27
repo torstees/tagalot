@@ -238,6 +238,15 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 | Aliases | Alternate names that match in the filter box only. |
 | Color | Optional, shown on chips. |
 
+Details the table leaves open:
+
+- Names are trimmed with inner runs of spaces collapsed, must be non-empty and at most 200 characters, and compare with `str.casefold()` among siblings. Renaming a tag to a different case of its own name is allowed. Colors are `#rrggbb`.
+- New and moved tags go to the end of their new parent's children.
+- **Reparent** is also refused when the new parent already has a child with the same name.
+- **Merge** is refused into the tag itself or one of its descendants (that would create a cycle); merging into an ancestor is fine. A child of A whose name clashes with a child of B is merged into it recursively, since merging is what the user asked for. A's aliases move to B along with A's name, skipping any that duplicate B's name or aliases.
+- **Delete, promoting children:** refused, with the clashing names listed, if a child's name clashes with a tag at the level above; the user didn't ask for a merge, so none is done silently. Deleting a subtree removes its tags from entities; entities are never deleted.
+- Each operation re-reads the tree inside its own transaction to validate, never trusting a possibly stale cache, and the cache is invalidated after it commits.
+
 All tag operations are single transactions and are recorded in an undo stack for the session.
 
 ## 8. Search
@@ -561,4 +570,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | The DB writer is a dedicated thread applying `Callable[[Connection], T]` jobs in their own transactions and returning futures; scans are applied in parts of at most 500 changes (§6). |
 | 2026-09 | `scan_root()` orchestrates §6 steps 1–4 per root: one fingerprint pass per scan, move detection limited to the scan's new files, and a `ScanReport` for the UI (§6). |
 | 2026-09 | The tag tree is cached as an immutable snapshot, reloaded only after explicit invalidation by tag operations; tag names compare with `str.casefold()` (§7). |
+| 2026-09 | Tag merge merges clashing children recursively and is refused into a descendant; promoting children on delete is refused on name clashes; operations validate against a fresh tree inside their transaction (§7). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

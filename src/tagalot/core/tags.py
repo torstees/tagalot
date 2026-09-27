@@ -5,15 +5,21 @@ immutable :class:`TagTree` snapshot and cached by :class:`TagTreeCache` until a 
 invalidates it (DESIGN.md §7).
 """
 
+import enum
 import logging
+import re
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import cached_property
+from typing import TypeVar
 
-from sqlalchemy import Connection, Engine, select
+from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, update
 
-from tagalot.core.models import Tag, TagAlias
+from tagalot.core.models import EntityTag, Tag, TagAlias
+from tagalot.core.writer import DbWriter
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -207,3 +213,273 @@ class TagTreeCache:
     def generation(self) -> int:
         """Increments on each reload, so views can tell whether their tree is current."""
         return self._generation
+
+
+# --- Tag operations (DESIGN.md §7) ---
+#
+# Each operation takes a Connection and runs inside one DB-writer transaction. It reloads the
+# tree from that connection, so validation never depends on a stale cache.
+
+MAX_NAME_LENGTH = 200
+_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+class TagError(ValueError):
+    """A tag operation was refused; the message is suitable for showing to the user."""
+
+
+class DeleteMode(enum.Enum):
+    """What to do with a deleted tag's children."""
+
+    SUBTREE = "subtree"
+    """Delete the children (and their descendants) too."""
+    PROMOTE = "promote"
+    """Move the children up to the deleted tag's parent."""
+
+
+def clean_name(name: str) -> str:
+    """Validate and normalize a tag name or alias (surrounding and repeated spaces removed)."""
+    name = " ".join(name.split())
+    if not name:
+        raise TagError("A tag name can't be empty.")
+    if len(name) > MAX_NAME_LENGTH:
+        raise TagError(f"A tag name can be at most {MAX_NAME_LENGTH} characters.")
+    return name
+
+
+def add_tag(conn: Connection, parent_id: int | None, name: str, color: str | None = None) -> int:
+    """Create a tag at the end of ``parent_id``'s children (``None`` = top level)."""
+    tree = TagTree.load(conn)
+    name = clean_name(name)
+    if parent_id is not None and parent_id not in tree:
+        raise TagError("The parent tag no longer exists.")
+    _require_free_name(tree, parent_id, name)
+    return int(
+        conn.execute(
+            insert(Tag)
+            .values(
+                parent_id=parent_id,
+                name=name,
+                color=_clean_color(color),
+                sort_order=_next_sort_order(tree, parent_id),
+            )
+            .returning(Tag.id)
+        ).scalar_one()
+    )
+
+
+def rename_tag(conn: Connection, tag_id: int, name: str) -> None:
+    """Rename a tag; the name must stay unique among its siblings (case-insensitively)."""
+    tree = TagTree.load(conn)
+    node = _existing(tree, tag_id)
+    name = clean_name(name)
+    _require_free_name(tree, node.parent_id, name, allow=tag_id)
+    conn.execute(update(Tag).where(Tag.id == tag_id).values(name=name))
+
+
+def reparent_tag(conn: Connection, tag_id: int, new_parent_id: int | None) -> None:
+    """Move a tag (with its subtree) under ``new_parent_id``, at the end of its children."""
+    tree = TagTree.load(conn)
+    node = _existing(tree, tag_id)
+    if new_parent_id == node.parent_id:
+        return
+    if new_parent_id is not None:
+        _existing(tree, new_parent_id)
+        if new_parent_id in tree.descendants(tag_id):
+            raise TagError(f"Can't move {node.name!r} under itself or one of its own sub-tags.")
+    _require_free_name(tree, new_parent_id, node.name)
+    conn.execute(
+        update(Tag)
+        .where(Tag.id == tag_id)
+        .values(parent_id=new_parent_id, sort_order=_next_sort_order(tree, new_parent_id))
+    )
+
+
+def merge_tags(conn: Connection, source_id: int, target_id: int) -> None:
+    """Fold ``source`` into ``target`` (§7).
+
+    Entities tagged with the source get the target (without duplicates). The source's
+    children move under the target; a child whose name clashes with one of the target's
+    children is merged into it the same way. The source's name and aliases become aliases of
+    the target, and the source is deleted.
+    """
+    tree = TagTree.load(conn)
+    source, target = _existing(tree, source_id), _existing(tree, target_id)
+    if source_id == target_id:
+        raise TagError("Can't merge a tag into itself.")
+    if target_id in tree.descendants(source_id):
+        raise TagError(
+            f"Can't merge {source.name!r} into one of its own sub-tags ({target.name!r})."
+        )
+    _merge(conn, tree, source_id, target_id)
+
+
+def delete_tag(conn: Connection, tag_id: int, mode: DeleteMode | None = None) -> None:
+    """Delete a tag. A tag with children needs a ``mode`` (§7).
+
+    Entities lose the deleted tags; the entities themselves are untouched. Promoting children
+    whose names clash with tags at the level above is refused rather than merged silently.
+    """
+    tree = TagTree.load(conn)
+    node = _existing(tree, tag_id)
+    children = tree.children(tag_id)
+    if children and mode is None:
+        raise TagError(f"{node.name!r} has sub-tags; choose to delete them or move them up.")
+    if children and mode is DeleteMode.PROMOTE:
+        clashes = []
+        for child in children:
+            other = tree.find_child(node.parent_id, tree.node(child).name)
+            if other is not None and other != tag_id:
+                clashes.append(repr(tree.node(child).name))
+        if clashes:
+            raise TagError(
+                f"Can't move sub-tags up: the level above already has {', '.join(clashes)}. "
+                "Rename or merge them first."
+            )
+        start = _next_sort_order(tree, node.parent_id)
+        for offset, child in enumerate(children):
+            conn.execute(
+                update(Tag)
+                .where(Tag.id == child)
+                .values(parent_id=node.parent_id, sort_order=start + offset)
+            )
+        conn.execute(delete(Tag).where(Tag.id == tag_id))
+    else:
+        # One statement, so parent-child foreign keys are checked after every row is gone.
+        conn.execute(delete(Tag).where(Tag.id.in_(tree.descendants(tag_id))))
+
+
+def set_tag_color(conn: Connection, tag_id: int, color: str | None) -> None:
+    """Set a tag's chip color (``#rrggbb``) or clear it with ``None``."""
+    _existing(TagTree.load(conn), tag_id)
+    conn.execute(update(Tag).where(Tag.id == tag_id).values(color=_clean_color(color)))
+
+
+def add_alias(conn: Connection, tag_id: int, alias: str) -> None:
+    """Add an alternate name that matches the tag in the filter box."""
+    tree = TagTree.load(conn)
+    node = _existing(tree, tag_id)
+    alias = clean_name(alias)
+    if name_key(alias) == name_key(node.name):
+        raise TagError("An alias must differ from the tag's name.")
+    if any(name_key(a) == name_key(alias) for a in tree.aliases(tag_id)):
+        return
+    conn.execute(insert(TagAlias).values(tag_id=tag_id, alias=alias))
+
+
+def remove_alias(conn: Connection, tag_id: int, alias: str) -> None:
+    """Remove an alias (matched case-insensitively)."""
+    tree = TagTree.load(conn)
+    _existing(tree, tag_id)
+    doomed = [a for a in tree.aliases(tag_id) if name_key(a) == name_key(alias)]
+    if doomed:
+        conn.execute(delete(TagAlias).where(TagAlias.tag_id == tag_id, TagAlias.alias.in_(doomed)))
+
+
+def count_tagged_entities(conn: Connection, tag_ids: Iterable[int]) -> int:
+    """How many distinct entities carry any of ``tag_ids`` directly (for confirmations)."""
+    ids = list(tag_ids)
+    if not ids:
+        return 0
+    query = select(func.count(func.distinct(EntityTag.entity_id))).where(EntityTag.tag_id.in_(ids))
+    return int(conn.scalar(query) or 0)
+
+
+def subtree_usage(conn: Connection, tag_id: int) -> int:
+    """Entities tagged with ``tag_id`` or a descendant: the count §7 shows before a reparent
+    or delete."""
+    return count_tagged_entities(conn, TagTree.load(conn).descendants(tag_id))
+
+
+def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> None:
+    source, target = tree.node(source_id), tree.node(target_id)
+    copied = select(EntityTag.entity_id, literal(target_id), EntityTag.added_at).where(
+        EntityTag.tag_id == source_id
+    )
+    conn.execute(
+        insert(EntityTag)
+        .from_select(["entity_id", "tag_id", "added_at"], copied)
+        .prefix_with("OR IGNORE")  # entities that already have the target keep their row
+    )
+    start = _next_sort_order(tree, target_id)
+    for offset, child in enumerate(tree.children(source_id)):
+        clash = tree.find_child(target_id, tree.node(child).name)
+        if clash is not None:
+            _merge(conn, tree, child, clash)
+        else:
+            conn.execute(
+                update(Tag)
+                .where(Tag.id == child)
+                .values(parent_id=target_id, sort_order=start + offset)
+            )
+    known = {name_key(target.name)} | {name_key(a) for a in tree.aliases(target_id)}
+    for alias in (source.name, *tree.aliases(source_id)):
+        if name_key(alias) not in known:
+            known.add(name_key(alias))
+            conn.execute(insert(TagAlias).values(tag_id=target_id, alias=alias))
+    conn.execute(delete(Tag).where(Tag.id == source_id))  # its entity_tag rows cascade
+
+
+def _existing(tree: TagTree, tag_id: int) -> TagNode:
+    if tag_id not in tree:
+        raise TagError("That tag no longer exists.")
+    return tree.node(tag_id)
+
+
+def _require_free_name(
+    tree: TagTree, parent_id: int | None, name: str, allow: int | None = None
+) -> None:
+    clash = tree.find_child(parent_id, name)
+    if clash is not None and clash != allow:
+        where = f"under {tree.node(parent_id).name!r}" if parent_id is not None else "at the top"
+        raise TagError(f"There is already a tag named {tree.node(clash).name!r} {where}.")
+
+
+def _next_sort_order(tree: TagTree, parent_id: int | None) -> int:
+    return max((tree.node(c).sort_order for c in tree.children(parent_id)), default=-1) + 1
+
+
+def _clean_color(color: str | None) -> str | None:
+    if color is None:
+        return None
+    if not _COLOR.fullmatch(color):
+        raise TagError(f"Colors are written as #rrggbb, not {color!r}.")
+    return color.lower()
+
+
+class TagService:
+    """Runs tag operations through the DB writer, then invalidates the tag tree cache."""
+
+    def __init__(self, writer: DbWriter, cache: TagTreeCache) -> None:
+        self.writer = writer
+        self.cache = cache
+
+    def _run(self, job: Callable[[Connection], T]) -> T:
+        try:
+            return self.writer.run(job)
+        finally:
+            self.cache.invalidate()
+
+    def add(self, parent_id: int | None, name: str, color: str | None = None) -> int:
+        return self._run(lambda conn: add_tag(conn, parent_id, name, color))
+
+    def rename(self, tag_id: int, name: str) -> None:
+        self._run(lambda conn: rename_tag(conn, tag_id, name))
+
+    def reparent(self, tag_id: int, new_parent_id: int | None) -> None:
+        self._run(lambda conn: reparent_tag(conn, tag_id, new_parent_id))
+
+    def merge(self, source_id: int, target_id: int) -> None:
+        self._run(lambda conn: merge_tags(conn, source_id, target_id))
+
+    def delete(self, tag_id: int, mode: DeleteMode | None = None) -> None:
+        self._run(lambda conn: delete_tag(conn, tag_id, mode))
+
+    def set_color(self, tag_id: int, color: str | None) -> None:
+        self._run(lambda conn: set_tag_color(conn, tag_id, color))
+
+    def add_alias(self, tag_id: int, alias: str) -> None:
+        self._run(lambda conn: add_alias(conn, tag_id, alias))
+
+    def remove_alias(self, tag_id: int, alias: str) -> None:
+        self._run(lambda conn: remove_alias(conn, tag_id, alias))
