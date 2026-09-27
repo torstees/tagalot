@@ -208,6 +208,8 @@ Because recomputation reads edges, not the closure, the order of changes within 
 - **`rebuild_all()`** recomputes the whole table. It is exposed as a repair action and is the oracle for tests: randomized sequences of adds and removes must leave the incrementally maintained table identical to a full rebuild.
 - **Depth semantics:** because depth is the minimum, `depth = 1` means exactly "direct child" and `depth = 0` is the self row.
 
+`core/scanjob.py`'s `scan_root()` runs steps 1–4 for one root in a worker and returns a report (counts, moves, read errors) for the activity panel. Within a scan, each pending file of the root is fingerprinted at most once, so an unreadable file can't loop, and move detection considers only that scan's new files. Steps 5–7 join it with themes (M4) and thumbnails (M8).
+
 Scans are incremental and resumable. File-system watchers are not relied upon because they are unreliable on SMB; rescans are manual or scheduled per keep.
 
 ### Threading model
@@ -557,4 +559,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Fingerprints are 16-byte blake2b digests; files up to 128 KiB are hashed whole; results are stored only if size and mtime still match (§5). |
 | 2026-09 | Move detection matches unlinked new files to missing files by fingerprint across roots with no time window; ambiguous groups pair only by unique file name, never by guess (§6). |
 | 2026-09 | The DB writer is a dedicated thread applying `Callable[[Connection], T]` jobs in their own transactions and returning futures; scans are applied in parts of at most 500 changes (§6). |
+| 2026-09 | `scan_root()` orchestrates §6 steps 1–4 per root: one fingerprint pass per scan, move detection limited to the scan's new files, and a `ScanReport` for the UI (§6). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

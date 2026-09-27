@@ -60,10 +60,10 @@ class FingerprintResult:
 
 
 def pending_fingerprints(
-    conn: Connection, *, root_id: str | None = None, limit: int = 500
+    conn: Connection, *, root_id: str | None = None, limit: int | None = 500
 ) -> list[FingerprintJob]:
     """Files that are ``ok`` and have no fingerprint, newest first (move detection needs new
-    files first)."""
+    files first). ``limit=None`` returns them all."""
     query = (
         select(Resource.id, Resource.root_id, Resource.relpath, Resource.size, Resource.mtime_ns)
         .where(
@@ -73,7 +73,7 @@ def pending_fingerprints(
             Resource.parent_resource_id.is_(None),
         )
         .order_by(Resource.id.desc())
-        .limit(limit)
+        .limit(limit)  # None means no limit
     )
     if root_id is not None:
         query = query.where(Resource.root_id == root_id)
