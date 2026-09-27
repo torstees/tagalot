@@ -71,6 +71,7 @@ src/tagalot/
     closure.py           # entity_ancestor maintenance
     tags.py              # tag tree ops: add/rename/reparent/merge/delete
     tag_service.py       # tag ops through the writer, with undo/redo
+    search_spec.py       # SearchSpec and its JSON form
     search.py            # SearchSpec -> SQLAlchemy query
     thumbnails/          # providers, cache, archive reader
     handlers.py          # open file / reveal / overrides

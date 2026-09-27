@@ -286,6 +286,10 @@ One filter kind per `field(search=...)` kind (§9): `TextFilter` compares case-i
 - **Aggregation (`aggregate_up`)**: a container matches if any descendant matches. Off by default; exposed as an advanced toggle.
 - **Within** restricts results to descendants of one entity (used by drill-down chips and container detail pages).
 
+- **Deleted tags** (for example in a saved search) count as a subtree of just themselves: including one matches nothing, excluding one excludes nothing.
+- **Field filters** resolve field names through a mapping of columns: the core provides `title`, `created_at`, and `updated_at`; themes add theirs (§9). An unknown field is an error, never ignored.
+- **Sorting** follows `sort`, compares titles case-insensitively, and always ends with the entity id, so paging never skips or repeats an item.
+
 ### Query shape
 
 With inheritance, each include group becomes:
@@ -305,7 +309,7 @@ Without inheritance, add `AND a.depth = 0` (or query `entity_tag` directly). Exc
 The search box uses the `entity_fts` table (§5) with the FTS5 **trigram** tokenizer, so text matches **substrings** ("bey" finds "Abbey"), case-insensitively and ignoring diacritics ("beyonce" finds "Beyoncé").
 
 - **Query building:** the user's input is split on whitespace; each term is double-quoted (internal quotes doubled) and the terms are ANDed. Users never see FTS query syntax, and stray quotes or words like `AND` cannot cause syntax errors.
-- **Short terms:** trigram matching needs at least 3 characters. Terms of 1–2 characters fall back to a `LIKE` scan over `entity_fts` (about 10 ms at 50k entities).
+- **Short terms:** trigram matching needs at least 3 characters. Terms of 1–2 characters fall back to a `LIKE` scan over `entity_fts` (about 10 ms at 50k entities), with `%` and `_` escaped. `LIKE` ignores case for ASCII letters only and does not fold diacritics, so a 2-letter non-ASCII term is matched exactly.
 - **Sync:** whenever an entity's title, text-search fields, or `extra` change (ingest, user edit, merge, delete), the DB writer rewrites that entity's `entity_fts` row in the same transaction. A "Rebuild search index" action repopulates the table from scratch.
 - **Field filters** (a `search="text"` field in the filter bar) use ordinary `LIKE` on their own column; FTS is only for the global text box.
 - **Size:** measured at roughly 20 MB of index per 50k entities (about 5× a word-based index). This is accepted; it is small next to `thumbs.db`.
@@ -580,4 +584,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Tag merge merges clashing children recursively and is refused into a descendant; promoting children on delete is refused on name clashes; operations validate against a fresh tree inside their transaction (§7). |
 | 2026-09 | Tag undo/redo restores snapshots of the tag tables plus the operation's own `entity_tag` delta instead of computing inverse operations (§7). |
 | 2026-09 | `SearchSpec` is frozen and uses tuples (hashable); field filters are `TextFilter` (contains or starts-with)/`RangeFilter`/`ChoiceFilter`; its JSON is versioned with tagged dates (§8). |
+| 2026-09 | Search: a deleted tag in a spec is a subtree of itself (include matches nothing, exclude excludes nothing); field names resolve through a column mapping (core: title/created_at/updated_at); results always tie-break on entity id (§8). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

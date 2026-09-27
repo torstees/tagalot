@@ -1,269 +1,206 @@
 """Builds SQLAlchemy queries from a ``SearchSpec`` (DESIGN.md §8).
 
-A :class:`SearchSpec` is an immutable value: tuples rather than lists, so it is hashable and
-can key result caches. Its JSON form (used by saved searches and view state) is versioned.
+Everything is expressed with SQLAlchemy constructs (AGENTS.md rule 10). Tag groups come from a
+:class:`~tagalot.core.tags.TagTree` snapshot, so "this tag or any descendant" is expanded in
+memory and the SQL only sees plain id lists.
 """
 
-import enum
-import json
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from datetime import date, datetime
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
-SPEC_VERSION = 1
+from sqlalchemy import (
+    ColumnElement,
+    Connection,
+    Select,
+    and_,
+    exists,
+    func,
+    literal_column,
+    or_,
+    select,
+)
 
-Scalar = str | int | float | bool | date | datetime
-"""A field value in a filter. Dates and datetimes survive the JSON round trip."""
+from tagalot.core.models import Entity, EntityTag, entity_fts
+from tagalot.core.search_spec import (
+    ChoiceFilter,
+    FieldFilter,
+    RangeFilter,
+    SearchSpec,
+    TextFilter,
+    TextMatch,
+)
+from tagalot.core.tags import TagTree
 
+MIN_TRIGRAM = 3
+"""Terms shorter than this can't use the trigram index and fall back to ``LIKE`` (§8)."""
 
-class SearchSpecError(ValueError):
-    """A search definition is invalid; the message is suitable for showing to the user."""
+CORE_FIELDS: Mapping[str, ColumnElement[Any]] = {
+    "title": Entity.title.expression,
+    "created_at": Entity.created_at.expression,
+    "updated_at": Entity.updated_at.expression,
+}
+"""Fields every entity has. Themes add their own columns to this mapping (M4, M11)."""
 
-
-class TextMatch(enum.Enum):
-    """How a :class:`TextFilter` compares; both ignore case."""
-
-    CONTAINS = "contains"
-    """Anywhere in the value: "road" matches "Abbey Road"."""
-    STARTS_WITH = "starts_with"
-    """At the start of the whole value: "the" matches "The Beatles", not "Abbey Road: The"."""
-
-
-@dataclass(frozen=True)
-class TextFilter:
-    """Compare a ``search="text"`` field with ``text``, ignoring case."""
-
-    field: str
-    text: str
-    match: TextMatch = TextMatch.CONTAINS
-
-
-@dataclass(frozen=True)
-class RangeFilter:
-    """``low <= field <= high``; either bound may be ``None`` (open). For ``search="range"``."""
-
-    field: str
-    low: Scalar | None = None
-    high: Scalar | None = None
-
-
-@dataclass(frozen=True)
-class ChoiceFilter:
-    """The field equals one of ``values``. For ``search="choice"`` fields."""
-
-    field: str
-    values: tuple[Scalar, ...]
+_WHITESPACE = re.compile(r"\s+")
 
 
-FieldFilter = TextFilter | RangeFilter | ChoiceFilter
+class SearchError(ValueError):
+    """A search can't be run as specified; the message is suitable for showing to the user."""
 
 
 @dataclass(frozen=True)
-class SortKey:
-    field: str
-    """``title``, ``created_at``, ``updated_at``, or a field valid for every type in scope."""
-    descending: bool = False
+class SearchHit:
+    id: int
+    type: str
+    title: str
 
 
-@dataclass(frozen=True)
-class SearchSpec:
-    """A search (DESIGN.md §8)."""
+def build_query(
+    spec: SearchSpec,
+    tree: TagTree,
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+) -> Select[int, str, str]:
+    """Return a ``SELECT id, type, title`` for ``spec``, sorted, without paging."""
+    _check_supported(spec)
+    query = select(Entity.id, Entity.type, Entity.title).where(*conditions(spec, tree, fields))
+    return query.order_by(*_order_by(spec, fields))
 
-    types: tuple[str, ...] = ()
-    """Entity types in scope, e.g. ``("music.album", "music.song")``; empty = all types."""
-    include: tuple[int, ...] = ()
-    """Tag ids. Each is expanded to its subtree and every one must match (AND of ORs)."""
-    exclude: tuple[int, ...] = ()
-    """Tag ids, expanded and merged; matching any of them removes the item."""
-    fields: tuple[FieldFilter, ...] = ()
-    within: int | None = None
-    """Restrict to descendants of this entity (drill-down, container pages)."""
-    text: str | None = None
-    """Matches titles, text-search fields, and ``extra`` values."""
-    inherit_tags: bool = False
-    """Tags on ancestors count as the entity's own, for include and exclude."""
-    show_contained: bool = False
-    """Also list descendants of matching containers."""
-    aggregate_up: bool = False
-    """A container matches if any of its descendants does."""
-    sort: tuple[SortKey, ...] = field(default=(SortKey("title"),))
 
-    def __post_init__(self) -> None:
-        text = self.text.strip() if self.text is not None else None
-        object.__setattr__(self, "text", text or None)
-        for name in ("include", "exclude"):
-            ids = getattr(self, name)
-            if not all(isinstance(i, int) and not isinstance(i, bool) and i > 0 for i in ids):
-                raise SearchSpecError(f"{name} must list positive tag ids, not {ids!r}")
-        within = self.within
-        if within is not None and (
-            not isinstance(within, int) or isinstance(within, bool) or within <= 0
-        ):
-            raise SearchSpecError(f"within must be a positive entity id, not {self.within!r}")
+def conditions(
+    spec: SearchSpec,
+    tree: TagTree,
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+) -> list[ColumnElement[bool]]:
+    """The ``WHERE`` clauses for ``spec`` (types, tags, text, fields), ANDed by the caller."""
+    where: list[ColumnElement[bool]] = []
+    if spec.types:
+        where.append(Entity.type.in_(spec.types))
+    for tag_id in spec.include:
+        where.append(_has_any_tag(_subtree(tree, tag_id)))
+    excluded = frozenset().union(*(_subtree(tree, t) for t in spec.exclude))
+    if excluded:
+        where.append(~_has_any_tag(excluded))
+    if spec.text:
+        where.append(text_condition(spec.text))
+    where.extend(_field_condition(f, fields) for f in spec.fields)
+    return where
 
-    # --- JSON ---
 
-    def to_json(self) -> dict[str, Any]:
-        """A JSON-compatible dict; see :meth:`from_json`."""
-        return {
-            "version": SPEC_VERSION,
-            "types": list(self.types),
-            "include": list(self.include),
-            "exclude": list(self.exclude),
-            "fields": [_filter_to_json(f) for f in self.fields],
-            "within": self.within,
-            "text": self.text,
-            "inherit_tags": self.inherit_tags,
-            "show_contained": self.show_contained,
-            "aggregate_up": self.aggregate_up,
-            "sort": [{"field": k.field, "descending": k.descending} for k in self.sort],
-        }
+def text_condition(text: str) -> ColumnElement[bool]:
+    """Match the search box text against ``entity_fts`` (§8).
 
-    @classmethod
-    def from_json(cls, data: Mapping[str, Any]) -> "SearchSpec":
-        """Rebuild a spec. Missing keys take their defaults and unknown keys are ignored, so
-        older and newer builds can share saved searches; a newer ``version`` is refused."""
-        if not isinstance(data, Mapping):
-            raise SearchSpecError("A saved search must be a JSON object.")
-        version = data.get("version", SPEC_VERSION)
-        if not isinstance(version, int) or version > SPEC_VERSION:
-            raise SearchSpecError(
-                f"This search was saved by a newer version of Tagalot (format {version})."
+    The text is split on whitespace and every term must match somewhere in the title or body.
+    Terms of three or more characters are quoted trigram ``MATCH`` terms, so quotes, ``AND``,
+    and ``*`` in the input are ordinary characters. Shorter terms use ``LIKE`` (with ``%``
+    and ``_`` escaped), because the trigram index can't match them.
+    """
+    terms = [t for t in _WHITESPACE.split(text.strip()) if t]
+    long_terms = [t for t in terms if len(t) >= MIN_TRIGRAM]
+    short_terms = [t for t in terms if len(t) < MIN_TRIGRAM]
+    matching = select(entity_fts.c.rowid)
+    if long_terms:
+        query = " ".join('"' + t.replace('"', '""') + '"' for t in long_terms)
+        matching = matching.where(literal_column(entity_fts.name).match(query))
+    for term in short_terms:
+        matching = matching.where(
+            or_(
+                entity_fts.c.title.icontains(term, autoescape=True),
+                entity_fts.c.body.icontains(term, autoescape=True),
             )
-        defaults = cls()
-        try:
-            return cls(
-                types=tuple(_strings(data.get("types", []), "types")),
-                include=tuple(_list(data.get("include", []), "include")),
-                exclude=tuple(_list(data.get("exclude", []), "exclude")),
-                fields=tuple(_filter_from_json(f) for f in _list(data.get("fields", []), "fields")),
-                within=data.get("within"),
-                text=_optional_str(data.get("text"), "text"),
-                inherit_tags=_bool(data, "inherit_tags", defaults.inherit_tags),
-                show_contained=_bool(data, "show_contained", defaults.show_contained),
-                aggregate_up=_bool(data, "aggregate_up", defaults.aggregate_up),
-                sort=tuple(_sort_from_json(k) for k in _list(data.get("sort"), "sort"))
-                if "sort" in data
-                else defaults.sort,
-            )
-        except (KeyError, TypeError) as e:
-            raise SearchSpecError(f"Invalid saved search: {e}") from e
-
-    def dumps(self) -> str:
-        """Compact JSON text (for ``saved_search.definition`` and ``ui_state.json``)."""
-        return json.dumps(self.to_json(), ensure_ascii=False, separators=(",", ":"))
-
-    @classmethod
-    def loads(cls, text: str) -> "SearchSpec":
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise SearchSpecError(f"A saved search is not valid JSON: {e}") from e
-        return cls.from_json(data)
-
-
-# --- JSON helpers ---
-
-
-def _scalar_to_json(value: Scalar | None) -> Any:
-    # datetime is a subclass of date, so test it first.
-    if isinstance(value, datetime):
-        return {"$datetime": value.isoformat()}
-    if isinstance(value, date):
-        return {"$date": value.isoformat()}
-    return value
-
-
-def _scalar_from_json(value: Any, where: str) -> Scalar | None:
-    if isinstance(value, dict):
-        try:
-            if set(value) == {"$datetime"}:
-                return datetime.fromisoformat(value["$datetime"])
-            if set(value) == {"$date"}:
-                return date.fromisoformat(value["$date"])
-        except (TypeError, ValueError) as e:
-            raise SearchSpecError(f"{where}: invalid date {value!r}") from e
-        raise SearchSpecError(f"{where}: unexpected value {value!r}")
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    raise SearchSpecError(f"{where}: unexpected value {value!r}")
-
-
-def _filter_to_json(f: FieldFilter) -> dict[str, Any]:
-    match f:
-        case TextFilter():
-            return {"kind": "text", "field": f.field, "text": f.text, "match": f.match.value}
-        case RangeFilter():
-            return {
-                "kind": "range",
-                "field": f.field,
-                "low": _scalar_to_json(f.low),
-                "high": _scalar_to_json(f.high),
-            }
-        case ChoiceFilter():
-            return {
-                "kind": "choice",
-                "field": f.field,
-                "values": [_scalar_to_json(v) for v in f.values],
-            }
-
-
-def _filter_from_json(data: Any) -> FieldFilter:
-    if not isinstance(data, dict) or not isinstance(data.get("field"), str):
-        raise SearchSpecError(f"Invalid field filter {data!r}")
-    name, kind = data["field"], data.get("kind")
-    where = f"filter on {name!r}"
-    if kind == "text":
-        text = data.get("text")
-        if not isinstance(text, str):
-            raise SearchSpecError(f"{where}: 'text' must be text")
-        try:
-            match = TextMatch(data.get("match", TextMatch.CONTAINS.value))
-        except ValueError as e:
-            raise SearchSpecError(f"{where}: unknown match {data.get('match')!r}") from e
-        return TextFilter(name, text, match)
-    if kind == "range":
-        return RangeFilter(
-            name,
-            _scalar_from_json(data.get("low"), where),
-            _scalar_from_json(data.get("high"), where),
         )
-    if kind == "choice":
-        values = tuple(_scalar_from_json(v, where) for v in _list(data.get("values"), where))
-        if any(v is None for v in values):
-            raise SearchSpecError(f"{where}: choices can't be empty")
-        return ChoiceFilter(name, values)  # type: ignore[arg-type]
-    raise SearchSpecError(f"{where}: unknown kind {kind!r}")
+    return Entity.id.in_(matching)
 
 
-def _sort_from_json(data: Any) -> SortKey:
-    if not isinstance(data, dict) or not isinstance(data.get("field"), str):
-        raise SearchSpecError(f"Invalid sort key {data!r}")
-    return SortKey(data["field"], _bool(data, "descending", False))
+def run_search(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    *,
+    offset: int = 0,
+    limit: int | None = 100,
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+) -> list[SearchHit]:
+    """One page of results, in sort order."""
+    query = build_query(spec, tree, fields).offset(offset).limit(limit)
+    return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]
 
 
-def _list(value: Any, where: str) -> list[Any]:
-    if not isinstance(value, list):
-        raise SearchSpecError(f"{where} must be a list")
-    return value
+def count_matches(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+) -> int:
+    """How many entities match ``spec`` (for "123 results")."""
+    _check_supported(spec)
+    query = select(func.count()).select_from(Entity).where(*conditions(spec, tree, fields))
+    return int(conn.scalar(query) or 0)
 
 
-def _strings(value: Any, where: str) -> list[str]:
-    items = _list(value, where)
-    if not all(isinstance(v, str) for v in items):
-        raise SearchSpecError(f"{where} must be a list of text")
-    return items
+def _check_supported(spec: SearchSpec) -> None:
+    pending = [
+        name
+        for name, on in [
+            ("inherit_tags", spec.inherit_tags),
+            ("show_contained", spec.show_contained),
+            ("aggregate_up", spec.aggregate_up),
+            ("within", spec.within is not None),
+        ]
+        if on
+    ]
+    if pending:
+        # Containment semantics need the closure table (issues #35 and #38).
+        raise NotImplementedError(f"Not supported yet: {', '.join(pending)}")
 
 
-def _optional_str(value: Any, where: str) -> str | None:
-    if value is not None and not isinstance(value, str):
-        raise SearchSpecError(f"{where} must be text")
-    return value
+def _subtree(tree: TagTree, tag_id: int) -> frozenset[int]:
+    """A tag's subtree; a tag no longer in the tree (e.g. from a saved search) is just itself,
+    so including it matches nothing and excluding it excludes nothing."""
+    return tree.descendants(tag_id) if tag_id in tree else frozenset({tag_id})
 
 
-def _bool(data: Mapping[str, Any], key: str, default: bool) -> bool:
-    value = data.get(key, default)
-    if not isinstance(value, bool):
-        raise SearchSpecError(f"{key} must be true or false")
-    return value
+def _has_any_tag(tag_ids: frozenset[int]) -> ColumnElement[bool]:
+    return exists().where(EntityTag.entity_id == Entity.id, EntityTag.tag_id.in_(tag_ids))
+
+
+def _column(name: str, fields: Mapping[str, ColumnElement[Any]]) -> ColumnElement[Any]:
+    try:
+        return fields[name]
+    except KeyError:
+        raise SearchError(f"Unknown field {name!r} for this search.") from None
+
+
+def _field_condition(
+    f: FieldFilter, fields: Mapping[str, ColumnElement[Any]]
+) -> ColumnElement[bool]:
+    column = _column(f.field, fields)
+    match f:
+        case TextFilter(text=text, match=TextMatch.STARTS_WITH):
+            return column.istartswith(text, autoescape=True)
+        case TextFilter(text=text):
+            return column.icontains(text, autoescape=True)
+        case RangeFilter(low=low, high=high):
+            bounds: list[ColumnElement[bool]] = []
+            if low is not None:
+                bounds.append(column >= low)
+            if high is not None:
+                bounds.append(column <= high)
+            # Both ends open: any value, but not a missing one.
+            return and_(*bounds) if bounds else column.is_not(None)
+        case ChoiceFilter(values=values):
+            return column.in_(values)
+
+
+def _order_by(
+    spec: SearchSpec, fields: Mapping[str, ColumnElement[Any]]
+) -> Sequence[ColumnElement[Any]]:
+    keys: list[ColumnElement[Any]] = []
+    for key in spec.sort:
+        column = _column(key.field, fields)
+        if key.field == "title":
+            column = column.collate("NOCASE")
+        keys.append(column.desc() if key.descending else column.asc())
+    keys.append(Entity.id.asc())  # stable order, so paging never skips or repeats
+    return keys
