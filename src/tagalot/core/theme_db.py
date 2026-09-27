@@ -9,8 +9,9 @@ in place; changing a field's type is not supported.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from sqlalchemy import Connection, Engine, Table, insert, inspect, select, update
 from sqlalchemy.schema import CreateColumn
@@ -20,6 +21,7 @@ from tagalot.core.keep import Keep, KeepError, save_keep_config
 from tagalot.core.models import SchemaVersion
 from tagalot.core.theme_schema import SchemaBuildError, ThemeSchema, build_theme_schema
 from tagalot.themes.api import IngestContext, Theme
+from tagalot.themes.loader import ThemeCatalog, load_themes
 
 logger = logging.getLogger(__name__)
 
@@ -164,3 +166,46 @@ def _add_column(conn: Connection, table: Table, name: str) -> None:
     column_ddl = CreateColumn(table.c[name]).compile(dialect=conn.dialect)
     table_name = conn.dialect.identifier_preparer.quote(table.name)
     conn.exec_driver_sql(f"ALTER TABLE {table_name} ADD COLUMN {column_ddl}")
+
+
+# --- Choosing and reloading a keep's theme ---
+
+
+def resolve_theme(catalog: ThemeCatalog, keep: Keep) -> type[Theme]:
+    """The keep's theme from ``catalog``, or :class:`KeepThemeError` explaining why it isn't
+    available: not installed, or its file had problems (listed with their paths)."""
+    theme_id = keep.config.theme.id
+    loaded = catalog.get(theme_id)
+    if loaded is not None:
+        return loaded.theme
+    message = f"This keep uses the {theme_id!r} theme, which isn't available."
+    if catalog.problems:
+        details = "\n".join(f"- {p.source}: {p.message}" for p in catalog.problems)
+        message += f" These theme files have problems (one may be {theme_id!r}):\n{details}"
+    else:
+        message += " Install it, or add the folder it is in to the theme folders in settings."
+    raise KeepThemeError(message)
+
+
+def reload_theme(
+    engine: Engine,
+    keep: Keep,
+    *,
+    extra_dirs: Iterable[Path] = (),
+    user_dir: Path | None = None,
+    allow_migration: bool = False,
+    make_context: ContextFactory | None = None,
+) -> tuple[OpenTheme, ThemeCatalog]:
+    """Reload themes from disk and reopen ``keep``'s theme without restarting.
+
+    User theme files are imported fresh (built-in themes ship with the app and stay as they
+    are). Added entity types and fields take effect at once; a version bump raises
+    :class:`KeepNeedsMigration` as on open. If the edited theme is broken, this raises
+    :class:`KeepThemeError` and changes nothing, so the caller keeps its previous schema.
+    """
+    catalog = load_themes(extra_dirs=extra_dirs, user_dir=user_dir)
+    theme = resolve_theme(catalog, keep)
+    opened = open_theme(
+        engine, keep, theme, allow_migration=allow_migration, make_context=make_context
+    )
+    return opened, catalog
