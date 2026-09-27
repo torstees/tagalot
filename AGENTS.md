@@ -73,6 +73,7 @@ src/tagalot/
     tag_service.py       # tag ops through the writer, with undo/redo
     search_spec.py       # SearchSpec and its JSON form
     search.py            # SearchSpec -> SQLAlchemy query
+    fts.py               # keeping entity_fts in sync; rebuild
     thumbnails/          # providers, cache, archive reader
     handlers.py          # open file / reveal / overrides
     dedupe.py
@@ -111,6 +112,7 @@ docs/DESIGN.md
 - Small, focused modules. Docstrings on public functions and on everything in `themes/api.py`.
 - Errors from bad files (corrupt archives, unreadable tags, permission errors) are caught, logged with the path, surfaced in the activity panel, and never crash a scan.
 - Use `logging` (module-level loggers), not `print`.
+- Code that creates or deletes entities, or changes an entity's `title`, `extra`, or text-search fields, calls `core.fts.sync_entities()` for them in the same transaction. The search index has no triggers; `rebuild_search_index()` is only a repair tool.
 - Qt: use model/view classes for lists and trees with many rows; don't populate `QListWidget`/`QTreeWidget` with thousands of items.
 
 ## Testing
