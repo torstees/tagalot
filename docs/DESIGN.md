@@ -287,6 +287,12 @@ One filter kind per `field(search=...)` kind (§9): `TextFilter` compares case-i
 - **Aggregation (`aggregate_up`)**: a container matches if any descendant matches. Off by default; exposed as an advanced toggle.
 - **Within** restricts results to descendants of one entity (used by drill-down chips and container detail pages).
 
+How they combine (the design above leaves these open):
+
+- **Within** means strict descendants (depth ≥ 1); the entity itself is never listed.
+- **Aggregation** lets a container match on tags and text through a descendant that is not itself excluded. Field filters always apply to the listed entity, since they belong to its type, and the container's own exclusion always applies: an excluded album is not brought back by a matching song. With no include tags and no text there is nothing to aggregate, and the toggle has no effect.
+- **Show contained** lists the matches plus every descendant of a match, regardless of `types` (that is the point: search albums, see their songs) and without re-applying include, text, or field filters to those descendants, which are shown because of their container. Exclusion still applies to them, as §8 says matching any excluded tag removes the item. Each entity is listed once even when two matching containers share it.
+
 - **Deleted tags** (for example in a saved search) count as a subtree of just themselves: including one matches nothing, excluding one excludes nothing.
 - **Field filters** resolve field names through a mapping of columns: the core provides `title`, `created_at`, and `updated_at`; themes add theirs (§9). An unknown field is an error, never ignored.
 - **Sorting** follows `sort`, compares titles case-insensitively, and always ends with the entity id, so paging never skips or repeats an item.
@@ -587,4 +593,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | `SearchSpec` is frozen and uses tuples (hashable); field filters are `TextFilter` (contains or starts-with)/`RangeFilter`/`ChoiceFilter`; its JSON is versioned with tagged dates (§8). |
 | 2026-09 | Search: a deleted tag in a spec is a subtree of itself (include matches nothing, exclude excludes nothing); field names resolve through a column mapping (core: title/created_at/updated_at); results always tie-break on entity id (§8). |
 | 2026-09 | Closure API: `apply` (removals first, ordered cycle checks, returns rejections), `add_entities` for self rows, and `detach` before deleting entities; affected ids use a temporary table (§6). |
+| 2026-09 | Containment search: `within` is strict; `aggregate_up` matches tags and text via non-excluded descendants while field filters and exclusion apply to the container; `show_contained` adds descendants regardless of types, subject only to exclusion (§8). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

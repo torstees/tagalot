@@ -208,19 +208,3 @@ def test_hits_carry_type_and_title(engine: Engine, tree: TagTree) -> None:
     with engine.connect() as conn:
         [hit] = run_search(conn, SearchSpec(include=(BEBOP,)), tree)
     assert (hit.id, hit.type, hit.title) == (4, SONG, "So What")
-
-
-@pytest.mark.parametrize(
-    "spec",
-    [
-        SearchSpec(inherit_tags=True),
-        SearchSpec(show_contained=True),
-        SearchSpec(aggregate_up=True),
-        SearchSpec(within=1),
-    ],
-)
-def test_containment_options_are_not_silently_ignored(
-    engine: Engine, tree: TagTree, spec: SearchSpec
-) -> None:
-    with pytest.raises(NotImplementedError, match="Not supported yet"):
-        _ids(engine, tree, spec)
