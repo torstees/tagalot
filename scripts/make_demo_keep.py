@@ -45,12 +45,42 @@ JUNK = {
 }
 
 
+class DemoInUseError(Exception):
+    """The demo keep or its files are open elsewhere (usually in Tagalot); nothing was deleted."""
+
+
+def _remove(folders: list[Path]) -> None:
+    """Delete ``folders`` completely, or not at all.
+
+    Each is first renamed aside. Windows refuses to rename a folder while a file in it is open
+    (Tagalot holding ``keep.db``), so an open keep stops the reset before anything is deleted,
+    instead of leaving a half-deleted keep behind.
+    """
+    moved: list[tuple[Path, Path]] = []
+    for folder in folders:
+        if not folder.exists():
+            continue
+        aside = folder.with_name(folder.name + ".deleting")
+        shutil.rmtree(aside, ignore_errors=True)  # left over from an interrupted reset
+        try:
+            folder.rename(aside)
+        except OSError as e:
+            for original, renamed in reversed(moved):
+                renamed.rename(original)
+            raise DemoInUseError(
+                f"Can't reset: {folder} is in use ({e.strerror}). Close Tagalot (and any window "
+                "showing that folder), then try again. Nothing was deleted."
+            ) from e
+        moved.append((folder, aside))
+    for _, aside in moved:
+        shutil.rmtree(aside)
+
+
 def make_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/demo-files`` and ``scratch/Demo.keep``; returns the keep folder."""
     files, keep_dir = scratch / "demo-files", scratch / "Demo.keep"
     if reset:
-        for path in (keep_dir, files):
-            shutil.rmtree(path, ignore_errors=True)
+        _remove([keep_dir, files])
     elif keep_dir.exists():
         raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
 
@@ -82,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         keep_dir = make_demo(reset=args.reset)
-    except FileExistsError as e:
+    except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
     print(f"Created {keep_dir.relative_to(REPO)} watching scratch/demo-files.")
