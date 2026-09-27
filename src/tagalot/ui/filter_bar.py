@@ -55,11 +55,13 @@ CLOSE_MARK = chr(0x00D7)  # MULTIPLICATION SIGN, the usual "remove" mark on a ch
 @dataclass(frozen=True)
 class Filters:
     """What the filter bar currently asks for: tag ids to include (each must match, with
-    its descendants), tag ids to exclude, and the search text."""
+    its descendants), tag ids to exclude, the search text, and ``only``, a type id the
+    global search is narrowed to ("Show all" on one of its sections)."""
 
     include: tuple[int, ...] = ()
     exclude: tuple[int, ...] = ()
     text: str = ""
+    only: str | None = None
 
 
 class FlowLayout(QLayout):
@@ -168,6 +170,34 @@ class Chip(QFrame):
         else:
             self.setToolTip(f"Only items tagged {path}, or with any tag under it")
         self.close_button.setToolTip("Remove this filter")
+
+
+class ScopeChip(QFrame):
+    """``[Only: Album x]``: the global search narrowed to one type."""
+
+    removed = Signal()
+
+    def __init__(self, type_id: str, label: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.type_id = type_id
+        self.setObjectName("scope_chip")
+        self.label = QLabel(f"Only: {label}")
+        self.close_button = QToolButton()
+        self.close_button.setText(CLOSE_MARK)
+        self.close_button.setAutoRaise(True)
+        self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_button.setToolTip("Show every type again")
+        self.close_button.clicked.connect(self.removed)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 1, 2, 1)
+        layout.setSpacing(2)
+        layout.addWidget(self.label)
+        layout.addWidget(self.close_button)
+        self.setToolTip(f"Only {label} results are listed")
+        self.setStyleSheet(
+            "#scope_chip { background: rgba(128, 128, 128, 0.18);"
+            " border: 1px solid rgba(128, 128, 128, 0.8); border-radius: 11px; }"
+        )
 
 
 class TagBox(QLineEdit):
@@ -324,6 +354,7 @@ class FilterBar(QWidget):
         self._include: list[int] = []
         self._exclude: list[int] = []
         self._chips: dict[int, Chip] = {}
+        self._only: ScopeChip | None = None
         self._applied_text = ""
 
         self.text_edit = QLineEdit()
@@ -368,7 +399,22 @@ class FilterBar(QWidget):
     # --- state ---
 
     def filters(self) -> Filters:
-        return Filters(tuple(self._include), tuple(self._exclude), self._applied_text)
+        only = self._only.type_id if self._only is not None else None
+        return Filters(tuple(self._include), tuple(self._exclude), self._applied_text, only)
+
+    def set_only(self, type_id: str | None, label: str = "") -> None:
+        """Show an "Only: <label>" chip (first), or remove it with ``None``."""
+        if self._only is not None:
+            if self._only.type_id == type_id:
+                return
+            self.chip_layout.removeWidget(self._only)
+            self._only.deleteLater()
+            self._only = None
+        if type_id is not None:
+            self._only = ScopeChip(type_id, label)
+            self._only.removed.connect(lambda: self.set_only(None))
+            self.chip_layout.insert_widget(0, self._only)
+        self._changed()
 
     def set_tree(self, tree: TagTree) -> None:
         """Use ``tree`` for chip names and suggestions (loaded in a worker by the page)."""
@@ -389,8 +435,8 @@ class FilterBar(QWidget):
         chip.set_tree(self.tree)
         chip.removed.connect(self.remove_tag)
         self._chips[tag_id] = chip
-        # Include chips come first, then exclude chips, then "Clear all".
-        position = (
+        # The "Only" chip, include chips, exclude chips, then "Clear all".
+        position = int(self._only is not None) + (
             len(self._include) - 1 if not exclude else len(self._include) + len(self._exclude) - 1
         )
         self.chip_layout.insert_widget(position, chip)
@@ -405,6 +451,10 @@ class FilterBar(QWidget):
         """Remove every chip and the text."""
         for tag_id in list(self._chips):
             self._drop(tag_id)
+        if self._only is not None:
+            self.chip_layout.removeWidget(self._only)
+            self._only.deleteLater()
+            self._only = None
         self.text_edit.clear()
         self._text_timer.stop()
         self._applied_text = ""
@@ -428,6 +478,6 @@ class FilterBar(QWidget):
             self._changed()
 
     def _changed(self) -> None:
-        self.chip_area.setVisible(bool(self._chips))
+        self.chip_area.setVisible(bool(self._chips) or self._only is not None)
         self.chip_layout.invalidate()
         self.changed.emit(self.filters())

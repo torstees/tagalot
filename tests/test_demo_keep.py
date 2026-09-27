@@ -9,11 +9,12 @@ import pytest
 from sqlalchemy import select
 
 from tagalot.core.models import Entity
-from tagalot.core.search import run_search
+from tagalot.core.search import count_by_type, run_search
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.tags import TagTree
+from tagalot.themes.loader import load_themes
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "make_demo_keep.py"
 
@@ -94,3 +95,23 @@ def test_a_failed_reset_puts_everything_back(
     assert (tmp_path / "Demo.keep" / "keep.toml").exists()  # renamed aside, then back
     assert not (tmp_path / "Demo.keep.deleting").exists()
     assert (tmp_path / "demo-files" / "readme.md").exists()
+
+
+def test_creates_a_media_keep_with_several_types(tmp_path: Path) -> None:
+    script = _script()
+    themes = tmp_path / "themes"
+    keep_dir = script.make_media_demo(tmp_path, themes_dir=themes)
+    assert (themes / script.MEDIA_THEME_FILE).exists()
+    catalog = load_themes(user_dir=themes)
+    with KeepSession.open(keep_dir, Settings(), catalog=catalog) as session:
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            love = count_by_type(conn, SearchSpec(text="love"), tree)
+            rock = count_by_type(conn, SearchSpec(include=_ids(tree, "Rock")), tree)
+    assert everything == {"demo_media.artist": 5, "demo_media.album": 11, "demo_media.song": 6}
+    assert love == {"demo_media.artist": 2, "demo_media.album": 6, "demo_media.song": 2}
+    assert rock == {"demo_media.artist": 2, "demo_media.album": 2, "demo_media.song": 2}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_media_demo(tmp_path, themes_dir=themes)
+    assert script.make_media_demo(tmp_path, reset=True, themes_dir=themes) == keep_dir

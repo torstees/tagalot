@@ -121,6 +121,24 @@ def count_matches(
     return int(conn.scalar(query) or 0)
 
 
+def count_by_type(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+) -> dict[str, int]:
+    """How many entities of each type the search lists (the global search's sections, §8).
+
+    Types with no matches are absent. One query, however many types there are.
+    """
+    query = (
+        select(Entity.type, func.count())
+        .where(_Filter(spec, tree, fields).result())
+        .group_by(Entity.type)
+    )
+    return {type_: int(n) for type_, n in conn.execute(query)}
+
+
 # --- Building the filter (DESIGN.md §8 "Semantics") ---
 
 

@@ -64,7 +64,8 @@ def test_layout(qtbot: QtBot, session: KeepSession) -> None:
     ]
     page = window.stack.currentWidget()
     assert isinstance(page, SearchPage)  # "Search all" is the default page
-    assert page.model.spec == SearchSpec()
+    assert page.grouped
+    assert page.current_spec() == SearchSpec()
     assert window.tags_dock.isVisible()
 
 

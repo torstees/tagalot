@@ -18,7 +18,7 @@ from tagalot.core.models import Entity
 from tagalot.core.search import CORE_FIELDS, SearchHit
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
-from tagalot.themes.api import FieldInfo, SearchView
+from tagalot.themes.api import FieldInfo, SearchView, entity_label, entity_plural
 
 
 def scoped_tables(schema: ThemeSchema, types: Sequence[str]) -> list[EntityTable]:
@@ -103,5 +103,10 @@ def view_spec(schema: ThemeSchema, view: SearchView) -> SearchSpec:
 
 
 def type_labels(schema: ThemeSchema) -> Mapping[str, str]:
-    """``{type id: display name}`` for the theme's entity types (the class name)."""
-    return {t.type_id: t.entity.__name__ for t in schema.entities.values()}
+    """``{type id: display name}`` for the theme's entity types ("Album")."""
+    return {t.type_id: entity_label(t.entity) for t in schema.entities.values()}
+
+
+def type_plurals(schema: ThemeSchema) -> Mapping[str, str]:
+    """``{type id: plural display name}`` for the theme's entity types ("Albums")."""
+    return {t.type_id: entity_plural(t.entity) for t in schema.entities.values()}
