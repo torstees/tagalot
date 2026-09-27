@@ -451,6 +451,14 @@ Themes read and write keep data only through the context object `ctx` passed to 
 
 Batch items are read-only `ResourceInfo` values: root id, relative path, kind, extension, size, mtime, and a readable local path. Themes may open files for reading; they must never write under a root.
 
+Implementation details (`core/ingest.py`, `IngestSession`):
+
+- **Provenance:** `upsert` records `extracted` provenance for the title and every field it writes, and skips any the user edited (`user`), title included; the entity is still found by its ingest key after the user renames it.
+- **Validation:** an unknown field, a role not declared on that type, undeclared containment, a relationship between the wrong types, or a type from another theme raises `IngestError` (a theme bug; the pipeline reports it per batch).
+- **Single-valued roles** (`many=False`) keep one resource: linking another replaces it. Relinking updates `sort_order`. Likewise a `many=False` relationship keeps one `a` per `b`.
+- **Batching:** containment edges and search-index updates are collected and applied by `flush()` (`closure.apply`, whose rejected edges become warnings, then `fts.sync_entities` with the theme's `search="text"` fields). The pipeline calls `flush()` before each transaction commits.
+- `ctx.warn()` collects warnings (root, relative path, message) for the activity panel.
+
 ### Views
 
 - `SearchView(name, types, *, inherit_tags=False, show_contained=False, layout="grid"|"list"|"tree", default_sort=...)`.
@@ -627,4 +635,5 @@ Keep configuration and the keep launcher are separate windows/dialogs.
 | 2026-09 | Theme tables: non-nullable scalar fields get database defaults, non-nullable dates are rejected, range/choice fields are indexed, names are namespaced by theme id, and all problems are reported together (§5). |
 | 2026-09 | Theme loading never raises: unique module names per file, per-file problems, first duplicate id wins, built-in placeholders skipped, full declaration validation plus a trial table build (§9). |
 | 2026-09 | Theme versions mirror core versions (keep.toml + `schema_version`, backup, one-transaction migrate). The core applies additive schema changes on every open, so `Theme.migrate()` now defaults to a no-op (API change) and is only for data changes (§9). |
+| 2026-09 | Ingest context: provenance-respecting upserts (title included), `IngestError` for theme mistakes, single-valued roles and `many=False` relationships replace, containment and index updates batched until `flush()` (§9). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
