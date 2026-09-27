@@ -1,0 +1,281 @@
+"""Tag operations with a session undo/redo history (DESIGN.md §7).
+
+Every operation runs through the DB writer as one transaction that also records a
+:class:`TagChange`: full snapshots of the (small) ``tag`` and ``tag_alias`` tables before and
+after, plus the ``entity_tag`` rows the operation removed and added within its scope. Undo
+restores the "before" tables and reverses the ``entity_tag`` delta; redo does the opposite.
+Neither re-runs the operation. Tagging done between an operation and its undo is untouched,
+because only the operation's own delta is reversed.
+"""
+
+import logging
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import Connection, delete, insert, select, tuple_, update
+
+from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
+from tagalot.core.tags import (
+    DeleteMode,
+    TagTree,
+    TagTreeCache,
+    add_alias,
+    add_tag,
+    delete_tag,
+    merge_tags,
+    remove_alias,
+    rename_tag,
+    reparent_tag,
+    set_tag_color,
+)
+from tagalot.core.writer import DbWriter
+
+logger = logging.getLogger(__name__)
+
+MAX_HISTORY = 100
+"""Undo steps kept per session."""
+
+TagRow = tuple[int, int | None, str, str | None, int]
+"""``(id, parent_id, name, color, sort_order)``."""
+EntityTagRow = tuple[int, int, datetime]
+"""``(entity_id, tag_id, added_at)``."""
+
+
+@dataclass(frozen=True)
+class TagChange:
+    """Everything needed to undo and redo one tag operation."""
+
+    label: str
+    """What the user did, e.g. ``Merge 'Bebop' into 'Jazz'``."""
+    tags_before: frozenset[TagRow]
+    tags_after: frozenset[TagRow]
+    aliases_before: frozenset[tuple[int, str]]
+    aliases_after: frozenset[tuple[int, str]]
+    removed: frozenset[EntityTagRow]
+    """``entity_tag`` rows the operation deleted."""
+    added: frozenset[EntityTagRow]
+    """``entity_tag`` rows the operation created."""
+
+
+class TagService:
+    """Runs tag operations through the DB writer, records them for undo, and refreshes the
+    tag tree cache."""
+
+    def __init__(self, writer: DbWriter, cache: TagTreeCache) -> None:
+        self.writer = writer
+        self.cache = cache
+        self._undo: list[TagChange] = []
+        self._redo: list[TagChange] = []
+
+    # --- operations ---
+
+    def add(self, parent_id: int | None, name: str, color: str | None = None) -> int:
+        return self._record(
+            lambda tree: f"Add tag {name.strip()!r}",
+            lambda tree: (),
+            lambda conn: add_tag(conn, parent_id, name, color),
+        )
+
+    def rename(self, tag_id: int, name: str) -> None:
+        self._record(
+            lambda tree: f"Rename {_name(tree, tag_id)!r} to {name.strip()!r}",
+            lambda tree: (),
+            lambda conn: rename_tag(conn, tag_id, name),
+        )
+
+    def reparent(self, tag_id: int, new_parent_id: int | None) -> None:
+        self._record(
+            lambda tree: f"Move {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: reparent_tag(conn, tag_id, new_parent_id),
+        )
+
+    def merge(self, source_id: int, target_id: int) -> None:
+        self._record(
+            lambda tree: f"Merge {_name(tree, source_id)!r} into {_name(tree, target_id)!r}",
+            lambda tree: _subtrees(tree, source_id, target_id),
+            lambda conn: merge_tags(conn, source_id, target_id),
+        )
+
+    def delete(self, tag_id: int, mode: DeleteMode | None = None) -> None:
+        self._record(
+            lambda tree: f"Delete {_name(tree, tag_id)!r}",
+            lambda tree: _subtrees(tree, tag_id),
+            lambda conn: delete_tag(conn, tag_id, mode),
+        )
+
+    def set_color(self, tag_id: int, color: str | None) -> None:
+        self._record(
+            lambda tree: f"Change the color of {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: set_tag_color(conn, tag_id, color),
+        )
+
+    def add_alias(self, tag_id: int, alias: str) -> None:
+        self._record(
+            lambda tree: f"Add alias {alias.strip()!r} to {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: add_alias(conn, tag_id, alias),
+        )
+
+    def remove_alias(self, tag_id: int, alias: str) -> None:
+        self._record(
+            lambda tree: f"Remove alias {alias.strip()!r} from {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: remove_alias(conn, tag_id, alias),
+        )
+
+    # --- history ---
+
+    @property
+    def undo_label(self) -> str | None:
+        """What :meth:`undo` would undo, for the Edit menu; ``None`` if nothing."""
+        return self._undo[-1].label if self._undo else None
+
+    @property
+    def redo_label(self) -> str | None:
+        return self._redo[-1].label if self._redo else None
+
+    def undo(self) -> str | None:
+        """Undo the most recent operation; returns its label, or ``None`` if there is none."""
+        if not self._undo:
+            return None
+        change = self._undo.pop()
+        self._apply(lambda conn: _restore(conn, change, forward=False))
+        self._redo.append(change)
+        return change.label
+
+    def redo(self) -> str | None:
+        """Redo the most recently undone operation; returns its label, or ``None``."""
+        if not self._redo:
+            return None
+        change = self._redo.pop()
+        self._apply(lambda conn: _restore(conn, change, forward=True))
+        self._undo.append(change)
+        return change.label
+
+    def clear_history(self) -> None:
+        self._undo.clear()
+        self._redo.clear()
+
+    # --- internals ---
+
+    def _record[T](
+        self,
+        label: Callable[[TagTree], str],
+        scope: Callable[[TagTree], Iterable[int]],
+        op: Callable[[Connection], T],
+    ) -> T:
+        def job(conn: Connection) -> tuple[T, TagChange]:
+            tree = TagTree.load(conn)
+            tag_ids = frozenset(scope(tree))
+            tags_before, aliases_before = _tag_tables(conn)
+            links_before = _links(conn, tag_ids)
+            result = op(conn)
+            tags_after, aliases_after = _tag_tables(conn)
+            links_after = _links(conn, tag_ids)
+            change = TagChange(
+                label=label(tree),
+                tags_before=tags_before,
+                tags_after=tags_after,
+                aliases_before=aliases_before,
+                aliases_after=aliases_after,
+                removed=links_before - links_after,
+                added=links_after - links_before,
+            )
+            return result, change
+
+        result, change = self._apply(job)
+        self._undo.append(change)
+        del self._undo[:-MAX_HISTORY]
+        self._redo.clear()
+        return result
+
+    def _apply[T](self, job: Callable[[Connection], T]) -> T:
+        try:
+            return self.writer.run(job)
+        finally:
+            self.cache.invalidate()
+
+
+def _name(tree: TagTree, tag_id: int) -> str:
+    return tree.node(tag_id).name if tag_id in tree else f"#{tag_id}"
+
+
+def _subtrees(tree: TagTree, *tag_ids: int) -> frozenset[int]:
+    return tree.expand(t for t in tag_ids if t in tree)
+
+
+def _tag_tables(conn: Connection) -> tuple[frozenset[TagRow], frozenset[tuple[int, str]]]:
+    tags = conn.execute(select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order))
+    aliases = conn.execute(select(TagAlias.tag_id, TagAlias.alias))
+    return frozenset(tuple(r) for r in tags), frozenset(tuple(r) for r in aliases)  # type: ignore[misc]
+
+
+def _links(conn: Connection, tag_ids: frozenset[int]) -> frozenset[EntityTagRow]:
+    if not tag_ids:
+        return frozenset()
+    rows = conn.execute(
+        select(EntityTag.entity_id, EntityTag.tag_id, EntityTag.added_at).where(
+            EntityTag.tag_id.in_(tag_ids)
+        )
+    )
+    return frozenset((e, t, a) for e, t, a in rows)
+
+
+def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
+    """Put the tag tables into the "after" (redo) or "before" (undo) state and replay or
+    reverse the ``entity_tag`` delta, in one transaction."""
+    tags = change.tags_after if forward else change.tags_before
+    aliases = change.aliases_after if forward else change.aliases_before
+    unlink = change.removed if forward else change.added
+    relink = change.added if forward else change.removed
+
+    conn.exec_driver_sql("PRAGMA defer_foreign_keys = ON")  # rows may return in any order
+    current = {row[0]: row for row in _tag_tables(conn)[0]}
+    wanted = {row[0]: row for row in tags}
+    gone = set(current) - set(wanted)
+    if gone:  # tags the change created: their entity_tag rows cascade
+        conn.execute(delete(Tag).where(Tag.id.in_(gone)))
+    missing = [_tag_values(wanted[i]) for i in set(wanted) - set(current)]
+    if missing:
+        conn.execute(insert(Tag), missing)
+    for tag_id in set(wanted) & set(current):
+        if wanted[tag_id] != current[tag_id]:
+            values = _tag_values(wanted[tag_id])
+            del values["id"]
+            conn.execute(update(Tag).where(Tag.id == tag_id).values(**values))
+
+    conn.execute(delete(TagAlias))
+    if aliases:
+        conn.execute(insert(TagAlias), [{"tag_id": t, "alias": a} for t, a in aliases])
+
+    if unlink:
+        pairs = [(e, t) for e, t, _ in unlink]
+        conn.execute(
+            delete(EntityTag).where(tuple_(EntityTag.entity_id, EntityTag.tag_id).in_(pairs))
+        )
+    if relink:
+        existing = set(
+            conn.scalars(select(Entity.id).where(Entity.id.in_({e for e, _, _ in relink})))
+        )
+        rows = [
+            {"entity_id": e, "tag_id": t, "added_at": a}
+            for e, t, a in relink
+            if e in existing and t in wanted
+        ]
+        if rows:
+            conn.execute(insert(EntityTag).prefix_with("OR IGNORE"), rows)
+
+
+def _tag_values(row: TagRow) -> dict[str, Any]:
+    tag_id, parent_id, name, color, sort_order = row
+    return {
+        "id": tag_id,
+        "parent_id": parent_id,
+        "name": name,
+        "color": color,
+        "sort_order": sort_order,
+    }

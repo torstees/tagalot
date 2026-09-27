@@ -9,17 +9,13 @@ import enum
 import logging
 import re
 import threading
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TypeVar
 
 from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, update
 
 from tagalot.core.models import EntityTag, Tag, TagAlias
-from tagalot.core.writer import DbWriter
-
-T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -445,41 +441,3 @@ def _clean_color(color: str | None) -> str | None:
     if not _COLOR.fullmatch(color):
         raise TagError(f"Colors are written as #rrggbb, not {color!r}.")
     return color.lower()
-
-
-class TagService:
-    """Runs tag operations through the DB writer, then invalidates the tag tree cache."""
-
-    def __init__(self, writer: DbWriter, cache: TagTreeCache) -> None:
-        self.writer = writer
-        self.cache = cache
-
-    def _run(self, job: Callable[[Connection], T]) -> T:
-        try:
-            return self.writer.run(job)
-        finally:
-            self.cache.invalidate()
-
-    def add(self, parent_id: int | None, name: str, color: str | None = None) -> int:
-        return self._run(lambda conn: add_tag(conn, parent_id, name, color))
-
-    def rename(self, tag_id: int, name: str) -> None:
-        self._run(lambda conn: rename_tag(conn, tag_id, name))
-
-    def reparent(self, tag_id: int, new_parent_id: int | None) -> None:
-        self._run(lambda conn: reparent_tag(conn, tag_id, new_parent_id))
-
-    def merge(self, source_id: int, target_id: int) -> None:
-        self._run(lambda conn: merge_tags(conn, source_id, target_id))
-
-    def delete(self, tag_id: int, mode: DeleteMode | None = None) -> None:
-        self._run(lambda conn: delete_tag(conn, tag_id, mode))
-
-    def set_color(self, tag_id: int, color: str | None) -> None:
-        self._run(lambda conn: set_tag_color(conn, tag_id, color))
-
-    def add_alias(self, tag_id: int, alias: str) -> None:
-        self._run(lambda conn: add_alias(conn, tag_id, alias))
-
-    def remove_alias(self, tag_id: int, alias: str) -> None:
-        self._run(lambda conn: remove_alias(conn, tag_id, alias))
