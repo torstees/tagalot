@@ -1,0 +1,241 @@
+"""Tests for theme discovery, import, and validation (DESIGN.md §9 "Discovery")."""
+
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from tagalot.themes.api import Theme
+from tagalot.themes.loader import (
+    ThemeCatalog,
+    default_user_themes_dir,
+    load_themes,
+    validate_theme,
+)
+from tests.themes.test_api import MoviesTheme
+
+GOOD = """
+from datetime import date
+from tagalot.themes.api import Entity, SearchView, Theme, field, role
+
+class Track(Entity):
+    year: int | None = field("Year", search="range")
+    roles = [role("audio", kinds={{"audio"}}, primary=True)]
+
+class {cls}(Theme):
+    id, name, version = "{theme_id}", "{name}", 1
+    extensions = {{".flac", ".mp3"}}
+    entities = [Track]
+    views = [SearchView("Tracks", [Track])]
+"""
+
+
+def _write(folder: Path, name: str, source: str) -> Path:
+    path = folder / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(source), encoding="utf-8")
+    return path
+
+
+def _good(theme_id: str, cls: str = "T", name: str = "Good") -> str:
+    return GOOD.format(theme_id=theme_id, cls=cls, name=name)
+
+
+def _load(folder: Path, *extra: Path) -> ThemeCatalog:
+    return load_themes(extra_dirs=extra, user_dir=folder, include_builtin=False)
+
+
+def _messages(catalog: ThemeCatalog, path: Path) -> list[str]:
+    return [p.message for p in catalog.problems_for(str(path))]
+
+
+def test_loads_a_theme_file(tmp_path: Path) -> None:
+    path = _write(tmp_path, "tunes.py", _good("tunes"))
+    catalog = _load(tmp_path)
+    assert catalog.problems == []
+    loaded = catalog.get("tunes")
+    assert loaded is not None
+    assert loaded.theme.name == "Good"
+    assert (loaded.source, loaded.builtin) == (str(path), False)
+
+
+def test_loads_a_package_theme_with_its_own_modules(tmp_path: Path) -> None:
+    _write(tmp_path, "pkg_theme/helpers.py", "LABEL = 'From a helper'\n")
+    _write(
+        tmp_path,
+        "pkg_theme/__init__.py",
+        _good("pkgtheme")
+        .replace('"Good"', "LABEL")
+        .replace(
+            "from datetime import date", "from datetime import date\nfrom .helpers import LABEL"
+        ),
+    )
+    catalog = _load(tmp_path)
+    assert catalog.problems == []
+    loaded = catalog.get("pkgtheme")
+    assert loaded is not None
+    assert loaded.theme.name == "From a helper"
+
+
+def test_extra_folders_are_searched_after_the_user_folder(tmp_path: Path) -> None:
+    user, extra = tmp_path / "user", tmp_path / "extra"
+    _write(user, "a.py", _good("aaa"))
+    _write(extra, "b.py", _good("bbb"))
+    assert set(_load(user, extra).themes) == {"aaa", "bbb"}
+
+
+def test_ignored_and_missing_paths(tmp_path: Path) -> None:
+    _write(tmp_path, "_private.py", "raise RuntimeError('never imported')")
+    _write(tmp_path, ".hidden.py", "raise RuntimeError('never imported')")
+    _write(tmp_path, "notes.txt", "not a theme")
+    _write(tmp_path, "folder_without_init/theme.py", "raise RuntimeError('never imported')")
+    catalog = _load(tmp_path, tmp_path / "does-not-exist")
+    assert (catalog.themes, catalog.problems) == ({}, [])
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        ("def broken(:\n", "SyntaxError"),
+        ("import tagalot_nonexistent_module\n", "ModuleNotFoundError"),
+        ("x = 1\nraise RuntimeError('boom at import')\n", "RuntimeError: boom at import"),
+        ("import sys\nsys.exit(3)\n", "SystemExit"),
+        ("x = 1\n", "defines no Theme subclass"),
+    ],
+)
+def test_broken_files_are_reported_and_others_still_load(
+    tmp_path: Path, source: str, message: str
+) -> None:
+    bad = _write(tmp_path, "bad.py", source)
+    _write(tmp_path, "good.py", _good("good"))
+    catalog = _load(tmp_path)  # never raises
+    assert "good" in catalog.themes
+    [problem] = _messages(catalog, bad)
+    assert message in problem
+
+
+def test_the_line_of_an_import_error_is_reported(tmp_path: Path) -> None:
+    bad = _write(tmp_path, "bad.py", "a = 1\nb = 2\nc = 1 / 0\n")
+    [problem] = _messages(_load(tmp_path), bad)
+    assert "line 3" in problem
+    assert "ZeroDivisionError" in problem
+
+
+def test_two_themes_in_one_module(tmp_path: Path) -> None:
+    source = _good("one") + "\nclass Second(T):\n    id = 'two'\n"
+    path = _write(tmp_path, "two.py", source)
+    catalog = _load(tmp_path)
+    assert catalog.themes == {}
+    assert "defines 2 Theme subclasses (Second, T)" in _messages(catalog, path)[0]
+
+
+def test_imported_theme_classes_dont_count(tmp_path: Path) -> None:
+    # A module that imports another theme class still defines exactly one of its own.
+    source = _good("mine") + "\nfrom tests.themes.test_api import MoviesTheme  # noqa\n"
+    _write(tmp_path, "mine.py", source)
+    assert set(_load(tmp_path).themes) == {"mine"}
+
+
+def test_duplicate_ids_first_one_wins(tmp_path: Path) -> None:
+    first = _write(tmp_path, "a_first.py", _good("same", name="First"))
+    second = _write(tmp_path, "b_second.py", _good("same", name="Second"))
+    catalog = _load(tmp_path)
+    assert catalog.themes["same"].theme.name == "First"
+    assert _messages(catalog, second) == [f"theme id 'same' is already provided by {first}"]
+
+
+def test_reloading_a_folder_picks_up_edits(tmp_path: Path) -> None:
+    path = _write(tmp_path, "edit.py", _good("edit", name="Before"))
+    assert _load(tmp_path).themes["edit"].theme.name == "Before"
+    _write(tmp_path, "edit.py", _good("edit", name="After"))
+    assert _load(tmp_path).themes["edit"].theme.name == "After"
+    assert path.exists()
+
+
+BAD_DECLARATIONS = """
+from datetime import date
+from tagalot.themes.api import (
+    DetailView, Entity, SearchView, Section, SortBy, Theme, action, contains, field, related, role
+)
+
+class Song(Entity):
+    when: date = field("When")
+    roles = [
+        role("audio", kinds={"audio"}, primary=True),
+        role("video", kinds={"video"}, primary=True),
+        role("art", kinds={"image"}),
+        role("art", kinds={"image"}),
+    ]
+
+class Album(Entity):
+    pass
+
+class Stranger(Entity):
+    pass
+
+class Bad(Theme):
+    id, name, version = "bad", "", 0
+    api_version = 99
+    extensions = {".FLAC", "mp3"}
+    entities = [Song, Album]
+    containment = [contains(Album, Stranger)]
+    relationships = [related("features", Song, Album)]
+    views = [
+        SearchView("Strangers", [Stranger]),
+        SearchView("Songs", [Song], default_sort=[SortBy("tempo")]),
+        DetailView(Song, [Section.role("cover"), Section.gallery("art"), Section.related("nope")]),
+        DetailView(Stranger, [Section.fields()]),
+    ]
+
+    @action("Play", applies_to=["lyrics", Stranger])
+    def play(self, entities, ctx):
+        pass
+"""
+
+
+def test_declaration_problems_are_all_reported(tmp_path: Path) -> None:
+    path = _write(tmp_path, "bad.py", BAD_DECLARATIONS)
+    catalog = _load(tmp_path)
+    assert catalog.themes == {}
+    problems = "\n".join(_messages(catalog, path))
+    for expected in [
+        "the theme needs a name",
+        "version must be a positive integer, not 0",
+        "needs theme API version 99; this Tagalot provides 1",
+        "extension '.FLAC' must be lowercase",
+        "extension 'mp3' must be lowercase and start with '.'",
+        "Song: role art is declared twice",
+        "Song: only one role can be primary (audio, video)",
+        "containment uses Stranger, which the theme doesn't declare",
+        "search view 'Strangers' uses Stranger",
+        "search view 'Songs' sorts by unknown 'tempo'",
+        "Song detail view: no role named 'cover'",
+        "Song detail view: gallery 'art' needs a role with many=True",
+        "Song detail view: no relationship named 'nope'",
+        "detail view for Stranger, which isn't declared",
+        "action 'play' applies to unknown role 'lyrics'",
+        "action 'play' applies to undeclared Stranger",
+        "Song.when: date and time fields must allow None",  # from the trial table build
+    ]:
+        assert expected in problems
+
+
+def test_a_theme_without_entities() -> None:
+    class Empty(Theme):
+        id, name = "empty", "Empty"
+
+    assert validate_theme(Empty) == ["the theme declares no entities"]
+
+
+def test_the_design_example_is_valid() -> None:
+    assert validate_theme(MoviesTheme) == []
+
+
+def test_builtin_placeholders_are_skipped_quietly() -> None:
+    catalog = load_themes(user_dir=Path("does-not-exist"))
+    assert catalog.problems == []  # empty built-in modules are placeholders, not errors
+
+
+def test_default_user_folder() -> None:
+    path = default_user_themes_dir()
+    assert (path.name, path.parent.name) == ("themes", "tagalot")
