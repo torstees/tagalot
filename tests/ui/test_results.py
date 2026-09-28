@@ -226,13 +226,14 @@ def test_list_columns(session: KeepSession) -> None:
     columns = list_columns(session.schema, ("generic.file",))
     assert [(c.key, c.label, c.numeric) for c in columns] == [
         ("title", "Name", False),  # the type's title_label
+        ("tags", "Tags", False),  # the item's own tags, next to the title; hidden by default
         ("extension", "Extension", False),
         ("folder", "Folder", False),
         ("size", "Size (bytes)", True),  # right-aligned
         ("modified", "Modified", False),
-    ]  # the card fields, in declaration order
+    ]  # then the card fields, in declaration order
     everything = [c.key for c in list_columns(session.schema, ())]
-    assert everything == ["title", "extension", "folder", "size", "modified"]
+    assert everything == ["title", "tags", "extension", "folder", "size", "modified"]
 
 
 def test_search_page(qtbot: QtBot, session: KeepSession, pool: QThreadPool) -> None:
@@ -267,7 +268,7 @@ def test_the_window_shows_searches_and_refreshes_them_after_a_scan(
     assert isinstance(page, SearchPage)
     qtbot.waitUntil(lambda: page.status.text() == "10 items", timeout=5000)
     assert page.model.index(0, 0).data() == "file07.txt"
-    assert page.model.sort_column() == (4, Qt.SortOrder.DescendingOrder)
+    assert page.model.sort_column() == (5, Qt.SortOrder.DescendingOrder)  # after Tags
 
     (files / "new.txt").write_bytes(b"new")
     with qtbot.waitSignal(window.scans.finished, timeout=10_000):

@@ -7,6 +7,7 @@ it shows that type's full list. A search page is created once per navigation tar
 re-runs its search after a scan.
 """
 
+from collections.abc import Iterable
 from dataclasses import replace
 
 import shiboken6
@@ -23,6 +24,7 @@ from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultsModel
 from tagalot.ui.result_table import (
+    DEFAULT_HIDDEN,
     count_text,
     list_columns,
     make_result_table,
@@ -45,6 +47,8 @@ class SearchPage(QWidget):
     """
 
     tags_dropped = Signal(list, list)
+    hidden_columns_changed = Signal(list)
+    """The column keys now hidden, after the user showed or hid one (to remember it)."""
 
     def __init__(
         self,
@@ -53,6 +57,7 @@ class SearchPage(QWidget):
         spec: SearchSpec,
         *,
         grouped: bool = False,
+        hidden_columns: Iterable[str] | None = None,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -60,6 +65,7 @@ class SearchPage(QWidget):
         self.session = session
         self.grouped = grouped
         self._base = spec
+        self.hidden_columns = set(DEFAULT_HIDDEN if hidden_columns is None else hidden_columns)
         self._sort = spec.sort
         self._pool = pool
         self._generation = 0
@@ -90,10 +96,13 @@ class SearchPage(QWidget):
         header.sortIndicatorChanged.connect(self._sort_clicked)
 
         self.table.tags_dropped.connect(self._tags_dropped_on_list)
+        self.table.column_toggled.connect(self._column_toggled)
 
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
         self.groups.tags_dropped.connect(self.tags_dropped)
+        self.groups.column_toggled.connect(self._column_toggled)
+        self.groups.set_hidden_columns(self.hidden_columns)
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.groups)
@@ -190,6 +199,7 @@ class SearchPage(QWidget):
             self.model.set_search(spec)
         else:
             self.model.refresh()  # the same search again: keep the rows until new ones arrive
+        self.table.set_columns(columns, self.hidden_columns)
         self.results.setCurrentWidget(self.table)
 
     def _load_tags(self) -> None:
@@ -200,6 +210,16 @@ class SearchPage(QWidget):
                 self.filter_bar.set_tree(tree)
 
         run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
+
+    def _column_toggled(self, key: str, visible: bool) -> None:
+        """Show or hide a column in the list and every section, and report it."""
+        if visible:
+            self.hidden_columns.discard(key)
+        else:
+            self.hidden_columns.add(key)
+        self.table.set_columns(self.table.columns, self.hidden_columns)
+        self.groups.set_hidden_columns(self.hidden_columns)
+        self.hidden_columns_changed.emit(sorted(self.hidden_columns))
 
     def _tags_dropped_on_list(self, rows: list[int], tag_ids: list[int]) -> None:
         # Rows far down a long selection may not be loaded yet: the model fetches their ids.

@@ -1,17 +1,27 @@
 """The list layout's columns and table setup, shared by search pages and grouped sections."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent
-from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QTableView, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
+    QHeaderView,
+    QMenu,
+    QTableView,
+    QWidget,
+)
 
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.dnd import dragged_tags
-from tagalot.ui.models.results import ResultColumn
+from tagalot.ui.models.results import TAGS, ResultColumn
 
 TITLE_MIN_WIDTH = 200
+TAGS_WIDTH = 220
+DEFAULT_HIDDEN = frozenset({TAGS})
+"""Columns hidden until the user shows them (right-click a column header)."""
 OUTLINE_COLOR = "#f0a020"
 """The drop target's dashed outline: amber, distinct from the selection color."""
 COLUMN_WIDTH = 140
@@ -20,12 +30,15 @@ NUMERIC_WIDTH = 100
 
 def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn]:
     """The list layout's columns for a scope: the title (named as the types call it), the
-    type when several types are in scope, then the card fields every scoped type has."""
+    type when several types are in scope, the item's tags (hidden unless the user shows
+    them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
+    the card fields every scoped type has."""
     tables = scoped_tables(schema, types)
     labels = {t.entity.title_label for t in tables}
     columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
     if len(tables) != 1:
         columns.append(ResultColumn("type", "Type", sortable=False))
+    columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     columns.extend(
         ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float))
         for f in scope_fields(schema, types)
@@ -47,6 +60,8 @@ class ResultTable(QTableView):
     """
 
     tags_dropped = Signal(list, list)
+    column_toggled = Signal(str, bool)
+    """A column's key and whether the user made it visible (from the header menu)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,6 +70,35 @@ class ResultTable(QTableView):
         self.setDropIndicatorShown(False)  # the outline below shows the target instead
         self._drop_rows: list[int] = []
         self._outlines: list[QFrame] = []
+        self.columns: list[ResultColumn] = []
+        header = self.horizontalHeader()
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._header_menu)
+
+    # --- columns ---
+
+    def set_columns(self, columns: Sequence[ResultColumn], hidden: Iterable[str]) -> None:
+        """Record the model's columns and hide those in ``hidden`` (never the title)."""
+        self.columns = list(columns)
+        hide = set(hidden)
+        for i, column in enumerate(self.columns):
+            self.setColumnHidden(i, column.key != "title" and column.key in hide)
+
+    def column_menu(self) -> QMenu:
+        """A menu with a checkbox per column (the title can't be hidden)."""
+        menu = QMenu(self)
+        for i, column in enumerate(self.columns):
+            action = menu.addAction(column.label)
+            action.setCheckable(True)
+            action.setChecked(not self.isColumnHidden(i))
+            action.setEnabled(column.key != "title")
+            action.toggled.connect(
+                lambda visible, key=column.key: self.column_toggled.emit(key, visible)
+            )
+        return menu
+
+    def _header_menu(self, point: QPoint) -> None:
+        self.column_menu().exec(self.horizontalHeader().mapToGlobal(point))
 
     def drop_rows(self, point: QPoint) -> list[int]:
         """The rows a drop at ``point`` (viewport coordinates) would tag."""
@@ -159,4 +203,5 @@ def set_column_widths(table: QTableView, columns: Sequence[ResultColumn]) -> Non
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
         else:
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-            table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else COLUMN_WIDTH)
+            width = TAGS_WIDTH if column.key == TAGS else COLUMN_WIDTH
+            table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else width)

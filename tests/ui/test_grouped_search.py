@@ -18,6 +18,7 @@ from tagalot.core.settings import Settings
 from tagalot.themes.loader import load_themes
 from tagalot.ui.filter_bar import ScopeChip
 from tagalot.ui.grouped_results import PREVIEW_ROWS, load_groups
+from tagalot.ui.models.results import TagsValue
 from tagalot.ui.search_view import SearchPage
 
 pytestmark = pytest.mark.gui
@@ -89,10 +90,10 @@ def test_load_groups(session: KeepSession) -> None:
     assert [(g.label, g.count) for g in groups] == [("Artists", 2), ("Albums", 10), ("Songs", 1)]
     artists, albums, _ = groups
     assert [h.title for h, _ in artists.rows] == ["Courtney Love", "Love"]
-    assert [c.label for c in artists.columns] == ["Name", "Country"]
-    assert [c.label for c in albums.columns] == ["Title", "Year"]
+    assert [c.label for c in artists.columns] == ["Name", "Tags", "Country"]
+    assert [c.label for c in albums.columns] == ["Title", "Tags", "Year"]
     assert len(albums.rows) == PREVIEW_ROWS
-    assert albums.rows[0][1] == {"year": 1990}
+    assert albums.rows[0][1] == {"year": 1990, "tags": TagsValue("", "")}  # untagged
     assert load_groups(session, SearchSpec(text="zebra")) == []
 
 
@@ -101,8 +102,8 @@ def test_sections_per_type(page: SearchPage) -> None:
     sections = page.groups.sections
     assert [s.header.text() for s in sections] == ["▾ Artists (3)", "▾ Albums (11)", "▾ Songs (2)"]
     artists, albums, songs = sections
-    assert artists.model.headerData(1, Qt.Orientation.Horizontal) == "Country"
-    assert artists.model.index(0, 1).data() == "UK"  # Blur, first by name
+    assert artists.model.headerData(2, Qt.Orientation.Horizontal) == "Country"  # after Tags
+    assert artists.model.index(0, 2).data() == "UK"  # Blur, first by name
     assert albums.model.rowCount() == PREVIEW_ROWS
     assert albums.show_all_button.isVisible()
     assert albums.show_all_button.text() == "Show all 11 →"
@@ -117,13 +118,13 @@ def test_show_all_narrows_to_one_type_and_the_chip_undoes_it(
         QTest.mouseClick(albums.show_all_button, Qt.MouseButton.LeftButton)
     assert not page.showing_groups()
     assert page.status.text() == "11 items"
-    assert [c.label for c in page.model.columns] == ["Title", "Year"]
+    assert [c.label for c in page.model.columns] == ["Title", "Tags", "Year"]
     [chip] = page.filter_bar.findChildren(ScopeChip)
     assert chip.label.text() == "Only: Albums"
     assert page.filter_bar.filters().only == ALBUM
 
     # Sorting the full list works, and filters keep the narrowing.
-    page.table.horizontalHeader().setSortIndicator(1, Qt.SortOrder.DescendingOrder)
+    page.table.horizontalHeader().setSortIndicator(2, Qt.SortOrder.DescendingOrder)  # Year
     qtbot.waitUntil(lambda: page.model.index(0, 0).data() == "Parklife", timeout=5000)
     with qtbot.waitSignal(page.model.counted, timeout=5000):
         _search_text(qtbot, page, "love 0")
@@ -145,7 +146,7 @@ def test_one_matching_type_shows_its_full_list(qtbot: QtBot, page: SearchPage) -
         _search_text(qtbot, page, "song")
     assert not page.showing_groups()
     assert [page.model.index(r, 0).data() for r in range(page.model.rowCount())] == ["Song 2"]
-    assert [c.label for c in page.model.columns] == ["Title", "Length"]
+    assert [c.label for c in page.model.columns] == ["Title", "Tags", "Length"]
     assert page.filter_bar.findChildren(ScopeChip) == []  # not narrowed by the user
     _search_text(qtbot, page, "")
     qtbot.waitUntil(page.showing_groups, timeout=5000)
@@ -157,7 +158,7 @@ def test_a_sort_is_kept_where_its_field_exists(qtbot: QtBot, page: SearchPage) -
     qtbot.waitUntil(lambda: page.status.text() == "13 items", timeout=5000)
     with qtbot.waitSignal(page.model.counted, timeout=5000):
         page.show_all(ALBUM)
-    page.table.horizontalHeader().setSortIndicator(1, Qt.SortOrder.DescendingOrder)  # Year
+    page.table.horizontalHeader().setSortIndicator(2, Qt.SortOrder.DescendingOrder)  # Year
     qtbot.waitUntil(lambda: page.model.index(0, 0).data() == "Love 10", timeout=5000)
     with qtbot.waitSignal(page.model.counted, timeout=5000):
         _search_text(qtbot, page, "love 0")
@@ -201,4 +202,4 @@ def test_a_view_is_never_grouped(qtbot: QtBot, session: KeepSession) -> None:
     qtbot.waitUntil(lambda: page.status.text() == "5 items", timeout=5000)
     assert not page.showing_groups()
     # Artists call their title "Name", songs "Title"; they share no card fields.
-    assert [c.label for c in page.model.columns] == ["Title", "Type"]
+    assert [c.label for c in page.model.columns] == ["Title", "Type", "Tags"]

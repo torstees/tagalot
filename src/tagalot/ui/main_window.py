@@ -182,14 +182,26 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
         if target.kind in ("search", "view"):
+            # Which columns are hidden is remembered per view, in ui_state.json.
+            state_key = f"{target.kind}:{target.key}"
+            hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
             if target.kind == "search":
-                search = SearchPage(session, target.label, SearchSpec(), grouped=True)
+                spec = SearchSpec()
             else:
                 views = [v for v in session.theme.views if isinstance(v, SearchView)]
                 view = next(v for v in views if v.name == target.key)
                 spec = view_spec(session.schema, view)
-                search = SearchPage(session, target.label, spec)
+            search = SearchPage(
+                session,
+                target.label,
+                spec,
+                grouped=target.kind == "search",
+                hidden_columns=hidden,
+            )
             search.tags_dropped.connect(self.apply_tags)
+            search.hidden_columns_changed.connect(
+                lambda keys: self._save_hidden_columns(state_key, keys)
+            )
             return search
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -234,6 +246,11 @@ class MainWindow(QMainWindow):
     def search_pages(self) -> list[SearchPage]:
         """The search pages created so far."""
         return [p for p in self._pages.values() if isinstance(p, SearchPage)]
+
+    def _save_hidden_columns(self, state_key: str, keys: list[str]) -> None:
+        assert self.session is not None
+        self._ui_state.setdefault("hidden_columns", {})[state_key] = keys
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _save_folded(self, folded: list[str]) -> None:
         assert self.session is not None

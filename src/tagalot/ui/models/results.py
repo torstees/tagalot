@@ -32,7 +32,8 @@ from tagalot.core.search import SearchError, SearchHit, count_matches, run_searc
 from tagalot.core.search_fields import field_values, search_fields
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import TagTree
+from tagalot.core.tags import PATH_SEPARATOR, TagTree, entity_tags, name_key
+from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -58,11 +59,53 @@ class ResultColumn:
     numeric: bool = False
 
 
+TAGS = "tags"
+"""The key of the Tags column: an item's own tags, not a theme field."""
+
+
+@dataclass(frozen=True)
+class TagsValue:
+    """The Tags column's cell: tag names for the list, full paths for the tooltip."""
+
+    text: str
+    tooltip: str
+
+
+def tags_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
+    """Tag names (with the path when a name is ambiguous) in name order; deleted tags are
+    skipped."""
+    shown = sorted((t for t in tag_ids if t in tree), key=lambda t: name_key(tree.display_name(t)))
+    return TagsValue(
+        ", ".join(tree.display_name(t) for t in shown),
+        "\n".join(PATH_SEPARATOR.join(tree.path(t)) for t in shown),
+    )
+
+
+def row_values(
+    conn: Connection,
+    schema: ThemeSchema,
+    tree: TagTree,
+    hits: Sequence[SearchHit],
+    columns: Sequence[ResultColumn],
+) -> dict[int, dict[str, Any]]:
+    """The cell values for ``hits``: their theme fields and, if shown, their tags. Runs in a
+    worker."""
+    names = [c.key for c in columns if c.key not in ("title", "type", TAGS)]
+    values = field_values(conn, schema, hits, names) if names else {}
+    if any(c.key == TAGS for c in columns):
+        tagged = entity_tags(conn, (h.id for h in hits))
+        for hit in hits:
+            values.setdefault(hit.id, {})[TAGS] = tags_value(tree, tagged.get(hit.id, ()))
+    return values
+
+
 def display_value(value: object) -> str:
     """How a field value reads in a list cell."""
     match value:
         case None:
             return ""
+        case TagsValue():
+            return value.text
         case bool():
             return "Yes" if value else "No"
         case datetime():
@@ -71,6 +114,12 @@ def display_value(value: object) -> str:
             return value.isoformat()
         case _:
             return str(value)
+
+
+def cell_tooltip(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
+    """The tooltip of one cell: the full tag paths for Tags, else the cell's text."""
+    value = row[1].get(column.key)
+    return value.tooltip if isinstance(value, TagsValue) else cell_text(column, row, type_labels)
 
 
 def cell_text(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
@@ -125,8 +174,10 @@ class PreviewModel(QAbstractTableModel):
         column = self.columns[index.column()]
         if role == Qt.ItemDataRole.TextAlignmentRole and column.numeric:
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+        if role == Qt.ItemDataRole.DisplayRole:
             return cell_text(column, self.rows[index.row()], self.type_labels)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return cell_tooltip(column, self.rows[index.row()], self.type_labels)
         return None
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
@@ -228,14 +279,14 @@ class ResultsModel(QAbstractTableModel):
     def _fetcher(self, spec: SearchSpec) -> Callable[..., tuple[int, list[Row]]]:
         """A function, safe to call in a worker, that loads one page (and maybe the count)."""
         session, limit = self.session, self.page_size
-        names = [c.key for c in self._columns if c.key not in ("title", "type")]
+        columns = list(self._columns)
 
         def fetch(conn: Connection, *, count: bool, offset: int) -> tuple[int, list[Row]]:
             tree: TagTree = session.tag_cache.get()
             fields: dict[str, ColumnElement[Any]] = search_fields(session.schema, spec.types)
             total = count_matches(conn, spec, tree, fields) if count else -1
             hits = run_search(conn, spec, tree, offset=offset, limit=limit, fields=fields)
-            values = field_values(conn, session.schema, hits, names) if names else {}
+            values = row_values(conn, session.schema, tree, hits, columns)
             return total, [(h, values.get(h.id, {})) for h in hits]
 
         return fetch
@@ -432,6 +483,8 @@ class ResultsModel(QAbstractTableModel):
             return (
                 PLACEHOLDER if index.column() == 0 and role == Qt.ItemDataRole.DisplayRole else ""
             )
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return cell_tooltip(column, found, self.type_labels)
         return cell_text(column, found, self.type_labels)
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
