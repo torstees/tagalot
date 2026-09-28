@@ -535,9 +535,10 @@ Case-insensitive, any of `.jpg .jpeg .png .webp`: `folder`, `cover`, `front`, `a
 
 ### Cache
 
-- `thumbs.db` table `thumb(key text pk, size int, format text, data blob, created_at)`.
-- `key = hash(resource_id, size, mtime, provider_id, provider_version, thumb_size)`, so changes and provider upgrades invalidate automatically.
-- Stored as WebP (fallback PNG). The entire file can be deleted at any time.
+- `thumbs.db` table `thumb(key text pk, size int, format text, width int, height int, data blob, created_at)`. `size` is the thumbnail size asked for; `width`/`height` are the stored image's, so views can lay out a cell before decoding it.
+- `key = sha256(resource_id, size, mtime_ns, provider_id, provider_version, thumb_size)`, so changes and provider upgrades invalidate automatically. Stale entries are never read, only removed by clearing the cache.
+- Thumbnails are fitted inside a `thumb_size` square (never enlarged, at least 1 px per side), turned upright by EXIF orientation, converted to RGB or RGBA (transparency kept), and stored as WebP quality 80 (PNG when Pillow lacks WebP). The entire file can be deleted at any time.
+- `thumbs.db` is separate from `keep.db` and is written directly by the thumbnail workers (one short transaction per thumbnail, serialized by a lock), not through the DB writer: it shares nothing with the keep's data, and losing it costs only regeneration. It uses `PRAGMA synchronous = OFF` and records its format in `PRAGMA user_version`; a damaged file or another format version is deleted and started afresh.
 - The resolved source resource is memoized in `entity.thumb_resource_id` to avoid re-running the chain.
 
 ## 11. Opening files
@@ -715,5 +716,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Tag manager moves aren't confirmed first; they're undoable and report the affected item count in the status bar (§7, §12). |
 | 2026-09 | Tag merge and delete dialogs explain the effect and count affected items from the tag manager's usage figures (no database wait); deleting a tag with sub-tags defaults to deleting the subtree (§7, §12). |
 | 2026-09 | Tag colors, descriptions, and aliases are edited in the tag manager's details pane; unsaved descriptions are kept per tag across reloads (§12). |
+| 2026-09 | `thumbs.db` is written by thumbnail workers directly (lock-serialized), not through the keep's DB writer, since it is a disposable cache; it is versioned with `user_version` and recreated when damaged or from another version. Rows also store the image's width and height (§10). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
