@@ -160,6 +160,7 @@ class MainWindow(QMainWindow):
         self.tag_panel = TagPanel(session)
         self.tag_panel.tag_requested.connect(self.tag_selection)
         self.tag_panel.create_requested.connect(self.create_tag)
+        self.tag_panel.search_requested.connect(self.add_tags_to_search)
         # The panel's all / some / none checks follow the current page's selection. Selection
         # changes come in bursts (Shift+arrows), so the summary waits for a short pause.
         self._summary_generation = 0
@@ -269,6 +270,19 @@ class MainWindow(QMainWindow):
             page.selected_entity_ids(lambda ids: self.tag_actions.create(names, ids, path))
         else:
             self.tag_actions.create(names, [], path)
+
+    def add_tags_to_search(self, tag_ids: list[int], exclude: bool = False) -> None:
+        """Add tags to the current search's filter bar (Search all if the current page
+        isn't a search), as include chips or "but not" chips."""
+        page = self.stack.currentWidget()
+        if not isinstance(page, SearchPage):
+            self.navigation.select(NavTarget("search", label="Search all"))
+            page = self.stack.currentWidget()
+        assert isinstance(page, SearchPage)
+        for tag_id in tag_ids:
+            page.filter_bar.add_tag(tag_id, exclude=exclude)
+        how = "Hiding items with" if exclude else "Showing only items with"
+        self.statusBar().showMessage(f"{how} {self.tag_names(tag_ids)}.")
 
     def focus_tag_filter(self) -> None:
         """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""

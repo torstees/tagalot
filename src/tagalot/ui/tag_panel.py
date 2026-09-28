@@ -13,12 +13,13 @@ change.
 """
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThreadPool, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QTreeView,
     QVBoxLayout,
@@ -40,6 +41,8 @@ class TagPanel(QWidget):
     """Tag ids, and whether to remove them (Shift+Enter) rather than apply them (Enter)."""
     create_requested = Signal(str)
     """The filter text, to create as a tag (a path like "Places > Norway" is allowed)."""
+    search_requested = Signal(list, bool)
+    """Tag ids to add to the current search, and whether as "but not" (from the menu)."""
 
     def __init__(
         self,
@@ -77,6 +80,12 @@ class TagPanel(QWidget):
         self.view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.view.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.view.installEventFilter(self)
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(
+            lambda point: self._show_menu(
+                self.view.indexAt(point), self.view.viewport().mapToGlobal(point)
+            )
+        )
         self.view.expanded.connect(lambda index: self._folded(index, True))
         self.view.collapsed.connect(lambda index: self._folded(index, False))
         self.view.selectionModel().currentChanged.connect(
@@ -259,6 +268,48 @@ class TagPanel(QWidget):
                 self.filter_edit.insert(text)  # type to filter, from the tree too
                 return True
         return super().eventFilter(watched, event)
+
+    # --- the context menu ---
+
+    def menu_for(self, index: QModelIndex) -> QMenu | None:
+        """The right-click menu for the tag at ``index`` (with the other selected tags, if
+        it is one of them), or ``None`` off the tags."""
+        clicked = self.model.tag_id(index)
+        tree = self.model.tree
+        if clicked is None or tree is None:
+            return None
+        selected = [
+            t
+            for i in self.view.selectionModel().selectedIndexes()
+            if (t := self.model.tag_id(i)) is not None
+        ]
+        tags = list(dict.fromkeys(selected)) if clicked in selected else [clicked]
+        names = repr(tree.display_name(tags[0])) if len(tags) == 1 else f"{len(tags)} tags"
+        menu = QMenu(self)
+        menu.addAction(
+            f"Show only items with {names}", lambda: self.search_requested.emit(tags, False)
+        )
+        menu.addAction(f"Hide items with {names}", lambda: self.search_requested.emit(tags, True))
+        menu.addSeparator()
+        count = self.model.selected_count
+        items = "the selected item" if count == 1 else f"the {count:,} selected items"
+        add = menu.addAction(
+            f"Add {names} to {items}", lambda: self.tag_requested.emit(tags, False)
+        )
+        remove = menu.addAction(
+            f"Remove {names} from {items}", lambda: self.tag_requested.emit(tags, True)
+        )
+        for action in (add, remove):
+            action.setEnabled(bool(count))
+        if not count:
+            add.setText(f"Add {names} to the selected items")
+            remove.setText(f"Remove {names} from the selected items")
+        return menu
+
+    def _show_menu(self, index: QModelIndex, where: QPoint) -> None:
+        menu = self.menu_for(index)
+        if menu is not None:
+            menu.exec(where)
 
     def target_tags(self) -> list[int]:
         """The tags Enter would use: those selected in the tree, else the highlighted one,
