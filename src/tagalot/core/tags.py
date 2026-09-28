@@ -557,6 +557,21 @@ def untag_entities(
     return frozenset(removed)
 
 
+def tag_counts(conn: Connection, entity_ids: Iterable[int]) -> dict[int, int]:
+    """For each tag, how many of ``entity_ids`` carry it directly (the tagging panel's
+    all / some / none summary); tags on none of them are absent."""
+    counts: dict[int, int] = {}
+    for chunk in _batches(entity_ids):
+        rows = conn.execute(
+            select(EntityTag.tag_id, func.count())
+            .where(EntityTag.entity_id.in_(chunk))
+            .group_by(EntityTag.tag_id)
+        )
+        for tag_id, count in rows:
+            counts[tag_id] = counts.get(tag_id, 0) + int(count)
+    return counts
+
+
 def entity_tags(conn: Connection, entity_ids: Iterable[int]) -> dict[int, list[int]]:
     """The tags applied directly to each entity (entities without tags are absent)."""
     found: dict[int, list[int]] = {}

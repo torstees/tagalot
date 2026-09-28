@@ -17,6 +17,7 @@ from PySide6.QtCore import (
     QObject,
     QPersistentModelIndex,
     Qt,
+    Signal,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 
@@ -45,7 +46,16 @@ AnyIndex = QModelIndex | QPersistentModelIndex
 
 
 class TagTreeModel(QAbstractItemModel):
-    """One column: tag names in tree order. Each index's internal id is its tag id."""
+    """One column: tag names in tree order. Each index's internal id is its tag id.
+
+    With items selected (:meth:`set_selection`), each tag has a check: checked if every
+    selected item has it, partly checked if some do, unchecked if none do. Clicking a check
+    doesn't change the model: it emits :attr:`check_clicked` with the tag id and whether to
+    remove it (it was on all of them) or apply it to all; the summary is updated once the
+    tagging is done.
+    """
+
+    check_clicked = Signal(int, bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -58,6 +68,8 @@ class TagTreeModel(QAbstractItemModel):
         self._children: dict[int | None, tuple[int, ...]] = {}
         self._row: dict[int, int] = {}
         self._swatches: dict[str, QPixmap | None] = {}
+        self.selected_count = 0
+        self._tag_counts: dict[int, int] = {}
 
     # --- content ---
 
@@ -181,8 +193,15 @@ class TagTreeModel(QAbstractItemModel):
             return node.name
         if role == TAG_ID_ROLE:
             return tag_id
+        if role == Qt.ItemDataRole.CheckStateRole:
+            return self.check_state(tag_id)
         if role == Qt.ItemDataRole.ToolTipRole:
-            return tag_tooltip(tree, tag_id)
+            tooltip = tag_tooltip(tree, tag_id)
+            if self.selected_count:
+                count = self._tag_counts.get(tag_id, 0)
+                items = "item" if self.selected_count == 1 else "items"
+                tooltip += f"\n\nOn {count} of the {self.selected_count} selected {items}"
+            return tooltip
         if role == Qt.ItemDataRole.FontRole and tag_id in self._matches:
             font = QFont()
             font.setBold(True)
@@ -194,9 +213,43 @@ class TagTreeModel(QAbstractItemModel):
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        return (
+        flags = (
             Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled
         )
+        if self.selected_count:
+            flags |= Qt.ItemFlag.ItemIsUserCheckable
+        return flags
+
+    # --- the selection summary (DESIGN.md §12) ---
+
+    def set_selection(self, selected_count: int, tag_counts: dict[int, int]) -> None:
+        """How many items are selected, and how many of them carry each tag directly."""
+        self.selected_count = selected_count
+        self._tag_counts = dict(tag_counts) if selected_count else {}
+        self._all_rows_changed()
+
+    def check_state(self, tag_id: int) -> Qt.CheckState | None:
+        """All, some, or none of the selected items have ``tag_id``; ``None`` if nothing is
+        selected."""
+        if not self.selected_count:
+            return None
+        count = self._tag_counts.get(tag_id, 0)
+        if count >= self.selected_count:
+            return Qt.CheckState.Checked
+        return Qt.CheckState.PartiallyChecked if count else Qt.CheckState.Unchecked
+
+    def setData(self, index: AnyIndex, value: Any, role: int = Qt.ItemDataRole.EditRole) -> bool:
+        tag_id = self.tag_id(index)
+        if role != Qt.ItemDataRole.CheckStateRole or tag_id is None or not self.selected_count:
+            return False
+        # On all of them: remove it from all. On some or none: apply it to all.
+        self.check_clicked.emit(tag_id, self.check_state(tag_id) == Qt.CheckState.Checked)
+        return False  # the summary changes when the tagging is done
+
+    def _all_rows_changed(self) -> None:
+        for tag_id in self._row:
+            index = self.index_of(tag_id)
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
 
     # --- dragging tags onto items (DESIGN.md §12) ---
 

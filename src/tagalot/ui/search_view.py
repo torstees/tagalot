@@ -48,6 +48,8 @@ class SearchPage(QWidget):
 
     tags_dropped = Signal(list, list)
     hidden_columns_changed = Signal(list)
+    selection_changed = Signal()
+    """The selected items may be different (a click, new results, grouped or not)."""
     """The column keys now hidden, after the user showed or hid one (to remember it)."""
 
     def __init__(
@@ -97,12 +99,15 @@ class SearchPage(QWidget):
 
         self.table.tags_dropped.connect(self._tags_dropped_on_list)
         self.table.column_toggled.connect(self._column_toggled)
+        self.table.selectionModel().selectionChanged.connect(self.selection_changed)
+        self.model.modelReset.connect(self.selection_changed)
 
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
         self.groups.tags_dropped.connect(self.tags_dropped)
         self.groups.column_toggled.connect(self._column_toggled)
         self.groups.set_hidden_columns(self.hidden_columns)
+        self.groups.selection_changed.connect(self.selection_changed)
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.groups)
