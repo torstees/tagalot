@@ -466,7 +466,7 @@ class TagManagerPage(QWidget):
         self.delete_button.setToolTip("Delete the selected tag (items are never deleted)")
         self.delete_button.clicked.connect(self.delete_current)
         # A toolbar, not a row: when the page is narrow, the buttons that don't fit move
-        # into its » menu instead of widening the page (and squeezing the navigation).
+        # into its overflow menu (…) instead of widening the page (and squeezing the navigation).
         self.toolbar = QToolBar("Tag operations")
         for button in (
             self.new_button,
