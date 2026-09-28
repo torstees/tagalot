@@ -17,7 +17,7 @@ a worker; :class:`GroupedResults` shows its result.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -200,6 +200,13 @@ class GroupedResults(QScrollArea):
         self.setWidget(self._content)
 
     def set_groups(self, groups: Sequence[TypeGroup]) -> None:
+        """Replace the sections, keeping selected the items that are still shown."""
+        kept = {
+            hit.id
+            for section in self.sections
+            for index in section.table.selectionModel().selectedRows()
+            if (hit := section.model.hit(index.row())) is not None
+        }
         for section in self.sections:
             self._layout.removeWidget(section)
             section.deleteLater()
@@ -213,6 +220,13 @@ class GroupedResults(QScrollArea):
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)
             self.sections.append(section)
+            for row, (hit, _) in enumerate(group.rows):
+                if hit.id in kept:
+                    section.table.selectionModel().select(
+                        section.model.index(row, 0),
+                        QItemSelectionModel.SelectionFlag.Select
+                        | QItemSelectionModel.SelectionFlag.Rows,
+                    )
 
     def set_hidden_columns(self, hidden: Iterable[str]) -> None:
         """Hide ``hidden`` in every section, now and in later results."""

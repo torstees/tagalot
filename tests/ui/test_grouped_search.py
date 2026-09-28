@@ -214,3 +214,15 @@ def test_the_selection_spans_every_section(page: SearchPage) -> None:
     page.selected_entity_ids(got.append)
     hits = [artists.model.hit(0), albums.model.hit(1)]
     assert got == [[h.id for h in hits if h is not None]]
+
+
+def test_refreshed_sections_keep_their_selection(qtbot: QtBot, page: SearchPage) -> None:
+    albums = page.groups.sections[1]
+    flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    albums.table.selectionModel().select(albums.model.index(2, 0), flags)
+    chosen = albums.model.hit(2)
+    page.refresh()
+    qtbot.waitUntil(lambda: page.groups.sections[1] is not albums, timeout=5000)
+    rebuilt = page.groups.sections[1]
+    rows = [i.row() for i in rebuilt.table.selectionModel().selectedRows()]
+    assert [rebuilt.model.hit(r) for r in rows] == [chosen]

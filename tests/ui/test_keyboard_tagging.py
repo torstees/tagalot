@@ -59,6 +59,11 @@ def _select(window: MainWindow, *titles: str) -> None:
             page.table.selectionModel().select(page.model.index(row, 0), flags)
 
 
+def _selected(window: MainWindow) -> set[str]:
+    page = _page(window)
+    return {page.model.index(i.row(), 0).data() for i in page.table.selectionModel().selectedRows()}
+
+
 def _status(window: MainWindow) -> str:
     return window.statusBar().currentMessage()
 
@@ -85,10 +90,12 @@ def test_type_then_enter_applies_and_shift_enter_removes(
     _select(window, "notes.txt", "readme.md")
     panel = window.tag_panel
     QTest.keyClicks(panel.filter_edit, "sky")
-    QTest.keyClick(panel.filter_edit, Qt.Key.Key_Return)
+    with qtbot.waitSignal(_page(window).model.counted, timeout=5000):  # the page refreshes
+        QTest.keyClick(panel.filter_edit, Qt.Key.Key_Return)
     _wait_status(qtbot, window, "Tagged 2 items with 'Sky'.")
     assert {"notes.txt", "readme.md"} <= _tagged(session, "Sky")
     assert panel.filter_edit.selectedText() == "sky"  # typing the next tag replaces it
+    assert _selected(window) == {"notes.txt", "readme.md"}  # still selected after the refresh
 
     QTest.keyClick(panel.filter_edit, Qt.Key.Key_Return, SHIFT)
     _wait_status(qtbot, window, "Removed 'Sky' from 2 items.")
@@ -140,3 +147,32 @@ def test_ctrl_t_goes_to_the_tag_filter(qtbot: QtBot, window: MainWindow) -> None
     assert window.tags_dock.isVisible()
     assert window.tag_panel.filter_edit.hasFocus()
     assert window.tag_panel.filter_edit.selectedText() == "old"
+
+
+def test_tagging_under_a_tag_filter_keeps_the_items_still_listed_selected(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    page = _page(window)
+    tree = window.tag_panel.model.tree
+    assert tree is not None
+    [places] = [s.tag_id for s in tree.suggest("Places") if tree.node(s.tag_id).name == "Places"]
+    with qtbot.waitSignal(page.model.counted, timeout=5000):
+        page.filter_bar.add_tag(places)
+    assert page.status.text() == "5 items"
+    _select(window, "sunset.jpg", "geyser.jpg")
+    edit = window.tag_panel.filter_edit
+
+    # Removing Sky doesn't change what the Places filter lists: rows update in place.
+    QTest.keyClicks(edit, "sky")
+    with qtbot.waitSignal(page.model.counted, timeout=5000):
+        QTest.keyClick(edit, Qt.Key.Key_Return, SHIFT)
+    assert page.status.text() == "5 items"
+    assert _selected(window) == {"sunset.jpg", "geyser.jpg"}
+
+    # Removing Beach takes sunset.jpg out of Places: the list changes, geyser stays selected.
+    edit.clear()
+    QTest.keyClicks(edit, "beach")
+    with qtbot.waitSignal(page.model.counted, timeout=5000):
+        QTest.keyClick(edit, Qt.Key.Key_Return, SHIFT)
+    assert page.status.text() == "4 items"
+    assert _selected(window) == {"geyser.jpg"}
