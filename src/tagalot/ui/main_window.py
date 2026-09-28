@@ -35,6 +35,7 @@ from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
+from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.workers import ScanController, run_in_pool
 
@@ -50,7 +51,6 @@ _COMING = {
     "saved": "Saved searches arrive in M18.",
     "triage": "Triage arrives in M14.",
     "dedupe": "Dedupe arrives in M16.",
-    "tags": "The tag manager arrives in M7.",
 }
 
 
@@ -227,6 +227,8 @@ class MainWindow(QMainWindow):
                 lambda keys: self._save_hidden_columns(state_key, keys)
             )
             return search
+        if target.kind == "tags":
+            return TagManagerPage(session)
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return page
@@ -339,6 +341,9 @@ class MainWindow(QMainWindow):
         for page in self.search_pages():
             page.refresh()  # tag filters may now match differently
         self.tag_panel.reload()  # undo can change the tag tree
+        for manager in self._pages.values():
+            if isinstance(manager, TagManagerPage):
+                manager.reload()  # usage counts, and the tree after an undo
         self._update_undo_actions()
 
     def _tag_message(self, message: str) -> None:

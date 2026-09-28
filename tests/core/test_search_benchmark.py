@@ -18,7 +18,7 @@ from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity
 from tagalot.core.search import count_by_type, count_matches, run_search
 from tagalot.core.search_spec import SearchSpec, SortKey
-from tagalot.core.tags import TagTree
+from tagalot.core.tags import TagTree, tag_usage
 from tests.core.bench_data import BenchKeep, build
 
 pytestmark = pytest.mark.slow
@@ -109,3 +109,13 @@ def test_first_page_and_count(
     assert page_ms < BOUND_MS, f"first page took {page_ms:.0f} ms"
     assert count_ms < BOUND_MS, f"count took {count_ms:.0f} ms"
     assert by_type_ms < BOUND_MS, f"count by type took {by_type_ms:.0f} ms"
+
+
+def test_tag_usage_counts(keep: tuple[Engine, BenchKeep, float]) -> None:
+    """The tag manager's usage columns for all 300 tags (each applied at every level)."""
+    engine, _, _ = keep
+    with engine.connect() as conn:
+        tree = TagTree.load(conn)
+        usage_ms = _median_ms(lambda: tag_usage(conn, tree))
+    print(f"tag usage for {len(tree)} tags: {usage_ms:.0f} ms")
+    assert usage_ms < 2000, f"tag usage took {usage_ms:.0f} ms"  # it runs in a worker

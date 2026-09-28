@@ -16,8 +16,10 @@ from tagalot.core.tags import (
     PATH_SEPARATOR,
     TagError,
     TagTreeCache,
+    TagUsage,
     split_tag_path,
     tag_counts,
+    tag_usage,
 )
 from tagalot.core.writer import DbWriter
 
@@ -161,3 +163,16 @@ def test_add_path_under_an_existing_tag_and_with_new_parents(env: Env) -> None:
     assert "Music" not in {tree.node(t).name for t in env.tags.cache.get().children(None)}
 
     assert env.tags.add_path(["Places", "Iceland"]) == ICELAND  # already there: no new tag
+
+
+def test_tag_usage(env: Env) -> None:
+    env.tags.apply([1, 2], [BEACH])  # entity 1 also has Iceland: counted once under Places
+    env.tags.apply([3], [PLACES])  # a parent applied directly
+    tree = env.tags.cache.get()
+    with env.engine.connect() as conn:
+        usage = tag_usage(conn, tree)
+    assert usage[ICELAND] == TagUsage(1, 1)
+    assert usage[BEACH] == TagUsage(2, 2)
+    assert usage[PLACES] == TagUsage(1, 3)  # entity 3 directly; 1 and 2 through sub-tags
+    assert usage[FAVORITES] == TagUsage(0, 0)
+    assert set(usage) == set(tree)
