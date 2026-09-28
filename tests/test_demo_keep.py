@@ -127,3 +127,17 @@ def _all(tree: TagTree) -> list[int]:
         ids.append(tag_id)
         stack.extend(tree.children(tag_id))
     return ids
+
+
+def test_media_leaves_the_demo_keep_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, private_user_folders: Path
+) -> None:
+    """--media builds only Media.keep, so an open Demo.keep can't block it."""
+    script = _script()
+    monkeypatch.setattr(script, "SCRATCH", tmp_path)
+    assert script.main([]) == 0
+    demo_toml = (tmp_path / "Demo.keep" / "keep.toml").read_bytes()
+    assert script.main(["--reset", "--media"]) == 0
+    assert (tmp_path / "Media.keep" / "keep.toml").exists()
+    assert (tmp_path / "Demo.keep" / "keep.toml").read_bytes() == demo_toml  # untouched
+    assert (private_user_folders / "themes" / script.MEDIA_THEME_FILE).exists()
