@@ -5,8 +5,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, Qt, QThreadPool
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QModelIndex, QPointF, Qt, QThreadPool
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtWidgets import QApplication, QDialog
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
@@ -183,3 +184,35 @@ def test_the_picker_blocks_the_tag_and_its_sub_tags(qtbot: QtBot, session: KeepS
     assert ok.isEnabled()
     dialog.filter_edit.setText("fam")
     assert dialog.model.rowCount() == 1  # People, holding Family
+
+
+def _drag(page: TagManagerPage, source: int, target: int, *, drop: bool) -> bool:
+    """Drag ``source`` over ``target`` the way Qt does (enter, move, and maybe drop, on the
+    tree's viewport); returns whether the tree accepted the drag there."""
+    view, model = page.view, page.model
+    mime = model.mimeData([model.index_of(source)])  # kept alive while the events use it
+    actions = model.supportedDragActions()
+    where = view.visualRect(model.index_of(target)).center()
+    left, none = Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+    QApplication.sendEvent(view.viewport(), QDragEnterEvent(where, actions, mime, left, none))
+    move = QDragMoveEvent(where, actions, mime, left, none)
+    QApplication.sendEvent(view.viewport(), move)
+    if drop and move.isAccepted():
+        QApplication.sendEvent(
+            view.viewport(), QDropEvent(QPointF(where), move.dropAction(), mime, left, none)
+        )
+    return move.isAccepted()
+
+
+def test_dragging_in_the_tree_moves_the_tag(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """Through the view, as a mouse drag goes: the tree must accept its own tags (it
+    refused them once, showing the "no" cursor, because the model offered only copying)."""
+    page = _page(window)
+    beach, topics = _id(session, "Places", "Beach"), _id(session, "Topics")
+    assert beach is not None
+    assert topics is not None
+    assert _drag(page, beach, topics, drop=True)
+    _wait_status(qtbot, window, "Moved 'Beach' under 'Topics' (2 items).")
+    assert _id(session, "Topics", "Beach") == beach

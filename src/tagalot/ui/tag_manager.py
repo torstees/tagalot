@@ -108,8 +108,13 @@ class TagManagerModel(TagTreeModel):
             return False  # the name changes when the rename is done
         return super().setData(index, value, role)
 
+    # Dragging a tag within the tree moves it; dragged onto results, the same drag tags
+    # them (a copy). Both ends must allow both actions, or Qt refuses the drop.
+    def supportedDragActions(self) -> Qt.DropAction:
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
+
     def supportedDropActions(self) -> Qt.DropAction:
-        return Qt.DropAction.MoveAction
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
 
     def canDropMimeData(
         self, data: QMimeData, action: Qt.DropAction, row: int, column: int, parent: AnyIndex
