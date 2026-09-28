@@ -53,6 +53,9 @@ class TagPanel(QWidget):
         self.filter_edit.installEventFilter(self)
 
         self.model = TagTreeModel(self)
+        self.model.check_clicked.connect(
+            lambda tag_id, remove: self.tag_requested.emit([tag_id], remove)
+        )
         self.view = QTreeView()
         self.view.setModel(self.model)
         self.view.setHeaderHidden(True)
@@ -77,6 +80,10 @@ class TagPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(self.filter_edit)
+        self.selection_label = QLabel()
+        self.selection_label.setWordWrap(True)
+        self.selection_label.hide()
+        layout.addWidget(self.selection_label)
         layout.addWidget(self.view, 1)
         layout.addWidget(self.message)
         self.reload()
@@ -229,6 +236,15 @@ class TagPanel(QWidget):
         tags = self.target_tags()
         if tags:
             self.tag_requested.emit(tags, remove)
+
+    def set_selection(self, selected_count: int, tag_counts: dict[int, int]) -> None:
+        """Show which tags the selected items have (checked: all, partly: some)."""
+        self.model.set_selection(selected_count, tag_counts)
+        items = "1 item" if selected_count == 1 else f"{selected_count:,} items"
+        self.selection_label.setText(
+            f"{items} selected. Tick a tag to put it on all of them; untick it to remove it."
+        )
+        self.selection_label.setVisible(bool(selected_count))
 
     def focus_filter(self) -> None:
         """Put the cursor in the filter box with its text selected (Ctrl+T)."""

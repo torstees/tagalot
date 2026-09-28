@@ -183,6 +183,8 @@ class GroupedResults(QScrollArea):
     show_all = Signal(str)
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
+    selection_changed = Signal()
+    """Any section's selection changed (or the sections were replaced)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -217,6 +219,7 @@ class GroupedResults(QScrollArea):
             section.show_all.connect(self.show_all)
             section.tags_dropped.connect(self.tags_dropped)
             section.column_toggled.connect(self.column_toggled)
+            section.table.selectionModel().selectionChanged.connect(self.selection_changed)
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)
             self.sections.append(section)
@@ -227,6 +230,7 @@ class GroupedResults(QScrollArea):
                         QItemSelectionModel.SelectionFlag.Select
                         | QItemSelectionModel.SelectionFlag.Rows,
                     )
+        self.selection_changed.emit()
 
     def set_hidden_columns(self, hidden: Iterable[str]) -> None:
         """Hide ``hidden`` in every section, now and in later results."""

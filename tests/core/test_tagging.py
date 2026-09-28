@@ -11,7 +11,7 @@ from sqlalchemy import Engine, insert, select
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity, EntityTag, Tag
 from tagalot.core.tag_service import TagService
-from tagalot.core.tags import LINK_BATCH, TagError, TagTreeCache
+from tagalot.core.tags import LINK_BATCH, TagError, TagTreeCache, tag_counts
 from tagalot.core.writer import DbWriter
 
 PLACES, ICELAND, BEACH, FAVORITES = 1, 2, 3, 4
@@ -109,3 +109,12 @@ def test_labels_name_up_to_three_tags(env: Env) -> None:
     assert env.tags.undo_label == "Tag 1 item with 'Beach', 'Favorites', 'Iceland'"
     env.tags.apply(range(10, 1210), [PLACES, ICELAND, BEACH, FAVORITES])
     assert env.tags.undo_label == "Tag 1,200 items with 4 tags"
+
+
+def test_tag_counts(env: Env) -> None:
+    env.tags.apply([1, 2, 3], [FAVORITES])
+    env.tags.apply([2], [BEACH])
+    with env.engine.connect() as conn:
+        assert tag_counts(conn, [1, 2, 3, 4]) == {ICELAND: 1, FAVORITES: 3, BEACH: 1}
+        assert tag_counts(conn, [4]) == {}
+        assert tag_counts(conn, range(1, 2001))[FAVORITES] == 3  # across batches

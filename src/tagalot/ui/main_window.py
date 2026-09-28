@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
@@ -29,6 +29,7 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
+from tagalot.core.tags import tag_counts
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -40,6 +41,9 @@ from tagalot.ui.workers import ScanController, run_in_pool
 logger = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Tagalot"
+
+SUMMARY_DELAY_MS = 150
+"""How long the Tags panel's selection summary waits for the selection to settle."""
 
 _COMING = {
     "dashboard": "The dashboard arrives in M15.",
@@ -155,6 +159,13 @@ class MainWindow(QMainWindow):
         self.tags_dock.setObjectName("tags_dock")
         self.tag_panel = TagPanel(session)
         self.tag_panel.tag_requested.connect(self.tag_selection)
+        # The panel's all / some / none checks follow the current page's selection. Selection
+        # changes come in bursts (Shift+arrows), so the summary waits for a short pause.
+        self._summary_generation = 0
+        self._summary_timer = QTimer(self)
+        self._summary_timer.setSingleShot(True)
+        self._summary_timer.setInterval(SUMMARY_DELAY_MS)
+        self._summary_timer.timeout.connect(self.update_selection_summary)
         self.tags_dock.setWidget(self.tag_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tags_dock)
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
@@ -186,6 +197,7 @@ class MainWindow(QMainWindow):
             self._pages[target] = page
             self.stack.addWidget(page)
         self.stack.setCurrentWidget(page)
+        self._schedule_summary()
 
     def _make_page(self, target: NavTarget) -> QWidget:
         session = self.session
@@ -208,6 +220,7 @@ class MainWindow(QMainWindow):
                 hidden_columns=hidden,
             )
             search.tags_dropped.connect(self.apply_tags)
+            search.selection_changed.connect(self._schedule_summary)
             search.hidden_columns_changed.connect(
                 lambda keys: self._save_hidden_columns(state_key, keys)
             )
@@ -258,8 +271,41 @@ class MainWindow(QMainWindow):
             return f"{len(names)} tags"
         return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
+    def _schedule_summary(self) -> None:
+        if self.session is not None:
+            self._summary_timer.start()
+
+    def update_selection_summary(self) -> None:
+        """Count, in a worker, which tags the current page's selected items carry, and
+        show it in the Tags panel."""
+        session = self.session
+        page = self.stack.currentWidget()
+        self._summary_generation += 1
+        generation = self._summary_generation
+        if session is None or not isinstance(page, SearchPage):
+            self.tag_panel.set_selection(0, {})
+            return
+
+        def show(count: int, counts: dict[int, int]) -> None:
+            if generation == self._summary_generation and shiboken6.isValid(self.tag_panel):
+                self.tag_panel.set_selection(count, counts)
+
+        def selected(ids: list[int]) -> None:
+            if not ids:
+                show(0, {})
+                return
+
+            def count() -> dict[int, int]:
+                with session.reader.connect() as conn:
+                    return tag_counts(conn, ids)
+
+            run_in_pool(count, on_done=lambda counts: show(len(ids), counts))
+
+        page.selected_entity_ids(selected)
+
     def _tags_changed(self, message: str) -> None:
         self.statusBar().showMessage(message)
+        self._schedule_summary()
         for page in self.search_pages():
             page.refresh()  # tag filters may now match differently
         self.tag_panel.reload()  # undo can change the tag tree
