@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, Qt, QThreadPool
+from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
@@ -150,3 +151,18 @@ def test_switching_pages_updates_the_summary(qtbot: QtBot, window: MainWindow) -
     files = next(t for t in window.navigation.targets("searches") if t.label == "Files")
     window.navigation.select(files)  # a new page: nothing selected there
     qtbot.waitUntil(lambda: _state(window, "Money") is None, timeout=5000)
+
+
+def test_space_on_a_highlighted_tag_toggles_it(qtbot: QtBot, window: MainWindow) -> None:
+    _select(window, "glacier.jpg", "geyser.jpg")
+    qtbot.waitUntil(lambda: _state(window, "Favorites") == PARTIAL, timeout=5000)
+    panel = window.tag_panel
+    tree = panel.model.tree
+    assert tree is not None
+    [favorites] = [
+        s.tag_id for s in tree.suggest("Favorites") if tree.node(s.tag_id).name == "Favorites"
+    ]
+    panel.view.setFocus()
+    panel.view.setCurrentIndex(panel.model.index_of(favorites))
+    QTest.keyClick(panel.view, Qt.Key.Key_Space)
+    qtbot.waitUntil(lambda: _state(window, "Favorites") == CHECKED, timeout=5000)
