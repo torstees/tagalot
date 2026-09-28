@@ -11,7 +11,7 @@ dropped, so a slow query never overwrites a newer one.
 
 import logging
 from collections import OrderedDict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any
@@ -331,6 +331,41 @@ class ResultsModel(QAbstractTableModel):
         """The entity at ``row``, if its page is loaded."""
         found = self.row(row, load=False)
         return found[0] if found else None
+
+    def entity_ids(self, rows: Iterable[int], on_done: Callable[[list[int]], None]) -> None:
+        """Call ``on_done`` with the entity ids at ``rows`` (in row order). Rows on loaded
+        pages are read directly; the rest come from one query, in a worker. If the search
+        changes meanwhile, ``on_done`` is not called (the rows no longer mean the same)."""
+        wanted = sorted({r for r in rows if 0 <= r < self._total})
+        ids: dict[int, int] = {}
+        for row in wanted:
+            if (hit := self.hit(row)) is not None:
+                ids[row] = hit.id
+        missing = [r for r in wanted if r not in ids]
+        if not missing or self._spec is None:
+            on_done([ids[r] for r in wanted if r in ids])
+            return
+        generation, spec, session = self._generation, self._spec, self.session
+        first, last = missing[0], missing[-1]
+
+        def job() -> list[int]:
+            tree = session.tag_cache.get()
+            fields = search_fields(session.schema, spec.types)
+            with session.reader.connect() as conn:
+                hits = run_search(
+                    conn, spec, tree, offset=first, limit=last - first + 1, fields=fields
+                )
+            return [h.id for h in hits]
+
+        def done(found: list[int]) -> None:
+            if generation != self._generation:
+                return
+            for row in missing:
+                if row - first < len(found):
+                    ids[row] = found[row - first]
+            on_done([ids[r] for r in wanted if r in ids])
+
+        self._run(job, on_done=done, on_error=lambda e: self._search_failed(generation, e))
 
     def loaded_pages(self) -> list[int]:
         return sorted(self._pages)

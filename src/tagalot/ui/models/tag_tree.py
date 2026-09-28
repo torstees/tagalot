@@ -7,12 +7,21 @@ The whole tree is small (hundreds to low thousands of tags), so a new snapshot o
 simply resets the model.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, QPersistentModelIndex, Qt
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QMimeData,
+    QModelIndex,
+    QObject,
+    QPersistentModelIndex,
+    Qt,
+)
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, description_excerpt, search_key
+from tagalot.ui.dnd import TAG_MIME, tags_mime
 
 TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 """The tag id of an index."""
@@ -185,7 +194,21 @@ class TagTreeModel(QAbstractItemModel):
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
-        return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        return (
+            Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled
+        )
+
+    # --- dragging tags onto items (DESIGN.md §12) ---
+
+    def mimeTypes(self) -> list[str]:
+        return [TAG_MIME]
+
+    def mimeData(self, indexes: Sequence[QModelIndex]) -> QMimeData:
+        ids = [t for i in indexes if (t := self.tag_id(i)) is not None]
+        return tags_mime(ids)
+
+    def supportedDragActions(self) -> Qt.DropAction:
+        return Qt.DropAction.CopyAction
 
     def _swatch(self, color: str) -> QIcon | None:
         """A small square of the tag's color; ``None`` for a color Qt can't parse.

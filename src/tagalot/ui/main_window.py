@@ -33,6 +33,7 @@ from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
+from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.workers import ScanController, run_in_pool
 
@@ -101,6 +102,21 @@ class MainWindow(QMainWindow):
             keep_menu.addAction(self.open_other_action)
         keep_menu.addAction(close_action)
 
+        # Edit: undo and redo tagging and tag operations (DESIGN.md §7).
+        self.tag_actions = TagActions(session, self)
+        self.tag_actions.changed.connect(self._tags_changed)
+        self.tag_actions.message.connect(self._tag_message)
+        self.undo_action = QAction("Undo", self)
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self.undo_action.triggered.connect(self.tag_actions.undo)
+        self.redo_action = QAction("Redo", self)
+        self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self.redo_action.triggered.connect(self.tag_actions.redo)
+        edit_menu = self.menuBar().addMenu("&Edit")
+        edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.redo_action)
+        self._update_undo_actions()
+
         # Toolbar.
         toolbar = QToolBar("Main toolbar", self)
         toolbar.setObjectName("main_toolbar")
@@ -165,15 +181,55 @@ class MainWindow(QMainWindow):
     def _make_page(self, target: NavTarget) -> QWidget:
         session = self.session
         assert session is not None
-        if target.kind == "search":
-            return SearchPage(session, target.label, SearchSpec(), grouped=True)
-        if target.kind == "view":
-            views = [v for v in session.theme.views if isinstance(v, SearchView)]
-            view = next(v for v in views if v.name == target.key)
-            return SearchPage(session, target.label, view_spec(session.schema, view))
+        if target.kind in ("search", "view"):
+            if target.kind == "search":
+                search = SearchPage(session, target.label, SearchSpec(), grouped=True)
+            else:
+                views = [v for v in session.theme.views if isinstance(v, SearchView)]
+                view = next(v for v in views if v.name == target.key)
+                spec = view_spec(session.schema, view)
+                search = SearchPage(session, target.label, spec)
+            search.tags_dropped.connect(self.apply_tags)
+            return search
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return page
+
+    # --- tagging ---
+
+    def apply_tags(self, entity_ids: list[int], tag_ids: list[int]) -> None:
+        """Tag entities (a drop on results), in the background; undoable."""
+        self.tag_actions.apply(entity_ids, tag_ids, self.tag_names(tag_ids))
+
+    def tag_names(self, tag_ids: list[int]) -> str:
+        """How tags read in a message: 'Iceland', 'Iceland' and 'Beach', or 4 tags."""
+        tree = self.tag_panel.model.tree
+        names = [
+            repr(tree.display_name(t)) if tree is not None and t in tree else "a tag"
+            for t in tag_ids
+        ]
+        if len(names) > 3:
+            return f"{len(names)} tags"
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+    def _tags_changed(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+        for page in self.search_pages():
+            page.refresh()  # tag filters may now match differently
+        self.tag_panel.reload()  # undo can change the tag tree
+        self._update_undo_actions()
+
+    def _tag_message(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+        self._update_undo_actions()
+
+    def _update_undo_actions(self) -> None:
+        for action, verb, label in (
+            (self.undo_action, "Undo", self.tag_actions.undo_label),
+            (self.redo_action, "Redo", self.tag_actions.redo_label),
+        ):
+            action.setEnabled(label is not None)
+            action.setText(f"{verb} {label}" if label else verb)
 
     def search_pages(self) -> list[SearchPage]:
         """The search pages created so far."""

@@ -10,7 +10,7 @@ re-runs its search after a scan.
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QThreadPool, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
@@ -39,7 +39,12 @@ class SearchPage(QWidget):
     ``spec`` is the page's starting point (a theme view's types, toggles, and sort); the
     filter bar's tags and text are applied on top of it. With ``grouped`` (the global
     search), results are shown in sections by type.
+
+    Emits :attr:`tags_dropped` with entity ids and tag ids when tags are dropped on results;
+    the window does the tagging.
     """
+
+    tags_dropped = Signal(list, list)
 
     def __init__(
         self,
@@ -84,8 +89,11 @@ class SearchPage(QWidget):
         header.setSectionsClickable(True)
         header.sortIndicatorChanged.connect(self._sort_clicked)
 
+        self.table.tags_dropped.connect(self._tags_dropped_on_list)
+
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
+        self.groups.tags_dropped.connect(self.tags_dropped)
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.groups)
@@ -192,6 +200,12 @@ class SearchPage(QWidget):
                 self.filter_bar.set_tree(tree)
 
         run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
+
+    def _tags_dropped_on_list(self, rows: list[int], tag_ids: list[int]) -> None:
+        # Rows far down a long selection may not be loaded yet: the model fetches their ids.
+        self.model.entity_ids(
+            rows, lambda ids: self.tags_dropped.emit(ids, tag_ids) if ids else None
+        )
 
     def _filters_changed(self, _filters: Filters) -> None:
         self._run()

@@ -30,6 +30,8 @@ from tagalot.core.tags import (
     reparent_tag,
     set_tag_color,
     set_tag_description,
+    tag_entities,
+    untag_entities,
 )
 from tagalot.core.writer import DbWriter
 
@@ -121,6 +123,24 @@ class TagService:
             lambda conn: set_tag_description(conn, tag_id, description),
         )
 
+    # --- tagging entities ---
+
+    def apply(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> int:
+        """Tag entities (undoable); returns how many ``entity_tag`` rows were added."""
+        entities, tags = frozenset(entity_ids), frozenset(tag_ids)
+        return self._record_links(
+            lambda tree: f"Tag {_items(len(entities))} with {_names(tree, tags)}",
+            lambda conn: (tag_entities(conn, entities, tags), frozenset()),
+        )
+
+    def remove(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> int:
+        """Untag entities (undoable); returns how many ``entity_tag`` rows were removed."""
+        entities, tags = frozenset(entity_ids), frozenset(tag_ids)
+        return self._record_links(
+            lambda tree: f"Remove {_names(tree, tags)} from {_items(len(entities))}",
+            lambda conn: (frozenset(), untag_entities(conn, entities, tags)),
+        )
+
     def add_alias(self, tag_id: int, alias: str) -> None:
         self._record(
             lambda tree: f"Add alias {alias.strip()!r} to {_name(tree, tag_id)!r}",
@@ -201,6 +221,28 @@ class TagService:
         self._redo.clear()
         return result
 
+    def _record_links(
+        self,
+        label: Callable[[TagTree], str],
+        op: Callable[[Connection], tuple[frozenset[EntityTagRow], frozenset[EntityTagRow]]],
+    ) -> int:
+        """Run a tagging operation, recording exactly the rows it added and removed. Unlike
+        :meth:`_record`, it never reads every use of a tag, so tagging stays cheap for tags
+        on tens of thousands of entities. A change that changed nothing isn't recorded."""
+
+        def job(conn: Connection) -> TagChange:
+            tree = TagTree.load(conn)
+            tags, aliases = _tag_tables(conn)
+            added, removed = op(conn)
+            return TagChange(label(tree), tags, tags, aliases, aliases, removed, added)
+
+        change = self.writer.run(job)  # the tag tree is unchanged: no cache refresh
+        if change.added or change.removed:
+            self._undo.append(change)
+            del self._undo[:-MAX_HISTORY]
+            self._redo.clear()
+        return len(change.added) + len(change.removed)
+
     def _apply[T](self, job: Callable[[Connection], T]) -> T:
         try:
             return self.writer.run(job)
@@ -210,6 +252,15 @@ class TagService:
 
 def _name(tree: TagTree, tag_id: int) -> str:
     return tree.node(tag_id).name if tag_id in tree else f"#{tag_id}"
+
+
+def _items(count: int) -> str:
+    return "1 item" if count == 1 else f"{count:,} items"
+
+
+def _names(tree: TagTree, tag_ids: frozenset[int]) -> str:
+    names = sorted(repr(_name(tree, t)) for t in tag_ids)
+    return ", ".join(names) if len(names) <= 3 else f"{len(names)} tags"
 
 
 def _subtrees(tree: TagTree, *tag_ids: int) -> frozenset[int]:
