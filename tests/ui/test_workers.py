@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QThread, QThreadPool
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
@@ -17,7 +18,7 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.writer import DbWriter
-from tagalot.ui.workers import ScanController, run_in_pool, watch_future
+from tagalot.ui.workers import ScanController, _Job, _Relay, run_in_pool, watch_future
 
 pytestmark = pytest.mark.gui
 
@@ -145,3 +146,21 @@ def test_a_failed_scan_is_reported(qtbot: QtBot, session: KeepSession) -> None:
         controller.scan(session)
     assert "closed" in str(failed.args[0])
     assert not _running(controller)
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_a_result_for_a_deleted_relay_is_dropped(qapp: QApplication, fails: bool) -> None:
+    """While the application shuts down, a job can finish after its relay is gone: the
+    result is dropped instead of raising "Signal source has been deleted" in the worker."""
+
+    def work() -> int:
+        if fails:
+            raise ValueError("late failure")
+        return 42
+
+    delivered: list[object] = []
+    relay = _Relay(delivered.append, delivered.append)
+    job = _Job(work, relay)
+    shiboken6.delete(relay)
+    job.run()  # raised RuntimeError before
+    assert delivered == []

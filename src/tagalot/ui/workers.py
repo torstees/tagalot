@@ -15,7 +15,8 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+import shiboken6
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, SignalInstance, Slot
 
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.session import KeepSession
@@ -70,9 +71,20 @@ class _Job(QRunnable):
         try:
             result = self._fn()
         except Exception as e:  # reported on the GUI thread, never swallowed
-            self._relay.error.emit(e)
+            self._report(self._relay.error, e)
         else:
-            self._relay.done.emit(result)
+            self._report(self._relay.done, result)
+
+    def _report(self, signal: SignalInstance, value: object) -> None:
+        # The relay can be gone if the application is shutting down; there is no one left
+        # to tell, so the result is dropped rather than raising in a worker thread.
+        if not shiboken6.isValid(self._relay):
+            logger.debug("Dropped a background result: the application is closing")
+            return
+        try:
+            signal.emit(value)
+        except RuntimeError:  # deleted between the check and the emit
+            logger.debug("Dropped a background result: the application is closing")
 
 
 def run_in_pool[T](
