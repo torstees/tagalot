@@ -5,15 +5,17 @@ keep from the command line, and scan a root that is offline.
 """
 
 import os
+import time
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
+from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.ui import app as app_module
 from tagalot.ui.app import TagalotApp
@@ -208,6 +210,8 @@ def test_the_command_line_falls_back_to_the_launcher(
         dialogs = [w for w in qapp.topLevelWidgets() if w.isVisible() and w.windowTitle()]
         if warnings and any(isinstance(w, LauncherDialog) for w in dialogs):
             seen.extend(w.windowTitle() for w in dialogs)
+            for dialog in dialogs:
+                dialog.close()  # later tests rely on no stray windows
             qapp.exit(0)
         else:
             QTimer.singleShot(50, quit_once_launcher_shows)
@@ -216,3 +220,35 @@ def test_the_command_line_falls_back_to_the_launcher(
     assert app_module.run(["tagalot", str(tmp_path / "Missing.keep")]) == 0
     assert "does not exist" in warnings[0]
     assert "Tagalot" in seen
+
+
+def test_quitting_waits_for_the_keep_to_close(
+    qapp: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Closing the last window quits Tagalot while the keep is still closing in the
+    background; run() returns only after that has finished."""
+    files = _make_files(tmp_path / "files")
+    roots = [RootConfig("r", "Files", str(files), list(DEFAULT_EXCLUDES))]
+    keep = create_keep(tmp_path / "Files.keep", "Files", ThemeRef("generic", 1), roots)
+    closed: list[KeepSession] = []
+    close = KeepSession.close
+
+    def slow_close(self: KeepSession) -> None:
+        time.sleep(0.3)  # a slow disk, or writes still queued
+        close(self)
+        closed.append(self)
+
+    monkeypatch.setattr(KeepSession, "close", slow_close)
+
+    def close_when_shown() -> None:
+        windows = [w for w in qapp.topLevelWidgets() if isinstance(w, MainWindow)]
+        if any(w.isVisible() for w in windows):
+            next(w for w in windows if w.isVisible()).close()  # starts the keep closing
+            QTimer.singleShot(0, qapp.quit)  # in case another test left a window open
+        else:
+            QTimer.singleShot(20, close_when_shown)
+
+    QTimer.singleShot(0, close_when_shown)
+    assert app_module.run(["tagalot", str(keep.dir)]) == 0
+    assert QThreadPool.globalInstance().activeThreadCount() == 0
+    assert [s.closed for s in closed] == [True]

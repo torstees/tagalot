@@ -4,6 +4,7 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import tagalot
@@ -16,6 +17,9 @@ from tagalot.ui.opening import open_keep_async
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
+
+SHUTDOWN_WAIT_MS = 30_000
+"""How long quitting waits for background jobs (a keep finishing its writes) to finish."""
 
 
 def run(argv: Sequence[str]) -> int:
@@ -47,6 +51,10 @@ def run(argv: Sequence[str]) -> int:
 
     code = app.exec()
     tagalot_app.close_all()
+    # Let background jobs (a keep closing, a search) finish before Python shuts down, so
+    # none of them reports back into a half-destroyed application.
+    if not QThreadPool.globalInstance().waitForDone(SHUTDOWN_WAIT_MS):
+        logger.warning("Background jobs were still running when Tagalot closed")
     return code
 
 
