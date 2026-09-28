@@ -71,6 +71,26 @@ class TagActions(QObject):
             ),
         )
 
+    def create(self, names: list[str], entity_ids: Iterable[int], path: str) -> None:
+        """Create the tag at ``names`` (and missing parents), then apply it to
+        ``entity_ids`` if there are any; ``path`` is how it reads in messages."""
+        entities = list(entity_ids)
+
+        def work() -> int:
+            tag_id = self.session.tags.add_path(names)
+            if entities:
+                self.session.tags.apply(entities, [tag_id])
+            return tag_id
+
+        self._run(
+            work,
+            lambda _: (
+                f"Created tag {path} and tagged {items_text(len(entities))} with it."
+                if entities
+                else f"Created tag {path}."
+            ),
+        )
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 

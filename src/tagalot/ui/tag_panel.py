@@ -15,10 +15,18 @@ change.
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QAbstractItemView, QLabel, QLineEdit, QTreeView, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
+)
 
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import TagTree
+from tagalot.core.tags import PATH_SEPARATOR, TagError, TagTree, split_tag_path
 from tagalot.ui.models.tag_tree import TagTreeModel
 from tagalot.ui.workers import run_in_pool
 
@@ -30,6 +38,8 @@ class TagPanel(QWidget):
     current_changed = Signal(object)
     tag_requested = Signal(list, bool)
     """Tag ids, and whether to remove them (Shift+Enter) rather than apply them (Enter)."""
+    create_requested = Signal(str)
+    """The filter text, to create as a tag (a path like "Places > Norway" is allowed)."""
 
     def __init__(
         self,
@@ -84,8 +94,18 @@ class TagPanel(QWidget):
         self.selection_label.setWordWrap(True)
         self.selection_label.hide()
         layout.addWidget(self.selection_label)
-        layout.addWidget(self.view, 1)
+        # With nothing to show, the tree hides and these sit right under the filter box.
         layout.addWidget(self.message)
+        self.create_button = QPushButton()
+        self.create_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.create_button.setToolTip(
+            "Create this tag (Enter). Use \u201c>\u201d to put it under another: Places > Norway"
+        )
+        self.create_button.clicked.connect(self.request_create)
+        self.create_button.hide()
+        layout.addWidget(self.create_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.view, 1)
+        layout.addStretch(0)  # takes the space while the tree is hidden
         self.reload()
 
     # --- loading ---
@@ -178,6 +198,29 @@ class TagPanel(QWidget):
             text = ""
         self.message.setText(text)
         self.message.setVisible(bool(text))
+        self.view.setVisible(not text)
+        self._show_create()
+
+    def _show_create(self) -> None:
+        """Offer "Create tag '…'" while the filter matches nothing (§12)."""
+        offer = self.model.tree is not None and self.model.filtering and not self.model.matches()
+        if offer:
+            try:  # show it as it will be created: "Places > Norway" goes under Places
+                shown = PATH_SEPARATOR.join(split_tag_path(self.filter_edit.text()))
+            except TagError:
+                shown = " ".join(self.filter_edit.text().split())
+            selected = self.model.selected_count
+            label = f"Create tag \u201c{shown}\u201d"
+            if selected:
+                label += f" and add it to {'1 item' if selected == 1 else f'{selected:,} items'}"
+            self.create_button.setText(label)
+        self.create_button.setVisible(offer)
+
+    def request_create(self) -> None:
+        """Ask to create the filter text as a tag (and apply it to the selection)."""
+        text = self.filter_edit.text().strip()
+        if text and self.create_button.isVisible():
+            self.create_requested.emit(text)
 
     # --- keyboard ---
 
@@ -196,7 +239,10 @@ class TagPanel(QWidget):
                 self.filter_edit.clear()
                 return True
             if enter:
-                self.request(remove=remove)
+                if self.create_button.isVisible() and not remove:
+                    self.request_create()  # nothing matches: Enter creates the tag
+                else:
+                    self.request(remove=remove)
                 self.filter_edit.selectAll()  # typing the next tag replaces this one
                 return True
         elif watched is self.view:
@@ -245,6 +291,7 @@ class TagPanel(QWidget):
             f"{items} selected. Tick a tag to put it on all of them; untick it to remove it."
         )
         self.selection_label.setVisible(bool(selected_count))
+        self._show_create()
 
     def focus_filter(self) -> None:
         """Put the cursor in the filter box with its text selected (Ctrl+T)."""
