@@ -12,7 +12,7 @@ import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import TagError, subtree_usage
+from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -104,6 +104,38 @@ class TagActions(QObject):
 
         where = f"under {target!r}" if target is not None else "to the top level"
         self._run(work, lambda n: f"Moved {name!r} {where} ({items_text(n - 1)}).")
+
+    def merge(self, source_id: int, target_id: int, source: str, target: str) -> None:
+        """Fold ``source_id`` into ``target_id`` (§7); the message says how many items
+        were tagged with it."""
+        session = self.session
+
+        def work() -> int:
+            with session.reader.connect() as conn:
+                affected = count_tagged_entities(conn, [source_id])
+            session.tags.merge(source_id, target_id)
+            return affected + 1  # truthy even when no items are affected
+
+        self._run(
+            work, lambda n: f"Merged {source!r} into {target!r} ({items_text(n - 1)} retagged)."
+        )
+
+    def delete(self, tag_id: int, mode: DeleteMode | None, name: str) -> None:
+        """Delete a tag; with ``DeleteMode.SUBTREE`` its sub-tags go too, with
+        ``PROMOTE`` they move up. The message says how many items lost a tag."""
+        session = self.session
+
+        def work() -> int:
+            with session.reader.connect() as conn:
+                if mode is DeleteMode.SUBTREE:
+                    affected = subtree_usage(conn, tag_id)
+                else:
+                    affected = count_tagged_entities(conn, [tag_id])
+            session.tags.delete(tag_id, mode)
+            return affected + 1
+
+        what = f"{name!r} and its sub-tags" if mode is DeleteMode.SUBTREE else repr(name)
+        self._run(work, lambda n: f"Deleted {what} ({items_text(n - 1)} lost a tag).")
 
     def create(self, names: list[str], entity_ids: Iterable[int], path: str) -> None:
         """Create the tag at ``names`` (and missing parents), then apply it to

@@ -54,7 +54,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, TagUsage, tag_usage
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.models.tag_tree import TagTreeModel
-from tagalot.ui.tag_picker import MoveToDialog
+from tagalot.ui.tag_picker import DeleteDialog, merge_dialog, move_dialog
 from tagalot.ui.workers import run_in_pool
 
 AnyIndex = QModelIndex | QPersistentModelIndex
@@ -243,6 +243,10 @@ class TagManagerPage(QWidget):
     add_requested = Signal(object, str)
     rename_requested = Signal(int, str, str)
     move_requested = Signal(int, object)
+    merge_requested = Signal(int, int)
+    """Source tag id, target tag id."""
+    delete_requested = Signal(int, object)
+    """Tag id, and a :class:`~tagalot.core.tags.DeleteMode` (``None`` without sub-tags)."""
 
     def __init__(
         self,
@@ -314,12 +318,22 @@ class TagManagerPage(QWidget):
             "Move the selected tag, with its sub-tags (you can also drag it onto another tag)"
         )
         self.move_button.clicked.connect(self.move_current)
+        self.merge_button = QPushButton("Merge into…")
+        self.merge_button.setToolTip(
+            "Fold the selected tag into another: its items and sub-tags go to that tag"
+        )
+        self.merge_button.clicked.connect(self.merge_current)
+        self.delete_button = QPushButton("Delete…")
+        self.delete_button.setToolTip("Delete the selected tag (items are never deleted)")
+        self.delete_button.clicked.connect(self.delete_current)
         buttons = QHBoxLayout()
         for button in (
             self.new_button,
             self.new_child_button,
             self.rename_button,
             self.move_button,
+            self.merge_button,
+            self.delete_button,
         ):
             buttons.addWidget(button)
         buttons.addStretch(1)
@@ -415,9 +429,28 @@ class TagManagerPage(QWidget):
         tag_id, tree = self.current_tag(), self.model.tree
         if tag_id is None or tree is None:
             return
-        dialog = MoveToDialog(tree, tag_id, self)
+        dialog = move_dialog(tree, tag_id, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.move_requested.emit(tag_id, dialog.target())
+
+    def merge_current(self) -> None:
+        """Pick a tag to fold the selected tag into (§7)."""
+        tag_id, tree = self.current_tag(), self.model.tree
+        if tag_id is None or tree is None:
+            return
+        dialog = merge_dialog(tree, tag_id, self.model.usage.get(tag_id), self)
+        target = dialog.target() if dialog.exec() == QDialog.DialogCode.Accepted else None
+        if target is not None:
+            self.merge_requested.emit(tag_id, target)
+
+    def delete_current(self) -> None:
+        """Confirm deleting the selected tag (and choose what happens to its sub-tags)."""
+        tag_id, tree = self.current_tag(), self.model.tree
+        if tag_id is None or tree is None:
+            return
+        dialog = DeleteDialog(tree, tag_id, self.model.usage.get(tag_id), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.delete_requested.emit(tag_id, dialog.mode())
 
     def _rename_requested(self, tag_id: int, name: str) -> None:
         tree = self.model.tree
@@ -434,7 +467,13 @@ class TagManagerPage(QWidget):
 
     def _on_current(self) -> None:
         has_tag = self.current_tag() is not None
-        for button in (self.new_child_button, self.rename_button, self.move_button):
+        for button in (
+            self.new_child_button,
+            self.rename_button,
+            self.move_button,
+            self.merge_button,
+            self.delete_button,
+        ):
             button.setEnabled(has_tag)
         self._show_details()
 
