@@ -619,6 +619,8 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Tag manager.** Full tree with usage counts; add, rename, reparent (drag or "Move to…"), merge, delete with subtree options, aliases, colors. Undo within the session.
 
+- **Layout** (`ui/tag_manager.py`): a filter box and the tag tree on the left, the selected tag's details on the right (path, color, description, aliases, usage); editing arrives with #68–#70. The tree has two count columns: **Items** (tagged with the tag itself) and **With sub-tags** (distinct items tagged with it or any tag under it). Counts come from `core.tags.tag_usage`: one grouped query, then one distinct count per tag with children (about 24 ms for 300 tags over 50k items), in a worker, and are reloaded after any tagging or undo. Filtering, folds, and the selection behave as in the tagging panel.
+
 **Triage.** Tabs: resources not linked to any entity; entities with no tags; entities whose linked resources are all missing. Bulk actions: link to entity/role, tag, dismiss (hide until changed).
 
 **Dedupe.** Groups of exact duplicates (fingerprint) and theme-suggested near-duplicates. Side-by-side comparison of files and entities (format, size, resolution/bitrate, tags). Actions: merge entities (§13), keep both files as versions under one entity, or mark "not a duplicate." Never deletes files.
@@ -705,5 +707,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Selection summary: tri-state checks on the tagging panel count direct tags only, recomputed in a worker after the selection settles or tags change; a click requests apply-to-all or remove-from-all (§12). |
 | 2026-09 | Creating tags from the Tags filter: a typed path with " > " or "›" nests the new tag, creating missing parents in one undo step, and the new tag is applied to any selected items (§12). |
 | 2026-09 | Tags panel context menu: add the tag to the search (include or "but not"), or apply / remove it on the selection; covers every selected tag in the tree (§12). |
+| 2026-09 | Tag manager: tree with Items / With sub-tags counts plus a details pane for the selected tag (§12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

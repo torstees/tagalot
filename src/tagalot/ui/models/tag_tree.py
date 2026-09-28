@@ -155,9 +155,9 @@ class TagTreeModel(QAbstractItemModel):
 
     def index(self, row: int, column: int, parent: AnyIndex = QModelIndex()) -> QModelIndex:  # noqa: B008
         kids = self._children.get(self.tag_id(parent), ())
-        if column != 0 or not 0 <= row < len(kids):
+        if not 0 <= column < self.columnCount() or not 0 <= row < len(kids):
             return QModelIndex()
-        return self.createIndex(row, 0, kids[row])
+        return self.createIndex(row, column, kids[row])
 
     def parent(self, index: AnyIndex = QModelIndex()) -> QModelIndex:  # type: ignore[override]  # noqa: B008
         tag_id = self.tag_id(index)

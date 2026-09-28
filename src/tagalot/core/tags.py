@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import unicodedata
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -115,6 +115,10 @@ class TagTree:
 
     def __len__(self) -> int:
         return len(self._nodes)
+
+    def __iter__(self) -> Iterator[int]:
+        """Every tag id (in no particular order)."""
+        return iter(self._nodes)
 
     def __contains__(self, tag_id: object) -> bool:
         return tag_id in self._nodes
@@ -580,6 +584,40 @@ def untag_entities(
             conn.execute(delete(EntityTag).where(*where))
             removed.update(found)
     return frozenset(removed)
+
+
+@dataclass(frozen=True)
+class TagUsage:
+    """How many entities use a tag: directly, and with any of its sub-tags (each entity
+    counted once)."""
+
+    direct: int
+    with_subtags: int
+
+
+def tag_usage(conn: Connection, tree: TagTree) -> dict[int, TagUsage]:
+    """Usage counts for every tag in ``tree`` (the tag manager's columns, §12). One grouped
+    query for direct uses, then one distinct count per tag that has sub-tags."""
+    direct: dict[int, int] = {
+        tag_id: int(count)
+        for tag_id, count in conn.execute(
+            select(EntityTag.tag_id, func.count()).group_by(EntityTag.tag_id)
+        )
+    }
+    usage: dict[int, TagUsage] = {}
+    for tag_id in tree:
+        own = direct.get(tag_id, 0)
+        if not tree.children(tag_id):
+            usage[tag_id] = TagUsage(own, own)
+            continue
+        subtree = tree.descendants(tag_id)
+        total = conn.scalar(
+            select(func.count(func.distinct(EntityTag.entity_id))).where(
+                EntityTag.tag_id.in_(subtree)
+            )
+        )
+        usage[tag_id] = TagUsage(own, int(total or 0))
+    return usage
 
 
 def tag_counts(conn: Connection, entity_ids: Iterable[int]) -> dict[int, int]:
