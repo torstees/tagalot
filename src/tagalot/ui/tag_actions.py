@@ -105,6 +105,16 @@ class TagActions(QObject):
         where = f"under {target!r}" if target is not None else "to the top level"
         self._run(work, lambda n: f"Moved {name!r} {where} ({items_text(n - 1)}).")
 
+    def change(self, work: Callable[[], object], message: str) -> None:
+        """Run a tag operation that returns nothing useful (set a color, add an alias…);
+        ``message`` goes to the status bar once it's done."""
+
+        def run() -> bool:
+            work()
+            return True
+
+        self._run(run, lambda _: message)
+
     def merge(self, source_id: int, target_id: int, source: str, target: str) -> None:
         """Fold ``source_id`` into ``target_id`` (§7); the message says how many items
         were tagged with it."""
