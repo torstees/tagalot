@@ -14,7 +14,7 @@ that type's own columns, and "Show all N →" when there are more. :func:`load_g
 a worker; :class:`GroupedResults` shows its result.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import Qt, Signal
@@ -30,10 +30,10 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.search import count_by_type, run_search
-from tagalot.core.search_fields import field_values, scoped_tables, search_fields, type_plurals
+from tagalot.core.search_fields import scoped_tables, search_fields, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.ui.models.results import PreviewModel, ResultColumn, Row
+from tagalot.ui.models.results import PreviewModel, ResultColumn, Row, row_values
 from tagalot.ui.result_table import list_columns, make_result_table, set_column_widths
 
 PREVIEW_ROWS = 8
@@ -76,8 +76,7 @@ def load_groups(
                 limit=limit,
                 fields=search_fields(schema, types),
             )
-            names = [c.key for c in columns if c.key not in ("title", "type")]
-            values = field_values(conn, schema, hits, names) if names else {}
+            values = row_values(conn, schema, tree, hits, columns)
             rows = tuple((h, values.get(h.id, {})) for h in hits)
             groups.append(
                 TypeGroup(table.type_id, labels[table.type_id], count, tuple(columns), rows)
@@ -92,8 +91,15 @@ class TypeSection(QWidget):
     show_all = Signal(str)
     toggled = Signal(str, bool)
     tags_dropped = Signal(list, list)
+    column_toggled = Signal(str, bool)
 
-    def __init__(self, group: TypeGroup, expanded: bool = True, parent: QWidget | None = None):
+    def __init__(
+        self,
+        group: TypeGroup,
+        expanded: bool = True,
+        hidden_columns: Iterable[str] = (),
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self.group = group
         self.header = QToolButton()
@@ -117,6 +123,8 @@ class TypeSection(QWidget):
         self.table.setModel(self.model)
         self.table.tags_dropped.connect(self._tags_dropped)
         set_column_widths(self.table, group.columns)
+        self.table.set_columns(group.columns, hidden_columns)
+        self.table.column_toggled.connect(self.column_toggled)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         rows_height = sum(self.table.rowHeight(r) for r in range(self.model.rowCount()))
@@ -174,12 +182,15 @@ class GroupedResults(QScrollArea):
 
     show_all = Signal(str)
     tags_dropped = Signal(list, list)
+    column_toggled = Signal(str, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self._folded: set[str] = set()
+        self.hidden_columns: set[str] = set()
+        """Column keys hidden in every section (the page's choice)."""
         self.sections: list[TypeSection] = []
         self._content = QWidget()
         self._layout = QVBoxLayout(self._content)
@@ -194,12 +205,20 @@ class GroupedResults(QScrollArea):
             section.deleteLater()
         self.sections = []
         for group in groups:
-            section = TypeSection(group, expanded=group.type_id not in self._folded)
+            expanded = group.type_id not in self._folded
+            section = TypeSection(group, expanded, self.hidden_columns)
             section.show_all.connect(self.show_all)
             section.tags_dropped.connect(self.tags_dropped)
+            section.column_toggled.connect(self.column_toggled)
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)
             self.sections.append(section)
+
+    def set_hidden_columns(self, hidden: Iterable[str]) -> None:
+        """Hide ``hidden`` in every section, now and in later results."""
+        self.hidden_columns = set(hidden)
+        for section in self.sections:
+            section.table.set_columns(section.group.columns, self.hidden_columns)
 
     def _remember_fold(self, type_id: str, expanded: bool) -> None:
         if expanded:

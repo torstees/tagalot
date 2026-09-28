@@ -557,6 +557,18 @@ def untag_entities(
     return frozenset(removed)
 
 
+def entity_tags(conn: Connection, entity_ids: Iterable[int]) -> dict[int, list[int]]:
+    """The tags applied directly to each entity (entities without tags are absent)."""
+    found: dict[int, list[int]] = {}
+    for chunk in _batches(entity_ids):
+        rows = conn.execute(
+            select(EntityTag.entity_id, EntityTag.tag_id).where(EntityTag.entity_id.in_(chunk))
+        )
+        for entity_id, tag_id in rows:
+            found.setdefault(entity_id, []).append(tag_id)
+    return found
+
+
 def _existing_tags(conn: Connection, tag_ids: Iterable[int]) -> list[int]:
     tree = TagTree.load(conn)
     tags = sorted(set(tag_ids))
