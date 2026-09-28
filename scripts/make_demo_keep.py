@@ -2,9 +2,10 @@
 
 Usage (from the repository folder):
 
-    uv run python scripts/make_demo_keep.py            # create it if it doesn't exist
-    uv run python scripts/make_demo_keep.py --reset    # delete and recreate it
+    uv run python scripts/make_demo_keep.py                   # create it if it doesn't exist
+    uv run python scripts/make_demo_keep.py --reset           # delete and recreate it
     uv run tagalot scratch/Demo.keep
+    uv run python scripts/make_demo_keep.py --reset --media   # the media keep instead
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
 it watches): a few real images, documents, nested folders, and names with accents and spaces,
@@ -14,7 +15,8 @@ default exclude patterns skip.
 The keep is scanned and given a small tag tree (with an alias), applied to most files, so
 tag filters can be tried before the tagging panel exists. Scanning again finds nothing new.
 
-``--media`` also creates ``scratch/Media.keep``: artists, albums, and songs with a few tags,
+``--media`` creates ``scratch/Media.keep`` instead (the demo keep is left alone, so it can
+stay open): artists, albums, and songs with a few tags,
 for trying views with several entity types (Search all's sections) before the music theme
 exists. Its small theme, ``tagalot_demo_media.py``, is installed in the user themes folder;
 delete that file when you're done with the media demo.
@@ -264,26 +266,30 @@ def _tag(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--reset", action="store_true", help="delete and recreate the demo keep")
+    parser.add_argument("--reset", action="store_true", help="delete and recreate the keep")
     parser.add_argument(
         "--media",
         action="store_true",
-        help="also create scratch/Media.keep (artists, albums, songs) and install its theme",
+        help="create scratch/Media.keep (artists, albums, songs) instead, and install its theme",
     )
     args = parser.parse_args(argv)
+    scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        keep_dir = make_demo(reset=args.reset)
-        media_dir = make_media_demo(reset=args.reset) if args.media else None
+        if args.media:
+            keep_dir = make_media_demo(scratch, reset=args.reset)
+        else:
+            keep_dir = make_demo(scratch, reset=args.reset)
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    print(f"Created {keep_dir.relative_to(REPO)} watching scratch/demo-files (scanned and tagged).")
-    print("Open it with:  uv run tagalot scratch/Demo.keep")
-    if media_dir is not None:
+    if args.media:
         theme = default_user_themes_dir() / MEDIA_THEME_FILE
-        print(f"Created {media_dir.relative_to(REPO)} with artists, albums, and songs.")
+        print(f"Created {keep_dir} with artists, albums, and songs.")
         print("Open it with:  uv run tagalot scratch/Media.keep")
         print(f"Its theme is {theme}; delete that file when you're done with the media demo.")
+    else:
+        print(f"Created {keep_dir} watching demo-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Demo.keep")
     return 0
 
 
