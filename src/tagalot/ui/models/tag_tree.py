@@ -12,10 +12,25 @@ from typing import Any
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, QObject, QPersistentModelIndex, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 
-from tagalot.core.tags import PATH_SEPARATOR, TagTree, search_key
+from tagalot.core.tags import PATH_SEPARATOR, TagTree, description_excerpt, search_key
 
 TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 """The tag id of an index."""
+
+EXCERPT_WIDTH = 32
+"""Characters of a description shown next to a tag matched only through it."""
+
+
+def tag_tooltip(tree: TagTree, tag_id: int) -> str:
+    """A tag's tooltip: its path, its description, and its aliases."""
+    node = tree.node(tag_id)
+    lines = [PATH_SEPARATOR.join(tree.path(tag_id))]
+    if node.description:
+        lines.append(node.description)
+    if aliases := tree.aliases(tag_id):
+        lines.append("Also: " + ", ".join(aliases))
+    return "\n".join(lines)
+
 
 AnyIndex = QModelIndex | QPersistentModelIndex
 
@@ -30,6 +45,7 @@ class TagTreeModel(QAbstractItemModel):
         self._visible: frozenset[int] | None = None  # None: every tag
         self._matches: frozenset[int] = frozenset()
         self._alias_hits: dict[int, str] = {}  # matched through an alias, not the name
+        self._description_hits: set[int] = set()  # matched only through the description
         self._children: dict[int | None, tuple[int, ...]] = {}
         self._row: dict[int, int] = {}
         self._swatches: dict[str, QPixmap | None] = {}
@@ -90,16 +106,18 @@ class TagTreeModel(QAbstractItemModel):
                 self._matches = tree.matching(self.filter_text)
                 self._visible = tree.with_ancestors(self._matches)
                 needle = search_key(self.filter_text)
-                self._alias_hits = {}
+                self._alias_hits, self._description_hits = {}, set()
                 for tag_id in self._matches:
                     if needle in search_key(tree.node(tag_id).name):
                         continue
                     aliases = [a for a in tree.aliases(tag_id) if needle in search_key(a)]
                     if aliases:
                         self._alias_hits[tag_id] = aliases[0]
+                    else:
+                        self._description_hits.add(tag_id)
             else:
                 self._visible, self._matches = None, frozenset()
-                self._alias_hits = {}
+                self._alias_hits, self._description_hits = {}, set()
             self._collect(tree, None)
         self.endResetModel()
 
@@ -146,14 +164,16 @@ class TagTreeModel(QAbstractItemModel):
         node = tree.node(tag_id)
         if role == Qt.ItemDataRole.DisplayRole:
             alias = self._alias_hits.get(tag_id)
-            return node.name if alias is None else f"{node.name} ({alias})"
+            if alias is not None:
+                return f"{node.name} ({alias})"
+            if tag_id in self._description_hits and node.description:
+                excerpt = description_excerpt(node.description, self.filter_text, EXCERPT_WIDTH)
+                return f"{node.name} — {excerpt}"
+            return node.name
         if role == TAG_ID_ROLE:
             return tag_id
         if role == Qt.ItemDataRole.ToolTipRole:
-            lines = [PATH_SEPARATOR.join(tree.path(tag_id))]
-            if aliases := tree.aliases(tag_id):
-                lines.append("Also: " + ", ".join(aliases))
-            return "\n".join(lines)
+            return tag_tooltip(tree, tag_id)
         if role == Qt.ItemDataRole.FontRole and tag_id in self._matches:
             font = QFont()
             font.setBold(True)

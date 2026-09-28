@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, event, insert, inspect, select, update
+from sqlalchemy import Engine, create_engine, event, insert, inspect, select, text, update
 from sqlalchemy.engine import URL, Connection
 from sqlalchemy.pool import NullPool
 
@@ -123,8 +123,14 @@ CORE = "core"
 Migration = Callable[[Connection], None]
 """Upgrades the core schema from version N to N + 1 inside the caller's transaction."""
 
-CORE_MIGRATIONS: Mapping[int, Migration] = {}
-"""Core migration steps keyed by the version they upgrade *from*. None exist yet."""
+
+def _v1_tag_descriptions(conn: Connection) -> None:
+    """Format 2: tags get an optional description (#192)."""
+    conn.execute(text("ALTER TABLE tag ADD COLUMN description VARCHAR"))
+
+
+CORE_MIGRATIONS: Mapping[int, Migration] = {1: _v1_tag_descriptions}
+"""Core migration steps keyed by the version they upgrade *from*."""
 
 
 class KeepVersionError(KeepError):

@@ -224,6 +224,7 @@ class Tag(Base):
     name: Mapped[str]
     color: Mapped[str | None]
     sort_order: Mapped[int] = mapped_column(default=0)
+    description: Mapped[str | None]  # shown in tooltips, matched when finding tags (core v2)
 
 
 # Sibling names are unique case-insensitively, including at the root level: SQLite treats

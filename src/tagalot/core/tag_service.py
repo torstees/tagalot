@@ -29,6 +29,7 @@ from tagalot.core.tags import (
     rename_tag,
     reparent_tag,
     set_tag_color,
+    set_tag_description,
 )
 from tagalot.core.writer import DbWriter
 
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY = 100
 """Undo steps kept per session."""
 
-TagRow = tuple[int, int | None, str, str | None, int]
-"""``(id, parent_id, name, color, sort_order)``."""
+TagRow = tuple[int, int | None, str, str | None, int, str | None]
+"""``(id, parent_id, name, color, sort_order, description)``."""
 EntityTagRow = tuple[int, int, datetime]
 """``(entity_id, tag_id, added_at)``."""
 
@@ -111,6 +112,13 @@ class TagService:
             lambda tree: f"Change the color of {_name(tree, tag_id)!r}",
             lambda tree: (),
             lambda conn: set_tag_color(conn, tag_id, color),
+        )
+
+    def set_description(self, tag_id: int, description: str | None) -> None:
+        self._record(
+            lambda tree: f"Change the description of {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: set_tag_description(conn, tag_id, description),
         )
 
     def add_alias(self, tag_id: int, alias: str) -> None:
@@ -209,7 +217,9 @@ def _subtrees(tree: TagTree, *tag_ids: int) -> frozenset[int]:
 
 
 def _tag_tables(conn: Connection) -> tuple[frozenset[TagRow], frozenset[tuple[int, str]]]:
-    tags = conn.execute(select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order))
+    tags = conn.execute(
+        select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description)
+    )
     aliases = conn.execute(select(TagAlias.tag_id, TagAlias.alias))
     return frozenset(tuple(r) for r in tags), frozenset(tuple(r) for r in aliases)  # type: ignore[misc]
 
@@ -271,11 +281,12 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
 
 
 def _tag_values(row: TagRow) -> dict[str, Any]:
-    tag_id, parent_id, name, color, sort_order = row
+    tag_id, parent_id, name, color, sort_order, description = row
     return {
         "id": tag_id,
         "parent_id": parent_id,
         "name": name,
         "color": color,
         "sort_order": sort_order,
+        "description": description,
     }

@@ -33,6 +33,7 @@ class TagNode:
     name: str
     color: str | None
     sort_order: int
+    description: str | None = None
 
 
 def name_key(name: str) -> str:
@@ -55,10 +56,12 @@ def _display_order(node: TagNode) -> tuple[int, str, int]:
 @dataclass(frozen=True)
 class TagSuggestion:
     """A tag offered for ``text`` by :meth:`TagTree.suggest`; ``alias`` is set when the
-    match came through an alias rather than the name."""
+    match came through an alias rather than the name, ``in_description`` when it came only
+    through the tag's description."""
 
     tag_id: int
     alias: str | None = None
+    in_description: bool = False
 
 
 _WORD_START = re.compile(r"\w+")
@@ -101,7 +104,7 @@ class TagTree:
         nodes = [
             TagNode(*row)
             for row in conn.execute(
-                select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order)
+                select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description)
             )
         ]
         aliases: dict[int, list[str]] = {}
@@ -185,8 +188,8 @@ class TagTree:
         return name
 
     def matching(self, text: str) -> frozenset[int]:
-        """Tags whose name or an alias contains ``text``, ignoring case and accents (the
-        filter box)."""
+        """Tags whose name, an alias, or description contains ``text``, ignoring case and
+        accents (the filter box)."""
         needle = search_key(text)
         if not needle:
             return frozenset(self._nodes)
@@ -195,16 +198,17 @@ class TagTree:
             for tag_id, node in self._nodes.items()
             if needle in search_key(node.name)
             or any(needle in search_key(a) for a in self._aliases.get(tag_id, ()))
+            or (node.description is not None and needle in search_key(node.description))
         )
 
     def suggest(self, text: str, limit: int = 20) -> list["TagSuggestion"]:
         """Tags for an autocomplete box, best first (the filter bar's tag box, §12).
 
-        A tag matches when its name or an alias contains ``text`` (ignoring case and
-        accents). Matches
+        A tag matches when its name, an alias, or its description contains ``text``
+        (ignoring case and accents). Matches
         rank: the whole name, the start of the name, the start of a word in it, anywhere in
-        it, then the same four through an alias; ties go by name, then tree position. Blank
-        text suggests nothing.
+        it, then the same four through an alias, then a match in the description; ties go
+        by name, then tree position. Blank text suggests nothing.
         """
         needle = search_key(text)
         if not needle:
@@ -213,18 +217,22 @@ class TagTree:
         for tag_id, node in self._nodes.items():
             rank = _match_rank(needle, node.name)
             alias: str | None = None
+            in_description = False
             if rank is None:
                 alias_ranks = [
                     (r, a)
                     for a in self._aliases.get(tag_id, ())
                     if (r := _match_rank(needle, a)) is not None
                 ]
-                if not alias_ranks:
+                if alias_ranks:
+                    best, alias = min(alias_ranks, key=lambda ra: (ra[0], name_key(ra[1])))
+                    rank = best + 4
+                elif node.description is not None and needle in search_key(node.description):
+                    rank, in_description = 8, True
+                else:
                     continue
-                best, alias = min(alias_ranks, key=lambda ra: (ra[0], name_key(ra[1])))
-                rank = best + 4
             key = (rank, name_key(node.name), tuple(name_key(n) for n in self.path(tag_id)))
-            ranked.append((key, TagSuggestion(tag_id, alias)))
+            ranked.append((key, TagSuggestion(tag_id, alias, in_description)))
         ranked.sort(key=lambda item: item[0])
         return [suggestion for _, suggestion in ranked[:limit]]
 
@@ -364,7 +372,8 @@ def merge_tags(conn: Connection, source_id: int, target_id: int) -> None:
     Entities tagged with the source get the target (without duplicates). The source's
     children move under the target; a child whose name clashes with one of the target's
     children is merged into it the same way. The source's name and aliases become aliases of
-    the target, and the source is deleted.
+    the target, and the source is deleted. A target without a description takes the
+    source's.
     """
     tree = TagTree.load(conn)
     source, target = _existing(tree, source_id), _existing(tree, target_id)
@@ -416,6 +425,44 @@ def set_tag_color(conn: Connection, tag_id: int, color: str | None) -> None:
     """Set a tag's chip color (``#rrggbb``) or clear it with ``None``."""
     _existing(TagTree.load(conn), tag_id)
     conn.execute(update(Tag).where(Tag.id == tag_id).values(color=_clean_color(color)))
+
+
+MAX_DESCRIPTION = 2000
+"""Characters allowed in a tag description."""
+
+
+def set_tag_description(conn: Connection, tag_id: int, description: str | None) -> None:
+    """Set a tag's description (trimmed; blank clears it)."""
+    _existing(TagTree.load(conn), tag_id)
+    cleaned = (description or "").strip() or None
+    if cleaned is not None and len(cleaned) > MAX_DESCRIPTION:
+        raise TagError(f"A description can be at most {MAX_DESCRIPTION} characters.")
+    conn.execute(update(Tag).where(Tag.id == tag_id).values(description=cleaned))
+
+
+def description_excerpt(description: str, text: str, width: int = 40) -> str:
+    """A short piece of ``description`` around the first match of ``text`` (ignoring case
+    and accents), with ellipses where it was cut; the start of it if ``text`` isn't found."""
+    flat = " ".join(description.split())
+    if len(flat) <= width:
+        return flat
+    needle = search_key(text)
+    position = next(
+        (
+            i
+            for i in range(len(flat))
+            if needle and search_key(flat[i : i + len(needle) + 4]).startswith(needle)
+        ),
+        0,
+    )
+    start = max(0, min(position - width // 4, len(flat) - width))
+    end = min(len(flat), start + width)
+    # Cut at word boundaries, never inside the match.
+    if start > 0 and (space := flat.find(" ", start, position)) != -1:
+        start = space + 1
+    if end < len(flat) and (space := flat.rfind(" ", position + len(text), end)) != -1:
+        end = space
+    return ("…" if start > 0 else "") + flat[start:end] + ("…" if end < len(flat) else "")
 
 
 def add_alias(conn: Connection, tag_id: int, alias: str) -> None:
@@ -480,6 +527,8 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
         if name_key(alias) not in known:
             known.add(name_key(alias))
             conn.execute(insert(TagAlias).values(tag_id=target_id, alias=alias))
+    if target.description is None and source.description is not None:
+        conn.execute(update(Tag).where(Tag.id == target_id).values(description=source.description))
     conn.execute(delete(Tag).where(Tag.id == source_id))  # its entity_tag rows cascade
 
 

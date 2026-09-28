@@ -10,6 +10,7 @@ from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity, EntityTag, Tag, TagAlias
 from tagalot.core.tag_service import TagService
 from tagalot.core.tags import (
+    MAX_DESCRIPTION,
     MAX_NAME_LENGTH,
     DeleteMode,
     TagError,
@@ -24,6 +25,7 @@ from tagalot.core.tags import (
     rename_tag,
     reparent_tag,
     set_tag_color,
+    set_tag_description,
     subtree_usage,
 )
 from tagalot.core.writer import DbWriter
@@ -305,3 +307,38 @@ def test_service_writes_through_the_writer_and_refreshes_the_cache(
         assert new not in tree
         assert tree.node(5).parent_id == 7
         assert tree.aliases(5) == ("Bebop",)
+
+
+# --- descriptions ---
+
+
+@pytest.mark.parametrize(
+    ("given", "stored"),
+    [
+        ("  Summer 2019 road trip  ", "Summer 2019 road trip"),
+        ("Line one\nLine two", "Line one\nLine two"),  # kept as written inside
+        ("   ", None),
+        (None, None),
+    ],
+)
+def test_set_description(engine: Engine, given: str | None, stored: str | None) -> None:
+    _do(engine, lambda conn: set_tag_description(conn, 2, "old"))
+    _do(engine, lambda conn: set_tag_description(conn, 2, given))
+    assert _tree(engine).node(2).description == stored
+
+
+def test_description_limits(engine: Engine) -> None:
+    with pytest.raises(TagError, match="at most"):
+        _do(engine, lambda conn: set_tag_description(conn, 2, "x" * (MAX_DESCRIPTION + 1)))
+    with pytest.raises(TagError, match="no longer exists"):
+        _do(engine, lambda conn: set_tag_description(conn, 999, "gone"))
+
+
+def test_merge_keeps_or_takes_a_description(engine: Engine) -> None:
+    _do(engine, lambda conn: set_tag_description(conn, 5, "Improvised"))
+    _do(engine, lambda conn: set_tag_description(conn, 6, "Fast jazz"))
+    _do(engine, lambda conn: merge_tags(conn, 6, 5))  # the target keeps its own
+    assert _tree(engine).node(5).description == "Improvised"
+    _do(engine, lambda conn: set_tag_description(conn, 3, "Fast, loud, and short"))
+    _do(engine, lambda conn: merge_tags(conn, 3, 12))  # Grunge had none: it takes Punk's
+    assert _tree(engine).node(12).description == "Fast, loud, and short"

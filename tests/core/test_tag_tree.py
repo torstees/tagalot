@@ -14,6 +14,7 @@ from tagalot.core.tags import (
     TagNode,
     TagTree,
     TagTreeCache,
+    description_excerpt,
     name_key,
     search_key,
 )
@@ -247,3 +248,55 @@ def test_suggest_ranks_prefix_before_word_before_anywhere() -> None:
     )
     assert [s.tag_id for s in tree.suggest("el")] == [4, 3, 2, 1]
     assert [s.tag_id for s in tree.suggest("el", limit=2)] == [4, 3]
+
+
+def _described_tree() -> TagTree:
+    return TagTree(
+        [
+            TagNode(1, None, "Places", None, 0),
+            TagNode(2, 1, "Iceland", None, 0, "Summer 2019 road trip around the Ring Road"),
+            TagNode(3, None, "Trips", None, 1),  # the name matches "trip" too
+            TagNode(4, None, "Café", None, 2, "Coffee receipts"),
+        ],
+        {},
+    )
+
+
+def test_matching_and_suggesting_through_descriptions() -> None:
+    tree = _described_tree()
+    assert tree.matching("ROAD trip") == {2}
+    assert tree.matching("trip") == {2, 3}
+    assert tree.matching("reçeipts") == {4}  # accents ignored in descriptions too
+    suggestions = tree.suggest("trip")
+    assert [(s.tag_id, s.in_description) for s in suggestions] == [(3, False), (2, True)]
+
+
+@pytest.mark.parametrize(
+    ("description", "text", "excerpt"),
+    [
+        ("Short one", "one", "Short one"),  # short: all of it
+        (
+            "Summer 2019 road trip around the Ring Road, with stops at every waterfall",
+            "waterfall",
+            "…Road, with stops at every waterfall",  # cut at word boundaries
+        ),
+        (
+            "Summer 2019 road trip around the Ring Road, with stops at every waterfall",
+            "summer",
+            "Summer 2019 road trip around the Ring…",
+        ),
+        (
+            "Summer 2019 road trip around the Ring Road, with stops at every waterfall",
+            "ring",
+            "…the Ring Road, with stops at…",
+        ),
+        (
+            "Receipts from the café on the corner, kept for taxes and for fun",
+            "cafe",  # found without the accent
+            "…from the café on the corner, kept for…",
+        ),
+        ("Line one\n\nline two  spaced", "zzz", "Line one line two spaced"),
+    ],
+)
+def test_description_excerpt(description: str, text: str, excerpt: str) -> None:
+    assert description_excerpt(description, text) == excerpt

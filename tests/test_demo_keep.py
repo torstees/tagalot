@@ -45,6 +45,9 @@ def test_creates_a_scanned_and_tagged_keep(tmp_path: Path) -> None:
     assert len(places) == 5  # Iceland's three and Beach's two, through the hierarchy
     assert {h.title for h in money} == {"tax 2025.pdf", "März.txt"}
     assert [s.alias for s in tree.suggest("finance")] == ["finance"]
+    described = {tree.node(t).name: tree.node(t).description for t in _all(tree)}
+    assert described["Iceland"] == "Summer 2019 road trip around the Ring Road"
+    assert described["Beach"] is None
     assert report.online
     assert report.new == report.ingested == 0  # already scanned
     assert report.ingest_errors == []
@@ -115,3 +118,12 @@ def test_creates_a_media_keep_with_several_types(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_media_demo(tmp_path, themes_dir=themes)
     assert script.make_media_demo(tmp_path, reset=True, themes_dir=themes) == keep_dir
+
+
+def _all(tree: TagTree) -> list[int]:
+    ids, stack = [], list(tree.children(None))
+    while stack:
+        tag_id = stack.pop()
+        ids.append(tag_id)
+        stack.extend(tree.children(tag_id))
+    return ids
