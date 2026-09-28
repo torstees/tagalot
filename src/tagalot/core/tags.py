@@ -9,6 +9,7 @@ import enum
 import logging
 import re
 import threading
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cached_property
@@ -39,6 +40,14 @@ def name_key(name: str) -> str:
     return name.strip().casefold()
 
 
+def search_key(text: str) -> str:
+    """How tag filters and suggestions match: ignoring case and accents, like the search box
+    (``"isl"`` finds ``"Ísland"``). Names stay distinct by :func:`name_key`, so ``"Ärger"``
+    and ``"Arger"`` can both exist."""
+    decomposed = unicodedata.normalize("NFKD", name_key(text))
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
 def _display_order(node: TagNode) -> tuple[int, str, int]:
     return (node.sort_order, name_key(node.name), node.id)
 
@@ -57,7 +66,7 @@ _WORD_START = re.compile(r"\w+")
 
 def _match_rank(needle: str, name: str) -> int | None:
     """0 whole name, 1 prefix, 2 start of a word, 3 anywhere; ``None`` if absent."""
-    key = name_key(name)
+    key = search_key(name)
     if needle not in key:
         return None
     if key == needle:
@@ -176,26 +185,28 @@ class TagTree:
         return name
 
     def matching(self, text: str) -> frozenset[int]:
-        """Tags whose name or an alias contains ``text``, ignoring case (the filter box)."""
-        needle = name_key(text)
+        """Tags whose name or an alias contains ``text``, ignoring case and accents (the
+        filter box)."""
+        needle = search_key(text)
         if not needle:
             return frozenset(self._nodes)
         return frozenset(
             tag_id
             for tag_id, node in self._nodes.items()
-            if needle in name_key(node.name)
-            or any(needle in name_key(a) for a in self._aliases.get(tag_id, ()))
+            if needle in search_key(node.name)
+            or any(needle in search_key(a) for a in self._aliases.get(tag_id, ()))
         )
 
     def suggest(self, text: str, limit: int = 20) -> list["TagSuggestion"]:
         """Tags for an autocomplete box, best first (the filter bar's tag box, §12).
 
-        A tag matches when its name or an alias contains ``text`` (ignoring case). Matches
+        A tag matches when its name or an alias contains ``text`` (ignoring case and
+        accents). Matches
         rank: the whole name, the start of the name, the start of a word in it, anywhere in
         it, then the same four through an alias; ties go by name, then tree position. Blank
         text suggests nothing.
         """
-        needle = name_key(text)
+        needle = search_key(text)
         if not needle:
             return []
         ranked: list[tuple[tuple[int, str, tuple[str, ...]], TagSuggestion]] = []

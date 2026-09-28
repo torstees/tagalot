@@ -9,7 +9,14 @@ from sqlalchemy import Engine, insert, update
 
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Tag, TagAlias
-from tagalot.core.tags import PATH_SEPARATOR, TagNode, TagTree, TagTreeCache, name_key
+from tagalot.core.tags import (
+    PATH_SEPARATOR,
+    TagNode,
+    TagTree,
+    TagTreeCache,
+    name_key,
+    search_key,
+)
 
 # id, parent, name, sort_order
 TAGS = [
@@ -121,6 +128,13 @@ def test_find_child(tree: TagTree, parent: int | None, name: str, expected: int 
 
 def test_name_key() -> None:
     assert name_key(" Straße ") == name_key("STRASSE")
+    assert name_key("Ärger") != name_key("Arger")  # distinct names; only searching folds accents
+
+
+def test_search_key() -> None:
+    assert search_key(" Ísland ") == search_key("ISLAND") == "island"
+    assert search_key("Beyoncé") == "beyonce"
+    assert search_key("Straße") == "strasse"
 
 
 @pytest.mark.parametrize(
@@ -129,6 +143,8 @@ def test_name_key() -> None:
         ("rock", {2, 4, 11, 3}),  # names, plus Punk via its alias "punk rock"
         ("CHILL", {8}),  # alias, case-insensitive
         ("bop", {6}),
+        ("arger", {12}),  # accents are ignored too, like the search box
+        ("ÄRG", {12}),
         ("zzz", set()),
     ],
 )
@@ -208,6 +224,7 @@ def _suggest_tree() -> TagTree:
         ("hard", [(3, "hardcore")]),
         ("ärg", [(12, None)]),
         ("ÄRGER", [(12, None)]),
+        ("arger", [(12, None)]),  # without the accent
         ("bop", [(6, None)]),  # anywhere in the name
         ("zebra", []),
         ("", []),
