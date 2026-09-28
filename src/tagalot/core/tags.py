@@ -12,11 +12,12 @@ import threading
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from functools import cached_property
 
 from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, update
 
-from tagalot.core.models import EntityTag, Tag, TagAlias
+from tagalot.core.models import Entity, EntityTag, Tag, TagAlias, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,74 @@ def subtree_usage(conn: Connection, tag_id: int) -> int:
     """Entities tagged with ``tag_id`` or a descendant: the count §7 shows before a reparent
     or delete."""
     return count_tagged_entities(conn, TagTree.load(conn).descendants(tag_id))
+
+
+# --- Tagging entities ---
+
+LINK_BATCH = 500
+"""Entities per statement when tagging a selection (SQLite limits bound parameters)."""
+
+LinkRow = tuple[int, int, datetime]
+"""An ``entity_tag`` row: ``(entity_id, tag_id, added_at)``."""
+
+
+def tag_entities(
+    conn: Connection, entity_ids: Iterable[int], tag_ids: Iterable[int]
+) -> frozenset[LinkRow]:
+    """Apply every tag in ``tag_ids`` to every entity in ``entity_ids``; returns the rows
+    added. Pairs that already exist are left alone, entities that no longer exist are
+    skipped, and a tag that no longer exists is an error. Parents are not added (§7)."""
+    tags = _existing_tags(conn, tag_ids)
+    now = utcnow()
+    added: set[LinkRow] = set()
+    for chunk in _batches(entity_ids):
+        present = set(conn.scalars(select(Entity.id).where(Entity.id.in_(chunk))))
+        pairs = conn.execute(
+            select(EntityTag.entity_id, EntityTag.tag_id).where(
+                EntityTag.entity_id.in_(chunk), EntityTag.tag_id.in_(tags)
+            )
+        )
+        have = {(e, t) for e, t in pairs}
+        new = [(e, t, now) for e in chunk if e in present for t in tags if (e, t) not in have]
+        if new:
+            conn.execute(
+                insert(EntityTag),
+                [{"entity_id": e, "tag_id": t, "added_at": a} for e, t, a in new],
+            )
+            added.update(new)
+    return frozenset(added)
+
+
+def untag_entities(
+    conn: Connection, entity_ids: Iterable[int], tag_ids: Iterable[int]
+) -> frozenset[LinkRow]:
+    """Remove every tag in ``tag_ids`` from every entity in ``entity_ids``; returns the rows
+    removed. Only these exact tags are removed, never their descendants."""
+    tags = _existing_tags(conn, tag_ids)
+    removed: set[LinkRow] = set()
+    for chunk in _batches(entity_ids):
+        where = (EntityTag.entity_id.in_(chunk), EntityTag.tag_id.in_(tags))
+        rows = conn.execute(
+            select(EntityTag.entity_id, EntityTag.tag_id, EntityTag.added_at).where(*where)
+        )
+        found = {(e, t, a) for e, t, a in rows}
+        if found:
+            conn.execute(delete(EntityTag).where(*where))
+            removed.update(found)
+    return frozenset(removed)
+
+
+def _existing_tags(conn: Connection, tag_ids: Iterable[int]) -> list[int]:
+    tree = TagTree.load(conn)
+    tags = sorted(set(tag_ids))
+    for tag_id in tags:
+        _existing(tree, tag_id)
+    return tags
+
+
+def _batches(ids: Iterable[int]) -> list[list[int]]:
+    unique = sorted(set(ids))
+    return [unique[i : i + LINK_BATCH] for i in range(0, len(unique), LINK_BATCH)]
 
 
 def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> None:

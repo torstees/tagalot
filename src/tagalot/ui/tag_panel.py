@@ -50,7 +50,11 @@ class TagPanel(QWidget):
         self.view.setHeaderHidden(True)
         self.view.setUniformRowHeights(True)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Several tags can be selected and dragged onto items together.
+        self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.view.setDragEnabled(True)
+        self.view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.view.setDefaultDropAction(Qt.DropAction.CopyAction)
         self.view.expanded.connect(lambda index: self._folded(index, True))
         self.view.collapsed.connect(lambda index: self._folded(index, False))
         self.view.selectionModel().currentChanged.connect(

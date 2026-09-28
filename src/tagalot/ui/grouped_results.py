@@ -86,10 +86,12 @@ def load_groups(
 
 
 class TypeSection(QWidget):
-    """A collapsible section for one type. Emits :attr:`show_all` with the type id."""
+    """A collapsible section for one type. Emits :attr:`show_all` with the type id, and
+    :attr:`tags_dropped` with entity ids and tag ids when tags are dropped on its rows."""
 
     show_all = Signal(str)
     toggled = Signal(str, bool)
+    tags_dropped = Signal(list, list)
 
     def __init__(self, group: TypeGroup, expanded: bool = True, parent: QWidget | None = None):
         super().__init__(parent)
@@ -113,6 +115,7 @@ class TypeSection(QWidget):
         self.model = PreviewModel(group.columns, group.rows, parent=self)
         self.table = make_result_table()
         self.table.setModel(self.model)
+        self.table.tags_dropped.connect(self._tags_dropped)
         set_column_widths(self.table, group.columns)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -146,6 +149,11 @@ class TypeSection(QWidget):
         layout.addWidget(self.body)
         self._toggled(expanded, notify=False)
 
+    def _tags_dropped(self, rows: list[int], tag_ids: list[int]) -> None:
+        ids = [hit.id for r in rows if (hit := self.model.hit(r)) is not None]
+        if ids:
+            self.tags_dropped.emit(ids, tag_ids)
+
     @property
     def expanded(self) -> bool:
         return self.header.isChecked()
@@ -165,6 +173,7 @@ class GroupedResults(QScrollArea):
     """
 
     show_all = Signal(str)
+    tags_dropped = Signal(list, list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -187,6 +196,7 @@ class GroupedResults(QScrollArea):
         for group in groups:
             section = TypeSection(group, expanded=group.type_id not in self._folded)
             section.show_all.connect(self.show_all)
+            section.tags_dropped.connect(self.tags_dropped)
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)
             self.sections.append(section)

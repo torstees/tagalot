@@ -2,13 +2,18 @@
 
 from collections.abc import Sequence
 
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView, QWidget
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtWidgets import QAbstractItemView, QFrame, QHeaderView, QTableView, QWidget
 
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.models.results import ResultColumn
 
 TITLE_MIN_WIDTH = 200
+OUTLINE_COLOR = "#f0a020"
+"""The drop target's dashed outline: amber, distinct from the selection color."""
 COLUMN_WIDTH = 140
 NUMERIC_WIDTH = 100
 
@@ -33,9 +38,100 @@ def count_text(total: int) -> str:
     return f"{total:,} item" if total == 1 else f"{total:,} items"
 
 
-def make_result_table(parent: QWidget | None = None) -> QTableView:
-    """A results table: whole-row multi-selection, read-only, fixed row heights."""
-    table = QTableView(parent)
+class ResultTable(QTableView):
+    """A results table that accepts tags dragged from the tagging panel (§12).
+
+    Dropping on a selected row tags the whole selection; dropping on any other row tags just
+    that row. While dragging, the rows that would be tagged are outlined. Emits
+    :attr:`tags_dropped` with the target rows and the tag ids; the page does the tagging.
+    """
+
+    tags_dropped = Signal(list, list)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DropOnly)
+        self.setDropIndicatorShown(False)  # the outline below shows the target instead
+        self._drop_rows: list[int] = []
+        self._outlines: list[QFrame] = []
+
+    def drop_rows(self, point: QPoint) -> list[int]:
+        """The rows a drop at ``point`` (viewport coordinates) would tag."""
+        index = self.indexAt(point)
+        if not index.isValid():
+            return []
+        selected = sorted({i.row() for i in self.selectionModel().selectedRows()})
+        return selected if index.row() in selected else [index.row()]
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if dragged_tags(event.mimeData()):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        rows = self.drop_rows(event.position().toPoint()) if dragged_tags(event.mimeData()) else []
+        self._set_drop_rows(rows)
+        if rows:
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._set_drop_rows([])
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        tags = dragged_tags(event.mimeData())
+        rows = self.drop_rows(event.position().toPoint())
+        self._set_drop_rows([])
+        if not tags or not rows:
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        self.tags_dropped.emit(rows, tags)
+
+    def drop_outline(self) -> list[QRect]:
+        """Where the drop target is outlined (viewport coordinates), for tests."""
+        return [f.geometry() for f in self._outlines if not f.isHidden()]
+
+    def _set_drop_rows(self, rows: list[int]) -> None:
+        """Outline ``rows``: one frame per run of consecutive rows. Frames float over the
+        viewport, so repainting cells (as selection changes do) can't break them up."""
+        if rows == self._drop_rows:
+            return
+        self._drop_rows = rows
+        runs: list[list[int]] = []
+        for row in rows:
+            if runs and row == runs[-1][-1] + 1:
+                runs[-1].append(row)
+            else:
+                runs.append([row])
+        while len(self._outlines) < len(runs):
+            frame = QFrame(self.viewport())
+            frame.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            frame.setObjectName("drop_outline")
+            frame.setStyleSheet(f"#drop_outline {{ border: 2px dashed {OUTLINE_COLOR}; }}")
+            self._outlines.append(frame)
+        width = self.viewport().width()
+        for i, frame in enumerate(self._outlines):
+            if i >= len(runs):
+                frame.hide()
+                continue
+            top = self.rowViewportPosition(runs[i][0])
+            bottom = self.rowViewportPosition(runs[i][-1]) + self.rowHeight(runs[i][-1])
+            frame.setGeometry(QRect(0, top, width, bottom - top))
+            frame.show()
+            frame.raise_()
+
+
+def make_result_table(parent: QWidget | None = None) -> ResultTable:
+    """A results table: whole-row multi-selection, read-only, fixed row heights, and a
+    drop target for tags."""
+    table = ResultTable(parent)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
