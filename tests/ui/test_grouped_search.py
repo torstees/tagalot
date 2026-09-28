@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QItemSelectionModel, Qt, QThreadPool
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import Connection
@@ -203,3 +203,14 @@ def test_a_view_is_never_grouped(qtbot: QtBot, session: KeepSession) -> None:
     assert not page.showing_groups()
     # Artists call their title "Name", songs "Title"; they share no card fields.
     assert [c.label for c in page.model.columns] == ["Title", "Type", "Tags"]
+
+
+def test_the_selection_spans_every_section(page: SearchPage) -> None:
+    artists, albums, _ = page.groups.sections
+    flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    artists.table.selectionModel().select(artists.model.index(0, 0), flags)
+    albums.table.selectionModel().select(albums.model.index(1, 0), flags)
+    got: list[list[int]] = []
+    page.selected_entity_ids(got.append)
+    hits = [artists.model.hit(0), albums.model.hit(1)]
+    assert got == [[h.id for h in hits if h is not None]]

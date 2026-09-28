@@ -1,9 +1,15 @@
 """The tagging panel: the tag tree with a filter box (DESIGN.md §12 "Tagging panel").
 
-Typing in the filter box narrows the tree to matching tags (names and aliases) and their
-ancestors, expanded so every match shows; clearing it restores the folds the user had.
-Down (or Enter) in the filter box moves to the first match. The tag tree is loaded in a
-worker; call :meth:`TagPanel.reload` after tags change.
+Typing in the filter box narrows the tree to matching tags (names, aliases, descriptions)
+and their ancestors, expanded so every match shows; clearing it restores the folds the user
+had. Down moves into the tree, on the first match.
+
+Keyboard tagging: **Enter** asks to apply the highlighted tag (or the tags selected in the
+tree) to the selected items, **Shift+Enter** to remove it; the panel emits
+:attr:`TagPanel.tag_requested` and the window does the tagging. In the filter box the text
+is then selected, so typing the next tag replaces it. Typing letters in the tree goes to the
+filter box. The tag tree is loaded in a worker; call :meth:`TagPanel.reload` after tags
+change.
 """
 
 import shiboken6
@@ -22,6 +28,8 @@ class TagPanel(QWidget):
     (or ``None``)."""
 
     current_changed = Signal(object)
+    tag_requested = Signal(list, bool)
+    """Tag ids, and whether to remove them (Shift+Enter) rather than apply them (Enter)."""
 
     def __init__(
         self,
@@ -55,6 +63,7 @@ class TagPanel(QWidget):
         self.view.setDragEnabled(True)
         self.view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.view.setDefaultDropAction(Qt.DropAction.CopyAction)
+        self.view.installEventFilter(self)
         self.view.expanded.connect(lambda index: self._folded(index, True))
         self.view.collapsed.connect(lambda index: self._folded(index, False))
         self.view.selectionModel().currentChanged.connect(
@@ -166,15 +175,65 @@ class TagPanel(QWidget):
     # --- keyboard ---
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self.filter_edit and event.type() == QEvent.Type.KeyPress:
-            assert isinstance(event, QKeyEvent)
-            if event.key() == Qt.Key.Key_Down:
+        if event.type() != QEvent.Type.KeyPress:
+            return super().eventFilter(watched, event)
+        assert isinstance(event, QKeyEvent)
+        key = event.key()
+        enter = key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        remove = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if watched is self.filter_edit:
+            if key == Qt.Key.Key_Down:
                 self._focus_tree()
                 return True
-            if event.key() == Qt.Key.Key_Escape and self.filter_edit.text():
+            if key == Qt.Key.Key_Escape and self.filter_edit.text():
                 self.filter_edit.clear()
                 return True
+            if enter:
+                self.request(remove=remove)
+                self.filter_edit.selectAll()  # typing the next tag replaces this one
+                return True
+        elif watched is self.view:
+            if enter:
+                self.request(remove=remove)
+                return True
+            if key == Qt.Key.Key_Escape:
+                self.focus_filter()
+                return True
+            text = event.text()
+            typing = event.modifiers() & ~Qt.KeyboardModifier.ShiftModifier
+            if text and text.isprintable() and not text.isspace() and not typing:
+                self.filter_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+                self.filter_edit.insert(text)  # type to filter, from the tree too
+                return True
         return super().eventFilter(watched, event)
+
+    def target_tags(self) -> list[int]:
+        """The tags Enter would use: those selected in the tree, else the highlighted one,
+        else (while filtering) the first match."""
+        selected = [
+            t
+            for i in self.view.selectionModel().selectedIndexes()
+            if (t := self.model.tag_id(i)) is not None
+        ]
+        if selected:
+            return list(dict.fromkeys(selected))
+        current = self.current_tag()
+        if current is not None:
+            return [current]
+        first = self.model.first_match() if self.model.filtering else None
+        tag_id = self.model.tag_id(first) if first is not None else None
+        return [tag_id] if tag_id is not None else []
+
+    def request(self, *, remove: bool = False) -> None:
+        """Ask to apply (or remove) :meth:`target_tags` to the selected items."""
+        tags = self.target_tags()
+        if tags:
+            self.tag_requested.emit(tags, remove)
+
+    def focus_filter(self) -> None:
+        """Put the cursor in the filter box with its text selected (Ctrl+T)."""
+        self.filter_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.filter_edit.selectAll()
 
     def _focus_tree(self) -> None:
         """Move from the filter box into the tree, on the first match (or the first tag)."""

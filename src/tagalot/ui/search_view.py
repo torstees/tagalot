@@ -7,7 +7,7 @@ it shows that type's full list. A search page is created once per navigation tar
 re-runs its search after a scan.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 import shiboken6
@@ -220,6 +220,21 @@ class SearchPage(QWidget):
         self.table.set_columns(self.table.columns, self.hidden_columns)
         self.groups.set_hidden_columns(self.hidden_columns)
         self.hidden_columns_changed.emit(sorted(self.hidden_columns))
+
+    def selected_entity_ids(self, on_done: Callable[[list[int]], None]) -> None:
+        """Call ``on_done`` with the entity ids selected in the list (or, when grouped, in
+        every section). Selected rows that aren't loaded yet are looked up in a worker."""
+        if self.showing_groups():
+            ids = [
+                hit.id
+                for section in self.groups.sections
+                for index in section.table.selectionModel().selectedRows()
+                if (hit := section.model.hit(index.row())) is not None
+            ]
+            on_done(ids)
+        else:
+            rows = [index.row() for index in self.table.selectionModel().selectedRows()]
+            self.model.entity_ids(rows, on_done)
 
     def _tags_dropped_on_list(self, rows: list[int], tag_ids: list[int]) -> None:
         # Rows far down a long selection may not be loaded yet: the model fetches their ids.
