@@ -227,3 +227,36 @@ def test_an_empty_keep(qtbot: QtBot, tmp_path: Path) -> None:
         qtbot.waitUntil(lambda: panel.loaded, timeout=5000)
         assert panel.message.text() == "No tags yet."
         assert panel.model.rowCount() == 0
+
+
+# --- descriptions ---
+
+
+def test_descriptions_in_tooltips_and_filtering(qapp: Any) -> None:
+    tree = TagTree(
+        [
+            TagNode(1, None, "Places", None, 0),
+            TagNode(2, 1, "Iceland", None, 0, "Summer 2019 road trip around the Ring Road"),
+            TagNode(3, None, "Trips", None, 1),
+        ],
+        {2: ["Ísland"]},
+    )
+    model = TagTreeModel()
+    tester = QAbstractItemModelTester(model, QAbstractItemModelTester.FailureReportingMode.Fatal)
+    model.set_tree(tree)
+    tooltip = model.index_of(2).data(Qt.ItemDataRole.ToolTipRole)
+    assert tooltip == (
+        f"Places{PATH_SEPARATOR}Iceland\nSummer 2019 road trip around the Ring Road\nAlso: Ísland"
+    )
+    model.set_filter("ring road")  # only the description says so: an excerpt shows why
+    assert _rows(model) == ["Places", "  Iceland — …road trip around the Ring Road"]
+    model.set_filter("trip")  # the name wins where it matches; Iceland through its description
+    assert _rows(model) == ["Places", "  Iceland — …road trip around the Ring…", "Trips"]
+    del tester
+
+
+def test_the_demo_keeps_descriptions_show_in_the_panel(qtbot: QtBot, panel: TagPanel) -> None:
+    iceland = panel.model.index_of(_tag(panel, "Iceland"))
+    assert "Summer 2019 road trip" in iceland.data(Qt.ItemDataRole.ToolTipRole)
+    panel.filter_edit.setText("receipts")
+    assert _shown(panel) == ["Topics", "  Money — Receipts, taxes, and bills"]

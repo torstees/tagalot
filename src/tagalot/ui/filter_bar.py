@@ -40,7 +40,8 @@ from PySide6.QtWidgets import (
     QWidgetItem,
 )
 
-from tagalot.core.tags import PATH_SEPARATOR, TagTree
+from tagalot.core.tags import PATH_SEPARATOR, TagTree, description_excerpt
+from tagalot.ui.models.tag_tree import EXCERPT_WIDTH, tag_tooltip
 
 TEXT_DELAY_MS = 300
 """How long the text box waits after the last keystroke before searching."""
@@ -166,9 +167,12 @@ class Chip(QFrame):
             name = path = "(deleted tag)" if tree is not None else "…"
         self.label.setText(f"not: {name}" if self.exclude else name)
         if self.exclude:
-            self.setToolTip(f"Hide items tagged {path}, or with any tag under it")
+            tip = f"Hide items tagged {path}, or with any tag under it"
         else:
-            self.setToolTip(f"Only items tagged {path}, or with any tag under it")
+            tip = f"Only items tagged {path}, or with any tag under it"
+        if tree is not None and self.tag_id in tree and tree.node(self.tag_id).description:
+            tip += f"\n\n{tree.node(self.tag_id).description}"
+        self.setToolTip(tip)
         self.close_button.setToolTip("Remove this filter")
 
 
@@ -260,12 +264,14 @@ class TagBox(QLineEdit):
             label = node.name
             if suggestion.alias is not None:
                 label += f"  ({suggestion.alias})"
+            elif suggestion.in_description and node.description:
+                label += f"  — {description_excerpt(node.description, text, EXCERPT_WIDTH)}"
             parents = tree.path(suggestion.tag_id)[:-1]
             if parents:
                 label += f"   ·   {PATH_SEPARATOR.join(parents)}"
             item = QStandardItem(label)
             item.setData(suggestion.tag_id, _TAG_ID)
-            item.setToolTip(PATH_SEPARATOR.join(tree.path(suggestion.tag_id)))
+            item.setToolTip(tag_tooltip(tree, suggestion.tag_id))
             self.suggestions.appendRow(item)
         if not suggestions:
             empty = QStandardItem("Loading tags…" if tree is None else "No matching tags")

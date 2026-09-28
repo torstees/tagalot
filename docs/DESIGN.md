@@ -69,7 +69,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 1                          # core schema version
+format_version = 2                          # core schema version
 
 [theme]
 id = "music"
@@ -145,7 +145,7 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **entity_ancestor** — closure table maintained by the core.
 `entity_id`, `ancestor_id`, `depth`. Every entity has a self row at depth 0. PK `(entity_id, ancestor_id)`; index `(ancestor_id, entity_id)`. When a DAG gives two paths, keep the minimum depth.
 
-**tag** — `id`, `parent_id` (nullable), `name`, `color` (nullable), `sort_order`. Sibling names are unique case-insensitively via a unique expression index on `(coalesce(parent_id, 0), lower(name))`; the `coalesce` is needed because SQLite treats NULLs as distinct in unique indexes, which would otherwise allow duplicate root-level tags (tag ids start at 1, so `0` is a safe sentinel). Tag operations in `tags.py` also check for clashes before writing so the UI can show a clear message; the index is the backstop. SQLite's `lower()` folds ASCII only, so the app-level check compares with `str.casefold()`. Names may repeat under different parents; the UI shows the full path when ambiguous.
+**tag** — `id`, `parent_id` (nullable), `name`, `color` (nullable), `sort_order`, `description` (nullable; shown in tooltips and matched when finding tags, §7). Sibling names are unique case-insensitively via a unique expression index on `(coalesce(parent_id, 0), lower(name))`; the `coalesce` is needed because SQLite treats NULLs as distinct in unique indexes, which would otherwise allow duplicate root-level tags (tag ids start at 1, so `0` is a safe sentinel). Tag operations in `tags.py` also check for clashes before writing so the UI can show a clear message; the index is the backstop. SQLite's `lower()` folds ASCII only, so the app-level check compares with `str.casefold()`. Names may repeat under different parents; the UI shows the full path when ambiguous.
 
 **tag_alias** — `tag_id`, `alias`. Used only for matching in the tag filter box.
 
@@ -158,6 +158,8 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **schema_version** — `component` (`core` or theme id), `version`.
 
 **Core schema versions** follow the same rule as theme versions (§9). The core version is kept both in `keep.toml` (`format_version`) and in `schema_version`. On open: a newer version in either place is refused with a clear message before anything is changed; an empty database gets the core tables and a `core` row; an older database raises a distinct "needs migration" error so the launcher can ask the user. Once the user confirms, `keep.db` is copied with SQLite's backup API (safe with WAL) to `keep.db.v<old>-<timestamp>.bak`, every migration step runs in one transaction (all or nothing), and `keep.toml` is updated. The backup is kept even if the migration fails.
+
+Core format history: **1**, the initial schema; **2**, `tag.description` (#192, one `ALTER TABLE … ADD COLUMN`).
 
 **entity_fts** — FTS5 virtual table for text search (§8), one row per entity, `rowid = entity.id`. Columns `title` and `body` (the entity's `search="text"` field values plus `extra` values, joined with spaces). Tokenizer `trigram remove_diacritics 1`. Maintained by the DB writer, not triggers.
 
@@ -262,8 +264,9 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 
 Details the table leaves open:
 
+- **Descriptions** are optional free text (trimmed; blank clears; at most 2,000 characters), set with `set_tag_description` / `TagService.set_description` (undoable). Tooltips show them in the tagging panel, filter-bar suggestions, and chips. Merging keeps the target's description, or takes the source's if the target has none. They are edited in the tag manager (M7).
 - Names are trimmed with inner runs of spaces collapsed, must be non-empty and at most 200 characters, and compare with `str.casefold()` among siblings. Renaming a tag to a different case of its own name is allowed. Colors are `#rrggbb`.
-- **Finding tags** (the tagging panel's filter, the filter bar's suggestions) ignores case **and accents**, like the search box: `isl` finds the alias "Ísland", `arger` finds "Ärger" (`tags.search_key`: casefold, then drop combining marks after NFKD). Names themselves stay distinct by case-folding only, so "Ärger" and "Arger" can be siblings.
+- **Finding tags** (the tagging panel's filter, the filter bar's suggestions) matches a tag's name, aliases, and **description** (§5), ignoring case **and accents**, like the search box. A tag found only through its description is shown with a short excerpt around the match (`Iceland — …road trip around the…`, `tags.description_excerpt`), and ranks after name and alias matches in suggestions. Items are not found through their tags' descriptions; the search box matches only their own text. Examples of accent folding: `isl` finds the alias "Ísland", `arger` finds "Ärger" (`tags.search_key`: casefold, then drop combining marks after NFKD). Names themselves stay distinct by case-folding only, so "Ärger" and "Arger" can be siblings.
 - New and moved tags go to the end of their new parent's children.
 - **Reparent** is also refused when the new parent already has a child with the same name.
 - **Merge** is refused into the tag itself or one of its descendants (that would create a cycle); merging into an ancestor is fine. A child of A whose name clashes with a child of B is merged into it recursively, since merging is what the user asked for. A's aliases move to B along with A's name, skipping any that duplicate B's name or aliases.
@@ -691,5 +694,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Theme API (still `API_VERSION = 1`, additive with defaults): `Entity.label` and `Entity.plural` name types in the UI; the plural defaults to regular English rules, and a blank value is a theme problem (§9). |
 | 2026-09 | Closing a keep's window closes the keep (it stayed open until Tagalot quit); the read-only engine uses no connection pool, so a query finishing after the close can't keep the file open. GUI smoke tests drive the app end to end (launcher → new keep → F5 → search; rescans; an offline root; the command line), and every test runs with private settings and user-themes folders (§12). |
 | 2026-09 | Tagging panel tree: filtering shows matches (bold) with their ancestors, all expanded, and restores the user's folds when cleared; alias matches name the alias (§12). Finding tags ignores accents as well as case, like the search box; name uniqueness still uses case-folding only (§7). |
+| 2026-09 | Tags get an optional description (core format 2, the first core migration): shown in tooltips and matched when finding tags (panel filter, suggestions), not when searching items; edited in the tag manager (M7) (§5, §7). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

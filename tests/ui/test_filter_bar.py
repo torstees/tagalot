@@ -242,3 +242,27 @@ def test_filters_keep_the_sort_and_nothing_found(qtbot: QtBot, demo: KeepSession
     assert page.model.spec.sort == spec.sort
     _pick(qtbot, page, "money")
     assert page.status.text() == "Nothing found"
+
+
+def test_descriptions_in_suggestions_and_chips(qtbot: QtBot) -> None:
+    window = QWidget()
+    qtbot.addWidget(window)
+    bar = FilterBar(window)
+    tree = TagTree(
+        [
+            TagNode(1, None, "Places", None, 0),
+            TagNode(2, 1, "Iceland", None, 0, "Summer 2019 road trip around the Ring Road"),
+        ],
+        {},
+    )
+    bar.set_tree(tree)
+    window.show()
+    bar.tag_edit.setFocus()
+    QTest.keyClicks(bar.tag_edit, "ring")
+    assert bar.tag_edit.suggestion_ids() == [2]
+    label = bar.tag_edit.suggestions.item(0).text()
+    assert label.startswith("Iceland  — …road trip around the Ring Road")
+    assert "Summer 2019" in bar.tag_edit.suggestions.item(0).toolTip()
+    QTest.keyClick(bar.tag_edit, Qt.Key.Key_Return)
+    [chip] = bar.findChildren(Chip)
+    assert chip.toolTip().endswith("\n\nSummer 2019 road trip around the Ring Road")

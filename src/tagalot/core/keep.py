@@ -17,7 +17,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 1
+KEEP_FORMAT_VERSION = 2
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (

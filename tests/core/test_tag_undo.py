@@ -27,6 +27,7 @@ TAGS = [
     (11, 10, "Punk"),
 ]
 TAGGED = {100: [3], 101: [3, 11], 102: [4], 103: [6, 8], 104: [11]}
+DESCRIPTIONS = {3: "Fast, loud, and short", 5: "Improvised"}  # restored by undo too
 
 State = tuple[frozenset[tuple[object, ...]], ...]
 
@@ -39,7 +40,7 @@ class Env:
     def state(self) -> State:
         """Everything a tag operation can change."""
         queries = [
-            select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order),
+            select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description),
             select(TagAlias.tag_id, TagAlias.alias),
             select(EntityTag.entity_id, EntityTag.tag_id, EntityTag.added_at),
         ]
@@ -52,7 +53,13 @@ def env(tmp_path: Path) -> Iterator[Env]:
     engine = create_keep_engine(tmp_path / "keep.db")
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(insert(Tag), [{"id": i, "parent_id": p, "name": n} for i, p, n in TAGS])
+        conn.execute(
+            insert(Tag),
+            [
+                {"id": i, "parent_id": p, "name": n, "description": DESCRIPTIONS.get(i)}
+                for i, p, n in TAGS
+            ],
+        )
         conn.execute(insert(Entity), [{"id": e, "type": "t", "title": f"E{e}"} for e in TAGGED])
         conn.execute(
             insert(EntityTag),
@@ -66,6 +73,8 @@ def env(tmp_path: Path) -> Iterator[Env]:
 
 OPERATIONS: dict[str, Callable[[TagService], object]] = {
     "add": lambda t: t.add(5, "Swing", "#112233"),
+    "set description": lambda t: t.set_description(2, "Guitars, mostly"),
+    "clear description": lambda t: t.set_description(3, None),
     "rename": lambda t: t.rename(3, "Punk Rock"),
     "reparent": lambda t: t.reparent(5, 7),
     "merge with clashing children": lambda t: t.merge(2, 10),

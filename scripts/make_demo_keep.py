@@ -64,6 +64,12 @@ TAGS: dict[tuple[str, ...], list[str]] = {
     ("Favorites",): ["glacier.jpg", "Family at the beach.jpg"],
 }
 ALIASES = {("Topics", "Money"): ["finance"], ("Places", "Iceland"): ["Ísland"]}
+DESCRIPTIONS = {
+    ("Places", "Iceland"): "Summer 2019 road trip around the Ring Road",
+    ("Topics", "Money"): "Receipts, taxes, and bills",
+    ("Topics", "Sky"): "Sunsets, auroras, and clouds",
+    ("Favorites",): "The ones worth printing",
+}
 JUNK = {
     # Operating-system leftovers that the default excludes skip.
     ".DS_Store": b"Bud1\x00\x00\x00\x01",
@@ -198,7 +204,7 @@ def make_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     )
     with KeepSession.open(keep_dir, Settings()) as session:
         session.scan_all()
-        _tag(session, TAGS, ALIASES)
+        _tag(session, TAGS, ALIASES, DESCRIPTIONS)
     return keep_dir
 
 
@@ -229,7 +235,7 @@ def make_media_demo(
             ctx.flush()
 
         session.writer.run(fill)
-        _tag(session, MEDIA_TAGS, {})
+        _tag(session, MEDIA_TAGS, {}, {})
     return keep_dir
 
 
@@ -237,9 +243,10 @@ def _tag(
     session: KeepSession,
     tags: dict[tuple[str, ...], list[str]],
     aliases: dict[tuple[str, ...], list[str]],
+    descriptions: dict[tuple[str, ...], str],
 ) -> None:
     """Create ``tags`` and apply them by title (the app can't apply tags until the tagging
-    panel), then add ``aliases``."""
+    panel), then add ``aliases`` and ``descriptions``."""
     with session.reader.connect() as conn:
         ids = {title: i for i, title in conn.execute(select(Entity.id, Entity.title))}
     tag_ids: dict[tuple[str, ...], int] = {}
@@ -250,6 +257,8 @@ def _tag(
     for path, names in aliases.items():
         for alias in names:
             session.tags.add_alias(tag_ids[path], alias)
+    for path, description in descriptions.items():
+        session.tags.set_description(tag_ids[path], description)
     session.writer.run(lambda conn: conn.execute(insert(EntityTag), rows))
 
 
