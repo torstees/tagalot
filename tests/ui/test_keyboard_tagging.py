@@ -63,6 +63,15 @@ def _status(window: MainWindow) -> str:
     return window.statusBar().currentMessage()
 
 
+def _wait_status(qtbot: QtBot, window: MainWindow, expected: str) -> None:
+    """Wait for the status bar to say ``expected``; a timeout reports what it said."""
+
+    def check() -> None:
+        assert _status(window) == expected
+
+    qtbot.waitUntil(check, timeout=5000)
+
+
 def _tagged(session: KeepSession, name: str) -> set[str]:
     tree = session.tag_cache.get()
     [tag_id] = [s.tag_id for s in tree.suggest(name) if tree.node(s.tag_id).name == name]
@@ -77,12 +86,12 @@ def test_type_then_enter_applies_and_shift_enter_removes(
     panel = window.tag_panel
     QTest.keyClicks(panel.filter_edit, "sky")
     QTest.keyClick(panel.filter_edit, Qt.Key.Key_Return)
-    qtbot.waitUntil(lambda: _status(window) == "Tagged 2 items with 'Sky'.", timeout=5000)
+    _wait_status(qtbot, window, "Tagged 2 items with 'Sky'.")
     assert {"notes.txt", "readme.md"} <= _tagged(session, "Sky")
     assert panel.filter_edit.selectedText() == "sky"  # typing the next tag replaces it
 
     QTest.keyClick(panel.filter_edit, Qt.Key.Key_Return, SHIFT)
-    qtbot.waitUntil(lambda: _status(window) == "Removed 'Sky' from 2 items.", timeout=5000)
+    _wait_status(qtbot, window, "Removed 'Sky' from 2 items.")
     assert not {"notes.txt", "readme.md"} & _tagged(session, "Sky")
 
 
