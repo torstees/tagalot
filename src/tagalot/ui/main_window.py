@@ -249,6 +249,9 @@ class MainWindow(QMainWindow):
             details.description_saved.connect(self._set_tag_description)
             details.alias_added.connect(self._add_tag_alias)
             details.alias_removed.connect(self._remove_tag_alias)
+            manager.undo_requested.connect(self.tag_actions.undo)
+            manager.redo_requested.connect(self.tag_actions.redo)
+            manager.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
             return manager
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -435,6 +438,9 @@ class MainWindow(QMainWindow):
         ):
             action.setEnabled(label is not None)
             action.setText(f"{verb} {label}" if label else verb)
+        for page in self._pages.values():
+            if isinstance(page, TagManagerPage):
+                page.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
 
     def search_pages(self) -> list[SearchPage]:
         """The search pages created so far."""

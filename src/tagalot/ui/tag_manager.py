@@ -386,6 +386,8 @@ class TagManagerPage(QWidget):
     """Source tag id, target tag id."""
     delete_requested = Signal(int, object)
     """Tag id, and a :class:`~tagalot.core.tags.DeleteMode` (``None`` without sub-tags)."""
+    undo_requested = Signal()
+    redo_requested = Signal()
 
     def __init__(
         self,
@@ -477,6 +479,16 @@ class TagManagerPage(QWidget):
             self.delete_button,
         ):
             self.toolbar.addWidget(button)
+        # Undo and Redo use the session's history (Edit → Undo / Redo, Ctrl+Z / Ctrl+Y);
+        # their tooltips name the step (the window keeps them up to date).
+        self.undo_button = QPushButton("Undo")
+        self.undo_button.clicked.connect(self.undo_requested)
+        self.redo_button = QPushButton("Redo")
+        self.redo_button.clicked.connect(self.redo_requested)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.undo_button)
+        self.toolbar.addWidget(self.redo_button)
+        self.set_history(None, None)
 
         self.details = TagDetails()
         left = QWidget()
@@ -541,6 +553,15 @@ class TagManagerPage(QWidget):
         self.view.setCurrentIndex(index)
         self.view.scrollTo(index)
         return True
+
+    def set_history(self, undo: str | None, redo: str | None) -> None:
+        """Show what Undo and Redo would do (``None``: nothing to undo or redo)."""
+        for button, verb, label in (
+            (self.undo_button, "Undo", undo),
+            (self.redo_button, "Redo", redo),
+        ):
+            button.setEnabled(label is not None)
+            button.setToolTip(f"{verb}: {label}" if label else f"Nothing to {verb.lower()}")
 
     # --- editing (the window runs the operations) ---
 
