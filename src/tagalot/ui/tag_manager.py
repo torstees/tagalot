@@ -32,9 +32,10 @@ from PySide6.QtCore import (
     QThreadPool,
     Signal,
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QColorDialog,
     QDialog,
     QFormLayout,
     QFrame,
@@ -43,8 +44,11 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QToolBar,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -165,30 +169,109 @@ class TagManagerModel(TagTreeModel):
         return None
 
 
+def pick_color(parent: QWidget, initial: str | None) -> str | None:
+    """Ask for a color; ``#rrggbb``, or ``None`` if cancelled. (Tests replace this.)"""
+    color = QColorDialog.getColor(QColor(initial or "#808080"), parent, "Tag color")
+    return color.name() if color.isValid() else None
+
+
 class TagDetails(QFrame):
-    """The selected tag's details (read-only for now)."""
+    """The selected tag's details: path and counts, plus editors for its color, description,
+    and aliases (other names the filters find).
+
+    Edits don't change anything here: they emit :attr:`color_chosen`,
+    :attr:`description_saved`, :attr:`alias_added`, or :attr:`alias_removed`, and the window
+    runs the operation; the pane then shows the reloaded tag. Unsaved description text
+    survives a reload of the same tag.
+    """
+
+    color_chosen = Signal(int, object)
+    """Tag id and ``#rrggbb``, or ``None`` to clear it."""
+    description_saved = Signal(int, str)
+    alias_added = Signal(int, str)
+    alias_removed = Signal(int, str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.tag_id: int | None = None
+        self._color: str | None = None
+        self._saved_description = ""
+        self._drafts: dict[int, str] = {}
+        """Unsaved description text, by tag id."""
+
         self.title = QLabel()
         font = QFont(self.title.font())
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() + 2)
         self.title.setFont(font)
         self.path = QLabel()
-        self.color = QLabel()
-        self.description = QLabel()
-        self.description.setWordWrap(True)
-        self.aliases = QLabel()
-        self.aliases.setWordWrap(True)
         self.counts = QLabel()
         self.empty = QLabel("Select a tag to see its details.")
+
+        # Color: a swatch and its value, Choose…, Clear.
+        self.color = QLabel()
+        self.choose_color = QPushButton("Choose…")
+        self.choose_color.clicked.connect(self._choose_color)
+        self.clear_color = QPushButton("Clear")
+        self.clear_color.clicked.connect(lambda: self._emit_color(None))
+        color_row = QHBoxLayout()
+        color_row.setContentsMargins(0, 0, 0, 0)
+        color_row.addWidget(self.color, 1)
+        color_row.addWidget(self.choose_color)
+        color_row.addWidget(self.clear_color)
+
+        # Description: edited here, saved on demand.
+        self.description = QPlainTextEdit()
+        self.description.setPlaceholderText("No description")
+        self.description.setMaximumHeight(self.fontMetrics().lineSpacing() * 5 + 12)
+        self.description.textChanged.connect(self._description_edited)
+        self.save_description = QPushButton("Save")
+        self.save_description.clicked.connect(self._save_description)
+        self.revert_description = QPushButton("Revert")
+        self.revert_description.clicked.connect(
+            lambda: self.description.setPlainText(self._saved_description)
+        )
+        description_buttons = QHBoxLayout()
+        description_buttons.setContentsMargins(0, 0, 0, 0)
+        description_buttons.addStretch(1)
+        description_buttons.addWidget(self.revert_description)
+        description_buttons.addWidget(self.save_description)
+        description_box = QVBoxLayout()
+        description_box.setContentsMargins(0, 0, 0, 0)
+        description_box.addWidget(self.description)
+        description_box.addLayout(description_buttons)
+
+        # Aliases: a short list, Remove, and a box to add one.
+        self.aliases = QListWidget()
+        self.aliases.setMaximumHeight(self.fontMetrics().lineSpacing() * 4 + 12)
+        self.aliases.currentItemChanged.connect(lambda *_: self._update_buttons())
+        self.remove_alias = QPushButton("Remove")
+        self.remove_alias.clicked.connect(self._remove_alias)
+        self.alias_edit = QLineEdit()
+        self.alias_edit.setPlaceholderText("Add another name…")
+        self.alias_edit.returnPressed.connect(self._add_alias)
+        self.alias_edit.textChanged.connect(lambda _: self._update_buttons())
+        self.add_alias = QPushButton("Add")
+        self.add_alias.clicked.connect(self._add_alias)
+        alias_list_row = QHBoxLayout()
+        alias_list_row.setContentsMargins(0, 0, 0, 0)
+        alias_list_row.addWidget(self.aliases, 1)
+        alias_list_row.addWidget(self.remove_alias, 0, Qt.AlignmentFlag.AlignTop)
+        alias_row = QHBoxLayout()
+        alias_row.setContentsMargins(0, 0, 0, 0)
+        alias_row.addWidget(self.alias_edit, 1)
+        alias_row.addWidget(self.add_alias)
+        alias_box = QVBoxLayout()
+        alias_box.setContentsMargins(0, 0, 0, 0)
+        alias_box.addLayout(alias_list_row)
+        alias_box.addLayout(alias_row)
+
         form = QFormLayout()
         form.addRow("Path:", self.path)
-        form.addRow("Color:", self.color)
-        form.addRow("Description:", self.description)
-        form.addRow("Also called:", self.aliases)
+        form.addRow("Color:", color_row)
+        form.addRow("Description:", description_box)
+        form.addRow("Also called:", alias_box)
         form.addRow("Used on:", self.counts)
         self.fields = QWidget()
         self.fields.setLayout(form)
@@ -201,6 +284,12 @@ class TagDetails(QFrame):
 
     def show_tag(self, tree: TagTree | None, tag_id: int | None, usage: TagUsage | None) -> None:
         shown = tree is not None and tag_id is not None and tag_id in tree
+        same_tag = shown and tag_id == self.tag_id
+        if self.tag_id is not None and self.description_changed():
+            # Unsaved text is kept for its tag: a reload (which briefly clears the tree's
+            # current tag) or a look at another tag mustn't throw it away.
+            self._drafts[self.tag_id] = self.description.toPlainText()
+        self.tag_id = tag_id if shown else None
         self.title.setVisible(shown)
         self.fields.setVisible(shown)
         self.empty.setVisible(not shown)
@@ -211,12 +300,20 @@ class TagDetails(QFrame):
         node = tree.node(tag_id)
         self.title.setText(node.name)
         self.path.setText(PATH_SEPARATOR.join(tree.path(tag_id)))
+        self._color = node.color
         if node.color:
-            self.color.setText(f'<span style="color:{node.color}">■</span> {node.color}')
+            self.color.setText(f'<span style="color:{node.color}">\u25a0</span> {node.color}')
         else:
             self.color.setText("None")
-        self.description.setText(node.description or "None")
-        self.aliases.setText(", ".join(tree.aliases(tag_id)) or "None")
+        saved = node.description or ""
+        draft = self._drafts.pop(tag_id, None)
+        self._saved_description = saved
+        keep = draft is not None and draft.strip() != saved.strip()
+        self.description.setPlainText(draft if keep and draft is not None else saved)
+        self.aliases.clear()
+        self.aliases.addItems(list(tree.aliases(tag_id)))
+        if not same_tag:
+            self.alias_edit.clear()
         if usage is None:
             self.counts.setText("…")
         else:
@@ -224,6 +321,48 @@ class TagDetails(QFrame):
             self.counts.setText(
                 f"{usage.direct:,} {items} directly; {usage.with_subtags:,} with its sub-tags"
             )
+        self._update_buttons()
+
+    def description_changed(self) -> bool:
+        """Whether the description box differs from the saved description."""
+        return self.description.toPlainText().strip() != self._saved_description.strip()
+
+    # --- edits ---
+
+    def _choose_color(self) -> None:
+        color = pick_color(self, self._color)
+        if color is not None:
+            self._emit_color(color)
+
+    def _emit_color(self, color: str | None) -> None:
+        if self.tag_id is not None and color != self._color:
+            self.color_chosen.emit(self.tag_id, color)
+
+    def _description_edited(self) -> None:
+        self._update_buttons()
+
+    def _save_description(self) -> None:
+        if self.tag_id is not None and self.description_changed():
+            self.description_saved.emit(self.tag_id, self.description.toPlainText())
+
+    def _add_alias(self) -> None:
+        alias = " ".join(self.alias_edit.text().split())
+        if self.tag_id is not None and alias:
+            self.alias_added.emit(self.tag_id, alias)
+            self.alias_edit.clear()
+
+    def _remove_alias(self) -> None:
+        item = self.aliases.currentItem()
+        if self.tag_id is not None and item is not None:
+            self.alias_removed.emit(self.tag_id, item.text())
+
+    def _update_buttons(self) -> None:
+        changed = self.description_changed()
+        self.save_description.setEnabled(changed)
+        self.revert_description.setEnabled(changed)
+        self.clear_color.setEnabled(self._color is not None)
+        self.remove_alias.setEnabled(self.aliases.currentItem() is not None)
+        self.add_alias.setEnabled(bool(self.alias_edit.text().strip()))
 
 
 def ask_name(parent: QWidget, title: str, label: str, text: str = "") -> str | None:
@@ -307,18 +446,18 @@ class TagManagerPage(QWidget):
         self.new_button = QPushButton("New tag…")
         self.new_button.setToolTip("Create a tag at the top level")
         self.new_button.clicked.connect(lambda: self.new_tag(under_current=False))
-        self.new_child_button = QPushButton("New sub-tag…")
+        self.new_child_button = QPushButton("Sub-tag…")
         self.new_child_button.setToolTip("Create a tag under the selected one")
         self.new_child_button.clicked.connect(lambda: self.new_tag(under_current=True))
         self.rename_button = QPushButton("Rename")
         self.rename_button.setToolTip("Rename the selected tag (F2, or double-click it)")
         self.rename_button.clicked.connect(self.start_rename)
-        self.move_button = QPushButton("Move to…")
+        self.move_button = QPushButton("Move…")
         self.move_button.setToolTip(
             "Move the selected tag, with its sub-tags (you can also drag it onto another tag)"
         )
         self.move_button.clicked.connect(self.move_current)
-        self.merge_button = QPushButton("Merge into…")
+        self.merge_button = QPushButton("Merge…")
         self.merge_button.setToolTip(
             "Fold the selected tag into another: its items and sub-tags go to that tag"
         )
@@ -326,7 +465,9 @@ class TagManagerPage(QWidget):
         self.delete_button = QPushButton("Delete…")
         self.delete_button.setToolTip("Delete the selected tag (items are never deleted)")
         self.delete_button.clicked.connect(self.delete_current)
-        buttons = QHBoxLayout()
+        # A toolbar, not a row: when the page is narrow, the buttons that don't fit move
+        # into its overflow menu (…) instead of widening the page (and squeezing the navigation).
+        self.toolbar = QToolBar("Tag operations")
         for button in (
             self.new_button,
             self.new_child_button,
@@ -335,14 +476,12 @@ class TagManagerPage(QWidget):
             self.merge_button,
             self.delete_button,
         ):
-            buttons.addWidget(button)
-        buttons.addStretch(1)
+            self.toolbar.addWidget(button)
 
         self.details = TagDetails()
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addLayout(buttons)
         left_layout.addWidget(self.filter_edit)
         left_layout.addWidget(self.view, 1)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -353,6 +492,7 @@ class TagManagerPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(header_row)
+        layout.addWidget(self.toolbar)  # the page's full width, so all fit
         layout.addWidget(splitter, 1)
         self.reload()
 

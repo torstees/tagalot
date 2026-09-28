@@ -52,6 +52,9 @@ WINDOW_TITLE = "Tagalot"
 SUMMARY_DELAY_MS = 150
 """How long the Tags panel's selection summary waits for the selection to settle."""
 
+NAVIGATION_MIN_WIDTH = 170
+"""The navigation pane never gets narrower than this, however wide a page wants to be."""
+
 _COMING = {
     "dashboard": "The dashboard arrives in M15.",
     "saved": "Saved searches arrive in M18.",
@@ -149,6 +152,7 @@ class MainWindow(QMainWindow):
         # Navigation and the center stack.
         views = [v.name for v in session.theme.views if isinstance(v, SearchView)]
         self.navigation = NavigationPane(views)
+        self.navigation.setMinimumWidth(NAVIGATION_MIN_WIDTH)  # pages can't squeeze it
         self.navigation.set_folded(self._ui_state.get("nav_folded", []))
         self.navigation.navigate.connect(self.show_target)
         self.navigation.folded_changed.connect(self._save_folded)
@@ -240,6 +244,11 @@ class MainWindow(QMainWindow):
             manager.move_requested.connect(self._move_tag)
             manager.merge_requested.connect(self._merge_tags)
             manager.delete_requested.connect(self._delete_tag)
+            details = manager.details
+            details.color_chosen.connect(self._set_tag_color)
+            details.description_saved.connect(self._set_tag_description)
+            details.alias_added.connect(self._add_tag_alias)
+            details.alias_removed.connect(self._remove_tag_alias)
             return manager
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -316,6 +325,44 @@ class MainWindow(QMainWindow):
         tree = self.tag_panel.model.tree
         if tree is not None and tag_id in tree:
             self.tag_actions.delete(tag_id, mode, tree.node(tag_id).name)
+
+    # --- the tag manager's details pane (§7) ---
+
+    def _tag_name(self, tag_id: int) -> str:
+        tree = self.tag_panel.model.tree
+        return tree.node(tag_id).name if tree is not None and tag_id in tree else "the tag"
+
+    def _set_tag_color(self, tag_id: int, color: str | None) -> None:
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        message = (
+            f"Set the color of {name!r} to {color}." if color else f"Cleared the color of {name!r}."
+        )
+        self.tag_actions.change(lambda: tags.set_color(tag_id, color), message)
+
+    def _set_tag_description(self, tag_id: int, description: str) -> None:
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        message = (
+            f"Saved the description of {name!r}."
+            if description.strip()
+            else f"Cleared the description of {name!r}."
+        )
+        self.tag_actions.change(lambda: tags.set_description(tag_id, description), message)
+
+    def _add_tag_alias(self, tag_id: int, alias: str) -> None:
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        self.tag_actions.change(
+            lambda: tags.add_alias(tag_id, alias), f"{name!r} is now also called {alias!r}."
+        )
+
+    def _remove_tag_alias(self, tag_id: int, alias: str) -> None:
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        self.tag_actions.change(
+            lambda: tags.remove_alias(tag_id, alias), f"{name!r} is no longer called {alias!r}."
+        )
 
     def focus_tag_filter(self) -> None:
         """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""

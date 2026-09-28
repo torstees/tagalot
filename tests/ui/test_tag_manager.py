@@ -106,12 +106,12 @@ def test_the_details_pane(window: MainWindow) -> None:
     _select(page, "Iceland")
     assert details.title.text() == "Iceland"
     assert details.path.text() == f"Places{PATH_SEPARATOR}Iceland"
-    assert details.description.text() == "Summer 2019 road trip around the Ring Road"
-    assert details.aliases.text() == "Ísland"
+    assert details.description.toPlainText() == "Summer 2019 road trip around the Ring Road"
+    assert [details.aliases.item(i).text() for i in range(details.aliases.count())] == ["Ísland"]
     assert details.color.text() == "None"
     assert details.counts.text() == "3 items directly; 3 with its sub-tags"
     _select(page, "Beach")
-    assert details.description.text() == "None"
+    assert details.description.toPlainText() == ""  # shows "No description"
 
 
 def test_filtering(window: MainWindow) -> None:
