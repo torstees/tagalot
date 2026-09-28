@@ -228,7 +228,11 @@ class MainWindow(QMainWindow):
             )
             return search
         if target.kind == "tags":
-            return TagManagerPage(session)
+            manager = TagManagerPage(session)
+            manager.add_requested.connect(self.tag_actions.add_tag)
+            manager.rename_requested.connect(self.tag_actions.rename)
+            manager.move_requested.connect(self._move_tag)
+            return manager
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return page
@@ -285,6 +289,13 @@ class MainWindow(QMainWindow):
             page.filter_bar.add_tag(tag_id, exclude=exclude)
         how = "Hiding items with" if exclude else "Showing only items with"
         self.statusBar().showMessage(f"{how} {self.tag_names(tag_ids)}.")
+
+    def _move_tag(self, tag_id: int, parent_id: int | None) -> None:
+        tree = self.tag_panel.model.tree
+        if tree is None or tag_id not in tree:
+            return
+        target = tree.node(parent_id).name if parent_id is not None and parent_id in tree else None
+        self.tag_actions.move(tag_id, parent_id, tree.node(tag_id).name, target)
 
     def focus_tag_filter(self) -> None:
         """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""

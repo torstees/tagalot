@@ -12,7 +12,7 @@ import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import TagError
+from tagalot.core.tags import TagError, subtree_usage
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,40 @@ class TagActions(QObject):
                 else f"None of those items had {names}: nothing to change."
             ),
         )
+
+    # --- tag operations (the tag manager, §7) ---
+
+    def add_tag(self, parent_id: int | None, name: str) -> None:
+        """Create a tag under ``parent_id`` (``None``: the top level)."""
+        self._run(
+            lambda: self.session.tags.add(parent_id, name),
+            lambda _: f"Added tag {' '.join(name.split())!r}.",
+        )
+
+    def rename(self, tag_id: int, name: str, old_name: str) -> None:
+        new = " ".join(name.split())
+
+        def work() -> bool:
+            if new == old_name:
+                return False  # nothing to do
+            self.session.tags.rename(tag_id, name)
+            return True
+
+        self._run(work, lambda changed: f"Renamed {old_name!r} to {new!r}." if changed else "")
+
+    def move(self, tag_id: int, parent_id: int | None, name: str, target: str | None) -> None:
+        """Move a tag (with its sub-tags) under ``parent_id``; the message says how many
+        items carry the moved tags (§7: "Show the affected item count")."""
+        session = self.session
+
+        def work() -> int:
+            with session.reader.connect() as conn:
+                affected = subtree_usage(conn, tag_id)
+            session.tags.reparent(tag_id, parent_id)
+            return affected + 1  # truthy even when no items are affected
+
+        where = f"under {target!r}" if target is not None else "to the top level"
+        self._run(work, lambda n: f"Moved {name!r} {where} ({items_text(n - 1)}).")
 
     def create(self, names: list[str], entity_ids: Iterable[int], path: str) -> None:
         """Create the tag at ``names`` (and missing parents), then apply it to
