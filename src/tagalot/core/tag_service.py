@@ -9,7 +9,7 @@ because only the operation's own delta is reversed.
 """
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -18,11 +18,13 @@ from sqlalchemy import Connection, delete, insert, select, tuple_, update
 
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
 from tagalot.core.tags import (
+    PATH_SEPARATOR,
     DeleteMode,
     TagTree,
     TagTreeCache,
     add_alias,
     add_tag,
+    add_tag_path,
     delete_tag,
     merge_tags,
     remove_alias,
@@ -79,6 +81,15 @@ class TagService:
             lambda tree: f"Add tag {name.strip()!r}",
             lambda tree: (),
             lambda conn: add_tag(conn, parent_id, name, color),
+        )
+
+    def add_path(self, names: Sequence[str]) -> int:
+        """Create the tag at ``names`` (top first) and any missing parents, as one step."""
+        path = PATH_SEPARATOR.join(n.strip() for n in names)
+        return self._record(
+            lambda tree: f"Add tag {path!r}",
+            lambda tree: (),
+            lambda conn: add_tag_path(conn, names),
         )
 
     def rename(self, tag_id: int, name: str) -> None:

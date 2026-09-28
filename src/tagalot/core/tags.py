@@ -10,7 +10,7 @@ import logging
 import re
 import threading
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -338,6 +338,31 @@ def add_tag(conn: Connection, parent_id: int | None, name: str, color: str | Non
             .returning(Tag.id)
         ).scalar_one()
     )
+
+
+_PATH_SPLIT = re.compile(rf"\s*{chr(0x203A)}\s*|\s+>\s+")
+"""Where a typed tag path splits: at U+203A (the separator paths are shown with) or at ">"
+with spaces around it, so names like "AC/DC" or "5>3" stay whole."""
+
+
+def split_tag_path(text: str) -> list[str]:
+    """The names in a typed tag path, top first: ``"Places > Norway"`` -> ``["Places",
+    "Norway"]``. A text without a separator is one name. Each name is cleaned
+    (:func:`clean_name`); an empty level is an error."""
+    return [clean_name(part) for part in _PATH_SPLIT.split(text.strip())]
+
+
+def add_tag_path(conn: Connection, names: Sequence[str]) -> int:
+    """The tag at ``names`` (top first), creating it and any missing parents; returns its
+    id. Existing levels are matched as siblings are (ignoring case)."""
+    if not names:
+        raise TagError("A tag name can't be empty.")
+    parent: int | None = None
+    for name in names:
+        existing = TagTree.load(conn).find_child(parent, name)
+        parent = existing if existing is not None else add_tag(conn, parent, name)
+    assert parent is not None
+    return parent
 
 
 def rename_tag(conn: Connection, tag_id: int, name: str) -> None:

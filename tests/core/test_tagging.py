@@ -11,7 +11,14 @@ from sqlalchemy import Engine, insert, select
 from tagalot.core.db import create_keep_engine
 from tagalot.core.models import Base, Entity, EntityTag, Tag
 from tagalot.core.tag_service import TagService
-from tagalot.core.tags import LINK_BATCH, TagError, TagTreeCache, tag_counts
+from tagalot.core.tags import (
+    LINK_BATCH,
+    PATH_SEPARATOR,
+    TagError,
+    TagTreeCache,
+    split_tag_path,
+    tag_counts,
+)
 from tagalot.core.writer import DbWriter
 
 PLACES, ICELAND, BEACH, FAVORITES = 1, 2, 3, 4
@@ -118,3 +125,39 @@ def test_tag_counts(env: Env) -> None:
         assert tag_counts(conn, [1, 2, 3, 4]) == {ICELAND: 1, FAVORITES: 3, BEACH: 1}
         assert tag_counts(conn, [4]) == {}
         assert tag_counts(conn, range(1, 2001))[FAVORITES] == 3  # across batches
+
+
+@pytest.mark.parametrize(
+    ("text", "names"),
+    [
+        ("Norway", ["Norway"]),
+        ("  Places  >  Norway ", ["Places", "Norway"]),
+        (f"Places{PATH_SEPARATOR}Norway", ["Places", "Norway"]),
+        (f"Places{PATH_SEPARATOR.strip()}Norway", ["Places", "Norway"]),  # no spaces
+        ("AC/DC", ["AC/DC"]),  # "/" is part of names
+        ("5>3", ["5>3"]),  # ">" splits only with spaces around it
+        ("Music > Rock > Punk", ["Music", "Rock", "Punk"]),
+    ],
+)
+def test_split_tag_path(text: str, names: list[str]) -> None:
+    assert split_tag_path(text) == names
+
+
+def test_split_tag_path_refuses_an_empty_level() -> None:
+    with pytest.raises(TagError, match="empty"):
+        split_tag_path(f"Places{PATH_SEPARATOR}{PATH_SEPARATOR}Norway")
+
+
+def test_add_path_under_an_existing_tag_and_with_new_parents(env: Env) -> None:
+    norway = env.tags.add_path(["places", "Norway"])  # matches Places ignoring case
+    tree = env.tags.cache.get()
+    assert tree.node(norway).parent_id == PLACES
+    assert env.tags.undo_label == f"Add tag 'places{PATH_SEPARATOR}Norway'"
+
+    punk = env.tags.add_path(["Music", "Rock", "Punk"])  # all three are new
+    tree = env.tags.cache.get()
+    assert tree.path(punk) == ("Music", "Rock", "Punk")
+    env.tags.undo()  # one step removes all three
+    assert "Music" not in {tree.node(t).name for t in env.tags.cache.get().children(None)}
+
+    assert env.tags.add_path(["Places", "Iceland"]) == ICELAND  # already there: no new tag

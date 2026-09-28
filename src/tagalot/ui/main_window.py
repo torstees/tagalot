@@ -29,7 +29,7 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import tag_counts
+from tagalot.core.tags import PATH_SEPARATOR, TagError, split_tag_path, tag_counts
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -159,6 +159,7 @@ class MainWindow(QMainWindow):
         self.tags_dock.setObjectName("tags_dock")
         self.tag_panel = TagPanel(session)
         self.tag_panel.tag_requested.connect(self.tag_selection)
+        self.tag_panel.create_requested.connect(self.create_tag)
         # The panel's all / some / none checks follow the current page's selection. Selection
         # changes come in bursts (Shift+arrows), so the summary waits for a short pause.
         self._summary_generation = 0
@@ -253,6 +254,21 @@ class MainWindow(QMainWindow):
                 self.tag_actions.apply(ids, tag_ids, names)
 
         page.selected_entity_ids(selected)
+
+    def create_tag(self, text: str) -> None:
+        """Create the tag typed in the Tags panel (a path like "Places > Norway" creates
+        missing parents too) and apply it to the current page's selected items, if any."""
+        try:
+            names = split_tag_path(text)
+        except TagError as e:
+            self.statusBar().showMessage(str(e))
+            return
+        path = repr(PATH_SEPARATOR.join(names))
+        page = self.stack.currentWidget()
+        if isinstance(page, SearchPage):
+            page.selected_entity_ids(lambda ids: self.tag_actions.create(names, ids, path))
+        else:
+            self.tag_actions.create(names, [], path)
 
     def focus_tag_filter(self) -> None:
         """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""
