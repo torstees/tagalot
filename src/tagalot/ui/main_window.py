@@ -115,6 +115,14 @@ class MainWindow(QMainWindow):
         edit_menu = self.menuBar().addMenu("&Edit")
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
+        edit_menu.addSeparator()
+        self.tag_selection_action = QAction("Tag selection…", self)
+        self.tag_selection_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.tag_selection_action.setToolTip(
+            "Type a tag, then Enter to apply it to the selected items (Shift+Enter removes it)"
+        )
+        self.tag_selection_action.triggered.connect(self.focus_tag_filter)
+        edit_menu.addAction(self.tag_selection_action)
         self._update_undo_actions()
 
         # Toolbar.
@@ -146,6 +154,7 @@ class MainWindow(QMainWindow):
         self.tags_dock = QDockWidget("Tags", self)
         self.tags_dock.setObjectName("tags_dock")
         self.tag_panel = TagPanel(session)
+        self.tag_panel.tag_requested.connect(self.tag_selection)
         self.tags_dock.setWidget(self.tag_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tags_dock)
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
@@ -212,6 +221,31 @@ class MainWindow(QMainWindow):
     def apply_tags(self, entity_ids: list[int], tag_ids: list[int]) -> None:
         """Tag entities (a drop on results), in the background; undoable."""
         self.tag_actions.apply(entity_ids, tag_ids, self.tag_names(tag_ids))
+
+    def tag_selection(self, tag_ids: list[int], remove: bool = False) -> None:
+        """Apply (or remove) tags on the current page's selected items (Enter or
+        Shift+Enter in the Tags panel)."""
+        page = self.stack.currentWidget()
+        if not isinstance(page, SearchPage):
+            self.statusBar().showMessage("Open a search to tag its items.")
+            return
+        names = self.tag_names(tag_ids)
+
+        def selected(ids: list[int]) -> None:
+            if not ids:
+                self.statusBar().showMessage(f"Select items to tag with {names} first.")
+            elif remove:
+                self.tag_actions.remove(ids, tag_ids, names)
+            else:
+                self.tag_actions.apply(ids, tag_ids, names)
+
+        page.selected_entity_ids(selected)
+
+    def focus_tag_filter(self) -> None:
+        """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""
+        self.tags_dock.show()
+        self.tags_dock.raise_()
+        self.tag_panel.focus_filter()
 
     def tag_names(self, tag_ids: list[int]) -> str:
         """How tags read in a message: 'Iceland', 'Iceland' and 'Beach', or 4 tags."""

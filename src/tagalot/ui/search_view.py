@@ -7,11 +7,11 @@ it shows that type's full list. A search page is created once per navigation tar
 re-runs its search after a scan.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QThreadPool, Signal
+from PySide6.QtCore import QItemSelectionModel, QThreadPool, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
@@ -115,6 +115,10 @@ class SearchPage(QWidget):
         self.model.counted.connect(self._counted)
         self.model.failed.connect(self._failed)
         self.model.modelReset.connect(self._show_sort)
+        # A reset (new results) keeps the selected items that are still listed.
+        self._kept_selection: set[int] = set()
+        self.model.modelAboutToBeReset.connect(self._remember_selection)
+        self.model.modelReset.connect(self._restore_selection)
         self._run()
         self._load_tags()
 
@@ -220,6 +224,40 @@ class SearchPage(QWidget):
         self.table.set_columns(self.table.columns, self.hidden_columns)
         self.groups.set_hidden_columns(self.hidden_columns)
         self.hidden_columns_changed.emit(sorted(self.hidden_columns))
+
+    def _remember_selection(self) -> None:
+        self._kept_selection = {
+            hit.id
+            for index in self.table.selectionModel().selectedRows()
+            if (hit := self.model.hit(index.row())) is not None
+        }
+
+    def _restore_selection(self) -> None:
+        kept, self._kept_selection = self._kept_selection, set()
+        if not kept:
+            return
+        flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+        for page in self.model.loaded_pages():
+            first = page * self.model.page_size
+            for row in range(first, min(first + self.model.page_size, self.model.total)):
+                hit = self.model.hit(row)
+                if hit is not None and hit.id in kept:
+                    self.table.selectionModel().select(self.model.index(row, 0), flags)
+
+    def selected_entity_ids(self, on_done: Callable[[list[int]], None]) -> None:
+        """Call ``on_done`` with the entity ids selected in the list (or, when grouped, in
+        every section). Selected rows that aren't loaded yet are looked up in a worker."""
+        if self.showing_groups():
+            ids = [
+                hit.id
+                for section in self.groups.sections
+                for index in section.table.selectionModel().selectedRows()
+                if (hit := section.model.hit(index.row())) is not None
+            ]
+            on_done(ids)
+        else:
+            rows = [index.row() for index in self.table.selectionModel().selectedRows()]
+            self.model.entity_ids(rows, on_done)
 
     def _tags_dropped_on_list(self, rows: list[int], tag_ids: list[int]) -> None:
         # Rows far down a long selection may not be loaded yet: the model fetches their ids.

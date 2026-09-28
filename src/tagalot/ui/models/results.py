@@ -224,6 +224,7 @@ class ResultsModel(QAbstractTableModel):
         self._loading: set[int] = set()
         self.searching = False
         """True from :meth:`set_search` until the count arrives (or the search fails)."""
+        self._refreshing = False
 
     # --- running searches ---
 
@@ -254,12 +255,14 @@ class ResultsModel(QAbstractTableModel):
 
     def refresh(self) -> None:
         """Run the current search again, keeping the rows on screen until the new ones
-        arrive (for example after a scan)."""
+        arrive (for example after a scan or tagging). If the number of results is the same,
+        the rows are updated in place, so the view keeps its selection and scroll position."""
         if self._spec is not None:
-            self._start()
+            self._start(refreshing=True)
 
-    def _start(self) -> None:
+    def _start(self, *, refreshing: bool = False) -> None:
         assert self._spec is not None
+        self._refreshing = refreshing
         self._generation += 1
         self._loading.clear()
         self.searching = True
@@ -313,6 +316,18 @@ class ResultsModel(QAbstractTableModel):
 
     def _counted(self, generation: int, total: int, first: list[Row]) -> None:
         if generation != self._generation:
+            return
+        if self._refreshing and total == self._total:
+            # Same rows, possibly new values (tags): update in place, keeping the selection.
+            # Other pages reload when shown.
+            self._pages.clear()
+            self._pages[0] = first
+            self._loading.clear()
+            if total and self._columns:
+                last = self.index(total - 1, len(self._columns) - 1)
+                self.dataChanged.emit(self.index(0, 0), last)
+            self.searching = False
+            self.counted.emit(total)
             return
         self.beginResetModel()
         self._total = total
