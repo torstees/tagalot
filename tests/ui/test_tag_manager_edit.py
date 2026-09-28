@@ -17,7 +17,7 @@ from tagalot.ui.dnd import tags_mime
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.tag_manager import TagManagerPage
-from tagalot.ui.tag_picker import MoveToDialog
+from tagalot.ui.tag_picker import TagPickerDialog, move_dialog
 from tagalot.ui.workers import ScanController
 
 pytestmark = pytest.mark.gui
@@ -152,11 +152,11 @@ def test_move_to_picker(
     assert money is not None
     assert people is not None
 
-    def pick(dialog: MoveToDialog) -> QDialog.DialogCode:
+    def pick(dialog: TagPickerDialog) -> QDialog.DialogCode:
         dialog.choose(people)
         return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(MoveToDialog, "exec", pick)
+    monkeypatch.setattr(TagPickerDialog, "exec", pick)
     page.select_tag(money)
     page.move_button.click()
     _wait_status(qtbot, window, "Moved 'Money' under 'People' (2 items).")
@@ -169,13 +169,13 @@ def test_the_picker_blocks_the_tag_and_its_sub_tags(qtbot: QtBot, session: KeepS
     iceland, topics = _id(session, "Places", "Iceland"), _id(session, "Topics")
     assert places is not None
     assert iceland is not None
-    dialog = MoveToDialog(tree, places)
+    dialog = move_dialog(tree, places)
     qtbot.addWidget(dialog)
-    ok = dialog.buttons.buttons()[0]
+    ok = dialog.ok_button
     assert not dialog.model.flags(dialog.model.index_of(iceland))  # its own sub-tag
     assert not dialog.model.flags(dialog.model.index_of(places))
     assert not ok.isEnabled()
-    assert dialog.message.text() == "Choose where to move it."
+    assert dialog.message.text() == "Choose a tag."
     dialog.choose(None)
     assert dialog.message.text() == "It's already there."  # Places is at the top level
     assert not ok.isEnabled()

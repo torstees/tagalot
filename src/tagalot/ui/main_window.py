@@ -29,7 +29,13 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import PATH_SEPARATOR, TagError, split_tag_path, tag_counts
+from tagalot.core.tags import (
+    PATH_SEPARATOR,
+    DeleteMode,
+    TagError,
+    split_tag_path,
+    tag_counts,
+)
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -232,6 +238,8 @@ class MainWindow(QMainWindow):
             manager.add_requested.connect(self.tag_actions.add_tag)
             manager.rename_requested.connect(self.tag_actions.rename)
             manager.move_requested.connect(self._move_tag)
+            manager.merge_requested.connect(self._merge_tags)
+            manager.delete_requested.connect(self._delete_tag)
             return manager
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -296,6 +304,18 @@ class MainWindow(QMainWindow):
             return
         target = tree.node(parent_id).name if parent_id is not None and parent_id in tree else None
         self.tag_actions.move(tag_id, parent_id, tree.node(tag_id).name, target)
+
+    def _merge_tags(self, source_id: int, target_id: int) -> None:
+        tree = self.tag_panel.model.tree
+        if tree is None or source_id not in tree or target_id not in tree:
+            return
+        source, target = tree.node(source_id).name, tree.node(target_id).name
+        self.tag_actions.merge(source_id, target_id, source, target)
+
+    def _delete_tag(self, tag_id: int, mode: DeleteMode | None) -> None:
+        tree = self.tag_panel.model.tree
+        if tree is not None and tag_id in tree:
+            self.tag_actions.delete(tag_id, mode, tree.node(tag_id).name)
 
     def focus_tag_filter(self) -> None:
         """Show the Tags panel and put the cursor in its filter box (Ctrl+T)."""
