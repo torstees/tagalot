@@ -141,3 +141,24 @@ def test_media_leaves_the_demo_keep_alone(
     assert (tmp_path / "Media.keep" / "keep.toml").exists()
     assert (tmp_path / "Demo.keep" / "keep.toml").read_bytes() == demo_toml  # untouched
     assert (private_user_folders / "themes" / script.MEDIA_THEME_FILE).exists()
+
+
+def test_creates_an_assets_keep(tmp_path: Path) -> None:
+    script = _script()
+    keep_dir = script.make_assets_demo(tmp_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        assert session.theme.id == "assets2d"
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            pixel = count_by_type(conn, SearchSpec(include=_ids(tree, "Pixel art")), tree)
+    assert everything == {
+        "assets2d.artist": 2,
+        "assets2d.image": 9,
+        "assets2d.font": 1,
+        "assets2d.archive": 2,
+    }
+    assert pixel == {"assets2d.image": 3}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_assets_demo(tmp_path)
+    assert script.make_assets_demo(tmp_path, reset=True) == keep_dir

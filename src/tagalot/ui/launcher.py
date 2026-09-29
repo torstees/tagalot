@@ -45,6 +45,9 @@ from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_THEME = "generic"
+"""The theme a new keep starts with in the New keep dialog."""
+
 _PATH = Qt.ItemDataRole.UserRole + 1
 
 
@@ -317,6 +320,10 @@ class NewKeepDialog(QDialog):
             self.theme_combo.addItem(
                 loaded.theme.name, ThemeRef(loaded.theme.id, loaded.theme.version)
             )
+        # Plain files suit any folder, so they're the starting choice.
+        for i in range(self.theme_combo.count()):
+            if self.theme_combo.itemData(i).id == DEFAULT_THEME:
+                self.theme_combo.setCurrentIndex(i)
         self.preview = QLabel()
         self.preview.setWordWrap(True)
 
