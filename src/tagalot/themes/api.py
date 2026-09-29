@@ -471,6 +471,11 @@ class IngestContext(Protocol):
         """Report a problem with a file to the activity panel."""
         ...
 
+    def prepared(self, resource: ResourceInfo | int) -> Any:
+        """What :meth:`Theme.prepare` returned for this resource, or ``None`` (it returned
+        nothing for it, or there is no prepare step, as in ``migrate`` and actions)."""
+        ...
+
 
 def kind_of(resource: ResourceInfo) -> Kind | None:
     """What kind of resource this is: ``Kind.DIR`` for folders, else by file extension;
@@ -726,8 +731,24 @@ class Theme:
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
 
+    def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
+        """Read what :meth:`ingest` needs from the files, before it runs: image sizes, tags,
+        font names. Returns ``{resource id: value}``; ``ingest`` gets each value with
+        ``ctx.prepared(resource)``.
+
+        It runs in a scan worker, outside any database transaction, so slow reads (a network
+        share) never hold up other writes. It has no ``ctx`` and must not touch the keep.
+        Catch problems with single files and leave them out (or ``ctx.warn`` about them
+        later); if ``prepare`` raises, the core retries the batch one resource at a time and
+        a resource that still fails is reported and stays pending for the next scan. The
+        default reads nothing.
+        """
+        return {}
+
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
-        """Turn new and changed resources into entities, links, containment, and fields."""
+        """Turn new and changed resources into entities, links, containment, and fields.
+
+        This runs inside a database write transaction: read files in :meth:`prepare`."""
 
     def migrate(self, from_version: int, ctx: IngestContext) -> None:
         """Upgrade this theme's *data* from ``from_version`` to :attr:`version`.

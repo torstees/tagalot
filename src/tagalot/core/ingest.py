@@ -59,9 +59,12 @@ class FlushReport:
 class IngestSession:
     """``ctx`` for ``Theme.ingest``, actions, and ``migrate`` on one connection."""
 
-    def __init__(self, conn: Connection, schema: ThemeSchema) -> None:
+    def __init__(
+        self, conn: Connection, schema: ThemeSchema, prepared: Mapping[int, Any] | None = None
+    ) -> None:
         self.conn = conn
         self.schema = schema
+        self._prepared = prepared or {}
         self.warnings: list[IngestWarning] = []
         self._added_edges: list[tuple[int, int]] = []
         self._removed_edges: list[tuple[int, int]] = []
@@ -117,6 +120,10 @@ class IngestSession:
             raise IngestError(f"entity {entity.id} no longer exists")
         self._apply_extracted(entity.id, entity_table, title, fields)
         self._dirty.add(entity.id)
+
+    def prepared(self, resource: ResourceInfo | int) -> Any:
+        """What the theme's ``prepare`` returned for ``resource``, or ``None``."""
+        return self._prepared.get(resource.id if isinstance(resource, ResourceInfo) else resource)
 
     def entities_of(self, resource: ResourceInfo | int, role: str | None = None) -> list[EntityRef]:
         """Entities linked to a resource (in ``role``, if given), of this theme's types."""
