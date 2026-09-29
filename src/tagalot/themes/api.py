@@ -9,6 +9,7 @@ validates every theme) can import it freely.
 """
 
 import enum
+import fnmatch
 import types
 import typing
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -495,6 +496,19 @@ class ThumbnailContext(Protocol):
         """The entities that directly contain ``entity``."""
         ...
 
+    def children(self, entity: EntityRef) -> list[EntityRef]:
+        """The entities ``entity`` directly contains, by title."""
+        ...
+
+    def folder_files(
+        self, entity: EntityRef, extensions: Iterable[str] | None = None
+    ) -> list[ResourceInfo]:
+        """Files directly inside the entity's folder, by name: the folder of its primary
+        resource, or that resource itself when it is a folder. Only scanned files are known,
+        so the theme's ``extensions`` must include the ones wanted. ``extensions`` narrows
+        the list (lowercase, with the dot)."""
+        ...
+
     def thumbnail_of(self, entity: EntityRef) -> ResourceInfo | None:
         """The resource another entity's thumbnail comes from, resolving it if needed;
         ``None`` when it shows an icon."""
@@ -534,7 +548,8 @@ class RoleImage(ThumbnailProvider):
 
 
 class ImageFile(ThumbnailProvider):
-    """The entity's own file: the resources of its primary role."""
+    """The entity's own file: the resources of its primary role, drawn by their kind (so an
+    audio file shows its embedded art and an archive its first image)."""
 
     id = "image_file"
 
@@ -559,6 +574,94 @@ class ParentThumbnail(ThumbnailProvider):
 
     def __repr__(self) -> str:
         return "ParentThumbnail()"
+
+
+FOLDER_IMAGE_NAMES: tuple[str, ...] = (
+    "folder",
+    "cover",
+    "front",
+    "albumart",
+    "albumart_*_large",
+    "albumartsmall",
+)
+"""File names (without extension, case-insensitive, ``*`` as a wildcard) that
+:class:`FolderImage` looks for, in order of preference."""
+
+FOLDER_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+"""Extensions :class:`FolderImage` accepts."""
+
+
+class FolderImage(ThumbnailProvider):
+    """A picture in the entity's folder named by convention (``folder.jpg``, ``cover.png``,
+    ``AlbumArt_{…}_Large.jpg``…). Pass ``names`` to extend the list, for example
+    ``FolderImage([*FOLDER_IMAGE_NAMES, "poster"])``."""
+
+    id = "folder_image"
+
+    def __init__(self, names: Iterable[str] = FOLDER_IMAGE_NAMES) -> None:
+        self.names = tuple(n.lower() for n in names)
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        files = ctx.folder_files(entity, FOLDER_IMAGE_EXTENSIONS)
+        stems = [(f.relpath.rpartition("/")[2].rpartition(".")[0].lower(), f) for f in files]
+        for pattern in self.names:
+            for stem, file in stems:
+                if fnmatch.fnmatchcase(stem, pattern):
+                    yield file
+
+    def __repr__(self) -> str:
+        return (
+            "FolderImage()"
+            if self.names == FOLDER_IMAGE_NAMES
+            else f"FolderImage({list(self.names)!r})"
+        )
+
+
+class EmbeddedAudioArt(ThumbnailProvider):
+    """Cover art embedded in the entity's audio (ID3, FLAC, MP4, Ogg pictures); for an
+    entity without audio of its own, such as an album, that of its first contained items."""
+
+    id = "embedded_audio_art"
+
+    children_tried = 3
+    """How many contained items to try: each try reads a file."""
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        own = _primary_of_kind(entity, ctx, Kind.AUDIO)
+        if own:
+            yield from own
+            return
+        tried = 0
+        for child in ctx.children(entity):
+            audio = _primary_of_kind(child, ctx, Kind.AUDIO)
+            if audio:
+                yield audio[0]
+                tried += 1
+                if tried == self.children_tried:
+                    return
+
+    def __repr__(self) -> str:
+        return "EmbeddedAudioArt()"
+
+
+class ArchiveFirstImage(ThumbnailProvider):
+    """The best image inside the entity's archive (zip, 7z, rar): one named like a cover or
+    preview, else the first in natural order (DESIGN.md §10 "Archives")."""
+
+    id = "archive_first_image"
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        return _primary_of_kind(entity, ctx, Kind.ARCHIVE)
+
+    def __repr__(self) -> str:
+        return "ArchiveFirstImage()"
+
+
+def _primary_of_kind(entity: EntityRef, ctx: ThumbnailContext, kind: Kind) -> list[ResourceInfo]:
+    primary = ctx.primary_role(entity)
+    if primary is None:
+        return []
+    return [r for r in ctx.resources(entity, primary) if kind_of(r) is kind]
 
 
 class Icon(ThumbnailProvider):
@@ -663,15 +766,20 @@ class Theme:
 __all__ = [
     "API_VERSION",
     "FIELD_TYPES",
+    "FOLDER_IMAGE_EXTENSIONS",
+    "FOLDER_IMAGE_NAMES",
     "KIND_EXTENSIONS",
     "SEARCH_KINDS",
     "ActionSpec",
+    "ArchiveFirstImage",
     "Containment",
     "DetailView",
+    "EmbeddedAudioArt",
     "Entity",
     "EntityRef",
     "FieldInfo",
     "FieldSpec",
+    "FolderImage",
     "Icon",
     "ImageFile",
     "IngestContext",
