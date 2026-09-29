@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from tagalot.core.fsinfo import is_network_path
-from tagalot.core.tomlio import toml_list, toml_str, write_atomic
+from tagalot.core.tomlio import (
+    toml_inline_table,
+    toml_key,
+    toml_list,
+    toml_str,
+    toml_value,
+    write_atomic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +24,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 2
+KEEP_FORMAT_VERSION = 3
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -77,6 +84,8 @@ class RootConfig:
     name: str
     path: str
     exclude: list[str] = field(default_factory=list)
+    options: dict[str, Any] = field(default_factory=dict)
+    """Theme options for this root only (``options = { … }``), over the keep's."""
 
 
 @dataclass
@@ -88,6 +97,8 @@ class KeepConfig:
     theme: ThemeRef
     format_version: int = KEEP_FORMAT_VERSION
     roots: list[RootConfig] = field(default_factory=list)
+    theme_options: dict[str, Any] = field(default_factory=dict)
+    """``[theme.options]``: the keep's settings for its theme's options."""
     thumbnail_max: int | None = None
     """``[thumbnails] max_size``: overrides the theme's ``thumbnail_max`` for this keep."""
 
@@ -125,6 +136,9 @@ def dump_keep_config(config: KeepConfig) -> str:
         f"id = {toml_str(config.theme.id)}",
         f"version = {config.theme.version}",
     ]
+    if config.theme_options:
+        lines += ["", "[theme.options]"]
+        lines += [f"{toml_key(k)} = {toml_value(v)}" for k, v in config.theme_options.items()]
     if config.thumbnail_max is not None:
         lines += ["", "[thumbnails]", f"max_size = {config.thumbnail_max}"]
     for root in config.roots:
@@ -136,6 +150,8 @@ def dump_keep_config(config: KeepConfig) -> str:
             f"path = {toml_str(root.path)}",
             f"exclude = {toml_list(root.exclude)}",
         ]
+        if root.options:
+            lines.append(f"options = {toml_inline_table(root.options)}")
     return "\n".join(lines) + "\n"
 
 
@@ -154,11 +170,12 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     format_version = reader.integer(keep, "format_version", "[keep]")
 
     theme_table = reader.table(data, "theme")
-    reader.warn_unknown(theme_table, {"id", "version"}, "[theme]")
+    reader.warn_unknown(theme_table, {"id", "version", "options"}, "[theme]")
     theme = ThemeRef(
         id=reader.string(theme_table, "id", "[theme]"),
         version=reader.integer(theme_table, "version", "[theme]"),
     )
+    theme_options = reader.options(theme_table, "[theme.options]")
 
     thumbnail_max = None
     if "thumbnails" in data:
@@ -173,7 +190,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     roots: list[RootConfig] = []
     for i, raw in enumerate(raw_roots, start=1):
         where = f"[[roots]] #{i}"
-        reader.warn_unknown(raw, {"id", "name", "path", "exclude"}, where)
+        reader.warn_unknown(raw, {"id", "name", "path", "exclude", "options"}, where)
         exclude = raw.get("exclude", [])
         if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
             raise KeepConfigError(path, f"{where} exclude must be a list of strings")
@@ -183,6 +200,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                 name=reader.string(raw, "name", where),
                 path=reader.string(raw, "path", where),
                 exclude=list(exclude),
+                options=reader.options(raw, f"{where} options"),
             )
         )
     seen: set[str] = set()
@@ -197,6 +215,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         theme=theme,
         format_version=format_version,
         roots=roots,
+        theme_options=theme_options,
         thumbnail_max=thumbnail_max,
     )
 
@@ -225,6 +244,18 @@ class _Reader:
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise KeepConfigError(self.path, f"{where} {key} must be a positive integer")
         return value
+
+    def options(self, data: Mapping[str, Any], where: str) -> dict[str, Any]:
+        """The ``options`` table of ``data``: names and scalar values. The theme checks
+        the names and types when the keep opens."""
+        value = data.get("options", {})
+        if not isinstance(value, dict) or not all(
+            isinstance(v, bool | int | float | str) for v in value.values()
+        ):
+            raise KeepConfigError(
+                self.path, f"{where} must be a table of numbers, true/false, or strings"
+            )
+        return dict(value)
 
     def warn_unknown(self, data: Mapping[str, Any], known: set[str], where: str) -> None:
         for key in sorted(set(data) - known):

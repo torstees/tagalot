@@ -44,11 +44,16 @@ class Env:
     files: Path
     cache: ThumbCache
 
-    def scan(self, when: datetime = T0) -> ScanReport:
-        root = RootConfig("r", "Assets", str(self.files))
+    def scan(
+        self,
+        when: datetime = T0,
+        keep_options: dict[str, Any] | None = None,
+        root_options: dict[str, Any] | None = None,
+    ) -> ScanReport:
+        root = RootConfig("r", "Assets", str(self.files), options=root_options or {})
         return scan_root(
             self.writer, self.reader, root, root.path, when=when, theme=Assets2DTheme,
-            schema=self.schema,
+            schema=self.schema, theme_options=keep_options,
         )  # fmt: skip
 
     def titles(self, entity: type) -> list[str]:
@@ -190,6 +195,38 @@ def results_resource(env: Env, relpath: str) -> int:
         found = conn.scalar(select(Resource.id).where(Resource.relpath == relpath))
     assert found is not None
     return found
+
+
+def test_changing_the_artist_level_reingests_the_root(env: Env) -> None:
+    env.scan()
+    sky = env.entity("sky.png")
+    assert env.titles(Artist) == ["Aurora", "Kenji Sato"]
+
+    # Level 2 (set on the keep): only Aurora/fonts is that deep.
+    report = env.scan(T0 + timedelta(hours=1), keep_options={"artist_level": 2})
+    assert report.ingested == 10  # all 7 files and 3 folders again
+    assert env.titles(Artist) == ["fonts"]  # Aurora and Kenji Sato were left empty
+    assert env.artists() == {"fonts": ["Aileron-Regular.ttf"]}
+    assert env.fields(Image, "sky.png")["artist"] is None
+    assert env.entity("sky.png") == sky  # assets are kept, with their tags
+
+    # The same values again: nothing to redo.
+    again = env.scan(T0 + timedelta(hours=2), keep_options={"artist_level": 2})
+    assert again.ingested == 0
+
+    # A root's own value wins over the keep's: back to level 1.
+    back = env.scan(
+        T0 + timedelta(hours=3), keep_options={"artist_level": 2}, root_options={"artist_level": 1}
+    )
+    assert back.ingested == 10
+    assert env.titles(Artist) == ["Aurora", "Kenji Sato"]
+    assert "sky.png" in env.artists()["Aurora"]
+
+
+def test_a_bad_option_value_is_reported_and_the_default_used(env: Env) -> None:
+    report = env.scan(keep_options={"artist_level": "two"})
+    assert env.titles(Artist) == ["Aurora", "Kenji Sato"]
+    assert any("artist_level must be a whole number" in w.message for w in report.ingest_warnings)
 
 
 @pytest.mark.parametrize(

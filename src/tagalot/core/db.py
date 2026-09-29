@@ -129,7 +129,15 @@ def _v1_tag_descriptions(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE tag ADD COLUMN description VARCHAR"))
 
 
-CORE_MIGRATIONS: Mapping[int, Migration] = {1: _v1_tag_descriptions}
+def _v2_root_ingest_options(conn: Connection) -> None:
+    """Format 3: roots remember the theme options they were ingested with (#82)."""
+    conn.execute(text("ALTER TABLE root ADD COLUMN ingest_options VARCHAR"))
+
+
+CORE_MIGRATIONS: Mapping[int, Migration] = {
+    1: _v1_tag_descriptions,
+    2: _v2_root_ingest_options,
+}
 """Core migration steps keyed by the version they upgrade *from*."""
 
 

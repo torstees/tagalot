@@ -33,6 +33,7 @@ from tagalot.themes.api import (
     SearchView,
     Theme,
     ThemeDeclarationError,
+    ThemeOption,
     ThumbnailProvider,
     entity_fields,
 )
@@ -193,6 +194,11 @@ def validate_theme(theme: type[Theme]) -> list[str]:
                 problems.append(f"action {method!r} applies to undeclared {target.__name__}")
 
     problems.extend(_chain_problems(theme, entities, roles_of))
+    option_names = [getattr(o, "name", None) for o in theme.options]
+    if not all(isinstance(o, ThemeOption) for o in theme.options):
+        problems.append("options must be declared with option()")
+    elif len(set(option_names)) != len(option_names):
+        problems.append("an option is declared twice")
     for entity in entities:
         known = _safe_field_names(entity)
         for name in entity.card_lines:

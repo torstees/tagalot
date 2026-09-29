@@ -3,7 +3,7 @@
 import os
 import re
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 import tomli_w
@@ -24,6 +24,21 @@ def toml_str(value: str) -> str:
 def toml_key(key: str) -> str:
     """Format a TOML key, quoting it unless it is a valid bare key."""
     return key if _BARE_KEY.fullmatch(key) else toml_str(key)
+
+
+def toml_value(value: bool | int | float | str) -> str:
+    """Format a TOML scalar (a theme option's value)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return toml_str(value)
+    return repr(value)
+
+
+def toml_inline_table(values: Mapping[str, bool | int | float | str]) -> str:
+    """Format ``{ key = value, … }`` on one line."""
+    items = ", ".join(f"{toml_key(k)} = {toml_value(v)}" for k, v in values.items())
+    return f"{{ {items} }}" if items else "{}"
 
 
 LIST_LINE_LIMIT = 80
