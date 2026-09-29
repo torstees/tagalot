@@ -18,6 +18,7 @@ from mutagen.id3 import ID3
 from mutagen.mp4 import MP4Tags
 from PIL import Image
 
+from tagalot.core.thumbnails.archive import archive_image_bytes
 from tagalot.themes.api import Kind, ResourceInfo, kind_of
 
 
@@ -91,9 +92,17 @@ def _vorbis_pictures(values: Iterable[str]) -> Iterable[tuple[int, bytes]]:
         yield picture.type, picture.data
 
 
+def load_archive_image(path: str, size: int) -> Image.Image | None:
+    """The best image inside an archive (a cover or preview, else the first); ``None`` when
+    it has none that can be read within the size budgets."""
+    data = archive_image_bytes(path)
+    return None if data is None else load_image_bytes(data, size)
+
+
 RENDERERS: dict[Kind, Renderer] = {
     Kind.IMAGE: Renderer("image", 1, load_image),
     Kind.AUDIO: Renderer("audio_art", 1, load_audio_art),
+    Kind.ARCHIVE: Renderer("archive_image", 1, load_archive_image),
 }
 """The renderer for each resource kind; kinds without one never give a picture."""
 

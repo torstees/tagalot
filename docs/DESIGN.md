@@ -542,6 +542,10 @@ Case-insensitive, any of `.jpg .jpeg .png .webp` (`FOLDER_IMAGE_EXTENSIONS`): `f
 - List members; skip directories, `__MACOSX/`, dotfiles, and non-images.
 - Prefer names containing `cover`, `preview`, `thumb`; otherwise the first image in natural sort order.
 - Read only the chosen member. Zip supports random access; solid 7z/RAR may need to decompress preceding data, so archive thumbnails always run in workers with a size/time budget and give up gracefully.
+- **Implementation** (`core/thumbnails/archive.py`): `ArchiveReader` has zip (`zipfile`), 7z (`py7zr`, extracting one member into memory), and rar (`rarfile`) implementations, chosen by the file's first bytes rather than its extension (many `.cbr` files are zips). Preferred names are ranked `cover`, then `preview`, then `thumb`; ties and the rest go in natural order (`page2` before `page10`), case-insensitively.
+- **Budgets:** images over 64 MB uncompressed are skipped (the next candidate is tried); in a solid archive, if more than 256 MB comes before the chosen image, the archive shows no picture. Encrypted members are skipped.
+- **Rar:** listing needs no tool, but reading a compressed member needs `unrar`, 7-Zip, or `bsdtar` on the `PATH`. Without one, rar archives show their icon; this is logged once, not reported for every file.
+- A file that isn't a readable archive, or a damaged member, is reported like any unreadable file.
 
 ### Cache
 
@@ -730,5 +734,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | `thumbs.db` is written by thumbnail workers directly (lock-serialized), not through the keep's DB writer, since it is a disposable cache; it is versioned with `user_version` and recreated when damaged or from another version. Rows also store the image's width and height (§10). |
 | 2026-09 | Thumbnail providers are subclassable (`ThumbnailProvider.candidates(entity, ctx)`) and only choose resources; the core renders a resource by its kind. So cache keys use the renderer's id and version rather than the provider's, and the memo stores just the chosen resource. Resource kinds are classified by extension in the API (`kind_of`). Ingest links clear the memo (§9, §10). |
 | 2026-09 | `FolderImage` looks only at scanned resources (via `ThumbnailContext.folder_files`), never lists folders itself, so its choice can be memoized and shares aren't walked again. `EmbeddedAudioArt` on an entity without audio (an album) tries its first three contained items with audio, by title (§10). |
+| 2026-09 | Archives are recognized by content, not extension. The budget is by size (64 MB per image, 256 MB of solid data before it) rather than time, since py7zr and rarfile can't be interrupted. A missing rar tool is logged once and the archive shows its icon, rather than reporting every rar file (§10). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
