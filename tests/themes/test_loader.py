@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tagalot.themes.api import Theme
+from tagalot.themes.api import Entity, Theme, field
 from tagalot.themes.loader import (
     ThemeCatalog,
     default_user_themes_dir,
@@ -259,3 +259,28 @@ def test_a_same_size_edit_is_not_hidden_by_cached_bytecode(tmp_path: Path) -> No
     )
     assert _load(tmp_path).themes["quick"].theme.version == 2
     assert not (tmp_path / "__pycache__").exists()  # user themes never leave .pyc files
+
+
+def test_card_lines_and_thumbnail_sizes_are_checked() -> None:
+    class Song(Entity):
+        length: int | None = field("Length")
+        card_lines = ("length", "tempo")
+
+    class Songs(Theme):
+        id, name = "songs", "Songs"
+        entities = [Song]
+        thumbnail_max = 8
+
+    assert validate_theme(Songs) == [
+        "Song: card line 'tempo' isn't one of its fields",
+        "thumbnail_max must be a whole number from 16 to 2048, not 8",
+    ]
+
+    class TooBig(Theme):
+        id, name = "big", "Big"
+        entities = [Song]
+        thumbnail_max, thumbnail_default = 512, 1024
+
+    assert "thumbnail_default must be a whole number from 16 to thumbnail_max (512), not 1024" in (
+        validate_theme(TooBig)
+    )

@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 USER_MODULE_PREFIX = "tagalot_user_theme_"
 
+MAX_THUMBNAIL_SIZE = 2048
+"""The largest thumbnail a theme (or keep) may ask for, in pixels."""
+
 
 def default_user_themes_dir() -> Path:
     """Where users drop theme files, e.g. ``%LOCALAPPDATA%\\tagalot\\themes`` on Windows."""
@@ -190,6 +193,21 @@ def validate_theme(theme: type[Theme]) -> list[str]:
                 problems.append(f"action {method!r} applies to undeclared {target.__name__}")
 
     problems.extend(_chain_problems(theme, entities, roles_of))
+    for entity in entities:
+        known = _safe_field_names(entity)
+        for name in entity.card_lines:
+            if name not in known:
+                problems.append(f"{names[entity]}: card line {name!r} isn't one of its fields")
+    maximum, default = theme.thumbnail_max, theme.thumbnail_default
+    if not (isinstance(maximum, int) and 16 <= maximum <= MAX_THUMBNAIL_SIZE):
+        problems.append(
+            f"thumbnail_max must be a whole number from 16 to {MAX_THUMBNAIL_SIZE}, not {maximum!r}"
+        )
+    elif not (isinstance(default, int) and 16 <= default <= maximum):
+        problems.append(
+            f"thumbnail_default must be a whole number from 16 to thumbnail_max ({maximum}), "
+            f"not {default!r}"
+        )
 
     try:
         build_theme_schema(theme)

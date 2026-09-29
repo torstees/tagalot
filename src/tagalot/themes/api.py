@@ -165,6 +165,8 @@ class Entity:
     - ``title_label``: what the core ``title`` is called for this type (default "Title").
     - ``roles``: a list of :func:`role` declarations.
     - ``double_click``: ``"page"`` (open the detail page, the default) or ``"open_file"``.
+    - ``card_lines``: field names shown, in order, under the title on grid cards (default:
+      none, just the title). Users can choose other lines per view.
     - ``table_name`` / ``type_id``: override the defaults ``<theme id>_<class name>`` and
       ``<theme id>.<class name>`` (lowercased).
     """
@@ -174,6 +176,7 @@ class Entity:
     title_label: ClassVar[str] = "Title"
     roles: ClassVar[Sequence[Role]] = ()
     double_click: ClassVar[Literal["page", "open_file"]] = "page"
+    card_lines: ClassVar[Sequence[str]] = ()
     table_name: ClassVar[str | None] = None
     type_id: ClassVar[str | None] = None
 
@@ -705,7 +708,9 @@ class Theme:
     schema version), ``api_version``, ``extensions`` (accepted file extensions, lowercase,
     with the dot; empty = all), ``dirs`` (whether folders become resources: ``bool`` or a
     predicate on the relative path), ``entities``, ``containment``, ``relationships``,
-    ``views``.
+    ``views``, and thumbnail sizes: ``thumbnail_max`` (the resolution thumbnails are made
+    and cached at; a keep can override it) and ``thumbnail_default`` (how big grid cards
+    start; users zoom between small sizes and the max).
     """
 
     id: ClassVar[str]
@@ -718,6 +723,8 @@ class Theme:
     containment: ClassVar[Sequence[Containment]] = ()
     relationships: ClassVar[Sequence[Relationship]] = ()
     views: ClassVar[Sequence[View]] = ()
+    thumbnail_max: ClassVar[int] = 256
+    thumbnail_default: ClassVar[int] = 128
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
         """Turn new and changed resources into entities, links, containment, and fields."""

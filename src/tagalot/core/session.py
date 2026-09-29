@@ -20,6 +20,8 @@ from tagalot.core.tag_service import TagService
 from tagalot.core.tags import TagTreeCache
 from tagalot.core.theme_db import open_theme, resolve_theme
 from tagalot.core.theme_schema import ThemeSchema, build_theme_schema
+from tagalot.core.thumbnails.cache import ThumbCache
+from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import Theme
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -40,6 +42,8 @@ class KeepSession:
     tags: TagService
     settings: Settings
     catalog: ThemeCatalog
+    thumbnails: ThumbnailResolver
+    """Resolves and caches thumbnails (``thumbs.db``) at :attr:`thumbnail_max`."""
     closed: bool = field(default=False, init=False)
     """True once :meth:`close` has finished: the database files are no longer open."""
     _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -78,6 +82,18 @@ class KeepSession:
         writer = DbWriter(engine)
         reader = create_keep_engine(opened.keep.db_path, network=keep.on_network, read_only=True)
         cache = TagTreeCache(reader)
+        thumbnail_max = opened.keep.config.thumbnail_max or theme.thumbnail_max
+        root_paths = {
+            r.id: settings.root_path(opened.keep.config.id, r) for r in opened.keep.config.roots
+        }
+        thumbnails = ThumbnailResolver(
+            reader,
+            writer,
+            theme,
+            ThumbCache(opened.keep.thumbs_path),
+            root_paths.__getitem__,
+            thumbnail_max,
+        )
         logger.info("Opened keep %r with the %r theme", opened.keep.config.name, theme.id)
         return cls(
             keep=opened.keep,
@@ -89,7 +105,18 @@ class KeepSession:
             tags=TagService(writer, cache),
             settings=settings,
             catalog=catalog,
+            thumbnails=thumbnails,
         )
+
+    @property
+    def thumbnail_max(self) -> int:
+        """The size thumbnails are made at: the keep's override, else the theme's."""
+        return self.thumbnails.size
+
+    @property
+    def thumbnail_default(self) -> int:
+        """The theme's starting size for grid cards (never above :attr:`thumbnail_max`)."""
+        return min(self.theme.thumbnail_default, self.thumbnail_max)
 
     def root_path(self, root_id: str) -> str:
         """This machine's path for a root (per-user override, else ``keep.toml``)."""
@@ -120,6 +147,7 @@ class KeepSession:
             if self.closed:
                 return
             self.writer.close()
+            self.thumbnails.cache.close()
             self.reader.dispose()
             self.closed = True  # only now are the files released
         logger.info("Closed keep %r", self.keep.config.name)
