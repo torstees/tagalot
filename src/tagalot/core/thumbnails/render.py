@@ -5,9 +5,17 @@ the picture from it. Each renderer has an id and a version that go into the cach
 changing how a kind is read (bump ``version``) regenerates its thumbnails.
 """
 
-from collections.abc import Callable
+import base64
+import binascii
+import io
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any
 
+import mutagen
+from mutagen.flac import Picture
+from mutagen.id3 import ID3
+from mutagen.mp4 import MP4Tags
 from PIL import Image
 
 from tagalot.themes.api import Kind, ResourceInfo, kind_of
@@ -32,8 +40,60 @@ def load_image(path: str, size: int) -> Image.Image:
         return image
 
 
+def load_image_bytes(data: bytes, size: int) -> Image.Image:
+    """Decode an image held in memory (embedded art, an archive member)."""
+    image = Image.open(io.BytesIO(data))
+    image.draft(None, (size, size))
+    image.load()
+    return image
+
+
+FRONT_COVER = 3
+"""The ID3/FLAC picture type of a front cover, preferred over other embedded pictures."""
+
+
+def load_audio_art(path: str, size: int) -> Image.Image | None:
+    """The cover art embedded in an audio file (ID3 ``APIC``, FLAC and Ogg pictures, MP4
+    ``covr``): the front cover when it's marked, else the first picture. ``None`` when the
+    file has no art."""
+    audio = mutagen.File(path)
+    if audio is None:
+        return None
+    data = embedded_art(audio)
+    return None if data is None else load_image_bytes(data, size)
+
+
+def embedded_art(audio: Any) -> bytes | None:
+    """The best embedded picture's bytes from a ``mutagen`` file, if it has one."""
+    pictures: list[tuple[int, bytes]] = [(p.type, p.data) for p in getattr(audio, "pictures", ())]
+    tags = getattr(audio, "tags", None)
+    if isinstance(tags, ID3):
+        apic = tags.getall("APIC")  # type: ignore[no-untyped-call]
+        pictures += [(frame.type, frame.data) for frame in apic]
+    elif isinstance(tags, MP4Tags):
+        covers = tags.get("covr", [])  # type: ignore[no-untyped-call]
+        pictures += [(FRONT_COVER, bytes(cover)) for cover in covers]
+    elif tags is not None and hasattr(tags, "get"):  # Vorbis comments (Ogg, Opus)
+        pictures += list(_vorbis_pictures(tags.get("metadata_block_picture", [])))
+    pictures = [(kind, data) for kind, data in pictures if data]
+    if not pictures:
+        return None
+    fronts = [data for kind, data in pictures if kind == FRONT_COVER]
+    return fronts[0] if fronts else pictures[0][1]
+
+
+def _vorbis_pictures(values: Iterable[str]) -> Iterable[tuple[int, bytes]]:
+    for value in values:
+        try:
+            picture = Picture(base64.b64decode(value))  # type: ignore[no-untyped-call]
+        except (binascii.Error, ValueError, mutagen.MutagenError):
+            continue  # one bad picture shouldn't hide the others
+        yield picture.type, picture.data
+
+
 RENDERERS: dict[Kind, Renderer] = {
     Kind.IMAGE: Renderer("image", 1, load_image),
+    Kind.AUDIO: Renderer("audio_art", 1, load_audio_art),
 }
 """The renderer for each resource kind; kinds without one never give a picture."""
 

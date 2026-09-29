@@ -9,13 +9,20 @@ come from ``thumbs.db`` when cached, and files are only read for resources that 
 import contextlib
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import Connection, Engine, Row, select, update
 
-from tagalot.core.models import Entity, EntityContains, EntityResource, Resource, ResourceStatus
+from tagalot.core.models import (
+    Entity,
+    EntityContains,
+    EntityResource,
+    Resource,
+    ResourceKind,
+    ResourceStatus,
+)
 from tagalot.core.roots import local_path
 from tagalot.core.thumbnails.cache import ThumbCache, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
@@ -263,6 +270,39 @@ class _Resolution:
             .order_by(Entity.id)
         ).all()
         return [EntityRef(row.id, row.type) for row in rows]
+
+    def children(self, entity: EntityRef) -> list[EntityRef]:
+        rows = self.conn.execute(
+            select(Entity.id, Entity.type)
+            .join(EntityContains, EntityContains.child_id == Entity.id)
+            .where(EntityContains.parent_id == entity.id)
+            .order_by(Entity.title, Entity.id)
+        ).all()
+        return [EntityRef(row.id, row.type) for row in rows]
+
+    def folder_files(
+        self, entity: EntityRef, extensions: Iterable[str] | None = None
+    ) -> list[ResourceInfo]:
+        primary = self.primary_role(entity)
+        own = self.resources(entity, primary) if primary else []
+        if not own:
+            return []
+        first = own[0]
+        folder = first.relpath if first.kind == "dir" else first.relpath.rpartition("/")[0]
+        prefix = f"{folder}/" if folder else ""
+        query = select(*_RESOURCE_COLUMNS).where(
+            Resource.root_id == first.root_id,
+            Resource.kind == ResourceKind.FILE,
+            Resource.status != ResourceStatus.MISSING,
+            Resource.parent_resource_id.is_(None),
+        )
+        if prefix:
+            query = query.where(Resource.relpath.startswith(prefix, autoescape=True))
+        if extensions is not None:
+            query = query.where(Resource.ext.in_(sorted(extensions)))
+        rows = self.conn.execute(query.order_by(Resource.relpath)).all()
+        inside = [row for row in rows if "/" not in row.relpath[len(prefix) :]]
+        return [info for info in map(self._info, inside) if info is not None]
 
     def thumbnail_of(self, entity: EntityRef) -> ResourceInfo | None:
         if entity.id in self._resolving:  # a containment cycle: don't loop
