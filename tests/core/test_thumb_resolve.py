@@ -285,6 +285,8 @@ def test_an_unreadable_image_is_reported_once_and_skipped(env: Env) -> None:
     assert [path for path, _ in first.problems] == [str(env.files / "beach.png")]
     second = resolver.resolve(photo)
     assert second.problems == ()  # not read again until it changes
+    resolver.forget_failures()  # as clearing the cache does
+    assert len(resolver.resolve(photo).problems) == 1
 
 
 class Broken(ThumbnailProvider):
