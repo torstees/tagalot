@@ -3,7 +3,7 @@
 It is disposable: deleting it only costs regenerating thumbnails, so anything unexpected
 (a damaged file, another format version) is handled by starting it afresh. Keys hash
 everything a thumbnail depends on (:func:`thumb_key`), so a changed file or an upgraded
-provider simply misses the cache; stale entries are never read, only cleared with the rest.
+renderer simply misses the cache; stale entries are never read, only cleared with the rest.
 
 It is separate from ``keep.db`` and written directly by the workers that make thumbnails
 (one short transaction per thumbnail, serialized by a lock), not through the keep's DB
@@ -64,14 +64,14 @@ def thumb_key(
     resource_id: int,
     file_size: int | None,
     mtime_ns: int | None,
-    provider_id: str,
-    provider_version: int,
+    renderer_id: str,
+    renderer_version: int,
     thumb_size: int,
 ) -> str:
     """The cache key of a thumbnail: a hash of everything it depends on, so a changed file
-    (size or modification time), another provider or provider version, or another thumbnail
+    (size or modification time), another renderer or renderer version, or another thumbnail
     size gives another key."""
-    parts = (resource_id, file_size, mtime_ns, provider_id, provider_version, thumb_size)
+    parts = (resource_id, file_size, mtime_ns, renderer_id, renderer_version, thumb_size)
     return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
 

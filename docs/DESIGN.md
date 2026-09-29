@@ -423,9 +423,10 @@ class MoviesTheme(Theme):
 
 - `Theme` class attributes: `id`, `name`, `version` (the theme's schema version), `api_version`, `extensions` (lowercase with the dot; empty = all), `dirs` (whether folders become resources: `bool` or a predicate on the relative path), `entities`, `containment`, `relationships`, `views`; methods `ingest(batch, ctx)` and `migrate(from_version, ctx)`; `type_id_of`, `table_name_of`, and `actions()` for the core.
 - `Entity` class attributes: `label` and `plural` (how the type is named in the UI: "Album" / "Albums"; defaults are the class name and a regular English plural, `+es` after s/x/z/ch/sh and `y`→`ies` after a consonant, so irregular words such as "Series" or "Person" set `plural`; `entity_label(cls)` / `entity_plural(cls)` / `plural_of(word)` compute them), `title_label`, `roles`, `double_click` (`"page"` or `"open_file"`), and optional `table_name` / `type_id` overrides. `entity_fields(cls)` resolves annotated fields (types `str`, `int`, `float`, `bool`, `date`, `datetime`, each optionally `| None`) in declaration order.
-- `Kind` (the resource kinds a role accepts: image, audio, video, font, archive, dir, any), `SortBy(field, descending)` for view defaults, and `Section.contents()` / `Section.custom(factory)` alongside the sections shown.
+- `Kind` (the resource kinds a role accepts: image, audio, video, font, archive, dir, any), with `KIND_EXTENSIONS` and `kind_of(resource)` classifying resources by extension; `SortBy(field, descending)` for view defaults, and `Section.contents()` / `Section.custom(factory)` alongside the sections shown.
 - `@action(label, applies_to)` marks a theme method called as `method(entities, ctx)`; `applies_to` lists entity types or role names.
 - Values themes receive: `EntityRef(id, type)`, `Record(ref, title, fields, extra)`, `ResourceInfo(id, root_id, relpath, kind, ext, size, mtime_ns, path)`, and the `IngestContext` protocol (below).
+- Thumbnails (§10): `Theme.thumbnail_chain(entity_type)` (default `default_thumbnail_chain`), the `ThumbnailProvider` base class, the built-in providers, and the read-only `ThumbnailContext` providers receive.
 - Obvious mistakes (an unknown `search` kind or role kind, an unsupported field type, a missing annotation) raise `ThemeDeclarationError` at declaration; whole-theme checks happen in the loader.
 
 Theme modules do not import SQLAlchemy. Entity classes are plain declarations; table names (`movies_actor`) and type ids (`movies.actor`) are derived from the theme id and the lowercased class name, overridable with `table_name` / `type_id` class attributes.
@@ -523,6 +524,13 @@ Each entity type has an ordered **provider chain** from the theme. Providers ret
 
 Built-in providers: `RoleImage(role)`, `FolderImage(names)`, `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, `ImageFile()`, `Icon(name)`.
 
+**Providers choose; renderers draw.** A provider is a `ThumbnailProvider` subclass (in `themes/api.py`; themes may write their own) whose `candidates(entity, ctx)` yields resources to try, best first. It only chooses: the core turns a resource into a picture with the **renderer for its kind** (`core/thumbnails/render.py`: an image is decoded, an archive shows its first image, an audio file its embedded art; kinds without a renderer never give a picture). The runner (`core/thumbnails/resolve.py`) tries each candidate in turn, skipping ones already tried, then the next provider; the first picture wins. `Icon(name)` ends the chain (`name` is a kind value, `"file"`, or `"entity"`; a chain without one ends in `"entity"`). A provider that raises is logged, reported, and skipped.
+
+- **Context** (`ThumbnailContext`, read-only): `resources(entity, role=None)` (linked resources in sort order, leaving out missing files), `primary_role(entity)`, `parents(entity)`, and `thumbnail_of(entity)` (another entity's resolved source; containment cycles give `None`).
+- **Default chain** (`default_thumbnail_chain`): `RoleImage` for each role marked `thumbnail=True`, then `ImageFile()` (the primary role's resources) unless the primary role was already listed, then `Icon` of the primary role's single kind (`"file"` for several or `any`, `"entity"` with no primary role).
+- **Validation:** the loader checks each entity type's chain holds only providers and that `RoleImage` roles exist.
+- **Failures:** a file that can't be read is reported (path and error, for the activity panel) and not retried in that session until it changes.
+
 ### Folder conventions
 
 Case-insensitive, any of `.jpg .jpeg .png .webp`: `folder`, `cover`, `front`, `albumart`, `AlbumArt_*_Large`, `AlbumArtSmall`. Themes can extend the list.
@@ -536,10 +544,11 @@ Case-insensitive, any of `.jpg .jpeg .png .webp`: `folder`, `cover`, `front`, `a
 ### Cache
 
 - `thumbs.db` table `thumb(key text pk, size int, format text, width int, height int, data blob, created_at)`. `size` is the thumbnail size asked for; `width`/`height` are the stored image's, so views can lay out a cell before decoding it.
-- `key = sha256(resource_id, size, mtime_ns, provider_id, provider_version, thumb_size)`, so changes and provider upgrades invalidate automatically. Stale entries are never read, only removed by clearing the cache.
+- `key = sha256(resource_id, size, mtime_ns, renderer_id, renderer_version, thumb_size)`, so changed files and renderer upgrades invalidate automatically. (The renderer, not the provider, decides the pixels, so it is the renderer's version that counts.) Stale entries are never read, only removed by clearing the cache.
 - Thumbnails are fitted inside a `thumb_size` square (never enlarged, at least 1 px per side), turned upright by EXIF orientation, converted to RGB or RGBA (transparency kept), and stored as WebP quality 80 (PNG when Pillow lacks WebP). The entire file can be deleted at any time.
 - `thumbs.db` is separate from `keep.db` and is written directly by the thumbnail workers (one short transaction per thumbnail, serialized by a lock), not through the DB writer: it shares nothing with the keep's data, and losing it costs only regeneration. It uses `PRAGMA synchronous = OFF` and records its format in `PRAGMA user_version`; a damaged file or another format version is deleted and started afresh.
-- The resolved source resource is memoized in `entity.thumb_resource_id` to avoid re-running the chain.
+- The resolved source resource is memoized in `entity.thumb_resource_id` to avoid re-running the chain. The runner tries the memo first; if it no longer gives a picture, the chain runs again and a different result is written through the DB writer (queued, not awaited). An offline memo without a cached picture keeps the memo and shows the chain's icon (offline isn't gone). Ingest clears an entity's memo whenever it links or unlinks a resource, so a new cover is chosen afresh. Entities that end in an icon have no memo and re-run their chain (database lookups only; unreadable files aren't retried).
+- Cached pictures are used whatever the resource's status; files are only read when the resource is online (`ok`).
 
 ## 11. Opening files
 
@@ -717,5 +726,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Tag merge and delete dialogs explain the effect and count affected items from the tag manager's usage figures (no database wait); deleting a tag with sub-tags defaults to deleting the subtree (§7, §12). |
 | 2026-09 | Tag colors, descriptions, and aliases are edited in the tag manager's details pane; unsaved descriptions are kept per tag across reloads (§12). |
 | 2026-09 | `thumbs.db` is written by thumbnail workers directly (lock-serialized), not through the keep's DB writer, since it is a disposable cache; it is versioned with `user_version` and recreated when damaged or from another version. Rows also store the image's width and height (§10). |
+| 2026-09 | Thumbnail providers are subclassable (`ThumbnailProvider.candidates(entity, ctx)`) and only choose resources; the core renders a resource by its kind. So cache keys use the renderer's id and version rather than the provider's, and the memo stores just the chosen resource. Resource kinds are classified by extension in the API (`kind_of`). Ingest links clear the memo (§9, §10). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

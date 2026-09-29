@@ -155,7 +155,8 @@ def test_reloading_a_folder_picks_up_edits(tmp_path: Path) -> None:
 BAD_DECLARATIONS = """
 from datetime import date
 from tagalot.themes.api import (
-    DetailView, Entity, SearchView, Section, SortBy, Theme, action, contains, field, related, role
+    DetailView, Entity, RoleImage, SearchView, Section, SortBy, Theme, action, contains, field,
+    related, role
 )
 
 class Song(Entity):
@@ -190,6 +191,11 @@ class Bad(Theme):
     @action("Play", applies_to=["lyrics", Stranger])
     def play(self, entities, ctx):
         pass
+
+    def thumbnail_chain(self, entity_type):
+        if entity_type is Album:
+            raise LookupError("no chain")
+        return [RoleImage("poster"), "cover.jpg"]
 """
 
 
@@ -215,6 +221,9 @@ def test_declaration_problems_are_all_reported(tmp_path: Path) -> None:
         "detail view for Stranger, which isn't declared",
         "action 'play' applies to unknown role 'lyrics'",
         "action 'play' applies to undeclared Stranger",
+        "Song thumbnails: no role named 'poster'",
+        "Song thumbnails: 'cover.jpg' isn't a ThumbnailProvider",
+        "Album thumbnails: thumbnail_chain failed: no chain",
         "Song.when: date and time fields must allow None",  # from the trial table build
     ]:
         assert expected in problems
