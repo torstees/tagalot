@@ -10,11 +10,12 @@ from collections.abc import Callable
 
 import shiboken6
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QLabel,
     QMainWindow,
+    QMenu,
     QProgressBar,
     QSplitter,
     QStackedWidget,
@@ -43,6 +44,7 @@ from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
+from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
 from tagalot.ui.workers import ScanController, run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,12 @@ class MainWindow(QMainWindow):
         self._ui_state = load_ui_state(session.keep.ui_state_path)
         self.scans = scans or ScanController()
         self._pages: dict[NavTarget, QWidget] = {}
+        self.thumbnails = ThumbnailLoader(session.thumbnails, self)
+        self.thumbnail_size = clamp_size(
+            self._ui_state.get("thumbnail_size"),
+            session.thumbnail_default,
+            session.thumbnail_max,
+        )
 
         # Actions and menus.
         self.scan_action = QAction(
@@ -183,6 +191,9 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.tags_dock.toggleViewAction())
+        view_menu.addSeparator()
+        self.size_menu = self._make_size_menu()
+        view_menu.addMenu(self.size_menu)
 
         # Status bar: a message plus a busy indicator while scanning.
         self.busy = QProgressBar()
@@ -216,20 +227,37 @@ class MainWindow(QMainWindow):
         assert session is not None
         if target.kind in ("search", "view"):
             # Which columns are hidden is remembered per view, in ui_state.json.
+            # So are its layout (list or grid) and the lines under grid cards.
             state_key = f"{target.kind}:{target.key}"
             hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
+            layout = "list"
             if target.kind == "search":
                 spec = SearchSpec()
             else:
                 views = [v for v in session.theme.views if isinstance(v, SearchView)]
                 view = next(v for v in views if v.name == target.key)
                 spec = view_spec(session.schema, view)
+                layout = view.layout
+            layout = self._ui_state.get("layouts", {}).get(state_key, layout)
+            card_lines = self._ui_state.get("card_lines", {}).get(state_key)
             search = SearchPage(
                 session,
                 target.label,
                 spec,
                 grouped=target.kind == "search",
                 hidden_columns=hidden,
+                layout_mode=layout,
+                card_lines=card_lines if isinstance(card_lines, list) else None,
+                thumbnails=self.thumbnails,
+                thumbnail_size=self.thumbnail_size,
+            )
+            search.size_menu = self.size_menu
+            search.zoom_requested.connect(self.zoom)
+            search.layout_changed.connect(
+                lambda mode: self._save_view_state("layouts", state_key, mode)
+            )
+            search.card_lines_changed.connect(
+                lambda names: self._save_view_state("card_lines", state_key, names)
             )
             search.tags_dropped.connect(self.apply_tags)
             search.selection_changed.connect(self._schedule_summary)
@@ -451,6 +479,73 @@ class MainWindow(QMainWindow):
         self._ui_state.setdefault("hidden_columns", {})[state_key] = keys
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
+    def _save_view_state(self, kind: str, state_key: str, value: object) -> None:
+        """Remember a view's layout or card lines (``None`` forgets the choice)."""
+        assert self.session is not None
+        views = self._ui_state.setdefault(kind, {})
+        if value is None:
+            views.pop(state_key, None)
+        else:
+            views[state_key] = value
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    # --- thumbnail sizes ---
+
+    def _make_size_menu(self) -> QMenu:
+        assert self.session is not None
+        menu = QMenu("Thumbnail size", self)
+        self._size_group = QActionGroup(self)
+        self._size_group.setExclusive(True)
+        self.size_actions: dict[int, QAction] = {}
+        for name, size in size_presets(self.session.thumbnail_max):
+            action = QAction(f"{name} ({size} px)", self)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _checked=False, size=size: self.set_thumbnail_size(size)
+            )
+            self._size_group.addAction(action)
+            menu.addAction(action)
+            self.size_actions[size] = action
+        menu.addSeparator()
+        self.zoom_in_action = QAction("Zoom in", self)
+        self.zoom_in_action.setShortcuts(
+            [QKeySequence("Ctrl+="), QKeySequence(QKeySequence.StandardKey.ZoomIn)]
+        )
+        self.zoom_in_action.triggered.connect(lambda: self.zoom(1))
+        self.zoom_out_action = QAction("Zoom out", self)
+        self.zoom_out_action.setShortcuts([QKeySequence(QKeySequence.StandardKey.ZoomOut)])
+        self.zoom_out_action.triggered.connect(lambda: self.zoom(-1))
+        menu.addAction(self.zoom_in_action)
+        menu.addAction(self.zoom_out_action)
+        self._show_size()
+        return menu
+
+    def set_thumbnail_size(self, size: int) -> None:
+        """Show grid thumbnails at ``size`` pixels in every page, and remember it."""
+        assert self.session is not None
+        size = clamp_size(size, self.session.thumbnail_default, self.session.thumbnail_max)
+        self.thumbnail_size = size
+        for page in self.search_pages():
+            page.set_thumbnail_size(size)
+        self._show_size()
+        self._ui_state["thumbnail_size"] = size
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def zoom(self, step: int) -> None:
+        """One size bigger (``step`` > 0) or smaller."""
+        assert self.session is not None
+        self.set_thumbnail_size(zoomed(self.thumbnail_size, step, self.session.thumbnail_max))
+
+    def _show_size(self) -> None:
+        for size, action in self.size_actions.items():
+            action.setChecked(size == self.thumbnail_size)
+        if self.thumbnail_size not in self.size_actions:  # a zoom step between presets
+            checked = self._size_group.checkedAction()
+            if checked is not None:
+                self._size_group.setExclusive(False)
+                checked.setChecked(False)
+                self._size_group.setExclusive(True)
+
     def _save_folded(self, folded: list[str]) -> None:
         assert self.session is not None
         self._ui_state["nav_folded"] = folded
@@ -488,6 +583,7 @@ class MainWindow(QMainWindow):
         self.scan_action.setEnabled(True)
         self.busy.setVisible(False)
         self.statusBar().showMessage(scan_summary(reports))
+        self.thumbnails.clear()  # files may have changed
         for page in self.search_pages():
             page.refresh()
 
@@ -503,6 +599,10 @@ class MainWindow(QMainWindow):
             return
         super().closeEvent(event)
         if event.isAccepted():
+            if self.session is not None:
+                # Thumbnail jobs read the keep: let them finish before it closes.
+                self.thumbnails.clear()
+                self.thumbnails.wait()
             self.closed.emit()
 
 

@@ -185,3 +185,20 @@ def test_error_includes_path(tmp_path: Path) -> None:
         load_keep_config(path)
     assert info.value.path == path
     assert str(path) in str(info.value)
+
+
+def test_thumbnail_max_round_trip(tmp_path: Path) -> None:
+    config = _config()
+    assert "[thumbnails]" not in dump_keep_config(config)  # absent unless set
+    config.thumbnail_max = 512
+    path = tmp_path / "keep.toml"
+    save_keep_config(config, path)
+    assert "[thumbnails]\nmax_size = 512" in path.read_text(encoding="utf-8")
+    assert load_keep_config(path).thumbnail_max == 512
+
+
+@pytest.mark.parametrize("value", ["0", '"big"', "true"])
+def test_invalid_thumbnail_max(tmp_path: Path, value: str) -> None:
+    text = DESIGN_EXAMPLE.replace("[[roots]]", f"[thumbnails]\nmax_size = {value}\n\n[[roots]]")
+    with pytest.raises(KeepConfigError, match=r"\[thumbnails\] max_size must be a positive"):
+        load_keep_config(_write(tmp_path, text))

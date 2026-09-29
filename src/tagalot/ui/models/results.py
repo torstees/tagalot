@@ -217,6 +217,7 @@ class ResultsModel(QAbstractTableModel):
         self.max_pages = max_pages
         self._pool = pool
         self._columns: list[ResultColumn] = []
+        self._extra_fields: list[str] = []
         self._spec: SearchSpec | None = None
         self._generation = 0
         self._total = 0
@@ -239,6 +240,15 @@ class ResultsModel(QAbstractTableModel):
     @property
     def total(self) -> int:
         return self._total
+
+    @property
+    def extra_fields(self) -> list[str]:
+        return list(self._extra_fields)
+
+    def set_extra_fields(self, names: Sequence[str]) -> None:
+        """Also load these theme fields for every row (the grid's card lines), though no
+        column shows them. Takes effect with the next search or refresh."""
+        self._extra_fields = list(dict.fromkeys(names))
 
     def set_search(self, spec: SearchSpec, columns: Sequence[ResultColumn] | None = None) -> None:
         """Run ``spec``, clearing the current results, and show ``columns`` (default: keep
@@ -282,7 +292,10 @@ class ResultsModel(QAbstractTableModel):
     def _fetcher(self, spec: SearchSpec) -> Callable[..., tuple[int, list[Row]]]:
         """A function, safe to call in a worker, that loads one page (and maybe the count)."""
         session, limit = self.session, self.page_size
-        columns = list(self._columns)
+        shown = {c.key for c in self._columns}
+        columns = list(self._columns) + [
+            ResultColumn(name, name) for name in self._extra_fields if name not in shown
+        ]
 
         def fetch(conn: Connection, *, count: bool, offset: int) -> tuple[int, list[Row]]:
             tree: TagTree = session.tag_cache.get()

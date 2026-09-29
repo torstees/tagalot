@@ -88,6 +88,8 @@ class KeepConfig:
     theme: ThemeRef
     format_version: int = KEEP_FORMAT_VERSION
     roots: list[RootConfig] = field(default_factory=list)
+    thumbnail_max: int | None = None
+    """``[thumbnails] max_size``: overrides the theme's ``thumbnail_max`` for this keep."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -123,6 +125,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         f"id = {toml_str(config.theme.id)}",
         f"version = {config.theme.version}",
     ]
+    if config.thumbnail_max is not None:
+        lines += ["", "[thumbnails]", f"max_size = {config.thumbnail_max}"]
     for root in config.roots:
         lines += [
             "",
@@ -137,7 +141,7 @@ def dump_keep_config(config: KeepConfig) -> str:
 
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
-    reader.warn_unknown(data, {"keep", "theme", "roots"}, "top level")
+    reader.warn_unknown(data, {"keep", "theme", "roots", "thumbnails"}, "top level")
 
     keep = reader.table(data, "keep")
     reader.warn_unknown(keep, {"id", "name", "format_version"}, "[keep]")
@@ -155,6 +159,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         id=reader.string(theme_table, "id", "[theme]"),
         version=reader.integer(theme_table, "version", "[theme]"),
     )
+
+    thumbnail_max = None
+    if "thumbnails" in data:
+        thumbnails = reader.table(data, "thumbnails")
+        reader.warn_unknown(thumbnails, {"max_size"}, "[thumbnails]")
+        if "max_size" in thumbnails:
+            thumbnail_max = reader.integer(thumbnails, "max_size", "[thumbnails]")
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -181,7 +192,12 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         seen.add(root.id)
 
     return KeepConfig(
-        id=keep_id, name=name, theme=theme, format_version=format_version, roots=roots
+        id=keep_id,
+        name=name,
+        theme=theme,
+        format_version=format_version,
+        roots=roots,
+        thumbnail_max=thumbnail_max,
     )
 
 

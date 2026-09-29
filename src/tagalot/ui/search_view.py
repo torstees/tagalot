@@ -1,28 +1,39 @@
 """Search view: a heading, the result count, the filter bar, and the results (DESIGN.md §12).
 
-Results use the list layout (columns); the grid and tree layouts come later. The global
-search ("Search all") is **grouped**: one section per type with its first matches, until the
+Results show as a list (columns) or a grid (thumbnail cards), switched with the two
+buttons by the count; the tree layout comes later. The global search ("Search all") is
+**grouped**: one section per type with its first matches, until the
 user picks "Show all" on a section (an "Only: <type>" chip) or only one type matches, when
 it shows that type's full list. A search page is created once per navigation target and
 re-runs its search after a scan.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QItemSelectionModel, QThreadPool, Signal
+from PySide6.QtCore import QItemSelectionModel, QPoint, QThreadPool, Signal
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QStackedWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from tagalot.core.search import CORE_FIELDS, SearchError
-from tagalot.core.search_fields import scope_fields, type_labels, type_plurals
+from tagalot.core.search_fields import scope_fields, scoped_tables, type_labels, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultsModel
+from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
     DEFAULT_HIDDEN,
     count_text,
@@ -30,7 +41,10 @@ from tagalot.ui.result_table import (
     make_result_table,
     set_column_widths,
 )
+from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
+
+LAYOUTS = ("list", "grid")
 
 __all__ = ["SearchPage", "count_text", "list_columns"]
 
@@ -48,9 +62,15 @@ class SearchPage(QWidget):
 
     tags_dropped = Signal(list, list)
     hidden_columns_changed = Signal(list)
+    """The column keys now hidden, after the user showed or hid one (to remember it)."""
     selection_changed = Signal()
     """The selected items may be different (a click, new results, grouped or not)."""
-    """The column keys now hidden, after the user showed or hid one (to remember it)."""
+    layout_changed = Signal(str)
+    """The user switched between ``"list"`` and ``"grid"`` (to remember it)."""
+    card_lines_changed = Signal(object)
+    """The user chose card lines (a list of field names), or ``None`` for the theme's."""
+    zoom_requested = Signal(int)
+    """Ctrl+wheel over the grid: +1 for bigger thumbnails, -1 for smaller."""
 
     def __init__(
         self,
@@ -60,6 +80,10 @@ class SearchPage(QWidget):
         *,
         grouped: bool = False,
         hidden_columns: Iterable[str] | None = None,
+        layout_mode: str = "list",
+        card_lines: Sequence[str] | None = None,
+        thumbnails: ThumbnailLoader | None = None,
+        thumbnail_size: int = 128,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -73,6 +97,10 @@ class SearchPage(QWidget):
         self._generation = 0
         self._showing_sort = False  # true while the page itself moves the sort indicator
         self._plurals = type_plurals(session.schema)
+        self.layout_mode = layout_mode if layout_mode in LAYOUTS else "list"
+        self._card_override = list(card_lines) if card_lines is not None else None
+        self.size_menu: QMenu | None = None
+        """The window's Thumbnail size menu, offered in the grid's context menu too."""
         self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
         self.model.setParent(self)
 
@@ -86,6 +114,15 @@ class SearchPage(QWidget):
         header_row.addWidget(heading)
         header_row.addStretch(1)
         header_row.addWidget(self.status)
+        self.list_button = self._layout_button("list", "Show the results as a list")
+        self.grid_button = self._layout_button("grid", "Show the results as thumbnails")
+        self._layout_buttons = QButtonGroup(self)
+        self._layout_buttons.setExclusive(True)
+        for button in (self.list_button, self.grid_button):
+            self._layout_buttons.addButton(button)
+            header_row.addWidget(button)
+        self.list_button.clicked.connect(lambda: self._layout_clicked("list"))
+        self.grid_button.clicked.connect(lambda: self._layout_clicked("grid"))
 
         self.filter_bar = FilterBar()
         self.filter_bar.changed.connect(self._filters_changed)
@@ -102,6 +139,14 @@ class SearchPage(QWidget):
         self.table.selectionModel().selectionChanged.connect(self.selection_changed)
         self.model.modelReset.connect(self.selection_changed)
 
+        self.grid = ResultGrid(thumbnails, thumbnail_size)
+        self.grid.setModel(self.model)
+        # One selection for both layouts: switching keeps what is selected.
+        self.grid.setSelectionModel(self.table.selectionModel())
+        self.grid.tags_dropped.connect(self._tags_dropped_on_list)
+        self.grid.zoom_requested.connect(self.zoom_requested)
+        self.grid.menu_requested.connect(self._grid_menu)
+
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
         self.groups.tags_dropped.connect(self.tags_dropped)
@@ -110,7 +155,9 @@ class SearchPage(QWidget):
         self.groups.selection_changed.connect(self.selection_changed)
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
+        self.results.addWidget(self.grid)
         self.results.addWidget(self.groups)
+        self._show_layout_buttons()
 
         layout = QVBoxLayout(self)
         layout.addLayout(header_row)
@@ -196,10 +243,12 @@ class SearchPage(QWidget):
             return
         self.groups.set_groups(groups)
         self.results.setCurrentWidget(self.groups)
+        self._show_layout_buttons()
         total = sum(g.count for g in groups)
         self.status.setText(count_text(total) if total else "Nothing found")
 
     def _show_list(self, spec: SearchSpec) -> None:
+        self._apply_card_lines(spec.types)
         columns = list_columns(self.session.schema, spec.types)
         if columns != self.model.columns:
             self.model.set_search(spec, columns)
@@ -209,7 +258,123 @@ class SearchPage(QWidget):
         else:
             self.model.refresh()  # the same search again: keep the rows until new ones arrive
         self.table.set_columns(columns, self.hidden_columns)
-        self.results.setCurrentWidget(self.table)
+        self.results.setCurrentWidget(self.grid if self.layout_mode == "grid" else self.table)
+        self._show_layout_buttons()
+
+    # --- layouts ---
+
+    def _layout_button(self, kind: str, tip: str) -> QToolButton:
+        button = QToolButton()
+        button.setIcon(grid_icon(kind))
+        button.setCheckable(True)
+        button.setAutoRaise(True)
+        button.setToolTip(tip)
+        return button
+
+    def set_layout(self, mode: str) -> None:
+        """Show the list or the grid (not reported: see :attr:`layout_changed`)."""
+        if mode not in LAYOUTS:
+            return
+        self.layout_mode = mode
+        if not self.showing_groups():
+            self.results.setCurrentWidget(self.grid if mode == "grid" else self.table)
+        self._show_layout_buttons()
+
+    def _layout_clicked(self, mode: str) -> None:
+        if mode != self.layout_mode:
+            self.set_layout(mode)
+            self.layout_changed.emit(mode)
+
+    def _show_layout_buttons(self) -> None:
+        grouped = self.showing_groups()
+        self.list_button.setChecked(self.layout_mode == "list")
+        self.grid_button.setChecked(self.layout_mode == "grid")
+        for button in (self.list_button, self.grid_button):
+            button.setEnabled(not grouped)
+        if grouped:
+            self.grid_button.setToolTip("Search all shows sections; pick Show all for the grid")
+        else:
+            self.grid_button.setToolTip("Show the results as thumbnails")
+
+    def set_thumbnail_size(self, size: int) -> None:
+        self.grid.set_thumbnail_size(size)
+
+    # --- card lines ---
+
+    def card_lines(self, types: Sequence[str] | None = None) -> CardLines:
+        """The lines under each type's card titles: the user's choice (the fields each type
+        has) or, without one, the theme's ``card_lines``."""
+        if types is None:
+            types = self._types()
+        lines: dict[str, list[tuple[str, str]]] = {}
+        for table in scoped_tables(self.session.schema, types):
+            fields = {f.name: f for f in table.fields}
+            names = self._card_override
+            if names is None:
+                names = list(table.entity.card_lines)
+            lines[table.type_id] = [(n, fields[n].spec.label) for n in names if n in fields]
+        return lines
+
+    def card_fields(self, types: Sequence[str] | None = None) -> list[tuple[str, str]]:
+        """Every field a card line could show for the listed types, in declaration order."""
+        found: dict[str, str] = {}
+        for table in scoped_tables(self.session.schema, self._types() if types is None else types):
+            for f in table.fields:
+                if f.name not in CORE_FIELDS:
+                    found.setdefault(f.name, f.spec.label)
+        return list(found.items())
+
+    def set_card_lines(self, names: Sequence[str] | None) -> None:
+        """Show ``names`` under card titles (``None``: the theme's lines), and report it."""
+        self._card_override = list(names) if names is not None else None
+        self._apply_card_lines(self._types())
+        self.model.refresh()  # load the fields the new lines show
+        self.card_lines_changed.emit(self._card_override)
+
+    def _types(self) -> tuple[str, ...]:
+        spec = self.model.spec
+        return spec.types if spec is not None else self.current_spec().types
+
+    def _apply_card_lines(self, types: Sequence[str]) -> None:
+        lines = self.card_lines(types)
+        self.grid.set_card_lines(lines)
+        self.model.set_extra_fields([key for shown in lines.values() for key, _ in shown])
+
+    def _shown_card_fields(self) -> list[str]:
+        shown: dict[str, None] = {}
+        for lines in self.card_lines().values():
+            for key, _ in lines:
+                shown[key] = None
+        return list(shown)
+
+    def grid_menu(self) -> QMenu:
+        """The grid's context menu: which fields show under card titles, and sizes."""
+        menu = QMenu(self)
+        heading = menu.addAction("Card lines")
+        heading.setEnabled(False)
+        shown = self._shown_card_fields()
+        for key, label in self.card_fields():
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(key in shown)
+            action.toggled.connect(lambda on, key=key: self._toggle_card_line(key, on))
+        theme_lines = menu.addAction("Use the theme's card lines")
+        theme_lines.setEnabled(self._card_override is not None)
+        theme_lines.triggered.connect(lambda: self.set_card_lines(None))
+        if self.size_menu is not None:
+            menu.addSeparator()
+            menu.addMenu(self.size_menu)
+        return menu
+
+    def _toggle_card_line(self, key: str, on: bool) -> None:
+        names = [n for n in self._shown_card_fields() if n != key]
+        if on:
+            order = [k for k, _ in self.card_fields()]
+            names = sorted([*names, key], key=lambda n: order.index(n) if n in order else 0)
+        self.set_card_lines(names)
+
+    def _grid_menu(self, point: QPoint) -> None:
+        self.grid_menu().exec(point)
 
     def _load_tags(self) -> None:
         """Load the tag tree in a worker (the cache may need to read it from the keep)."""
