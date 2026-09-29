@@ -16,7 +16,7 @@ import mutagen
 from mutagen.flac import Picture
 from mutagen.id3 import ID3
 from mutagen.mp4 import MP4Tags
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from tagalot.core.thumbnails.archive import archive_image_bytes
 from tagalot.themes.api import Kind, ResourceInfo, kind_of
@@ -99,10 +99,28 @@ def load_archive_image(path: str, size: int) -> Image.Image | None:
     return None if data is None else load_image_bytes(data, size)
 
 
+FONT_SAMPLE = ("Aa", "Quick fox")
+"""What a font's thumbnail shows: two big letters, then a short line of text."""
+
+
+def load_font_sample(path: str, size: int) -> Image.Image:
+    """A sample of a font file (TTF, OTF, WOFF): dark text on a light square. Raises if the
+    font can't be loaded."""
+    big = ImageFont.truetype(path, max(8, size * 2 // 5))
+    small = ImageFont.truetype(path, max(6, size // 9))
+    image = Image.new("RGB", (size, size), (250, 250, 250))
+    draw = ImageDraw.Draw(image)
+    ink = (30, 30, 30)
+    draw.text((size / 2, size * 0.42), FONT_SAMPLE[0], font=big, fill=ink, anchor="mm")
+    draw.text((size / 2, size * 0.78), FONT_SAMPLE[1], font=small, fill=ink, anchor="mm")
+    return image
+
+
 RENDERERS: dict[Kind, Renderer] = {
     Kind.IMAGE: Renderer("image", 1, load_image),
     Kind.AUDIO: Renderer("audio_art", 1, load_audio_art),
     Kind.ARCHIVE: Renderer("archive_image", 1, load_archive_image),
+    Kind.FONT: Renderer("font_sample", 1, load_font_sample),
 }
 """The renderer for each resource kind; kinds without one never give a picture."""
 

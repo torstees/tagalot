@@ -25,6 +25,11 @@ demo-media:
     uv run python scripts/make_demo_keep.py --reset --media
     uv run tagalot scratch/Media.keep
 
+# (Re)create Assets.keep (the 2D assets theme) and open it; Demo.keep is left alone
+demo-assets:
+    uv run python scripts/make_demo_keep.py --reset --assets
+    uv run tagalot scratch/Assets.keep
+
 # (Re)create scratch/Demo.keep and scratch/demo-files without opening them
 demo-reset:
     uv run python scripts/make_demo_keep.py --reset

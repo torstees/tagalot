@@ -6,6 +6,7 @@ Usage (from the repository folder):
     uv run python scripts/make_demo_keep.py --reset           # delete and recreate it
     uv run tagalot scratch/Demo.keep
     uv run python scripts/make_demo_keep.py --reset --media   # the media keep instead
+    uv run python scripts/make_demo_keep.py --reset --assets  # the 2D assets keep instead
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
 it watches): a few real images, documents, nested folders, and names with accents and spaces,
@@ -20,14 +21,24 @@ stay open): artists, albums, and songs with a few tags,
 for trying views with several entity types (Search all's sections) before the music theme
 exists. Its small theme, ``tagalot_demo_media.py``, is installed in the user themes folder;
 delete that file when you're done with the media demo.
+
+``--assets`` creates ``scratch/Assets.keep`` watching ``scratch/asset-files`` with the built-in
+assets2d theme: two artists' images (one with a ``folder.jpg``), a font, a zip and a 7z
+archive of images, and a picture directly in the root (no artist), with a few tags.
 """
 
 import argparse
+import base64
+import inspect
+import io
+import re
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+import py7zr
+from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import Connection, insert, select
 
 from tagalot.core.ingest import IngestSession
@@ -241,6 +252,89 @@ def make_media_demo(
     return keep_dir
 
 
+ASSET_IMAGES = {
+    # relative path: (size, background, accent)
+    "Aurora Studio/folder.jpg": ((256, 256), (40, 30, 90), (250, 200, 80)),
+    "Aurora Studio/Backgrounds/dusk sky.png": ((1920, 1080), (60, 40, 120), (250, 140, 60)),
+    "Aurora Studio/Backgrounds/forest.png": ((1600, 900), (20, 70, 40), (120, 200, 90)),
+    "Aurora Studio/Icons/gem.png": ((64, 64), (0, 0, 0, 0), (80, 200, 230)),
+    "Aurora Studio/Icons/heart.png": ((64, 64), (0, 0, 0, 0), (230, 60, 90)),
+    "Kenji Sato/sketch 01.jpg": ((800, 1200), (235, 230, 220), (60, 60, 60)),
+    "Kenji Sato/sketch 02.jpg": ((1200, 800), (235, 230, 220), (120, 90, 60)),
+    "Kenji Sato/tileset.png": ((512, 512), (30, 30, 30), (200, 160, 60)),
+    "mood board.png": ((1000, 600), (200, 210, 220), (90, 110, 160)),
+}
+ASSET_TAGS = {
+    ("Use", "Background"): ["dusk sky.png", "forest.png"],
+    ("Use", "Icon"): ["gem.png", "heart.png"],
+    ("Style", "Pixel art"): ["tileset.png", "gem.png", "heart.png"],
+    ("Style", "Sketch"): ["sketch 01.jpg", "sketch 02.jpg"],
+    ("Favorites",): ["forest.png", "Aileron-Regular.ttf"],
+}
+
+
+def _asset_image(
+    size: tuple[int, int], background: tuple[int, ...], accent: tuple[int, ...]
+) -> Image.Image:
+    """A simple picture: a background with a circle and a stripe, so thumbnails differ."""
+    image = Image.new("RGBA" if len(background) == 4 else "RGB", size, background)
+    draw = ImageDraw.Draw(image)
+    w, h = size
+    r = min(w, h) // 3
+    draw.ellipse((w // 2 - r, h // 2 - r, w // 2 + r, h // 2 + r), fill=accent)
+    draw.rectangle((0, h * 3 // 4, w, h * 3 // 4 + max(2, h // 20)), fill=accent)
+    return image
+
+
+def _png(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
+    buffer = io.BytesIO()
+    _asset_image(size, color, (255, 255, 255)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def _demo_font() -> bytes:
+    """Aileron Regular (SIL Open Font License), the font Pillow embeds as its default."""
+    found = re.search(r'b"""(.*?)"""', inspect.getsource(ImageFont.load_default), re.DOTALL)
+    assert found is not None
+    return base64.b64decode(found.group(1))
+
+
+def make_assets_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+    """Create ``scratch/asset-files`` and ``scratch/Assets.keep`` (the assets2d theme),
+    scanned and tagged; returns the keep folder."""
+    files, keep_dir = scratch / "asset-files", scratch / "Assets.keep"
+    if reset:
+        _remove([keep_dir, files])
+    elif keep_dir.exists():
+        raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
+    for relpath, (size, background, accent) in ASSET_IMAGES.items():
+        path = files / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _asset_image(size, background, accent).save(path)
+    fonts = files / "Aurora Studio" / "Fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "Aileron-Regular.ttf").write_bytes(_demo_font())
+    with zipfile.ZipFile(files / "Aurora Studio" / "UI pack.zip", "w") as zf:
+        zf.writestr("UI pack/cover.png", _png((320, 200), (200, 80, 60)))
+        for i in range(1, 4):
+            zf.writestr(f"UI pack/button {i}.png", _png((96, 32), (60, 120, 200)))
+        zf.writestr("UI pack/license.txt", "Demo assets for Tagalot.")
+    with py7zr.SevenZipFile(files / "Kenji Sato" / "sketchbook.7z", "w") as sz:
+        for i in (2, 10, 1):  # natural order picks page 1
+            sz.writestr(_png((300, 400), (240 - i * 10, 230, 210)), f"page {i}.png")
+
+    create_keep(
+        keep_dir,
+        "Assets",
+        ThemeRef("assets2d", 1),
+        [RootConfig("assets", "Asset files", str(files), list(DEFAULT_EXCLUDES))],
+    )
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        _tag(session, ASSET_TAGS, {}, {})
+    return keep_dir
+
+
 def _tag(
     session: KeepSession,
     tags: dict[tuple[str, ...], list[str]],
@@ -272,17 +366,27 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="create scratch/Media.keep (artists, albums, songs) instead, and install its theme",
     )
+    parser.add_argument(
+        "--assets",
+        action="store_true",
+        help="create scratch/Assets.keep (the 2D assets theme) instead",
+    )
     args = parser.parse_args(argv)
     scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        if args.media:
+        if args.assets:
+            keep_dir = make_assets_demo(scratch, reset=args.reset)
+        elif args.media:
             keep_dir = make_media_demo(scratch, reset=args.reset)
         else:
             keep_dir = make_demo(scratch, reset=args.reset)
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    if args.media:
+    if args.assets:
+        print(f"Created {keep_dir} watching asset-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Assets.keep")
+    elif args.media:
         theme = default_user_themes_dir() / MEDIA_THEME_FILE
         print(f"Created {keep_dir} with artists, albums, and songs.")
         print("Open it with:  uv run tagalot scratch/Media.keep")

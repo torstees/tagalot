@@ -166,6 +166,7 @@ _ICONS: dict[str, QStyle.StandardPixmap] = {
     "audio": QStyle.StandardPixmap.SP_MediaVolume,
     "video": QStyle.StandardPixmap.SP_MediaPlay,
     "archive": QStyle.StandardPixmap.SP_DriveHDIcon,
+    "font": QStyle.StandardPixmap.SP_FileDialogDetailedView,
     "entity": QStyle.StandardPixmap.SP_FileIcon,
 }
 

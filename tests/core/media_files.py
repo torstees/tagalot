@@ -2,14 +2,17 @@
 # (mutagen is untyped)
 """Tiny media files made in tests: images, and audio with embedded art."""
 
+import base64
+import inspect
 import io
+import re
 import struct
 from collections.abc import Sequence
 from pathlib import Path
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import APIC, ID3
-from PIL import Image
+from PIL import Image, ImageFont
 
 MP3_FRAME = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(413)
 """One silent MPEG-1 Layer III frame (128 kbit/s, 44.1 kHz): enough for ``mutagen``."""
@@ -50,3 +53,17 @@ def write_flac(path: Path, pictures: Sequence[tuple[int, bytes]] = ()) -> None:
             picture.type, picture.mime, picture.data = kind, "image/png", data
             audio.add_picture(picture)
         audio.save()
+
+
+def font_bytes() -> bytes:
+    """A small TrueType font (Aileron Regular, SIL Open Font License), the one Pillow embeds
+    for ``ImageFont.load_default()``, so tests need no font file of their own."""
+    source = inspect.getsource(ImageFont.load_default)
+    found = re.search(r'b"""(.*?)"""', source, re.DOTALL)
+    assert found is not None, "Pillow no longer embeds its default font"
+    return base64.b64decode(found.group(1))
+
+
+def write_font(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(font_bytes())
