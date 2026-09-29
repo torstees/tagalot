@@ -38,6 +38,20 @@ class Kind(enum.StrEnum):
     ANY = "any"
 
 
+KIND_EXTENSIONS: Mapping[Kind, frozenset[str]] = {
+    Kind.IMAGE: frozenset(
+        {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".psd", ".tga"}
+    ),
+    Kind.AUDIO: frozenset(
+        {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wav", ".wma", ".aif", ".aiff"}
+    ),
+    Kind.VIDEO: frozenset({".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm", ".m4v", ".mpg"}),
+    Kind.FONT: frozenset({".ttf", ".otf", ".woff", ".woff2"}),
+    Kind.ARCHIVE: frozenset({".zip", ".7z", ".rar", ".cbz", ".cbr", ".cb7"}),
+}
+"""File extensions of each resource kind (lowercase, with the dot)."""
+
+
 class ThemeDeclarationError(ValueError):
     """A theme declaration is invalid; the message says what to fix."""
 
@@ -454,6 +468,128 @@ class IngestContext(Protocol):
         ...
 
 
+def kind_of(resource: ResourceInfo) -> Kind | None:
+    """What kind of resource this is: ``Kind.DIR`` for folders, else by file extension;
+    ``None`` for files of no known kind."""
+    if resource.kind == "dir":
+        return Kind.DIR
+    return next((k for k, exts in KIND_EXTENSIONS.items() if resource.ext in exts), None)
+
+
+# --- Thumbnails ---
+
+
+class ThumbnailContext(Protocol):
+    """What thumbnail providers can look up (read-only; DESIGN.md §10)."""
+
+    def resources(self, entity: EntityRef, role: str | None = None) -> list[ResourceInfo]:
+        """Resources linked to ``entity`` (in ``role``, if given), in their sort order.
+        Files known to be missing are left out."""
+        ...
+
+    def primary_role(self, entity: EntityRef) -> str | None:
+        """The name of the entity type's primary role, if it has one."""
+        ...
+
+    def parents(self, entity: EntityRef) -> list[EntityRef]:
+        """The entities that directly contain ``entity``."""
+        ...
+
+    def thumbnail_of(self, entity: EntityRef) -> ResourceInfo | None:
+        """The resource another entity's thumbnail comes from, resolving it if needed;
+        ``None`` when it shows an icon."""
+        ...
+
+
+class ThumbnailProvider:
+    """One step of an entity type's thumbnail chain (:meth:`Theme.thumbnail_chain`).
+
+    A provider only *chooses* resources. The core turns a resource into a picture by its
+    kind (an image is decoded, an archive shows its first image, an audio file its embedded
+    art) and tries the next candidate, then the next provider, when that fails. Subclass it
+    to choose resources your own way.
+    """
+
+    id: ClassVar[str] = "provider"
+    """Names the provider in logs and error reports."""
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        """Resources to try for ``entity``'s thumbnail, best first."""
+        return ()
+
+
+class RoleImage(ThumbnailProvider):
+    """The resources linked in a role, such as ``poster`` or ``photo``."""
+
+    id = "role"
+
+    def __init__(self, role: str) -> None:
+        self.role = role
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        return ctx.resources(entity, self.role)
+
+    def __repr__(self) -> str:
+        return f"RoleImage({self.role!r})"
+
+
+class ImageFile(ThumbnailProvider):
+    """The entity's own file: the resources of its primary role."""
+
+    id = "image_file"
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        primary = ctx.primary_role(entity)
+        return ctx.resources(entity, primary) if primary else ()
+
+    def __repr__(self) -> str:
+        return "ImageFile()"
+
+
+class ParentThumbnail(ThumbnailProvider):
+    """Whatever the containing entity (a song's album) shows."""
+
+    id = "parent"
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        for parent in ctx.parents(entity):
+            found = ctx.thumbnail_of(parent)
+            if found is not None:
+                yield found
+
+    def __repr__(self) -> str:
+        return "ParentThumbnail()"
+
+
+class Icon(ThumbnailProvider):
+    """A generic icon; ends the chain. ``name`` is a :class:`Kind` value (``"audio"``,
+    ``"image"``…), ``"file"``, or ``"entity"``; unknown names show the generic icon."""
+
+    id = "icon"
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"Icon({self.name!r})"
+
+
+def default_thumbnail_chain(entity: type[Entity]) -> list[ThumbnailProvider]:
+    """The chain :meth:`Theme.thumbnail_chain` uses unless a theme overrides it: the roles
+    marked ``thumbnail=True``, then the entity's own file, then an icon for its kind."""
+    chain: list[ThumbnailProvider] = [RoleImage(r.name) for r in entity.roles if r.thumbnail]
+    primary = next((r for r in entity.roles if r.primary), None)
+    if primary is not None and not primary.thumbnail:
+        chain.append(ImageFile())
+    if primary is None:
+        icon = "entity"
+    else:
+        kinds = primary.kinds - {Kind.ANY}
+        icon = next(iter(kinds)).value if len(kinds) == 1 else "file"
+    chain.append(Icon(icon))
+    return chain
+
+
 # --- The theme ---
 
 DirRule = bool | Callable[[str], bool]
@@ -492,6 +628,14 @@ class Theme:
         nothing.
         """
 
+    def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
+        """The providers tried, in order, for thumbnails of ``entity_type`` (DESIGN.md §10).
+
+        The first resource that makes a picture wins; an :class:`Icon` ends the chain. The
+        default is :func:`default_thumbnail_chain`.
+        """
+        return default_thumbnail_chain(entity_type)
+
     # --- Introspection (used by the core) ---
 
     @classmethod
@@ -519,6 +663,7 @@ class Theme:
 __all__ = [
     "API_VERSION",
     "FIELD_TYPES",
+    "KIND_EXTENSIONS",
     "SEARCH_KINDS",
     "ActionSpec",
     "Containment",
@@ -527,24 +672,32 @@ __all__ = [
     "EntityRef",
     "FieldInfo",
     "FieldSpec",
+    "Icon",
+    "ImageFile",
     "IngestContext",
     "Kind",
+    "ParentThumbnail",
     "Record",
     "Relationship",
     "ResourceInfo",
     "Role",
+    "RoleImage",
     "SearchView",
     "Section",
     "SortBy",
     "Theme",
     "ThemeDeclarationError",
+    "ThumbnailContext",
+    "ThumbnailProvider",
     "View",
     "action",
     "contains",
+    "default_thumbnail_chain",
     "entity_fields",
     "entity_label",
     "entity_plural",
     "field",
+    "kind_of",
     "plural_of",
     "related",
     "role",

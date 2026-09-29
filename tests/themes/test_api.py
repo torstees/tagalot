@@ -300,3 +300,79 @@ def test_entity_labels_and_plurals() -> None:
     assert (entity_label(Series), entity_plural(Series)) == ("Series", "Series")
     assert (entity_label(Person), entity_plural(Person)) == ("Actor or actress", "Cast")
     assert (entity_label(AudioBook), entity_plural(AudioBook)) == ("Audiobook", "Audiobooks")
+
+
+# --- thumbnails ---
+
+
+def _resource(relpath: str, kind: str = "file") -> api.ResourceInfo:
+    ext = (
+        ""
+        if kind == "dir"
+        else ("." + relpath.rpartition(".")[2].lower() if "." in relpath else "")
+    )
+    return api.ResourceInfo(1, "r", relpath, kind, ext, None, None, relpath)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("relpath", "kind", "expected"),
+    [
+        ("a/cover.jpg", "file", api.Kind.IMAGE),
+        ("a/Cover.JPEG", "file", api.Kind.IMAGE),
+        ("a/01.flac", "file", api.Kind.AUDIO),
+        ("film.mkv", "file", api.Kind.VIDEO),
+        ("font.otf", "file", api.Kind.FONT),
+        ("pack.zip", "file", api.Kind.ARCHIVE),
+        ("a", "dir", api.Kind.DIR),
+        ("notes.txt", "file", None),
+        ("README", "file", None),
+    ],
+)
+def test_kind_of(relpath: str, kind: str, expected: api.Kind | None) -> None:
+    assert api.kind_of(_resource(relpath, kind)) == expected
+
+
+def test_no_extension_has_two_kinds() -> None:
+    seen: set[str] = set()
+    for exts in api.KIND_EXTENSIONS.values():
+        assert not exts & seen
+        seen |= exts
+
+
+class _Poster(api.Entity):
+    roles = [
+        api.role("video", kinds={"video"}, primary=True),
+        api.role("poster", kinds={"image"}, thumbnail=True),
+        api.role("still", kinds={"image"}, many=True, thumbnail=True),
+    ]
+
+
+class _Picture(api.Entity):
+    roles = [api.role("image", kinds={"image"}, primary=True, thumbnail=True)]
+
+
+class _Anything(api.Entity):
+    roles = [api.role("file", kinds={"any"}, primary=True)]
+
+
+class _Person(api.Entity):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("entity", "expected"),
+    [
+        (_Poster, "[RoleImage('poster'), RoleImage('still'), ImageFile(), Icon('video')]"),
+        (_Picture, "[RoleImage('image'), Icon('image')]"),
+        (_Anything, "[ImageFile(), Icon('file')]"),
+        (_Person, "[Icon('entity')]"),
+    ],
+)
+def test_default_thumbnail_chains(entity: type[api.Entity], expected: str) -> None:
+    assert repr(api.default_thumbnail_chain(entity)) == expected
+
+    class Themed(api.Theme):
+        id, name = "t", "T"
+        entities = [entity]
+
+    assert repr(list(Themed().thumbnail_chain(entity))) == expected

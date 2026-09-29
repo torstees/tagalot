@@ -195,6 +195,7 @@ class IngestSession:
                 set_={"sort_order": sort_order},
             )
         )
+        self._forget_thumbnail(entity)
 
     def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None:
         self._role(entity, role)
@@ -206,6 +207,7 @@ class IngestSession:
                 EntityResource.role == role,
             )
         )
+        self._forget_thumbnail(entity)
 
     # --- containment (applied at flush) ---
 
@@ -278,6 +280,14 @@ class IngestSession:
             return self.schema.by_type_id(entity.type)
         except KeyError:
             raise IngestError(f"{entity.type!r} is not a type of this theme") from None
+
+    def _forget_thumbnail(self, entity: EntityRef) -> None:
+        """Its links changed, so its thumbnail source is chosen afresh (DESIGN.md §10)."""
+        self.conn.execute(
+            update(Entity)
+            .where(Entity.id == entity.id, Entity.thumb_resource_id.is_not(None))
+            .values(thumb_resource_id=None)
+        )
 
     def _role(self, entity: EntityRef, role: str) -> Any:
         entity_table = self._table_of(entity)

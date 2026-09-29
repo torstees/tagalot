@@ -15,7 +15,7 @@ import logging
 import pkgutil
 import sys
 import traceback
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -29,9 +29,11 @@ from tagalot.themes.api import (
     API_VERSION,
     DetailView,
     Entity,
+    RoleImage,
     SearchView,
     Theme,
     ThemeDeclarationError,
+    ThumbnailProvider,
     entity_fields,
 )
 
@@ -187,12 +189,38 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             elif inspect.isclass(target) and target not in declared:
                 problems.append(f"action {method!r} applies to undeclared {target.__name__}")
 
+    problems.extend(_chain_problems(theme, entities, roles_of))
+
     try:
         build_theme_schema(theme)
     except SchemaBuildError as e:
         problems.extend(e.problems)
     except Exception as e:  # a declaration so broken the builder itself fails
         problems.append(f"its tables can't be built: {e}")
+    return problems
+
+
+def _chain_problems(
+    theme: type[Theme], entities: Sequence[type[Entity]], roles_of: dict[type[Entity], set[str]]
+) -> list[str]:
+    """Each entity type's thumbnail chain holds providers, and its roles exist."""
+    problems = []
+    try:
+        instance = theme()
+    except Exception as e:
+        return [f"the theme can't be created: {e}"]
+    for entity in entities:
+        where = f"{entity.__name__} thumbnails"
+        try:
+            chain: list[object] = list(instance.thumbnail_chain(entity))
+        except Exception as e:
+            problems.append(f"{where}: thumbnail_chain failed: {e}")
+            continue
+        for provider in chain:
+            if not isinstance(provider, ThumbnailProvider):
+                problems.append(f"{where}: {provider!r} isn't a ThumbnailProvider")
+            elif isinstance(provider, RoleImage) and provider.role not in roles_of[entity]:
+                problems.append(f"{where}: no role named {provider.role!r}")
     return problems
 
 
