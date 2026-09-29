@@ -7,6 +7,7 @@ import inspect
 import io
 import re
 import struct
+import zlib
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -67,3 +68,54 @@ def font_bytes() -> bytes:
 def write_font(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(font_bytes())
+
+
+def psd_bytes(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
+    """A minimal Photoshop file: 8-bit RGB, no layers, an uncompressed composite image (what
+    Pillow reads). Pillow can't write PSD, so the bytes are assembled here."""
+    width, height = size
+    header = b"8BPS" + struct.pack(">H6sHIIHH", 1, bytes(6), 3, height, width, 8, 3)
+    empty_sections = struct.pack(">III", 0, 0, 0)  # color mode, resources, layers
+    planes = b"".join(bytes([c]) * (width * height) for c in color)
+    return header + empty_sections + struct.pack(">H", 0) + planes
+
+
+def woff_bytes(ttf: bytes) -> bytes:
+    """A TrueType font rewrapped as WOFF 1.0 (zlib-compressed tables), per the W3C spec."""
+    flavor, count = struct.unpack(">IH", ttf[:6])
+    tables = []
+    for i in range(count):
+        tag, checksum, offset, length = struct.unpack(">4sIII", ttf[12 + 16 * i : 28 + 16 * i])
+        tables.append((tag, checksum, ttf[offset : offset + length]))
+
+    def padded(n: int) -> int:
+        return (n + 3) & ~3
+
+    start = 44 + 20 * count
+    directory, blobs = b"", b""
+    for tag, checksum, data in tables:
+        packed = zlib.compress(data)
+        if len(packed) >= len(data):
+            packed = data  # stored as is when compression doesn't help
+        directory += struct.pack(
+            ">4sIIII", tag, start + len(blobs), len(packed), len(data), checksum
+        )
+        blobs += packed + bytes(padded(len(packed)) - len(packed))
+    sfnt_size = 12 + 16 * count + sum(padded(len(d)) for _, _, d in tables)
+    header = struct.pack(
+        ">4sIIHHIHHIIIII",
+        b"wOFF",
+        flavor,
+        44 + len(directory) + len(blobs),
+        count,
+        0,
+        sfnt_size,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    return header + directory + blobs
