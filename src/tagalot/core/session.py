@@ -135,6 +135,7 @@ class KeepSession:
                     self.root_path(root.id),
                     theme=self.theme,
                     schema=self.schema,
+                    theme_options=self.keep.config.theme_options,
                     progress=progress,
                 )
             )

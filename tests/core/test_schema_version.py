@@ -203,13 +203,16 @@ def test_database_without_core_row_is_reported(tmp_path: Path) -> None:
         open_keep_database(keep)
 
 
-def test_format_1_keeps_upgrade_to_tag_descriptions(tmp_path: Path) -> None:
-    """The real step 1 -> 2 (#192): tags get a description column; nothing else changes."""
+def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
+    """The real steps: 1 -> 2 gives tags a description (#192), 2 -> 3 gives roots the
+    options they were ingested with (#82); nothing else changes."""
     keep, engine = open_keep_database(_keep(tmp_path))
     with engine.begin() as conn:
         conn.exec_driver_sql("INSERT INTO tag (id, name, sort_order) VALUES (1, 'Iceland', 0)")
+        conn.exec_driver_sql("INSERT INTO root (id, name, online) VALUES ('r', 'Photos', 0)")
         # Put the database back the way format 1 made it.
         conn.exec_driver_sql("ALTER TABLE tag DROP COLUMN description")
+        conn.exec_driver_sql("ALTER TABLE root DROP COLUMN ingest_options")
         conn.execute(update(SchemaVersion).values(version=1))
     engine.dispose()
     keep.config.format_version = 1
@@ -217,15 +220,18 @@ def test_format_1_keeps_upgrade_to_tag_descriptions(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 2)
+    assert (info.value.stored, info.value.current) == (1, 3)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
         assert "description" in {c["name"] for c in inspect(engine).get_columns("tag")}
+        assert "ingest_options" in {c["name"] for c in inspect(engine).get_columns("root")}
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT id, name, description FROM tag")).all()
+            roots = conn.execute(text("SELECT id, name, ingest_options FROM root")).all()
         assert [tuple(r) for r in rows] == [(1, "Iceland", None)]
+        assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 2
+    assert migrated.config.format_version == 3
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]

@@ -113,6 +113,42 @@ class FieldInfo:
     spec: FieldSpec
 
 
+# --- Options ---
+
+OPTION_TYPES: tuple[type, ...] = (bool, int, float, str)
+"""Types a theme option may have."""
+
+
+@dataclass(frozen=True)
+class ThemeOption:
+    """A setting of a theme that a keep (or one of its roots) can change, declared with
+    :func:`option`."""
+
+    name: str
+    type: type
+    default: Any
+    label: str
+    description: str = ""
+
+
+def option(name: str, default: Any, *, label: str, description: str = "") -> ThemeOption:
+    """Declare a theme option; its type is the default's (``bool``, ``int``, ``float``, or
+    ``str``): ``option("artist_level", 1, label="Artist folder level")``.
+
+    Keeps set options in ``keep.toml`` under ``[theme.options]``, and a root can override
+    them with ``options = { … }``. :meth:`IngestContext.option` reads the value for the root
+    being scanned; when a root's values change, its files are ingested again.
+    """
+    kind = type(default)
+    if kind not in OPTION_TYPES:
+        raise ThemeDeclarationError(
+            f"option {name!r}: the default must be a bool, int, float, or str, not {default!r}"
+        )
+    if not name.isidentifier():
+        raise ThemeDeclarationError(f"option name {name!r} must be a Python identifier")
+    return ThemeOption(name, kind, default, label, description)
+
+
 # --- Roles ---
 
 
@@ -467,6 +503,24 @@ class IngestContext(Protocol):
 
     def get(self, entity: EntityRef) -> Record: ...
 
+    def contents(self, entity: EntityRef) -> list[EntityRef]:
+        """The entities ``entity`` directly contains, including this batch's changes."""
+        ...
+
+    def linked(self, entity: EntityRef, role: str | None = None) -> list[int]:
+        """Ids of the resources linked to ``entity`` (in ``role``, if given)."""
+        ...
+
+    def delete(self, entity: EntityRef) -> None:
+        """Delete an entity (for example an artist left empty). Its links, containment, and
+        tags go with it; the resources stay. Use it only for entities the theme made."""
+        ...
+
+    def option(self, name: str) -> Any:
+        """The value of a theme option (:func:`option`) for the root being scanned: the
+        root's override, else the keep's setting, else the default."""
+        ...
+
     def warn(self, resource: ResourceInfo | None, message: str) -> None:
         """Report a problem with a file to the activity panel."""
         ...
@@ -728,6 +782,7 @@ class Theme:
     containment: ClassVar[Sequence[Containment]] = ()
     relationships: ClassVar[Sequence[Relationship]] = ()
     views: ClassVar[Sequence[View]] = ()
+    options: ClassVar[Sequence[ThemeOption]] = ()
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
 
@@ -797,6 +852,7 @@ __all__ = [
     "FOLDER_IMAGE_EXTENSIONS",
     "FOLDER_IMAGE_NAMES",
     "KIND_EXTENSIONS",
+    "OPTION_TYPES",
     "SEARCH_KINDS",
     "ActionSpec",
     "ArchiveFirstImage",
@@ -823,6 +879,7 @@ __all__ = [
     "SortBy",
     "Theme",
     "ThemeDeclarationError",
+    "ThemeOption",
     "ThumbnailContext",
     "ThumbnailProvider",
     "View",
@@ -834,6 +891,7 @@ __all__ = [
     "entity_plural",
     "field",
     "kind_of",
+    "option",
     "plural_of",
     "related",
     "role",

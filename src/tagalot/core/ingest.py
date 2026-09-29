@@ -18,6 +18,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from tagalot.core import closure, fts
 from tagalot.core.models import (
     Entity,
+    EntityContains,
     EntityResource,
     FieldProvenance,
     FieldSource,
@@ -60,11 +61,16 @@ class IngestSession:
     """``ctx`` for ``Theme.ingest``, actions, and ``migrate`` on one connection."""
 
     def __init__(
-        self, conn: Connection, schema: ThemeSchema, prepared: Mapping[int, Any] | None = None
+        self,
+        conn: Connection,
+        schema: ThemeSchema,
+        prepared: Mapping[int, Any] | None = None,
+        options: Mapping[str, Any] | None = None,
     ) -> None:
         self.conn = conn
         self.schema = schema
         self._prepared = prepared or {}
+        self._options = dict(options) if options is not None else default_options(schema.theme)
         self.warnings: list[IngestWarning] = []
         self._added_edges: list[tuple[int, int]] = []
         self._removed_edges: list[tuple[int, int]] = []
@@ -120,6 +126,50 @@ class IngestSession:
             raise IngestError(f"entity {entity.id} no longer exists")
         self._apply_extracted(entity.id, entity_table, title, fields)
         self._dirty.add(entity.id)
+
+    def option(self, name: str) -> Any:
+        """A theme option's value for the root being scanned (its default elsewhere)."""
+        try:
+            return self._options[name]
+        except KeyError:
+            raise IngestError(
+                f"the {self.schema.theme.id!r} theme has no option {name!r}"
+            ) from None
+
+    def contents(self, entity: EntityRef) -> list[EntityRef]:
+        """Direct children, counting this batch's ``contain``/``uncontain`` not yet flushed."""
+        rows = self.conn.execute(
+            select(EntityContains.child_id).where(EntityContains.parent_id == entity.id)
+        ).scalars()
+        children = dict.fromkeys(rows)
+        for parent, child in self._removed_edges:
+            if parent == entity.id:
+                children.pop(child, None)
+        for parent, child in self._added_edges:
+            if parent == entity.id:
+                children[child] = None
+        if not children:
+            return []
+        found = self.conn.execute(select(Entity.id, Entity.type).where(Entity.id.in_(children)))
+        types = {row.id: row.type for row in found}
+        return [EntityRef(c, types[c]) for c in children if c in types]
+
+    def linked(self, entity: EntityRef, role: str | None = None) -> list[int]:
+        query = select(EntityResource.resource_id).where(EntityResource.entity_id == entity.id)
+        if role is not None:
+            query = query.where(EntityResource.role == role)
+        return list(self.conn.execute(query.order_by(EntityResource.sort_order)).scalars())
+
+    def delete(self, entity: EntityRef) -> None:
+        """Delete an entity and everything linked to it (not its resources)."""
+        self._table_of(entity)
+        # Pending edges first, so detaching sees the containment as it now stands.
+        self._added_edges = [e for e in self._added_edges if entity.id not in e]
+        self._removed_edges = [e for e in self._removed_edges if entity.id not in e]
+        self._flush_edges(FlushReport())
+        closure.detach(self.conn, [entity.id])
+        self.conn.execute(delete(Entity).where(Entity.id == entity.id))
+        self._dirty.add(entity.id)  # its search row goes at flush
 
     def prepared(self, resource: ResourceInfo | int) -> Any:
         """What the theme's ``prepare`` returned for ``resource``, or ``None``."""
@@ -258,12 +308,7 @@ class IngestSession:
         """Apply batched containment changes and refresh the search index for touched
         entities. Call before the transaction commits; safe to call more than once."""
         report = FlushReport()
-        if self._added_edges or self._removed_edges:
-            result = closure.apply(self.conn, self._added_edges, self._removed_edges)
-            report.edges_added, report.edges_removed = len(result.added), len(result.removed)
-            for (parent, child), reason in result.rejected:
-                self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
-            self._added_edges, self._removed_edges = [], []
+        self._flush_edges(report)
         if self._dirty:
             fts.sync_entities(self.conn, self._dirty, theme_text_source(self.schema))
             report.entities_indexed = len(self._dirty)
@@ -272,6 +317,15 @@ class IngestSession:
         return report
 
     # --- internals ---
+
+    def _flush_edges(self, report: FlushReport) -> None:
+        if self._added_edges or self._removed_edges:
+            result = closure.apply(self.conn, self._added_edges, self._removed_edges)
+            report.edges_added += len(result.added)
+            report.edges_removed += len(result.removed)
+            for (parent, child), reason in result.rejected:
+                self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
+            self._added_edges, self._removed_edges = [], []
 
     def _entity_table(self, type: type[ThemeEntity]) -> EntityTable:
         try:
@@ -375,6 +429,11 @@ class IngestSession:
                 where=FieldProvenance.source != FieldSource.USER,
             )
         )
+
+
+def default_options(theme: type[Any]) -> dict[str, Any]:
+    """Every option a theme declares, at its default."""
+    return {o.name: o.default for o in getattr(theme, "options", ())}
 
 
 def theme_text_source(schema: ThemeSchema) -> fts.TextSource:

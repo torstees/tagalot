@@ -6,8 +6,11 @@ Artist ⊃ Image    .png .jpg .psd …   width, height
        ⊃ Archive  .zip .7z .rar      images inside
 ```
 
-The artist is the first folder under a root (``Root/<Artist>/…``); files directly in a
-root have no artist. Each file is one entity, so tags stay with it when it moves, as in the
+The artist is a folder at a set level under a root: the ``artist_level`` option, 1 by
+default (``Root/<Artist>/…``), which a keep or a single root can change. Files above that
+level have no artist. When the level changes, the root is ingested again: assets move to
+their new artists, and artists left empty (whose folder is no longer an artist folder) are
+deleted. Each file is one entity, so tags stay with it when it moves, as in the
 generic theme. File details (image sizes, font names, archive contents) are read in
 :meth:`Assets2DTheme.prepare`, in the scan worker.
 """
@@ -41,13 +44,19 @@ from tagalot.themes.api import (
     contains,
     field,
     kind_of,
+    option,
     role,
 )
 
 logger = logging.getLogger(__name__)
 
-ARTIST_LEVEL = 1
-"""Which folder under a root names the artist (1: ``Root/<Artist>/…``)."""
+ARTIST_LEVEL = option(
+    "artist_level",
+    1,
+    label="Artist folder level",
+    description="Which folder under a root names the artist: 1 is Root/<Artist>/…, "
+    "2 is Root/<Store>/<Artist>/…",
+)
 
 
 class Artist(Entity):
@@ -103,11 +112,6 @@ ASSET_TYPES: dict[Kind, type[_Asset]] = {
 }
 
 
-def is_artist_folder(relpath: str) -> bool:
-    """Only artist folders become resources."""
-    return relpath.count("/") == ARTIST_LEVEL - 1
-
-
 class ContentsThumbnail(ThumbnailProvider):
     """An artist shows the thumbnail of one of its first assets."""
 
@@ -131,9 +135,8 @@ class Assets2DTheme(Theme):
     views = [SearchView("Assets", [Image, Font, Archive])]
     thumbnail_max = 1024
     thumbnail_default = 256
-
-    # mypy reads a callable ClassVar as a method; the scanner calls it with a relpath.
-    dirs = staticmethod(is_artist_folder)  # type: ignore[assignment]
+    options = [ARTIST_LEVEL]
+    dirs = True  # every folder: ingest decides which are artists (the level can change)
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Artist:
@@ -160,12 +163,10 @@ class Assets2DTheme(Theme):
     # --- ingest (DB writer) ---
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
+        level: int = ctx.option(ARTIST_LEVEL.name)
         for resource in batch:
             if resource.kind == "dir":
-                name = resource.relpath.rpartition("/")[2]
-                ctx.link(
-                    ctx.upsert(Artist, artist_key(resource.relpath), title=name), resource, "folder"
-                )
+                self._ingest_folder(resource, level, ctx)
                 continue
             kind = kind_of(resource)
             asset_type = ASSET_TYPES.get(kind) if kind is not None else None
@@ -175,7 +176,7 @@ class Assets2DTheme(Theme):
             error = details.pop("error", None)
             if error:
                 ctx.warn(resource, f"Couldn't read its details: {error}")
-            artist = artist_of(resource.relpath)
+            artist = artist_of(resource.relpath, level)
             title, values = file_values(resource)
             values.update(details, artist=artist)
 
@@ -185,7 +186,9 @@ class Assets2DTheme(Theme):
                 previous = ctx.get(asset).fields.get("artist")
                 ctx.update(asset, title=title, **values)
                 if previous != artist and previous is not None:
-                    ctx.uncontain(ctx.upsert(Artist, artist_key(previous)), asset)
+                    old = ctx.upsert(Artist, artist_key(previous))
+                    ctx.uncontain(old, asset)
+                    _delete_if_empty(old, ctx)
             else:
                 # Never-reused keys: a new file where another used to be is a new asset.
                 asset = ctx.upsert(asset_type, f"file:{uuid.uuid4().hex}", title=title, **values)
@@ -193,8 +196,26 @@ class Assets2DTheme(Theme):
             if artist is not None:
                 ctx.contain(ctx.upsert(Artist, artist_key(artist), title=artist), asset)
 
+    def _ingest_folder(self, resource: ResourceInfo, level: int, ctx: IngestContext) -> None:
+        """An artist's folder becomes its ``folder`` link; a folder at another level stops
+        being one (after the level changed)."""
+        if resource.relpath.count("/") == level - 1:
+            name = resource.relpath.rpartition("/")[2]
+            artist = ctx.upsert(Artist, artist_key(name), title=name)
+            ctx.link(artist, resource, "folder")
+            return
+        for artist in ctx.entities_of(resource, "folder"):
+            ctx.unlink(artist, resource, "folder")
+            _delete_if_empty(artist, ctx)
 
-def artist_of(relpath: str, level: int = ARTIST_LEVEL) -> str | None:
+
+def _delete_if_empty(artist: EntityRef, ctx: IngestContext) -> None:
+    """An artist with no assets whose folder is no longer an artist folder is gone."""
+    if not ctx.contents(artist) and not ctx.linked(artist, "folder"):
+        ctx.delete(artist)
+
+
+def artist_of(relpath: str, level: int = 1) -> str | None:
     """The artist folder's name for a file, or ``None`` if the file isn't that deep."""
     parts = relpath.split("/")
     return parts[level - 1] if len(parts) > level else None

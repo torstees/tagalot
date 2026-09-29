@@ -117,6 +117,9 @@ class Root(Base):
     online: Mapped[bool] = mapped_column(default=False)
     last_scan_at: Mapped[datetime | None]
     last_error: Mapped[str | None]
+    ingest_options: Mapped[str | None]
+    """The theme options this root was last ingested with (JSON); when they change, the
+    root's files are ingested again."""
 
 
 class Resource(Base):
