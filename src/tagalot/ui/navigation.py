@@ -10,10 +10,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, Qt, Signal
-from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QFont, QMouseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
 
-TargetKind = Literal["dashboard", "search", "view", "saved", "triage", "dedupe", "tags"]
+TargetKind = Literal["dashboard", "search", "view", "saved", "triage", "dedupe", "tags", "entity"]
 SECTIONS = ("library", "searches", "saved", "tools")
 _TITLES = {"library": "LIBRARY", "searches": "SEARCHES", "saved": "SAVED", "tools": "TOOLS"}
 _SECTION = Qt.ItemDataRole.UserRole + 1
@@ -26,7 +26,7 @@ class NavTarget:
 
     kind: TargetKind
     key: str = ""
-    """The view name, or the saved search id."""
+    """The view name, the saved search id, or the entity id (a detail page)."""
     label: str = ""
 
 
@@ -86,6 +86,8 @@ class NavigationPane(QTreeView):
         self.expandAll()
         self._refresh_headings()
 
+        self._current_before_press = QPersistentModelIndex()
+        """What was selected when the mouse went down: clicking it again navigates again."""
         self.clicked.connect(self._clicked)
         self.expanded.connect(self._fold_state_changed)
         self.collapsed.connect(self._fold_state_changed)
@@ -111,7 +113,10 @@ class NavigationPane(QTreeView):
             for row in range(heading.rowCount()):
                 child = heading.child(row)
                 if child.data(_TARGET) == target:
-                    self.setCurrentIndex(child.index())
+                    if child.index() == self.currentIndex():
+                        self.navigate.emit(target)  # already selected: show it again
+                    else:
+                        self.setCurrentIndex(child.index())
                     return
 
     # --- folding ---
@@ -142,9 +147,21 @@ class NavigationPane(QTreeView):
             count = f" ({heading.rowCount()})" if folded else ""
             heading.setText(f"{'▸' if folded else '▾'} {_TITLES[key]}{count}")
 
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._current_before_press = QPersistentModelIndex(self.currentIndex())
+        super().mousePressEvent(event)
+
     def _clicked(self, index: QModelIndex) -> None:
         if index.data(_SECTION) is not None:
             self.setExpanded(index, not self.isExpanded(index))
+            return
+        target = index.data(_TARGET)
+        if not isinstance(target, NavTarget):
+            return
+        if index == self._current_before_press:
+            # It was already selected (say, a detail page is showing): go back to it. A
+            # click on another item already navigated when it became current.
+            self.navigate.emit(target)
 
     def _fold_state_changed(self, index: QModelIndex) -> None:
         self._refresh_headings()

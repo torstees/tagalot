@@ -1,0 +1,246 @@
+"""What an entity's detail page shows (DESIGN.md §12 "Detail page").
+
+:func:`load_detail` reads everything a page needs in one read transaction, in a worker: the
+entity's fields, the files in each role, related entities, and how many items it contains,
+following the theme's :class:`~tagalot.themes.api.DetailView` for the type, or
+:func:`default_detail_view` when the theme declares none.
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from sqlalchemy import Connection, func, select
+
+from tagalot.core.models import (
+    Entity,
+    EntityContains,
+    EntityResource,
+    Resource,
+    ResourceStatus,
+    Root,
+)
+from tagalot.core.roots import local_path
+from tagalot.core.theme_schema import ThemeSchema
+from tagalot.themes.api import (
+    DetailView,
+    Section,
+    entity_fields,
+    entity_label,
+    entity_plural,
+)
+from tagalot.themes.api import Entity as ThemeEntity
+
+
+@dataclass(frozen=True)
+class FileRow:
+    """A resource shown in a role section."""
+
+    resource_id: int
+    root_name: str
+    relpath: str
+    kind: str
+    """``"file"`` or ``"dir"``."""
+    size: int | None
+    status: ResourceStatus
+    path: str | None
+    """This machine's path, or ``None`` if its root isn't configured here."""
+
+
+@dataclass(frozen=True)
+class EntityRow:
+    """A related or contained entity, shown as a link to its page."""
+
+    id: int
+    type: str
+    title: str
+
+
+@dataclass(frozen=True)
+class FieldRow:
+    name: str
+    label: str
+    value: Any
+
+
+@dataclass(frozen=True)
+class DetailSection:
+    """One section of the page, in the theme's order."""
+
+    kind: str
+    """``fields``, ``role``, ``gallery``, ``related``, ``contents``, or ``custom``."""
+    title: str
+    fields: tuple[FieldRow, ...] = ()
+    files: tuple[FileRow, ...] = ()
+    entities: tuple[EntityRow, ...] = ()
+    count: int = 0
+    """Contents: how many items the entity directly contains."""
+
+
+@dataclass(frozen=True)
+class EntityDetail:
+    id: int
+    type: str
+    type_label: str
+    title: str
+    sections: tuple[DetailSection, ...] = field(default_factory=tuple)
+
+
+MAX_ROWS = 200
+"""Files or entities listed per section; the section says how many more there are."""
+
+
+def default_detail_view(entity: type[ThemeEntity], is_container: bool) -> DetailView:
+    """The page for a type the theme gave no :class:`DetailView`: its fields, its primary
+    role's files, and its contents if it can contain anything."""
+    sections = [Section.fields()]
+    primary = next((r for r in entity.roles if r.primary), None)
+    if primary is not None:
+        sections.append(Section.role(primary.name))
+    if is_container:
+        sections.append(Section.contents())
+    return DetailView(entity, sections)
+
+
+def detail_view_for(schema: ThemeSchema, entity: type[ThemeEntity]) -> DetailView:
+    theme = schema.theme
+    for view in theme.views:
+        if isinstance(view, DetailView) and view.type is entity:
+            return view
+    return default_detail_view(entity, any(c.parent is entity for c in theme.containment))
+
+
+def load_detail(
+    conn: Connection,
+    schema: ThemeSchema,
+    entity_id: int,
+    root_path: Callable[[str], str | None],
+) -> EntityDetail | None:
+    """The detail page of an entity, or ``None`` if it no longer exists. ``root_path``
+    gives this machine's path for a root id (``None`` if unknown)."""
+    row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
+    if row is None:
+        return None
+    try:
+        table = schema.by_type_id(row.type)
+    except KeyError:
+        return EntityDetail(entity_id, row.type, row.type, row.title)
+    entity = table.entity
+    sections: list[DetailSection] = []
+    for section in detail_view_for(schema, entity).sections:
+        loaded = _load_section(conn, schema, entity, entity_id, section, root_path)
+        if loaded is not None:
+            sections.append(loaded)
+    return EntityDetail(entity_id, row.type, entity_label(entity), row.title, tuple(sections))
+
+
+def _load_section(
+    conn: Connection,
+    schema: ThemeSchema,
+    entity: type[ThemeEntity],
+    entity_id: int,
+    section: Section,
+    root_path: Callable[[str], str | None],
+) -> DetailSection | None:
+    match section.kind:
+        case "fields":
+            return DetailSection(
+                "fields", "Details", fields=_fields(conn, schema, entity, entity_id)
+            )
+        case "role" | "gallery":
+            role = next((r for r in entity.roles if r.name == section.name), None)
+            if role is None:
+                return None
+            title = role.label or (section.name or "").replace("_", " ").capitalize()
+            files = _files(conn, entity_id, role.name, root_path)
+            return DetailSection(section.kind, title, files=files)
+        case "related":
+            return _related(conn, schema, entity, entity_id, section.name or "")
+        case "contents":
+            count = (
+                conn.scalar(select(func.count()).where(EntityContains.parent_id == entity_id)) or 0
+            )
+            return DetailSection("contents", "Contents", count=int(count))
+        case _:
+            return DetailSection(section.kind, "")
+
+
+def _fields(
+    conn: Connection, schema: ThemeSchema, entity: type[ThemeEntity], entity_id: int
+) -> tuple[FieldRow, ...]:
+    table = schema.entities[entity].table
+    shown = [f for f in entity_fields(entity) if f.spec.detail]
+    if not shown:
+        return ()
+    values = conn.execute(
+        select(*(table.c[f.name] for f in shown)).where(table.c.id == entity_id)
+    ).first()
+    return tuple(
+        FieldRow(f.name, f.spec.label, values[i] if values is not None else None)
+        for i, f in enumerate(shown)
+    )
+
+
+def _files(
+    conn: Connection, entity_id: int, role: str, root_path: Callable[[str], str | None]
+) -> tuple[FileRow, ...]:
+    rows = conn.execute(
+        select(
+            Resource.id,
+            Resource.root_id,
+            Root.name,
+            Resource.relpath,
+            Resource.kind,
+            Resource.size,
+            Resource.status,
+        )
+        .join(EntityResource, EntityResource.resource_id == Resource.id)
+        .join(Root, Root.id == Resource.root_id)
+        .where(EntityResource.entity_id == entity_id, EntityResource.role == role)
+        .order_by(EntityResource.sort_order, Resource.relpath)
+        .limit(MAX_ROWS)
+    ).all()
+    found = []
+    for rid, root_id, root_name, relpath, kind, size, status in rows:
+        base = root_path(root_id)
+        found.append(
+            FileRow(
+                rid,
+                root_name,
+                relpath,
+                kind.value,
+                size,
+                status,
+                local_path(base, relpath) if base is not None else None,
+            )
+        )
+    return tuple(found)
+
+
+def _related(
+    conn: Connection,
+    schema: ThemeSchema,
+    entity: type[ThemeEntity],
+    entity_id: int,
+    name: str,
+) -> DetailSection | None:
+    link = schema.relationships.get(name)
+    if link is None:
+        return None
+    rel = link.relationship
+    if rel.a is entity:
+        mine, other, title = link.table.c.a_id, link.table.c.b_id, rel.label
+        default = entity_plural(rel.b)
+    elif rel.b is entity:
+        mine, other, title = link.table.c.b_id, link.table.c.a_id, rel.reverse_label
+        default = entity_plural(rel.a)
+    else:
+        return None
+    rows = conn.execute(
+        select(Entity.id, Entity.type, Entity.title)
+        .join(link.table, other == Entity.id)
+        .where(mine == entity_id)
+        .order_by(Entity.title, Entity.id)
+        .limit(MAX_ROWS)
+    ).all()
+    return DetailSection("related", title or default, entities=tuple(EntityRow(*r) for r in rows))

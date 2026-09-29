@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QItemSelectionModel, QPoint, QThreadPool, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QThreadPool, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -71,6 +71,8 @@ class SearchPage(QWidget):
     """The user chose card lines (a list of field names), or ``None`` for the theme's."""
     zoom_requested = Signal(int)
     """Ctrl+wheel over the grid: +1 for bigger thumbnails, -1 for smaller."""
+    open_requested = Signal(int)
+    """An item was double-clicked (or Enter pressed on it): its entity id."""
 
     def __init__(
         self,
@@ -146,6 +148,8 @@ class SearchPage(QWidget):
         self.grid.tags_dropped.connect(self._tags_dropped_on_list)
         self.grid.zoom_requested.connect(self.zoom_requested)
         self.grid.menu_requested.connect(self._grid_menu)
+        self.table.activated.connect(self._activated)
+        self.grid.activated.connect(self._activated)
 
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
@@ -153,6 +157,7 @@ class SearchPage(QWidget):
         self.groups.column_toggled.connect(self._column_toggled)
         self.groups.set_hidden_columns(self.hidden_columns)
         self.groups.selection_changed.connect(self.selection_changed)
+        self.groups.open_requested.connect(self.open_requested)
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.grid)
@@ -434,6 +439,11 @@ class SearchPage(QWidget):
         self.model.entity_ids(
             rows, lambda ids: self.tags_dropped.emit(ids, tag_ids) if ids else None
         )
+
+    def _activated(self, index: QModelIndex) -> None:
+        hit = self.model.hit(index.row())
+        if hit is not None:
+            self.open_requested.emit(hit.id)
 
     def _filters_changed(self, _filters: Filters) -> None:
         self._run()
