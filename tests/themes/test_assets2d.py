@@ -3,13 +3,13 @@
 import os
 import zipfile
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, insert, select
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.assets2d import (
@@ -23,13 +23,17 @@ from tagalot.builtin_themes.assets2d import (
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
-from tagalot.core.models import Entity, EntityContains, Resource
+from tagalot.core.models import Entity, EntityContains, EntityTag, Resource, Tag
 from tagalot.core.scanjob import ScanReport, scan_root
+from tagalot.core.search import run_search
+from tagalot.core.search_fields import search_fields, view_spec
+from tagalot.core.tags import TagTree, TagTreeCache
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.cache import ThumbCache
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
+from tagalot.themes.api import SearchView
 from tagalot.themes.loader import validate_theme
 from tests.core.media_files import png_bytes, write_font, write_image
 
@@ -250,3 +254,43 @@ def test_artist_of(relpath: str, artist: str | None) -> None:
 )
 def test_is_image_name(name: str, image: bool) -> None:
     assert is_image_name(name) is image
+
+
+# --- views (#83) ---
+
+
+def _view(env: Env, name: str, tree: TagTree, include: tuple[int, ...] = ()) -> list[str]:
+    view = next(v for v in Assets2DTheme.views if isinstance(v, SearchView) and v.name == name)
+    spec = replace(view_spec(env.schema, view), include=include)
+    with env.reader.connect() as conn:
+        hits = run_search(conn, spec, tree, fields=search_fields(env.schema, spec.types))
+    return [h.title for h in hits]
+
+
+def test_each_view_lists_its_kind(env: Env) -> None:
+    env.scan()
+    tree = TagTreeCache(env.reader).get()
+    names = [v.name for v in Assets2DTheme.views if isinstance(v, SearchView)]
+    assert names == ["Assets", "Artists", "Images", "Fonts", "Archives"]
+    assert len(_view(env, "Assets", tree)) == 7
+    assert _view(env, "Artists", tree) == ["Aurora", "Kenji Sato"]
+    assert _view(env, "Images", tree) == [
+        "broken.png",
+        "folder.jpg",
+        "loose.png",
+        "sketch.jpg",
+        "sky.png",
+    ]
+    assert _view(env, "Fonts", tree) == ["Aileron-Regular.ttf"]
+    assert _view(env, "Archives", tree) == ["pack.zip"]
+
+
+def test_an_artists_tags_count_for_its_assets(env: Env) -> None:
+    env.scan()
+    kenji = env.entity("Kenji Sato")
+    env.writer.run(lambda conn: conn.execute(insert(Tag).values(id=1, name="Sketchy")))
+    env.writer.run(lambda conn: conn.execute(insert(EntityTag).values(entity_id=kenji, tag_id=1)))
+    tree = TagTreeCache(env.reader).get()
+    assert _view(env, "Images", tree, include=(1,)) == ["broken.png", "sketch.jpg"]
+    assert _view(env, "Artists", tree, include=(1,)) == ["Kenji Sato"]
+    assert _view(env, "Fonts", tree, include=(1,)) == []

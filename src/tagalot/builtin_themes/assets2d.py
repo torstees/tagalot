@@ -38,6 +38,7 @@ from tagalot.themes.api import (
     Kind,
     ResourceInfo,
     SearchView,
+    SortBy,
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
@@ -132,7 +133,20 @@ class Assets2DTheme(Theme):
     )
     entities = [Artist, Image, Font, Archive]
     containment = [contains(Artist, Image), contains(Artist, Font), contains(Artist, Archive)]
-    views = [SearchView("Assets", [Image, Font, Archive])]
+    # Asset views count an artist's tags as its assets' own (tag an artist "Pixel art" and
+    # its assets match), so tagging a whole artist is one step.
+    views = [
+        SearchView("Assets", [Image, Font, Archive], inherit_tags=True),
+        SearchView("Artists", [Artist]),
+        SearchView("Images", [Image], inherit_tags=True),
+        SearchView(
+            "Fonts",
+            [Font],
+            inherit_tags=True,
+            default_sort=[SortBy("family"), SortBy("style"), SortBy("title")],
+        ),
+        SearchView("Archives", [Archive], inherit_tags=True),
+    ]
     thumbnail_max = 1024
     thumbnail_default = 256
     options = [ARTIST_LEVEL]
