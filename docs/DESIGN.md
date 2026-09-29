@@ -215,7 +215,7 @@ A scan runs per root in background workers:
    - `resource.ingested_at` marks what the theme has handled; it is cleared when a file changes and set only when its ingest commits. Every scan ingests all *pending* resources (new, changed, or whose ingest failed before), so a failure is retried by the next scan.
    - Batches of 100 run as one DB-writer transaction each: the theme's `ingest()`, `ctx.flush()` (containment, search index), and marking the batch ingested. A batch that raises is rolled back and each resource retried alone; resources that still fail stay pending and are listed in the scan report with the error.
    - With a theme, the walk uses the theme's `extensions` and `dirs`.
-   - Known trade-off: `ingest()` runs inside the write transaction, so file reading in it holds the write lock for the batch. A worker-side `prepare()` hook is planned for themes that read files (issue #176, M12).
+   - **Reading files happens before the transaction** (#176): for each batch the scan worker first calls the theme's optional `prepare(batch)`, outside any transaction, which returns `{resource id: value}` (tags, image sizes, font names); `ingest()` then reads each value with `ctx.prepared(resource)`. So the write lock is held only for database work, and tagging stays responsive while a batch is read from a slow share. If `prepare()` raises, the batch is prepared one resource at a time; a resource that still fails is reported with the error and left pending. Themes without `prepare()` skip the step (no "Reading…" progress).
 6. **Closure maintenance.** The core updates `entity_ancestor` for changed containment edges.
 7. **Thumbnail queue.** Affected entities are queued for thumbnail resolution (§10).
 
@@ -415,6 +415,7 @@ class MoviesTheme(Theme):
                                     Section.related("cast"), Section.gallery("screenshot")]),
     ]
 
+    def prepare(self, batch): ...              # optional: read files in a worker (§6)
     def ingest(self, batch, ctx): ...          # resources -> entities, links, fields (via ctx)
     def thumbnail_chain(self, entity_type): ...  # ordered providers (§10)
     def similarity(self, a, b) -> float | None: ...  # optional, for dedupe (§13)
@@ -425,7 +426,7 @@ class MoviesTheme(Theme):
 
 **The API module** (`tagalot/themes/api.py`, `API_VERSION = 1`) imports only the standard library, so the core and the launcher can import it without side effects. Beyond the names above it provides:
 
-- `Theme` class attributes: `id`, `name`, `version` (the theme's schema version), `api_version`, `extensions` (lowercase with the dot; empty = all), `dirs` (whether folders become resources: `bool` or a predicate on the relative path), `entities`, `containment`, `relationships`, `views`, `thumbnail_max` (default 256) and `thumbnail_default` (default 128) (§10 "Sizes"); methods `ingest(batch, ctx)` and `migrate(from_version, ctx)`; `type_id_of`, `table_name_of`, and `actions()` for the core.
+- `Theme` class attributes: `id`, `name`, `version` (the theme's schema version), `api_version`, `extensions` (lowercase with the dot; empty = all), `dirs` (whether folders become resources: `bool` or a predicate on the relative path), `entities`, `containment`, `relationships`, `views`, `thumbnail_max` (default 256) and `thumbnail_default` (default 128) (§10 "Sizes"); methods `prepare(batch)` (optional file reading in a worker, returning `{resource id: value}`, §6), `ingest(batch, ctx)`, and `migrate(from_version, ctx)`; `type_id_of`, `table_name_of`, and `actions()` for the core.
 - `Entity` class attributes: `label` and `plural` (how the type is named in the UI: "Album" / "Albums"; defaults are the class name and a regular English plural, `+es` after s/x/z/ch/sh and `y`→`ies` after a consonant, so irregular words such as "Series" or "Person" set `plural`; `entity_label(cls)` / `entity_plural(cls)` / `plural_of(word)` compute them), `title_label`, `roles`, `double_click` (`"page"` or `"open_file"`), `card_lines` (field names shown under the title on grid cards, default none; §12), and optional `table_name` / `type_id` overrides. `entity_fields(cls)` resolves annotated fields (types `str`, `int`, `float`, `bool`, `date`, `datetime`, each optionally `| None`) in declaration order.
 - `Kind` (the resource kinds a role accepts: image, audio, video, font, archive, dir, any), with `KIND_EXTENSIONS` and `kind_of(resource)` classifying resources by extension; `SortBy(field, descending)` for view defaults, and `Section.contents()` / `Section.custom(factory)` alongside the sections shown.
 - `@action(label, applies_to)` marks a theme method called as `method(entities, ctx)`; `applies_to` lists entity types or role names.
@@ -473,6 +474,7 @@ Themes read and write keep data only through the context object `ctx` passed to 
 - `ctx.contain(parent, child)`, `ctx.uncontain(parent, child)`.
 - `ctx.relate(name, a, b)`, `ctx.unrelate(name, a, b)`.
 - `ctx.find(Type, **equals) -> list[EntityRef]` and `ctx.get(entity) -> Record` (read-only field values) for lookups.
+- `ctx.prepared(resource)`: what `prepare()` returned for the resource, or `None` (nothing returned for it, or no prepare step, as in `migrate` and actions).
 - `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
 - `ctx.entities_of(resource, role=None) -> list[EntityRef]`: the entities linked to a resource. Because move detection (§6) carries links to a file's new path, this is how a file-based theme finds "the entity for this file"; keying such entities by path would let a new file at a vacated path take over a moved file's entity.
 - `ctx.warn(resource, message)`: report a problem with a file to the activity panel.
@@ -752,5 +754,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Archives are recognized by content, not extension. The budget is by size (64 MB per image, 256 MB of solid data before it) rather than time, since py7zr and rarfile can't be interrupted. A missing rar tool is logged once and the archive shows its icon, rather than reporting every rar file (§10). |
 | 2026-09 | Grid layout: thumbnail cards sharing the list's model and selection, switched by header buttons (remembered per view). Card text is the title plus lines the theme declares per entity (`card_lines`) and the user can change per view. Thumbnail sizes: the theme sets `thumbnail_max` (cache resolution; a keep can override it in `keep.toml`) and `thumbnail_default`; the user picks presets from View → Thumbnail size or zooms with Ctrl+wheel, remembered per keep. Thumbnails load on a dedicated 4-thread pool, newest request first (§4, §9, §10, §12). |
 | 2026-09 | Clearing the thumbnail cache is in the Keep menu until the Keep configuration window exists; it keeps the memoized sources and retries files that failed (§10). |
+| 2026-09 | Themes read files in an optional `prepare(batch)` run by the scan worker outside the write transaction; `ingest` gets the results through `ctx.prepared(resource)`, so its signature is unchanged. Done in M9 (for assets2d) rather than M12 (§6, §9). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

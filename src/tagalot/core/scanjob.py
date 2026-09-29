@@ -6,10 +6,11 @@ Thumbnails (step 7) arrive in M8.
 """
 
 import logging
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
+from typing import Any
 
 from sqlalchemy import Connection, Engine, select, update
 
@@ -244,20 +245,52 @@ def _ingest_pending(
         for rid, rel, kind, ext, size, mtime in rows
     ]
     ingester = theme()
+    reads = type(ingester).prepare is not Theme.prepare
     for start in range(0, len(pending), INGEST_BATCH):
         batch = pending[start : start + INGEST_BATCH]
-        say(f"Ingesting {start + len(batch)} of {len(pending)} in {root.name}…")
+        done = f"{start + len(batch)} of {len(pending)} in {root.name}"
+        prepared: Mapping[int, Any] = {}
+        if reads:
+            say(f"Reading {done}…")
+            batch, prepared = _prepare(ingester, batch, report, root)
+        say(f"Ingesting {done}…")
         try:
-            _record(report, writer.run(partial(_ingest, ingester, schema, batch, when)), batch)
+            _record(
+                report, writer.run(partial(_ingest, ingester, schema, batch, when, prepared)), batch
+            )
         except Exception:
             for info in batch:
                 try:
                     _record(
-                        report, writer.run(partial(_ingest, ingester, schema, [info], when)), [info]
+                        report,
+                        writer.run(partial(_ingest, ingester, schema, [info], when, prepared)),
+                        [info],
                     )
                 except Exception as e:
                     report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
                     logger.warning("Ingest of %s in root %s failed: %s", info.relpath, root.id, e)
+
+
+def _prepare(
+    ingester: Theme, batch: list[ResourceInfo], report: ScanReport, root: RootConfig
+) -> tuple[list[ResourceInfo], Mapping[int, Any]]:
+    """Run the theme's ``prepare`` for a batch, in this worker (no transaction). If it
+    raises, each resource is prepared alone; those that still fail are reported and left
+    out of the ingest, so they stay pending for the next scan."""
+    try:
+        return batch, dict(ingester.prepare(batch))
+    except Exception:
+        kept: list[ResourceInfo] = []
+        prepared: dict[int, Any] = {}
+        for info in batch:
+            try:
+                prepared.update(ingester.prepare([info]))
+            except Exception as e:
+                report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
+                logger.warning("Reading %s in root %s failed: %s", info.relpath, root.id, e)
+            else:
+                kept.append(info)
+        return kept, prepared
 
 
 def _record(report: ScanReport, warnings: list[IngestWarning], batch: list[ResourceInfo]) -> None:
@@ -270,10 +303,11 @@ def _ingest(
     schema: ThemeSchema,
     batch: list[ResourceInfo],
     when: datetime,
+    prepared: Mapping[int, Any],
     conn: Connection,
 ) -> list[IngestWarning]:
     """One ingest transaction: the theme's ingest, its flush, and marking the batch done."""
-    ctx = IngestSession(conn, schema)
+    ctx = IngestSession(conn, schema, prepared)
     ingester.ingest(batch, ctx)
     flushed = ctx.flush()
     conn.execute(
