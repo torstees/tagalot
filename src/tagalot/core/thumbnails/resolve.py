@@ -124,6 +124,11 @@ class ThumbnailResolver:
         with self._lock:
             self._failed.add(key)
 
+    def forget_failures(self) -> None:
+        """Try files that failed this session again (after the cache is cleared)."""
+        with self._lock:
+            self._failed.clear()
+
     def remember(self, entity_id: int, resource_id: int | None) -> None:
         """Store the chain's result in ``entity.thumb_resource_id`` (queued, not awaited)."""
 

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QSplitter,
     QStackedWidget,
@@ -37,6 +38,7 @@ from tagalot.core.tags import (
     split_tag_path,
     tag_counts,
 )
+from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -115,6 +117,12 @@ class MainWindow(QMainWindow):
         close_action.triggered.connect(self.close)
         keep_menu = self.menuBar().addMenu("&Keep")
         keep_menu.addAction(self.scan_action)
+        self.clear_thumbnails_action = QAction("Clear thumbnail cache…", self)
+        self.clear_thumbnails_action.setToolTip(
+            "Delete every stored thumbnail; they are made again as you browse"
+        )
+        self.clear_thumbnails_action.triggered.connect(self.clear_thumbnail_cache)
+        keep_menu.addAction(self.clear_thumbnails_action)
         keep_menu.addSeparator()
         if on_open_other is not None:
             self.open_other_action = QAction("Open another keep…", self)
@@ -489,6 +497,54 @@ class MainWindow(QMainWindow):
             views[state_key] = value
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
+    # --- the thumbnail cache ---
+
+    def clear_thumbnail_cache(self) -> None:
+        """Ask, then delete every stored thumbnail (DESIGN.md §10). Counting and clearing
+        run in workers; thumbnails are made again as they are shown."""
+        assert self.session is not None
+        cache = self.session.thumbnails.cache
+        self.clear_thumbnails_action.setEnabled(False)
+
+        def counted(stats: CacheStats) -> None:
+            if not stats.count:
+                self.clear_thumbnails_action.setEnabled(True)
+                self.statusBar().showMessage("The thumbnail cache is already empty.")
+                return
+            if not self.confirm_clear_thumbnails(stats):
+                self.clear_thumbnails_action.setEnabled(True)
+                return
+            self.statusBar().showMessage("Clearing thumbnails…")
+            run_in_pool(cache.clear, on_done=cleared, on_error=failed)
+
+        def cleared(count: int) -> None:
+            assert self.session is not None
+            self.session.thumbnails.forget_failures()  # unreadable files get another try
+            self.thumbnails.clear()
+            for page in self.search_pages():
+                page.grid.viewport().update()
+            self.clear_thumbnails_action.setEnabled(True)
+            self.statusBar().showMessage(f"Cleared {count:,} thumbnails.")
+
+        def failed(error: BaseException) -> None:
+            self.clear_thumbnails_action.setEnabled(True)
+            logger.error("Clearing thumbnails failed", exc_info=error)
+            self.statusBar().showMessage(f"Clearing thumbnails failed: {error}")
+
+        run_in_pool(cache.stats, on_done=counted, on_error=failed)
+
+    def confirm_clear_thumbnails(self, stats: CacheStats) -> bool:
+        """Ask before clearing ``stats.count`` thumbnails (tests replace this)."""
+        answer = QMessageBox.question(
+            self,
+            "Clear thumbnail cache",
+            f"Delete {stats.count:,} stored thumbnails ({format_bytes(stats.bytes)})?\n\n"
+            "They are made again as you browse, which reads the files again.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     # --- thumbnail sizes ---
 
     def _make_size_menu(self) -> QMenu:
@@ -604,6 +660,18 @@ class MainWindow(QMainWindow):
                 self.thumbnails.clear()
                 self.thumbnails.wait()
             self.closed.emit()
+
+
+def format_bytes(size: int) -> str:
+    """A size for people: ``"980 KB"``, ``"12.4 MB"``."""
+    value = float(size)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            break
+        value /= 1024
+    if unit == "bytes":
+        return f"{size:,} bytes"
+    return f"{value:,.0f} {unit}" if value >= 100 else f"{value:,.1f} {unit}"
 
 
 def scan_summary(reports: list[ScanReport]) -> str:

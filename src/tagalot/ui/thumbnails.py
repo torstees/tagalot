@@ -111,6 +111,11 @@ class ThumbnailLoader(QObject):
         self._wanted.clear()
         self._running.clear()
 
+    @property
+    def idle(self) -> bool:
+        """Nothing is loading or waiting to load."""
+        return not self._wanted and not self._running
+
     def wait(self, msecs: int = 30_000) -> bool:
         """Wait for running thumbnail jobs (for closing, and tests)."""
         return self.pool.waitForDone(msecs)
