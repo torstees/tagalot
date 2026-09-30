@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QListView,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -54,7 +55,7 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
-from tagalot.ui.search_view import SearchPage
+from tagalot.ui.search_view import SearchPage, add_reread_actions
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -77,6 +78,8 @@ class DetailPage(QWidget):
     extra_edited = Signal(int, str, object, bool)
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
+    reread_requested = Signal(list, bool)
+    """Read the entity's files again; true: replacing what the user edited."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
     selection_changed = Signal()
@@ -131,10 +134,20 @@ class DetailPage(QWidget):
         titles.addWidget(self.title_value)
         titles.addWidget(self.type_label)
         titles.addStretch(1)
+        self.more_button = QToolButton()
+        self.more_button.setText("More \u25be")
+        self.more_button.setAutoRaise(True)
+        self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more = QMenu(self.more_button)
+        add_reread_actions(
+            more, lambda replace: self.reread_requested.emit([self.entity_id], replace)
+        )
+        self.more_button.setMenu(more)
         header = QHBoxLayout()
         header.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignTop)
         header.addSpacing(12)
         header.addLayout(titles, 1)
+        header.addWidget(self.more_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self._sections = QVBoxLayout()
         self._sections.setSpacing(14)

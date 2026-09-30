@@ -102,7 +102,7 @@ def test_otherwise_everything_the_container_holds(qtbot: QtBot, window: MainWind
 def test_items_that_contain_nothing(qtbot: QtBot, window: MainWindow) -> None:
     page = _search(qtbot, window, SEARCH_ALL, "14 items")
     menu = page.item_menu(_hit(page, "forest.png"))
-    [open_action, within] = menu.actions()
+    open_action, within = menu.actions()[:2]
     assert open_action.text() == "Open"
     assert not within.isEnabled()
     with qtbot.waitSignal(page.open_requested) as blocker:

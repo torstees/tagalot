@@ -362,6 +362,7 @@ class MainWindow(QMainWindow):
             detail.open_entity.connect(self.open_entity)
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
+            detail.reread_requested.connect(self.reread)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
@@ -417,6 +418,7 @@ class MainWindow(QMainWindow):
         )
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
+        search.reread_requested.connect(self.reread)
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
             lambda mode: self._save_view_state("layouts", state_key, mode)
@@ -455,6 +457,26 @@ class MainWindow(QMainWindow):
         page = self.stack.currentWidget()
         assert isinstance(page, SearchPage)
         page.show_within(detail.entity_id, detail.detail.title, detail.detail.type)
+
+    def reread(self, entity_ids: list[int], replace_edits: bool) -> None:
+        """Read items' files again (asking first when that replaces the user's edits)."""
+        if replace_edits and not self.confirm_replace_edits(len(entity_ids)):
+            return
+        self.statusBar().showMessage("Reading files again\u2026")
+        self.tag_actions.reread(entity_ids, replace_edits)
+
+    def confirm_replace_edits(self, count: int) -> bool:
+        """Ask before the files' values replace what the user edited (tests replace this)."""
+        items = "this item" if count == 1 else f"these {count:,} items"
+        answer = QMessageBox.question(
+            self,
+            "Replace your edits",
+            f"Replace what you edited on {items} with what the files say?\n\n"
+            "Edit \u2192 Undo can put your edits back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def open_entity(self, entity_id: int) -> None:
         """Show an entity's detail page (double-click, Enter, or a link on another page)."""
