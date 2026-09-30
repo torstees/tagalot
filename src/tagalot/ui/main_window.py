@@ -354,6 +354,7 @@ class MainWindow(QMainWindow):
                 make_contents=self._contents_search,
             )
             detail.open_entity.connect(self.open_entity)
+            detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
         if target.kind == "tags":
@@ -423,6 +424,15 @@ class MainWindow(QMainWindow):
         """The search embedded in a container's detail page. Pages of the same type share
         their remembered layout and columns."""
         return self._search_page("Contents", spec, f"contents:{entity_type}", layout="grid")
+
+    def _contents_in_search(self, detail: DetailPage) -> None:
+        """Search all, listing only a detail page's contents (a Within chip)."""
+        if detail.detail is None:
+            return
+        self.navigation.select(NavTarget("search", label="Search all"))
+        page = self.stack.currentWidget()
+        assert isinstance(page, SearchPage)
+        page.show_within(detail.entity_id, detail.detail.title, detail.detail.type)
 
     def open_entity(self, entity_id: int) -> None:
         """Show an entity's detail page (double-click, Enter, or a link on another page)."""

@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QThreadPool, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -25,8 +25,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tagalot.core.search import CORE_FIELDS, SearchError
-from tagalot.core.search_fields import scope_fields, scoped_tables, type_labels, type_plurals
+from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit
+from tagalot.core.search_fields import (
+    contained_types,
+    scope_fields,
+    scoped_tables,
+    type_labels,
+    type_plurals,
+)
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
@@ -113,6 +119,8 @@ class SearchPage(QWidget):
         heading.setFont(font)
         self.status = QLabel("Searching…")
         header_row = QHBoxLayout()
+        self.header_row = header_row
+        """The heading's row: a page holding this search can add buttons to it."""
         header_row.addWidget(heading)
         header_row.addStretch(1)
         header_row.addWidget(self.status)
@@ -150,6 +158,8 @@ class SearchPage(QWidget):
         self.grid.menu_requested.connect(self._grid_menu)
         self.table.activated.connect(self._activated)
         self.grid.activated.connect(self._activated)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._table_menu)
 
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
@@ -158,6 +168,7 @@ class SearchPage(QWidget):
         self.groups.set_hidden_columns(self.hidden_columns)
         self.groups.selection_changed.connect(self.selection_changed)
         self.groups.open_requested.connect(self.open_requested)
+        self.groups.item_menu_requested.connect(lambda hit, at: self.item_menu(hit).exec(at))
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.grid)
@@ -186,9 +197,13 @@ class SearchPage(QWidget):
         types, or the "Only" type). The last sort the user chose is kept when the listed
         types have its field; otherwise the page's default sort applies."""
         filters = self.filter_bar.filters()
-        if types is None:
-            types = (filters.only,) if filters.only is not None else self._base.types
         base = self._base
+        within = base.within
+        if types is None:
+            types = (filters.only,) if filters.only is not None else base.types
+            if filters.within is not None and filters.within_type is not None:
+                within = filters.within
+                types = self._types_within(types, filters.within_type)
         text = " ".join(t for t in (base.text, filters.text) if t)
         # A sort chosen on one type's list (Year on albums) may not exist across types.
         valid = set(CORE_FIELDS) | {f.name for f in scope_fields(self.session.schema, types)}
@@ -200,7 +215,43 @@ class SearchPage(QWidget):
             exclude=base.exclude + tuple(t for t in filters.exclude if t not in base.exclude),
             text=text or None,
             sort=sort,
+            within=within,
         )
+
+    def _types_within(self, types: tuple[str, ...], container: str) -> tuple[str, ...]:
+        """The types listed within a container: the page's own, where the container can
+        hold them (Images within an artist), else everything it can hold (Artists within an
+        artist would be empty). Search all keeps every type, so it stays grouped."""
+        if not types:
+            return types
+        holds = contained_types(self.session.schema, container)
+        kept = tuple(t for t in types if t in holds)
+        return kept or tuple(holds)
+
+    # --- drilling down (DESIGN.md §12) ---
+
+    def show_within(self, entity_id: int, title: str, type_id: str) -> None:
+        """List only what an entity contains: a "Within" chip, keeping the tag filters."""
+        self.filter_bar.set_within(entity_id, title, type_id)
+
+    def item_menu(self, hit: SearchHit) -> QMenu:
+        """The right-click menu of one result."""
+        menu = QMenu(self)
+        open_action = menu.addAction("Open")
+        open_action.triggered.connect(lambda: self.open_requested.emit(hit.id))
+        within = menu.addAction("Show contents in search")
+        holds = contained_types(self.session.schema, hit.type)
+        within.setEnabled(bool(holds))
+        within.setToolTip(
+            f"List only what {hit.title} contains" if holds else "This item contains nothing"
+        )
+        within.triggered.connect(lambda: self.show_within(hit.id, hit.title, hit.type))
+        return menu
+
+    def _table_menu(self, point: QPoint) -> None:
+        hit = self.model.hit(self.table.indexAt(point).row())
+        if hit is not None:
+            self.item_menu(hit).exec(self.table.viewport().mapToGlobal(point))
 
     def showing_groups(self) -> bool:
         return self.results.currentWidget() is self.groups
@@ -352,9 +403,12 @@ class SearchPage(QWidget):
                 shown[key] = None
         return list(shown)
 
-    def grid_menu(self) -> QMenu:
-        """The grid's context menu: which fields show under card titles, and sizes."""
-        menu = QMenu(self)
+    def grid_menu(self, hit: SearchHit | None = None) -> QMenu:
+        """The grid's context menu: the card's own actions (when on one), which fields show
+        under card titles, and sizes."""
+        menu = self.item_menu(hit) if hit is not None else QMenu(self)
+        if hit is not None:
+            menu.addSeparator()
         heading = menu.addAction("Card lines")
         heading.setEnabled(False)
         shown = self._shown_card_fields()
@@ -378,8 +432,8 @@ class SearchPage(QWidget):
             names = sorted([*names, key], key=lambda n: order.index(n) if n in order else 0)
         self.set_card_lines(names)
 
-    def _grid_menu(self, point: QPoint) -> None:
-        self.grid_menu().exec(point)
+    def _grid_menu(self, point: QPoint, row: int) -> None:
+        self.grid_menu(self.model.hit(row) if row >= 0 else None).exec(point)
 
     def _load_tags(self) -> None:
         """Load the tag tree in a worker (the cache may need to read it from the keep)."""
