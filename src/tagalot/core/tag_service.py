@@ -19,7 +19,14 @@ from typing import Any
 
 from sqlalchemy import Connection, delete, insert, select, tuple_, update
 
-from tagalot.core.fields import FieldChange, edit_field, restore_field
+from tagalot.core.fields import (
+    ExtraChange,
+    FieldChange,
+    edit_extra,
+    edit_field,
+    restore_extra,
+    restore_field,
+)
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
 from tagalot.core.tags import (
     PATH_SEPARATOR,
@@ -69,7 +76,7 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-Step = TagChange | FieldChange
+Step = TagChange | FieldChange | ExtraChange
 """One entry in the undo history."""
 
 
@@ -189,6 +196,20 @@ class TagService:
             self._push(change)
         return change
 
+    def edit_extra(
+        self, entity_id: int, name: str, value: str | None, *, new: bool = False
+    ) -> ExtraChange:
+        """Add, change, or remove one of an entity's extra fields; one undo step."""
+        schema = self.schema
+        if schema is None:
+            raise RuntimeError("extra fields need the keep's schema")
+        change = self.writer.run(
+            lambda conn: edit_extra(conn, schema, entity_id, name, value, new=new)
+        )
+        if change.before != change.after:
+            self._push(change)
+        return change
+
     # --- history ---
 
     @property
@@ -230,10 +251,13 @@ class TagService:
         self._redo.clear()
 
     def _replay(self, step: Step, *, forward: bool) -> None:
+        schema = self.schema
         if isinstance(step, FieldChange):
-            schema = self.schema
             assert schema is not None  # field edits are only recorded with a schema
             self.writer.run(lambda conn: restore_field(conn, schema, step, forward=forward))
+        elif isinstance(step, ExtraChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_extra(conn, schema, step, forward=forward))
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 

@@ -186,3 +186,60 @@ def test_search_sees_edited_titles_and_text_fields(env: Env) -> None:
 def test_editing_a_deleted_entity(env: Env) -> None:
     with pytest.raises(FieldEditError, match="no longer exists"):
         env.service.edit_field(999_999, "year", 1)
+
+
+# --- extra fields (#95) ---
+
+
+def _extra(env: Env) -> dict[str, Any]:
+    with env.reader.connect() as conn:
+        return dict(conn.scalar(select(Entity.extra).where(Entity.id == env.heat)) or {})
+
+
+def test_add_change_and_remove_extra_fields(env: Env) -> None:
+    change = env.service.edit_extra(env.heat, " Director ", " Michael Mann ", new=True)
+    assert change.label == "Add 'Director' to 'Heat'"
+    assert _extra(env) == {"Director": "Michael Mann"}
+    env.service.edit_extra(env.heat, "Director", "M. Mann")
+    assert _extra(env) == {"Director": "M. Mann"}
+    removed = env.service.edit_extra(env.heat, "Director", None)
+    assert removed.label == "Remove 'Director' from 'Heat'"
+    assert _extra(env) == {}
+
+
+def test_extra_fields_are_searchable_and_undoable(env: Env) -> None:
+    env.service.edit_extra(env.heat, "Director", "Michael Mann", new=True)
+    assert env.search("mann") == ["Heat"]
+    env.service.edit_extra(env.heat, "Director", "")  # empty removes it
+    assert env.search("mann") == []
+    assert env.service.undo() == "Remove 'Director' from 'Heat'"
+    assert _extra(env) == {"Director": "Michael Mann"}
+    assert env.search("mann") == ["Heat"]
+    env.service.undo()
+    assert _extra(env) == {}
+    assert env.service.redo() == "Add 'Director' to 'Heat'"
+    assert _extra(env) == {"Director": "Michael Mann"}
+
+
+def test_extra_fields_survive_a_rescan(env: Env) -> None:
+    env.service.edit_extra(env.heat, "Director", "Michael Mann", new=True)
+    env.ingest(title="Heat", year=1995)
+    assert _extra(env) == {"Director": "Michael Mann"}
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "new", "message"),
+    [
+        ("  ", "x", True, "A field needs a name"),
+        ("Writer", "", True, "Type a value for 'Writer'"),
+        ("Director", "Someone", True, "already has a field named 'Director'"),
+        ("Writer", None, False, "has no field named 'Writer'"),
+    ],
+)
+def test_extra_edits_that_dont_fit(
+    env: Env, name: str, value: str | None, new: bool, message: str
+) -> None:
+    env.service.edit_extra(env.heat, "Director", "Michael Mann", new=True)
+    with pytest.raises(FieldEditError, match=message):
+        env.service.edit_extra(env.heat, name, value, new=new)
+    assert _extra(env) == {"Director": "Michael Mann"}

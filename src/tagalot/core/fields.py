@@ -168,3 +168,73 @@ def user_fields(conn: Connection, entity_id: int) -> set[str]:
             )
         )
     )
+
+
+# --- extra fields (#95) ---
+
+
+@dataclass(frozen=True)
+class ExtraChange:
+    """Everything needed to undo and redo one change to an entity's extra fields."""
+
+    label: str
+    entity_id: int
+    before: dict[str, Any]
+    after: dict[str, Any]
+
+
+def edit_extra(
+    conn: Connection,
+    schema: ThemeSchema,
+    entity_id: int,
+    name: str,
+    value: str | None,
+    *,
+    new: bool = False,
+) -> ExtraChange:
+    """Add (``new``), change, or remove (``value=None``, or empty) an extra field: a name
+    and a text value the user keeps on an entity, searchable as text."""
+    row = conn.execute(select(Entity.title, Entity.extra).where(Entity.id == entity_id)).first()
+    if row is None:
+        raise FieldEditError("This item no longer exists")
+    name = name.strip()
+    if not name:
+        raise FieldEditError("A field needs a name")
+    before = dict(row.extra or {})
+    after = dict(before)
+    text = value.strip() if isinstance(value, str) else None
+    if new:
+        if name in before:
+            raise FieldEditError(f"{row.title!r} already has a field named {name!r}")
+        if not text:
+            raise FieldEditError(f"Type a value for {name!r}")
+        after[name] = text
+        label = f"Add {name!r} to {row.title!r}"
+    elif not text:
+        if name not in before:
+            raise FieldEditError(f"{row.title!r} has no field named {name!r}")
+        del after[name]
+        label = f"Remove {name!r} from {row.title!r}"
+    else:
+        after[name] = text
+        label = f"Set {name} of {row.title!r} to {text!r}"
+    _write_extra(conn, schema, entity_id, after)
+    return ExtraChange(label, entity_id, before, after)
+
+
+def restore_extra(
+    conn: Connection, schema: ThemeSchema, change: ExtraChange, *, forward: bool
+) -> None:
+    """Put an entity's extra fields back as they were before the change, or after it."""
+    if conn.scalar(select(Entity.id).where(Entity.id == change.entity_id)) is None:
+        return
+    _write_extra(conn, schema, change.entity_id, change.after if forward else change.before)
+
+
+def _write_extra(
+    conn: Connection, schema: ThemeSchema, entity_id: int, extra: dict[str, Any]
+) -> None:
+    conn.execute(
+        update(Entity).where(Entity.id == entity_id).values(extra=extra, updated_at=utcnow())
+    )
+    fts.sync_entities(conn, [entity_id], theme_text_source(schema))

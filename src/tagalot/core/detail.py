@@ -96,6 +96,8 @@ class EntityDetail:
     title_label: str = "Title"
     title_edited: bool = False
     """The user renamed it by hand."""
+    extra: tuple[tuple[str, Any], ...] = ()
+    """The user's own fields (``entity.extra``), by name."""
     breadcrumbs: tuple[EntityRow, ...] = ()
     """The containers above it, outermost first (for a song: its artist, then its album)."""
     other_parents: int = 0
@@ -137,10 +139,13 @@ def load_detail(
 ) -> EntityDetail | None:
     """The detail page of an entity, or ``None`` if it no longer exists. ``root_path``
     gives this machine's path for a root id (``None`` if unknown)."""
-    row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
+    row = conn.execute(
+        select(Entity.type, Entity.title, Entity.extra).where(Entity.id == entity_id)
+    ).first()
     if row is None:
         return None
     crumbs, others = breadcrumbs(conn, entity_id)
+    extra = tuple(sorted((row.extra or {}).items(), key=lambda item: item[0].casefold()))
     try:
         table = schema.by_type_id(row.type)
     except KeyError:
@@ -164,6 +169,7 @@ def load_detail(
         other_parents=others,
         title_label=entity.title_label,
         title_edited=TITLE in edited,
+        extra=extra,
     )
 
 

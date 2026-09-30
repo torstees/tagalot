@@ -361,6 +361,7 @@ class MainWindow(QMainWindow):
             )
             detail.open_entity.connect(self.open_entity)
             detail.field_edited.connect(self.tag_actions.edit_field)
+            detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
