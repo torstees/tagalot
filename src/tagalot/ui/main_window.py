@@ -367,8 +367,7 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
-            detail.file_requested.connect(self.files.open_entity)
-            detail.resource_requested.connect(self.files.open_resource)
+            detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
@@ -425,7 +424,7 @@ class MainWindow(QMainWindow):
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
         search.reread_requested.connect(self.reread)
-        search.file_requested.connect(self.files.open_entity)
+        search.file_opener = self.files
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
             lambda mode: self._save_view_state("layouts", state_key, mode)

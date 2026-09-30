@@ -47,7 +47,7 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
-from tagalot.ui.file_actions import add_file_actions, file_kind
+from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultColumn, ResultsModel
@@ -117,8 +117,6 @@ class SearchPage(QWidget):
     open_requested = Signal(int)
     """An item was double-clicked (or Enter pressed on it): its entity id."""
     reread_requested = Signal(list, bool)
-    file_requested = Signal(int, str)
-    """Open an item's file: (entity id, ``"open"``, ``"reveal"``, or ``"open_with"``)."""
     """Read these entities' files again; true: replacing what the user edited."""
 
     def __init__(
@@ -151,6 +149,8 @@ class SearchPage(QWidget):
         self.layout_mode = layout_mode if layout_mode in LAYOUTS else "list"
         self._card_override = list(card_lines) if card_lines is not None else None
         self.size_menu: QMenu | None = None
+        self.file_opener: FileOpener | None = None
+        """Opens items' files (the window sets it); without one, menus have no file actions."""
         """The window's Thumbnail size menu, offered in the grid's context menu too."""
         self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
         self.model.setParent(self)
@@ -362,11 +362,9 @@ class SearchPage(QWidget):
         )
         within.triggered.connect(lambda: self.show_within(hit.id, hit.title, hit.type))
         kind = file_kind(self.session.schema, hit.type)
-        if kind is not None:
+        if kind is not None and self.file_opener is not None:
             menu.addSeparator()
-            add_file_actions(
-                menu, lambda how: self.file_requested.emit(hit.id, how), folder=kind == "folder"
-            )
+            add_file_actions(menu, self.file_opener, entity_id=hit.id, folder=kind == "folder")
         menu.addSeparator()
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
         return menu

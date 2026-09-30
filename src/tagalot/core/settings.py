@@ -85,6 +85,19 @@ class Settings:
         else:
             overrides[root_id] = path
 
+    def set_handler(self, ext: str, command: str, role: str | None = None) -> HandlerOverride:
+        """Open files with ``ext`` (in ``role``, if given) with ``command``, replacing the rule
+        for the same extension and role."""
+        handler = HandlerOverride(ext=ext, command=command, role=role)
+        self.handlers = [
+            h for h in self.handlers if (h.ext, h.role) != (handler.ext, handler.role)
+        ] + [handler]
+        return handler
+
+    def remove_handler(self, handler: HandlerOverride) -> None:
+        """Forget a rule (the one :meth:`handler_for` returned, say)."""
+        self.handlers = [h for h in self.handlers if (h.ext, h.role) != (handler.ext, handler.role)]
+
     def handler_for(self, ext: str, role: str | None = None) -> HandlerOverride | None:
         """Return the override for a file: a rule for this extension and role wins over one for
         the extension alone. Extensions match case-insensitively."""

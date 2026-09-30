@@ -7,8 +7,13 @@ nothing here writes under a root (AGENTS.md rule 1).
 - :func:`files_to_open` lists an entity's files: its primary role's, else all it links.
 - :func:`choose_file` picks the first one that can be opened, or explains why none can.
 - :func:`reveal_command` and :func:`open_with_command` give the command for a platform.
+- Per-user overrides (``[[handlers]]`` in ``settings.toml``) are command templates:
+  :func:`expand_command` turns one into a command for a file, and :func:`program_command`
+  writes one for a program the user picked.
 """
 
+import ntpath
+import posixpath
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -34,6 +39,13 @@ class FileToOpen:
     path: str
     """This machine's path."""
     is_dir: bool
+    role: str | None = None
+    """The role the item links it in (per-role overrides use it)."""
+
+    @property
+    def ext(self) -> str:
+        """The extension, lowercased with its dot (``".psd"``), or ``""``."""
+        return posixpath.splitext(_name(self.path))[1].lower()
 
 
 @dataclass(frozen=True)
@@ -69,10 +81,10 @@ def files_to_open(
 
 
 def resource_to_open(
-    conn: Connection, resource_id: int, root_path: Callable[[str], str | None]
+    conn: Connection, entity_id: int, resource_id: int, root_path: Callable[[str], str | None]
 ) -> tuple[FileRow, ...]:
-    """One resource, as :func:`choose_file` takes it (empty if it's gone)."""
-    return role_files(conn, 0, None, root_path, resource_id=resource_id)
+    """One of the entity's files, as :func:`choose_file` takes it (empty if it's gone)."""
+    return role_files(conn, entity_id, None, root_path, resource_id=resource_id)
 
 
 def choose_file(files: Sequence[FileRow]) -> FileToOpen:
@@ -80,7 +92,7 @@ def choose_file(files: Sequence[FileRow]) -> FileToOpen:
     this computer. Otherwise :class:`CannotOpen` says why the first one can't."""
     for file in files:
         if file.status is ResourceStatus.OK and file.path is not None:
-            return FileToOpen(file.resource_id, file.path, file.kind == "dir")
+            return FileToOpen(file.resource_id, file.path, file.kind == "dir", file.role)
     if not files:
         raise CannotOpen("Nothing to open: this item has no files.")
     first = files[0]
@@ -119,3 +131,71 @@ def open_with_command(file: FileToOpen, program: str, platform: str = sys.platfo
     if platform == "darwin":
         return Command("open", ("-a", program, file.path))
     return Command(program, (file.path,))
+
+
+# --- per-user overrides (DESIGN.md §11) ---
+
+
+def split_command(template: str) -> list[str]:
+    """Split a command template into words: spaces separate them, double quotes group them
+    (and are removed). Backslashes are ordinary, so Windows paths need no escaping:
+    ``"C:\\Program Files\\Krita\\krita.exe" "{path}"``."""
+    words: list[str] = []
+    current: list[str] = []
+    quoted = in_word = False
+    for c in template:
+        if c == '"':
+            quoted = not quoted
+            in_word = True
+        elif c.isspace() and not quoted:
+            if in_word:
+                words.append("".join(current))
+                current, in_word = [], False
+        else:
+            current.append(c)
+            in_word = True
+    if in_word:
+        words.append("".join(current))
+    return words
+
+
+def expand_command(template: str, file: FileToOpen) -> Command:
+    """The command a template gives for ``file``: ``{path}``, ``{dir}`` (its folder), and
+    ``{name}`` (its file name) are filled in each word, so a path with spaces stays one
+    argument. A template without placeholders gets the path as its last argument."""
+    words = split_command(template)
+    if not words:
+        raise CannotOpen("The command for this kind of file is empty.")
+    values = {"path": file.path, "dir": _folder(file.path), "name": _name(file.path)}
+    if not any("{" in w for w in words):
+        words.append("{path}")
+    expanded = [w.format(**values) for w in words]
+    return Command(expanded[0], tuple(expanded[1:]))
+
+
+def program_command(program: str, platform: str = sys.platform) -> str:
+    """The template that opens files with ``program``, a program the user picked (an
+    application bundle on macOS)."""
+    if platform == "darwin" and program.rstrip("/").endswith(".app"):
+        return f'open -a "{program}" "{{path}}"'
+    return f'"{program}" "{{path}}"'
+
+
+def program_name(template: str) -> str:
+    """A short name for the program a template runs, for menus: ``Krita``."""
+    words = split_command(template)
+    if words[:2] == ["open", "-a"] and len(words) > 2:
+        words = words[2:]
+    if not words:
+        return "?"
+    name = _name(words[0].rstrip("/\\"))
+    stem, ext = posixpath.splitext(name)
+    return stem if ext.lower() in (".exe", ".app", ".bat", ".cmd") and stem else name
+
+
+def _name(path: str) -> str:
+    return ntpath.basename(path) if "\\" in path else posixpath.basename(path)
+
+
+def _folder(path: str) -> str:
+    return ntpath.dirname(path) if "\\" in path else posixpath.dirname(path)
