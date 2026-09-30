@@ -214,6 +214,15 @@ def validate_theme(theme: type[Theme]) -> list[str]:
         for name in entity.card_lines:
             if name not in known:
                 problems.append(f"{names[entity]}: card line {name!r} isn't one of its fields")
+        sortable = {"title", "created_at", "updated_at"}
+        for inside in _contained(theme, entity):
+            sortable |= _safe_field_names(inside)
+        for key in entity.contents_sort:
+            if key.field not in sortable:
+                problems.append(
+                    f"{names[entity]}: contents_sort uses {key.field!r}, which nothing it "
+                    "contains has"
+                )
     maximum, default = theme.thumbnail_max, theme.thumbnail_default
     if not (isinstance(maximum, int) and 16 <= maximum <= MAX_THUMBNAIL_SIZE):
         problems.append(
@@ -256,6 +265,20 @@ def _chain_problems(
             elif isinstance(provider, RoleImage) and provider.role not in roles_of[entity]:
                 problems.append(f"{where}: no role named {provider.role!r}")
     return problems
+
+
+def _contained(theme: type[Theme], entity: type[Entity]) -> set[type[Entity]]:
+    """The types ``entity`` can contain, at any depth."""
+    edges = [(c.parent, c.child) for c in getattr(theme, "containment", ())]
+    found: set[type[Entity]] = set()
+    frontier = [entity]
+    while frontier:
+        current = frontier.pop()
+        for parent, child in edges:
+            if parent is current and child not in found:
+                found.add(child)
+                frontier.append(child)
+    return found
 
 
 def _safe_field_names(entity: type[Entity]) -> set[str]:

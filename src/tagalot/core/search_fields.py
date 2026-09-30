@@ -37,6 +37,34 @@ def contained_types(schema: ThemeSchema, type_id: str) -> list[str]:
     return [t.type_id for t in schema.entities.values() if t.type_id in found]
 
 
+def contents_order(
+    schema: ThemeSchema, type_id: str
+) -> tuple[tuple[SortKey, ...], dict[str, ColumnElement[Any]]]:
+    """How an entity of ``type_id`` orders what it holds (its type's ``contents_sort``,
+    else by title), with the field expressions that sort needs: a field any contained type
+    has, ``NULL`` for the others."""
+    try:
+        entity = schema.by_type_id(type_id).entity
+    except KeyError:
+        return (SortKey("title"),), dict(CORE_FIELDS)
+    keys = tuple(SortKey(k.field, k.descending) for k in entity.contents_sort)
+    if not keys:
+        return (SortKey("title"),), dict(CORE_FIELDS)
+    fields: dict[str, ColumnElement[Any]] = dict(CORE_FIELDS)
+    tables = scoped_tables(schema, contained_types(schema, type_id))
+    for key in keys:
+        if key.field in fields:
+            continue
+        values = [
+            select(t.table.c[key.field]).where(t.table.c.id == Entity.id).scalar_subquery()
+            for t in tables
+            if key.field in t.table.c
+        ]
+        if values:
+            fields[key.field] = values[0] if len(values) == 1 else func.coalesce(*values)
+    return tuple(k for k in keys if k.field in fields) or (SortKey("title"),), fields
+
+
 def scoped_tables(schema: ThemeSchema, types: Sequence[str]) -> list[EntityTable]:
     """The entity tables a search covers: those of ``types``, or every type if it is empty.
 

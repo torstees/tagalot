@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,11 +24,16 @@ from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
+from tagalot.core.search import child_hits, run_search
+from tagalot.core.search_fields import contents_order, search_fields, view_spec
+from tagalot.core.search_spec import SearchSpec
+from tagalot.core.tags import TagTreeCache
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.cache import ThumbCache
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
+from tagalot.themes.api import SearchView
 from tagalot.themes.loader import validate_theme
 from tests.core.media_files import png_bytes, write_flac, write_image, write_mp3
 
@@ -326,3 +331,63 @@ def test_thumbnail_chains(env: Env, tmp_path: Path) -> None:
         assert source("Dave Brubeck") == "entity"
     finally:
         cache.close()
+
+
+def _view(env: Env, name: str, *, tree_layout: bool = False) -> list[str]:
+    """The titles a view lists; ``tree_layout`` gives its tree's top level."""
+    view = next(v for v in MusicTheme.views if isinstance(v, SearchView) and v.name == name)
+    spec = view_spec(env.schema, view)
+    if tree_layout:
+        spec = replace(spec, show_contained=False, nest=True)
+    tree = TagTreeCache(env.reader).get()
+    with env.reader.connect() as conn:
+        hits = run_search(
+            conn, spec, tree, limit=None, fields=search_fields(env.schema, spec.types)
+        )
+    return [h.title for h in hits]
+
+
+def test_views(env: Env) -> None:
+    env.scan()
+    assert [v.name for v in MusicTheme.views if isinstance(v, SearchView)] == [
+        "Browse",
+        "Artists",
+        "Albums",
+        "Songs",
+    ]
+    # Albums by artist (none first), then year.
+    assert _view(env, "Albums") == ["Untagged", "Kind of Blue", "The Box", "Jazz Hits"]
+    assert _view(env, "Artists") == [
+        "Dave Brubeck", "Joni Mitchell", "Miles Davis", "Nobody", "Queen", "Various Artists",
+    ]  # fmt: skip
+    # Songs by artist, album, disc, track.
+    assert _view(env, "Songs") == [
+        "broken", "Lonely Road",  # no artist; no track, then track 3
+        "Take Five", "Blue", "So What", "Freddie Freeloader", "Loose", "Intro", "Intro",
+    ]  # fmt: skip
+    # Browse's tree starts with the albums, and the song that has none.
+    assert sorted(_view(env, "Browse", tree_layout=True)) == [
+        "Jazz Hits", "Kind of Blue", "Loose", "The Box", "Untagged",
+    ]  # fmt: skip
+
+
+def test_an_albums_songs_are_in_track_order(env: Env) -> None:
+    env.scan()
+    tree = TagTreeCache(env.reader).get()
+    album = MusicTheme.type_id_of(Album)
+    sort, fields = contents_order(env.schema, album)
+    assert [k.field for k in sort] == ["disc", "track", "title"]
+    with env.reader.connect() as conn:
+
+        def children(title: str, **order: object) -> list[tuple[str, int | None]]:
+            hits = child_hits(conn, SearchSpec(), tree, env.entity(title), **order)  # type: ignore[arg-type]
+            return [(h.title, env.fields(Song, h.title)["track"]) for h in hits]
+
+        assert children("Kind of Blue") == [("Freddie Freeloader", 2), ("So What", 1)]
+        assert children("Kind of Blue", sort=sort, fields=fields) == [
+            ("So What", 1),
+            ("Freddie Freeloader", 2),
+        ]
+    # An artist's contents (albums and songs) by year: a field both have.
+    sort, _ = contents_order(env.schema, MusicTheme.type_id_of(Artist))
+    assert [k.field for k in sort] == ["year", "title"]

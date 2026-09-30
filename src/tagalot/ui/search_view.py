@@ -300,6 +300,8 @@ class SearchPage(QWidget):
             fields=base.fields + fields,
             # In the tree, containers expand to show what they hold instead.
             show_contained=filters.show_contained and not self._tree_layout(),
+            # ...and what a listed container holds isn't listed again at the top.
+            nest=self._tree_layout(),
         )
 
     def _tree_layout(self) -> bool:

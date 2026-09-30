@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tagalot.themes.api import Entity, Theme, field
+from tagalot.themes.api import Entity, SortBy, Theme, contains, field
 from tagalot.themes.loader import (
     ThemeCatalog,
     default_user_themes_dir,
@@ -284,3 +284,22 @@ def test_card_lines_and_thumbnail_sizes_are_checked() -> None:
     assert "thumbnail_default must be a whole number from 16 to thumbnail_max (512), not 1024" in (
         validate_theme(TooBig)
     )
+
+
+def test_contents_sort_names_fields_of_what_the_type_contains() -> None:
+    class Track(Entity):
+        number: int | None = field("Number")
+
+    class Record(Entity):
+        year: int | None = field("Year")
+        contents_sort = (SortBy("number"), SortBy("title"), SortBy("year"))
+
+    class Records(Theme):
+        id, name = "records", "Records"
+        entities = [Record, Track]
+        containment = [contains(Record, Track)]
+
+    # A record's own year isn't something its tracks have.
+    assert validate_theme(Records) == [
+        "Record: contents_sort uses 'year', which nothing it contains has"
+    ]

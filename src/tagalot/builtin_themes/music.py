@@ -40,6 +40,8 @@ from tagalot.themes.api import (
     IngestContext,
     Kind,
     ResourceInfo,
+    SearchView,
+    SortBy,
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
@@ -64,6 +66,7 @@ class Artist(Entity):
     """Whoever an album or song is by."""
 
     title_label = "Name"
+    contents_sort = (SortBy("year"), SortBy("title"))
 
 
 class Album(Entity):
@@ -75,6 +78,7 @@ class Album(Entity):
     folder: str = field("Folder", search="text", editable=False)
     roles = [role("folder", kinds={"dir"}, primary=True)]
     card_lines = ("artist", "year")
+    contents_sort = (SortBy("disc"), SortBy("track"), SortBy("title"))
 
 
 class Song(Entity):
@@ -129,6 +133,38 @@ class MusicTheme(Theme):
     dirs = True
     entities = [Artist, Album, Song]
     containment = [contains(Artist, Album), contains(Album, Song), contains(Artist, Song)]
+    # Tags on an album count for its songs (tag an album "Calm" and Songs with Calm lists
+    # its songs); Browse also lists a matching album's songs, under it in the tree.
+    views = [
+        SearchView(
+            "Browse",
+            [Album, Song],
+            inherit_tags=True,
+            show_contained=True,
+            layout="tree",
+            default_sort=[SortBy("artist"), SortBy("year"), SortBy("title")],
+        ),
+        SearchView("Artists", [Artist]),
+        SearchView(
+            "Albums",
+            [Album],
+            inherit_tags=True,
+            default_sort=[SortBy("artist"), SortBy("year"), SortBy("title")],
+        ),
+        SearchView(
+            "Songs",
+            [Song],
+            inherit_tags=True,
+            layout="list",
+            default_sort=[
+                SortBy("artist"),
+                SortBy("album"),
+                SortBy("disc"),
+                SortBy("track"),
+                SortBy("title"),
+            ],
+        ),
+    ]
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Song:
