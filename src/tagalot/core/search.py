@@ -7,7 +7,7 @@ memory and the SQL only sees plain id lists.
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from sqlalchemy import (
@@ -323,3 +323,35 @@ def child_hits(
     )
     query = build_query(listing, tree, CORE_FIELDS).where(Entity.id.in_(children)).limit(limit)
     return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]
+
+
+MAX_CHOICES = 500
+"""Values offered for one choice filter."""
+
+
+def choice_counts(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    name: str,
+    fields: Mapping[str, ColumnElement[Any]],
+    *,
+    limit: int = MAX_CHOICES,
+) -> list[tuple[Any, int]]:
+    """The values of field ``name`` among the search's results, with how many results have
+    each, most common first. The search's own filter on ``name`` is left out, so the counts
+    show what adding another value would bring. Empty values aren't listed."""
+    column = fields.get(name)
+    if column is None:
+        raise SearchError(f"No field {name!r} for these types")
+    others = replace(spec, fields=tuple(f for f in spec.fields if f.field != name), sort=())
+    count = func.count()
+    query = (
+        select(column.label("value"), count)
+        .select_from(Entity)
+        .where(_Filter(others, tree, fields).result(), column.is_not(None))
+        .group_by(column)
+        .order_by(count.desc(), column)
+        .limit(limit)
+    )
+    return [(value, int(n)) for value, n in conn.execute(query)]

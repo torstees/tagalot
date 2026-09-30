@@ -11,8 +11,10 @@ the tagging panel uses to apply and remove tags. The text box applies after a sh
 or on Enter. Every change emits :attr:`FilterBar.changed` with the current :class:`Filters`.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+import shiboken6
 from PySide6.QtCore import QModelIndex, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QFocusEvent,
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QLayoutItem,
     QLineEdit,
     QListView,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QToolButton,
@@ -41,7 +44,14 @@ from PySide6.QtWidgets import (
     QWidgetItem,
 )
 
+from tagalot.core.search_spec import FieldFilter
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, description_excerpt
+from tagalot.ui.field_filters import (
+    ChoiceLoader,
+    FieldChip,
+    FieldFilterPopup,
+    FilterField,
+)
 from tagalot.ui.models.tag_tree import EXCERPT_WIDTH, tag_tooltip
 
 TEXT_DELAY_MS = 300
@@ -71,6 +81,8 @@ class Filters:
     """Also list what matching containers hold (DESIGN.md §8)."""
     inherit_tags: bool = False
     """Tags on containers count as their contents' own."""
+    fields: tuple[FieldFilter, ...] = ()
+    """Field filters on fields every listed type has (chips for others aren't applied)."""
 
 
 class FlowLayout(QLayout):
@@ -382,6 +394,11 @@ class FilterBar(QWidget):
         self._chips: dict[int, Chip] = {}
         self._only: ScopeChip | None = None
         self._within: ScopeChip | None = None
+        self._field_chips: dict[str, FieldChip] = {}
+        self._filter_fields: dict[str, FilterField] = {}
+        self.choice_loader: ChoiceLoader | None = None
+        """How a choice filter's popup gets its values (set by the page)."""
+        self.popup: FieldFilterPopup | None = None
         self._applied_text = ""
 
         self.text_edit = QLineEdit()
@@ -411,10 +428,18 @@ class FilterBar(QWidget):
         for box in (self.contained_box, self.inherit_box):
             box.toggled.connect(lambda _on: self._changed())
 
+        self.field_button = QToolButton()
+        self.field_button.setText("+ Field")
+        self.field_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.field_menu = QMenu(self.field_button)
+        self.field_button.setMenu(self.field_menu)
+        self.set_filter_fields([])
+
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self.text_edit, 3)
         top.addWidget(self.tag_edit, 2)
+        top.addWidget(self.field_button)
         top.addWidget(self.contained_box)
         top.addWidget(self.inherit_box)
 
@@ -452,7 +477,65 @@ class FilterBar(QWidget):
             within.type_id if within is not None else None,
             self.contained_box.isChecked(),
             self.inherit_box.isChecked(),
+            tuple(chip.filter for chip in self._field_chips.values() if chip.available),
         )
+
+    # --- field filters ---
+
+    def set_filter_fields(self, fields: Sequence[FilterField]) -> None:
+        """The fields every listed type can be filtered on (the "+ Field" menu). Chips for
+        other fields stay, greyed and not applied, until the scope has the field again."""
+        self._filter_fields = {f.name: f for f in fields}
+        self.field_menu.clear()
+        for f in fields:
+            action = self.field_menu.addAction(f.label)
+            action.triggered.connect(lambda _checked=False, name=f.name: self.edit_field(name))
+        self.field_button.setEnabled(bool(fields))
+        self.field_button.setToolTip(
+            "Filter by a field's value"
+            if fields
+            else "No searchable field is shared by every type listed here"
+        )
+        for name, chip in self._field_chips.items():
+            chip.set_available(name in self._filter_fields)
+
+    def edit_field(self, name: str) -> None:
+        """Open the popup for a field's filter, under its chip or the "+ Field" button."""
+        field = self._filter_fields.get(name)
+        if field is None:
+            return
+        chip = self._field_chips.get(name)
+        popup = FieldFilterPopup(field, chip.filter if chip is not None else None, self)
+        popup.applied.connect(lambda chosen: self.set_field_filter(name, chosen))
+        anchor: QWidget = chip if chip is not None else self.field_button
+        self.popup = popup
+        popup.show_at(anchor.mapToGlobal(QPoint(0, anchor.height())))
+        if field.kind == "choice" and self.choice_loader is not None:
+            self.choice_loader(
+                name, lambda counts: popup.set_choices(counts) if shiboken6.isValid(popup) else None
+            )
+
+    def set_field_filter(self, name: str, chosen: FieldFilter | None) -> None:
+        """Apply a field's filter (a chip), replace it, or remove it with ``None``."""
+        old = self._field_chips.pop(name, None)
+        position = None
+        if old is not None:
+            position = self.chip_layout.indexOf(old)
+            self.chip_layout.removeWidget(old)
+            old.deleteLater()
+        field = self._filter_fields.get(name)
+        if chosen is not None and field is not None:
+            chip = FieldChip(field, chosen)
+            chip.removed.connect(lambda n: self.set_field_filter(n, None))
+            chip.edit_requested.connect(self.edit_field)
+            self._field_chips[name] = chip
+            if position is None or position < 0:
+                position = self._scope_count() + len(self._field_chips) - 1
+            self.chip_layout.insert_widget(position, chip)
+        self._changed()
+
+    def _scope_count(self) -> int:
+        return int(self._within is not None) + int(self._only is not None)
 
     def set_toggles(self, *, show_contained: bool, inherit_tags: bool) -> None:
         """Set the two toggles (a view's defaults, or what the user chose before) without
@@ -517,10 +600,10 @@ class FilterBar(QWidget):
         chip.set_tree(self.tree)
         chip.removed.connect(self.remove_tag)
         self._chips[tag_id] = chip
-        # The "Within" and "Only" chips, include chips, exclude chips, then "Clear all".
+        # "Within", "Only", field chips, include chips, exclude chips, then "Clear all".
         position = (
-            int(self._within is not None)
-            + int(self._only is not None)
+            self._scope_count()
+            + len(self._field_chips)
             + (
                 len(self._include) - 1
                 if not exclude
@@ -539,11 +622,12 @@ class FilterBar(QWidget):
         """Remove every chip and the text."""
         for tag_id in list(self._chips):
             self._drop(tag_id)
-        for scope in (self._only, self._within):
+        for scope in (self._only, self._within, *self._field_chips.values()):
             if scope is not None:
                 self.chip_layout.removeWidget(scope)
                 scope.deleteLater()
         self._only = self._within = None
+        self._field_chips.clear()
         self.text_edit.clear()
         self._text_timer.stop()
         self._applied_text = ""
@@ -568,7 +652,10 @@ class FilterBar(QWidget):
 
     def _changed(self) -> None:
         self.chip_area.setVisible(
-            bool(self._chips) or self._only is not None or self._within is not None
+            bool(self._chips)
+            or bool(self._field_chips)
+            or self._only is not None
+            or self._within is not None
         )
         self.chip_layout.invalidate()
         self.changed.emit(self.filters())
