@@ -238,6 +238,12 @@ class MainWindow(QMainWindow):
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.tags_dock.toggleViewAction())
+        self.preview_action = QAction("Preview", self)
+        self.preview_action.setCheckable(True)
+        self.preview_action.setChecked(bool(self._ui_state.get("preview", True)))
+        self.preview_action.setToolTip("Show the selected item under the results")
+        self.preview_action.toggled.connect(self._preview_toggled)
+        view_menu.addAction(self.preview_action)
         view_menu.addSeparator()
         self.size_menu = self._make_size_menu()
         view_menu.addMenu(self.size_menu)
@@ -403,6 +409,7 @@ class MainWindow(QMainWindow):
             card_lines=card_lines if isinstance(card_lines, list) else None,
             thumbnails=self.thumbnails,
             thumbnail_size=self.thumbnail_size,
+            preview=self.preview_action.isChecked(),
         )
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
@@ -419,6 +426,14 @@ class MainWindow(QMainWindow):
             lambda keys: self._save_hidden_columns(state_key, keys)
         )
         return search
+
+    def _preview_toggled(self, visible: bool) -> None:
+        """Show or hide the preview strip on every search page, and remember it."""
+        assert self.session is not None
+        for page in self.search_pages():
+            page.set_preview_visible(visible)
+        self._ui_state["preview"] = visible
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _contents_search(self, entity_type: str, spec: SearchSpec) -> SearchPage:
         """The search embedded in a container's detail page. Pages of the same type share

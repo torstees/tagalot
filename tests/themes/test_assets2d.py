@@ -22,6 +22,7 @@ from tagalot.builtin_themes.assets2d import (
     is_image_name,
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
+from tagalot.core.detail import load_preview
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity, EntityContains, EntityTag, Resource, Tag
 from tagalot.core.scanjob import ScanReport, scan_root
@@ -294,3 +295,22 @@ def test_an_artists_tags_count_for_its_assets(env: Env) -> None:
     assert _view(env, "Images", tree, include=(1,)) == ["broken.png", "sketch.jpg"]
     assert _view(env, "Artists", tree, include=(1,)) == ["Kenji Sato"]
     assert _view(env, "Fonts", tree, include=(1,)) == []
+
+
+# --- the preview strip (#90) ---
+
+
+def test_preview_of_an_asset(env: Env) -> None:
+    env.scan()
+    with env.reader.connect() as conn:
+        preview = load_preview(conn, env.schema, env.entity("sky.png"))
+        missing = load_preview(conn, env.schema, 999_999)
+    assert preview is not None
+    assert (preview.title, preview.type_label) == ("sky.png", "Image")
+    facts = {f.label: f.value for f in preview.facts}
+    assert facts["Artist"] == "Aurora"
+    assert facts["Extension"] == ".png"
+    assert facts["Dimensions"] == "300 \u00d7 200"
+    assert "Width" not in facts  # not a card field
+    assert preview.file == "Assets \u203a Aurora/sky.png"
+    assert missing is None

@@ -11,6 +11,7 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 
+import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 from PySide6.QtGui import QIcon, QImage
 from PySide6.QtWidgets import QApplication, QStyle
@@ -150,6 +151,8 @@ class ThumbnailLoader(QObject):
         run_in_pool(job, on_done=done, on_error=failed, pool=self.pool)
 
     def _finished(self, generation: int, entity_id: int, loaded: LoadedThumbnail) -> None:
+        if not shiboken6.isValid(self):
+            return  # the window closed while this thumbnail was loading
         if generation != self._generation:
             return  # cleared meanwhile: it may be out of date
         self._running.discard(entity_id)
