@@ -12,7 +12,15 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 
 import shiboken6
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, Qt, QThreadPool, Signal
+from PySide6.QtCore import (
+    QItemSelectionModel,
+    QModelIndex,
+    QPoint,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -39,6 +47,7 @@ from tagalot.core.tags import TagTree
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultsModel
+from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
     DEFAULT_HIDDEN,
@@ -51,6 +60,9 @@ from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 LAYOUTS = ("list", "grid")
+
+PREVIEW_DELAY_MS = 120
+"""How long the selection must settle before the preview strip updates."""
 
 __all__ = ["SearchPage", "count_text", "list_columns"]
 
@@ -92,6 +104,7 @@ class SearchPage(QWidget):
         card_lines: Sequence[str] | None = None,
         thumbnails: ThumbnailLoader | None = None,
         thumbnail_size: int = 128,
+        preview: bool = True,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -179,6 +192,16 @@ class SearchPage(QWidget):
         layout.addLayout(header_row)
         layout.addWidget(self.filter_bar)
         layout.addWidget(self.results, 1)
+        self.preview = PreviewStrip(session, thumbnails, pool)
+        self.preview.open_requested.connect(self.open_requested)
+        self.preview.setVisible(preview)
+        layout.addWidget(self.preview)
+        # Selections change in bursts (Shift+arrows): preview once they settle.
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(PREVIEW_DELAY_MS)
+        self._preview_timer.timeout.connect(self._update_preview)
+        self.selection_changed.connect(self._preview_timer.start)
 
         self.model.counted.connect(self._counted)
         self.model.failed.connect(self._failed)
@@ -316,6 +339,31 @@ class SearchPage(QWidget):
         self.table.set_columns(columns, self.hidden_columns)
         self.results.setCurrentWidget(self.grid if self.layout_mode == "grid" else self.table)
         self._show_layout_buttons()
+
+    # --- the preview strip ---
+
+    def set_preview_visible(self, visible: bool) -> None:
+        self.preview.setVisible(visible)
+        if visible:
+            self._update_preview()
+
+    def _update_preview(self) -> None:
+        if self.preview.isHidden():
+            return
+        rows = self._selected_rows()
+        if len(rows) == 1:
+            self.selected_entity_ids(self.preview.show_selection)
+        else:
+            self.preview.show_count(len(rows))
+
+    def _selected_rows(self) -> list[int]:
+        if self.showing_groups():
+            return [
+                i.row()
+                for section in self.groups.sections
+                for i in section.table.selectionModel().selectedRows()
+            ]
+        return [i.row() for i in self.table.selectionModel().selectedRows()]
 
     # --- layouts ---
 

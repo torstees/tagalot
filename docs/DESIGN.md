@@ -618,6 +618,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 ### Navigation model
 
 - **Select** (single click): updates the tagging panel and an optional preview strip (thumbnail + key fields).
+- **Preview strip** (#90, `ui/preview.py`): a slim strip under every search's results (views, Search all, and a detail page's contents). For one selected item: a 96 px thumbnail, the title and type, its card fields joined with " · ", and its primary file as `root name › relative path` (`core.detail.load_preview`, in a worker). For several: "N items selected"; for none, a hint. It updates once the selection settles (120 ms), and double-click opens the item's page. **View → Preview** shows or hides it on every page; the choice is remembered per keep in `ui_state.json` (`preview`, on by default).
 - **Open** (double-click/Enter): navigates to the entity's detail page.
 - **Drill down** ("Show contents in search"): adds a removable `Within: <entity>` chip to the current search, keeping current tag filters.
 - **Back/forward** history like a browser (Alt+←/→, mouse buttons).
@@ -782,5 +783,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | A container's page embeds a full search of its contents below the sections (a splitter between); its view settings are shared by all pages of that type; tagging applies to the selected contents, else the page's entity (§12). |
 | 2026-09 | Back/forward history of every page shown (100 steps; 30 detail pages kept alive); breadcrumbs follow the first container by title and mention the others (§12). |
 | 2026-09 | A Within chip keeps the current search and its tag filters; a view keeps its types if the container can hold them, else lists everything it holds; Search all stays grouped. Contents (on detail pages and within) include every depth (§12). |
+| 2026-09 | The preview is a strip under the results (not a dock): thumbnail, title, type, card fields, primary file; View → Preview toggles it for the keep (§12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

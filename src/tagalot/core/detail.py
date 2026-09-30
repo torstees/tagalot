@@ -90,6 +90,9 @@ class EntityDetail:
     """How many more containers hold it directly, besides the one the crumbs follow."""
 
 
+PATH_MARK = "\u203a"
+"""Between a root's name and a path inside it."""
+
 MAX_ROWS = 200
 """Files or entities listed per section; the section says how many more there are."""
 
@@ -283,3 +286,53 @@ def _related(
         .limit(MAX_ROWS)
     ).all()
     return DetailSection("related", title or default, entities=tuple(EntityRow(*r) for r in rows))
+
+
+# --- the preview strip (#90) ---
+
+
+@dataclass(frozen=True)
+class Preview:
+    """What the preview strip shows for one selected entity."""
+
+    id: int
+    type_label: str
+    title: str
+    facts: tuple[FieldRow, ...]
+    """Its card fields, in declaration order."""
+    file: str | None
+    """Its primary file: the root's name, then the path inside it."""
+
+
+def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Preview | None:
+    """The preview of one entity, or ``None`` if it no longer exists."""
+    row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
+    if row is None:
+        return None
+    try:
+        table = schema.by_type_id(row.type)
+    except KeyError:
+        return Preview(entity_id, row.type, row.title, (), None)
+    entity = table.entity
+    shown = [f for f in entity_fields(entity) if f.spec.card]
+    facts: tuple[FieldRow, ...] = ()
+    if shown:
+        values = conn.execute(
+            select(*(table.table.c[f.name] for f in shown)).where(table.table.c.id == entity_id)
+        ).first()
+        if values is not None:
+            facts = tuple(FieldRow(f.name, f.spec.label, values[i]) for i, f in enumerate(shown))
+    primary = next((r for r in entity.roles if r.primary), None)
+    file = None
+    if primary is not None:
+        found = conn.execute(
+            select(Root.name, Resource.relpath)
+            .join(EntityResource, EntityResource.resource_id == Resource.id)
+            .join(Root, Root.id == Resource.root_id)
+            .where(EntityResource.entity_id == entity_id, EntityResource.role == primary.name)
+            .order_by(EntityResource.sort_order, Resource.relpath)
+            .limit(1)
+        ).first()
+        if found is not None:
+            file = f"{found.name} {PATH_MARK} {found.relpath}" if found.relpath else found.name
+    return Preview(entity_id, entity_label(entity), row.title, facts, file)
