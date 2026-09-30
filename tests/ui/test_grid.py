@@ -165,14 +165,12 @@ def test_card_lines_are_chosen_and_remembered(qtbot: QtBot, session: KeepSession
     page = _grid_page(qtbot, window)
     assert page.card_lines() == {"generic.file": []}  # the generic theme shows titles only
     labels = [a.text() for a in page.grid_menu().actions()]
-    assert labels[:5] == ["Card lines", "Extension", "Folder", "Size (bytes)", "Modified"]
+    assert labels[:5] == ["Card lines", "Extension", "Folder", "Size", "Modified"]
     height = page.grid.gridSize().height()
 
     with qtbot.waitSignal(page.card_lines_changed):
         page.set_card_lines(["size", "extension"])
-    assert page.card_lines() == {
-        "generic.file": [("size", "Size (bytes)"), ("extension", "Extension")]
-    }
+    assert page.card_lines() == {"generic.file": [("size", "Size"), ("extension", "Extension")]}
     assert page.grid.gridSize().height() > height  # room for two more lines
     assert set(page.model.extra_fields) == {"size", "extension"}
     qtbot.waitUntil(lambda: (row := page.model.row(0, load=False)) is not None and "size" in row[1])
@@ -181,8 +179,8 @@ def test_card_lines_are_chosen_and_remembered(qtbot: QtBot, session: KeepSession
 
     menu = page.grid_menu()
     by_label = {a.text(): a for a in menu.actions()}
-    assert by_label["Size (bytes)"].isChecked()
-    by_label["Size (bytes)"].toggle()  # unchecking removes that line
+    assert by_label["Size"].isChecked()
+    by_label["Size"].toggle()  # unchecking removes that line
     assert page.card_lines() == {"generic.file": [("extension", "Extension")]}
     by_label["Use the theme's card lines"].trigger()
     assert page.card_lines() == {"generic.file": []}

@@ -200,6 +200,16 @@ def validate_theme(theme: type[Theme]) -> list[str]:
     elif len(set(option_names)) != len(option_names):
         problems.append("an option is declared twice")
     for entity in entities:
+        try:
+            infos = entity_fields(entity)
+        except ThemeDeclarationError:
+            infos = []  # reported by the table build below
+        for info in infos:
+            if info.spec.display is not None and info.type not in (int, float):
+                problems.append(
+                    f"{names[entity]}.{info.name}: display={info.spec.display!r} needs a "
+                    "number field (int or float)"
+                )
         known = _safe_field_names(entity)
         for name in entity.card_lines:
             if name not in known:

@@ -308,7 +308,7 @@ class SearchPage(QWidget):
     def _filter_fields(self, types: Sequence[str]) -> list[FilterField]:
         """The fields the listed types can all be filtered on."""
         return [
-            FilterField(f.name, f.spec.label, f.spec.search, f.type)
+            FilterField(f.name, f.spec.label, f.spec.search, f.type, f.spec.display)
             for f in scope_fields(self.session.schema, types)
             if f.spec.search is not None
         ]
@@ -575,6 +575,12 @@ class SearchPage(QWidget):
 
     def _apply_card_lines(self, types: Sequence[str]) -> None:
         lines = self.card_lines(types)
+        self.grid.displays = {
+            f.name: f.spec.display
+            for table in scoped_tables(self.session.schema, types)
+            for f in table.fields
+            if f.spec.display is not None
+        }
         self.grid.set_card_lines(lines)
         self.model.set_extra_fields([key for shown in lines.values() for key, _ in shown])
 

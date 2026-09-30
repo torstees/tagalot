@@ -40,7 +40,7 @@ def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn
         columns.append(ResultColumn("type", "Type", sortable=False))
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     columns.extend(
-        ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float))
+        ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float), display=f.spec.display)
         for f in scope_fields(schema, types)
         if f.spec.card
     )

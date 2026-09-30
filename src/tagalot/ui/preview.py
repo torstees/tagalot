@@ -120,7 +120,7 @@ class PreviewStrip(QFrame):
             self.file.clear()
             return
         self.title.setText(f"{preview.title} · {preview.type_label}")
-        facts = [display_value(f.value) for f in preview.facts]
+        facts = [display_value(f.value, f.display) for f in preview.facts]
         self.facts.setText(" · ".join(f for f in facts if f))
         self.file.setText(preview.file or "")
         self.file.setToolTip(preview.file or "")

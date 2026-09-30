@@ -373,7 +373,12 @@ class DetailPage(QWidget):
         form.setContentsMargins(12, 0, 0, 0)
         for row in section.fields:
             value = EditableValue(
-                row.value, row.type, editable=row.editable, edited=row.edited, label=row.label
+                row.value,
+                row.type,
+                editable=row.editable,
+                edited=row.edited,
+                label=row.label,
+                display=row.display,
             )
             value.setObjectName(f"field_{row.name}")
             value.committed.connect(

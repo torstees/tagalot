@@ -114,7 +114,7 @@ def test_the_tags_column_is_hidden_until_shown_and_remembered(
     again = _window(qtbot, session)  # a new window for the keep restores the choice
     assert not _page(again).table.isColumnHidden(_tags_column(_page(again)))
     actions = {a.text(): a for a in _page(again).table.column_menu().actions()}
-    actions["Size (bytes)"].setChecked(False)
+    actions["Size"].setChecked(False)
     assert _page(again).table.isColumnHidden(4)  # title, tags, extension, folder, size
     assert load_ui_state(session.keep.ui_state_path)["hidden_columns"] == {"search:": ["size"]}
 
