@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +53,7 @@ from tagalot.core.search_fields import contained_types
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
+from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
@@ -71,6 +74,9 @@ class DetailPage(QWidget):
     open_entity = Signal(int)
     field_edited = Signal(int, str, object)
     """The user set a field (or ``"title"``) by hand: entity id, field name, new value."""
+    extra_edited = Signal(int, str, object, bool)
+    """An extra field was added (last argument true), changed, or removed (value
+    ``None``): entity id, name, value, whether it is new."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
     selection_changed = Signal()
@@ -187,12 +193,17 @@ class DetailPage(QWidget):
             self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
             self._show_breadcrumbs(detail)
+            extras = self._extra_widget(detail)
             for section in detail.sections:
                 if section.kind == "contents" and self._show_contents(detail):
                     continue
                 widget = self._section_widget(section)
                 if widget is not None:
                     self._sections.addWidget(widget)
+                if section.kind == "fields" and extras.parent() is None:
+                    self._sections.addWidget(extras)  # the user's fields follow the theme's
+            if extras.parent() is None:
+                self._sections.insertWidget(0, extras)
             self._show_thumbnail()
         self.loaded.emit()
 
@@ -269,6 +280,10 @@ class DetailPage(QWidget):
                 body.setContentsMargins(12, 0, 0, 0)
             case _:
                 return None
+        return self._titled(title, body, f"section_{section.kind}")
+
+    def _titled(self, title: str, body: QWidget, name: str) -> QWidget:
+        """A section: a bold heading with a rule, then its body."""
         box = QWidget()
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -285,8 +300,59 @@ class DetailPage(QWidget):
         row.addWidget(rule, 1)
         layout.addLayout(row)
         layout.addWidget(body)
-        box.setObjectName(f"section_{section.kind}")
+        box.setObjectName(name)
         return box
+
+    def _extra_widget(self, detail: EntityDetail) -> QWidget:
+        """The user's own fields: each editable in place, with x to remove it, and a row
+        to add one."""
+        body = QWidget()
+        form = QFormLayout(body)
+        form.setContentsMargins(12, 0, 0, 0)
+        entity_id = self.entity_id
+        for name, value in detail.extra:
+            row = QHBoxLayout()
+            editor = EditableValue(value, str, editable=True, label=name)
+            editor.setObjectName(f"extra_{name}")
+            editor.committed.connect(
+                lambda new, name=name: self.extra_edited.emit(entity_id, name, new, False)
+            )
+            remove = QToolButton()
+            remove.setText(CLOSE_MARK)
+            remove.setAutoRaise(True)
+            remove.setToolTip(f"Remove {name!r}")
+            remove.clicked.connect(
+                lambda _c=False, name=name: self.extra_edited.emit(entity_id, name, None, False)
+            )
+            row.addWidget(editor)
+            row.addWidget(remove)
+            row.addStretch(1)  # the x follows its value
+            form.addRow(f"{name}:", row)
+        self.extra_name = QLineEdit()
+        self.extra_name.setPlaceholderText("Field name")
+        self.extra_value = QLineEdit()
+        self.extra_value.setPlaceholderText("Value")
+        add = QPushButton("Add")
+        add.setToolTip("Add a field of your own to this item (it's searchable as text)")
+        for widget in (self.extra_name, self.extra_value):
+            widget.returnPressed.connect(self._add_extra)
+        add.clicked.connect(self._add_extra)
+        adding = QHBoxLayout()
+        adding.addWidget(self.extra_name, 1)
+        adding.addWidget(self.extra_value, 2)
+        adding.addWidget(add)
+        form.addRow(adding)
+        return self._titled("Extra fields", body, "section_extra")
+
+    def _add_extra(self) -> None:
+        name, value = self.extra_name.text().strip(), self.extra_value.text().strip()
+        if not name:
+            self.extra_name.setFocus()
+            return
+        if not value:
+            self.extra_value.setFocus()
+            return
+        self.extra_edited.emit(self.entity_id, name, value, True)
 
     def _fields(self, section: DetailSection) -> QWidget:
         body = QWidget()

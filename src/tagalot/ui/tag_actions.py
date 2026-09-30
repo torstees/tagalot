@@ -177,6 +177,14 @@ class TagActions(QObject):
             lambda change: f"{change.label}.",
         )
 
+    def edit_extra(self, entity_id: int, name: str, value: object, new: bool) -> None:
+        """Add (``new``), change, or remove (``None``) an extra field; one undo step."""
+        text = value if isinstance(value, str) else None
+        self._run(
+            lambda: self.session.tags.edit_extra(entity_id, name, text, new=new),
+            lambda change: f"{change.label}.",
+        )
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 

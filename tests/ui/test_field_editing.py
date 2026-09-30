@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QToolButton
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
@@ -154,3 +154,75 @@ def test_file_facts_are_read_only(qtbot: QtBot, window: MainWindow, session: Kee
     assert _field(page, "family").editable
     for name in ("extension", "folder", "size", "modified", "artist"):
         assert not _field(page, name).editable, name
+
+
+# --- extra fields (#95) ---
+
+
+def _extra(page: DetailPage, name: str) -> EditableValue | None:
+    found = page.findChild(EditableValue, f"extra_{name}")
+    return found if isinstance(found, EditableValue) else None
+
+
+def _section_order(page: DetailPage) -> list[str]:
+    layout = page._sections
+    names = []
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        widget = item.widget() if item is not None else None
+        if widget is not None:
+            names.append(widget.objectName())
+    return names
+
+
+def test_adding_editing_and_removing_extra_fields(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _open(qtbot, window, session, FONT)
+    assert _section_order(page)[:2] == ["section_fields", "section_extra"]
+    page.extra_name.setText("Licence")
+    page.extra_value.setText("SIL Open Font License")
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as blocker:
+        QTest.keyClick(page.extra_value, Qt.Key.Key_Return)
+    assert blocker.args == [f"Add 'Licence' to '{FONT}'."]
+    qtbot.waitUntil(lambda: _extra(page, "Licence") is not None, timeout=5000)
+    licence = _extra(page, "Licence")
+    assert licence is not None
+    assert licence.label.text() == "SIL Open Font License"
+
+    _double_click(licence)
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        _type(licence, "OFL 1.1")
+    qtbot.waitUntil(
+        lambda: (value := _extra(page, "Licence")) is not None and value.label.text() == "OFL 1.1",
+        timeout=5000,
+    )
+
+    remove = next(b for b in page.findChildren(QToolButton) if b.toolTip() == "Remove 'Licence'")
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as removed:
+        remove.click()
+    assert removed.args == [f"Remove 'Licence' from '{FONT}'."]
+    qtbot.waitUntil(lambda: _extra(page, "Licence") is None, timeout=5000)
+
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        window.undo_action.trigger()
+    qtbot.waitUntil(lambda: _extra(page, "Licence") is not None, timeout=5000)
+
+
+def test_a_type_without_fields_shows_extra_fields_first(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _open(qtbot, window, session, "Kenji Sato")
+    assert _section_order(page)[0] == "section_extra"
+
+
+def test_a_duplicate_extra_name_is_refused(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _open(qtbot, window, session, FONT)
+    for _ in range(2):
+        page.extra_name.setText("Licence")
+        page.extra_value.setText("OFL")
+        page._add_extra()
+        qtbot.waitUntil(lambda: window.tag_actions.busy == 0, timeout=5000)
+    assert "already has a field named 'Licence'" in window.statusBar().currentMessage()
