@@ -15,7 +15,7 @@ the first time it is expanded (:func:`~tagalot.core.search.child_hits`): everyth
 directly holds, by title, without the excluded items. Children can be containers too.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,12 +174,24 @@ class ResultTreeModel(QAbstractItemModel):
         node = self.node(parent)
         if node is None or node.children is not None or node.loading:
             return
+        self._load(node, self._loaded)
+
+    def refresh_children(self) -> None:
+        """Load the children of every expanded container again (after tagging or a scan:
+        their tags or fields may have changed). Rows that stay the same are updated in
+        place, so the view keeps what is expanded and selected."""
+        for node in list(self._nodes.values()):
+            if node.children is not None and not node.loading:
+                self._load(node, self._reloaded)
+
+    def _load(self, node: _Node, on_rows: Callable[[int, list[Row]], None]) -> None:
+        """Read a container's children in a worker, then call ``on_rows(node id, rows)``."""
         spec = self.source.spec
         if spec is None:
             return
         node.loading = True
         generation, session, columns = self._generation, self.session, self.source.columns
-        parent_id = node.hit.id
+        parent_id, node_id = node.hit.id, node.id
 
         def job() -> list[Row]:
             tree = session.tag_cache.get()
@@ -190,7 +202,7 @@ class ResultTreeModel(QAbstractItemModel):
 
         def done(rows: list[Row]) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
-                self._loaded(node.id, rows)
+                on_rows(node_id, rows)
 
         run_in_pool(job, on_done=done, pool=self._pool)
 
@@ -207,6 +219,41 @@ class ResultTreeModel(QAbstractItemModel):
         else:
             node.children = []
             self.dataChanged.emit(index, index)  # no expand arrow any more
+
+    def _reloaded(self, node_id: int, rows: list[Row]) -> None:
+        node = self._nodes.get(node_id)
+        if node is None:
+            return
+        node.loading = False
+        old = node.children or []
+        index = self.createIndex(node.row, 0, node.parent)
+        if [h.id for h, _ in old] == [h.id for h, _ in rows]:
+            node.children = rows  # the same items: new values in place
+            if rows:
+                last = self.columnCount() - 1
+                self.dataChanged.emit(
+                    self.index(0, 0, index), self.index(len(rows) - 1, last, index)
+                )
+            return
+        if old:  # items came or went: replace the rows
+            self.beginRemoveRows(index, 0, len(old) - 1)
+            node.children = []
+            self._forget_below(node.id)
+            self.endRemoveRows()
+        if rows:
+            self.beginInsertRows(index, 0, len(rows) - 1)
+            node.children = rows
+            self.endInsertRows()
+        else:
+            node.children = []
+
+    def _forget_below(self, node_id: int) -> None:
+        """Drop the nodes under a node whose rows are being replaced."""
+        below = [n for n in self._nodes.values() if n.parent == node_id]
+        for child in below:
+            self._forget_below(child.id)
+            del self._nodes[child.id]
+            self._keys.pop((child.parent, child.row), None)
 
     def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole

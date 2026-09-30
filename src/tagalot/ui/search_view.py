@@ -322,6 +322,7 @@ class SearchPage(QWidget):
             self._run()
         else:
             self.model.refresh()
+            self.tree_model.refresh_children()  # expanded containers' rows too
         self._load_tags()
 
     def show_all(self, type_id: str) -> None:

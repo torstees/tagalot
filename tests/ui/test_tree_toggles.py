@@ -10,6 +10,7 @@ from tagalot.core.ui_state import load_ui_state
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.dnd import tags_mime
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.models.results import TAGS
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController
@@ -201,3 +202,63 @@ def test_search_all_has_no_tree(qtbot: QtBot, window: MainWindow) -> None:
     page = _search(qtbot, window, NavTarget("search", label="Search all"), "14 items")
     assert page.showing_groups()
     assert not page.tree_button.isEnabled()
+
+
+# --- the Tags column after tagging ---
+
+
+def _show_tags_column(page: SearchPage) -> int:
+    page._column_toggled(TAGS, True)
+    column = [c.key for c in page.model.columns].index(TAGS)
+    return column
+
+
+def test_tags_column_updates_in_the_list_after_tagging(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _search(qtbot, window, IMAGES, "9 items")
+    column = _show_tags_column(page)
+    qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
+    row = next(r for r in range(9) if page.model.hit(r).title == "gem.png")  # type: ignore[union-attr]
+    favorites = session.tag_cache.get().find_child(None, "Favorites")
+    assert favorites is not None
+    assert "Favorites" not in str(page.model.index(row, column).data())
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        window.apply_tags([_id(session, "gem.png")], [favorites])
+    qtbot.waitUntil(lambda: "Favorites" in str(page.model.index(row, column).data()), timeout=5000)
+
+
+def test_tags_column_updates_in_the_tree_after_tagging(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page, aurora = _tree(qtbot, window)
+    column = _show_tags_column(page)
+    gem = _tree_row(page, "gem.png", aurora)
+    favorites = session.tag_cache.get().find_child(None, "Favorites")
+    assert favorites is not None
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        window.apply_tags([_id(session, "gem.png")], [favorites])
+
+    def updated() -> None:
+        cell = page.tree_model.index(gem.row(), column, aurora).data()
+        assert "Favorites" in str(cell)
+
+    qtbot.waitUntil(updated, timeout=5000)
+
+
+def test_a_child_that_becomes_excluded_leaves_the_tree(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page, aurora = _tree(qtbot, window)
+    favorites = session.tag_cache.get().find_child(None, "Favorites")
+    assert favorites is not None
+    page.filter_bar.add_tag(favorites, exclude=True)  # excluded children are left out
+    qtbot.waitUntil(lambda: page.status.text() == "2 items", timeout=5000)
+    aurora = _tree_row(page, "Aurora Studio")
+    page.tree.expand(aurora)
+    qtbot.waitUntil(lambda: page.tree_model.rowCount(aurora) == 5, timeout=5000)  # no forest, font
+    assert "gem.png" in _tree_titles(page, aurora)
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        window.apply_tags([_id(session, "gem.png")], [favorites])
+    qtbot.waitUntil(lambda: page.tree_model.rowCount(aurora) == 4, timeout=5000)
+    assert "gem.png" not in _tree_titles(page, aurora)
