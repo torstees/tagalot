@@ -104,6 +104,9 @@ class SearchSpec:
     """Also list descendants of matching containers."""
     aggregate_up: bool = False
     """A container matches if any of its descendants does."""
+    nest: bool = False
+    """Leave out matches that one of their containers' matches holds (the tree layout lists
+    them under it instead). Ignored with ``show_contained``."""
     sort: tuple[SortKey, ...] = field(default=(SortKey("title"),))
 
     def __post_init__(self) -> None:
@@ -134,6 +137,7 @@ class SearchSpec:
             "inherit_tags": self.inherit_tags,
             "show_contained": self.show_contained,
             "aggregate_up": self.aggregate_up,
+            "nest": self.nest,
             "sort": [{"field": k.field, "descending": k.descending} for k in self.sort],
         }
 
@@ -160,6 +164,7 @@ class SearchSpec:
                 inherit_tags=_bool(data, "inherit_tags", defaults.inherit_tags),
                 show_contained=_bool(data, "show_contained", defaults.show_contained),
                 aggregate_up=_bool(data, "aggregate_up", defaults.aggregate_up),
+                nest=_bool(data, "nest", defaults.nest),
                 sort=tuple(_sort_from_json(k) for k in _list(data.get("sort"), "sort"))
                 if "sort" in data
                 else defaults.sort,

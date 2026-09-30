@@ -35,7 +35,7 @@ from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDro
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QTreeView, QWidget
 
 from tagalot.core.search import SearchHit, child_hits
-from tagalot.core.search_fields import contained_types
+from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.session import KeepSession
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.models.results import ResultsModel, Row, cell_text, cell_tooltip, row_values
@@ -191,12 +191,13 @@ class ResultTreeModel(QAbstractItemModel):
             return
         node.loading = True
         generation, session, columns = self._generation, self.session, self.source.columns
-        parent_id, node_id = node.hit.id, node.id
+        parent_id, parent_type, node_id = node.hit.id, node.hit.type, node.id
 
         def job() -> list[Row]:
             tree = session.tag_cache.get()
+            sort, fields = contents_order(session.schema, parent_type)
             with session.reader.connect() as conn:
-                hits = child_hits(conn, spec, tree, parent_id)
+                hits = child_hits(conn, spec, tree, parent_id, sort=sort, fields=fields)
                 values = row_values(conn, session.schema, tree, hits, columns)
             return [(h, values.get(h.id, {})) for h in hits]
 

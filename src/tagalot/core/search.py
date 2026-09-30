@@ -166,6 +166,13 @@ class _Filter:
     def result(self) -> ColumnElement[bool]:
         """Which entities the search lists."""
         matches = self._matches()
+        if self.spec.nest and not self.spec.show_contained:
+            # Drop matches held by another match: expanding that one shows them.
+            matched = self._materialize(("matched",), select(Entity.id).where(matches))
+            held = select(EntityAncestor.entity_id).where(
+                EntityAncestor.ancestor_id.in_(matched), EntityAncestor.depth > 0
+            )
+            return and_(matches, Entity.id.not_in(held))
         if not self.spec.show_contained:
             return matches
         # Matches plus every descendant of a match, whatever its type; descendants still
@@ -306,10 +313,14 @@ def child_hits(
     parent_id: int,
     *,
     limit: int = MAX_CHILDREN,
+    sort: tuple[SortKey, ...] = (SortKey("title"),),
+    fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
 ) -> list[SearchHit]:
     """What a container directly holds, for the tree layout (DESIGN.md §8 "Show
-    contained"): every type, by title, not re-filtered by the search's includes, text, or
-    fields (they are shown because of their container), but still without excluded items."""
+    contained"): every type, in ``sort`` order (the container's ``contents_sort``, with
+    ``fields`` from :func:`~tagalot.core.search_fields.contents_order`), not re-filtered by
+    the search's includes, text, or fields (they are shown because of their container), but
+    still without excluded items."""
     children = (
         select(EntityContains.child_id)
         .where(EntityContains.parent_id == parent_id)
@@ -319,9 +330,9 @@ def child_hits(
         exclude=spec.exclude,
         inherit_tags=spec.inherit_tags,
         within=parent_id,
-        sort=(SortKey("title"),),
+        sort=sort,
     )
-    query = build_query(listing, tree, CORE_FIELDS).where(Entity.id.in_(children)).limit(limit)
+    query = build_query(listing, tree, fields).where(Entity.id.in_(children)).limit(limit)
     return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]
 
 

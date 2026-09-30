@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.ingest import TITLE
 from tagalot.core.models import ResourceStatus
-from tagalot.core.search_fields import contained_types
+from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
@@ -227,7 +227,8 @@ class DetailPage(QWidget):
             return False
         if self.contents is None:
             types = tuple(contained_types(self.session.schema, detail.type))
-            spec = SearchSpec(types=types, within=self.entity_id)
+            sort, _ = contents_order(self.session.schema, detail.type)
+            spec = SearchSpec(types=types, within=self.entity_id, sort=sort)
             self.contents = self._make_contents(detail.type, spec)
             self.contents.selection_changed.connect(self.selection_changed)
             in_search = QPushButton("Show in search")

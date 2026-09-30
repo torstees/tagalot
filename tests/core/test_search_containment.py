@@ -197,6 +197,24 @@ CASES = {
         SearchSpec(types=(ALBUM,), include=(CALM,), aggregate_up=True, show_contained=True),
         {20, 200, 201},
     ),
+    # nest (the tree's top level): matches held by another match are listed under it.
+    "nested: albums and loose songs": (
+        SearchSpec(types=(ALBUM, SONG), nest=True),
+        {10, 11, 20, 30, 300},
+    ),
+    "nested: everything under the artists": (SearchSpec(nest=True), {1, 2, 30, 300}),
+    "nested: songs whose album doesn't match stay": (
+        SearchSpec(types=(ALBUM, SONG), include=(FAV,), nest=True),
+        {101, 111},
+    ),
+    "nested: held by any matching container, at any depth": (
+        SearchSpec(types=(ARTIST, SONG), include=(ROCK,), inherit_tags=True, nest=True),
+        {1, 300},  # the Beatles' songs are under it, through their albums
+    ),
+    "nest is ignored with show contained": (
+        SearchSpec(types=(ALBUM,), include=(XMAS,), show_contained=True, nest=True),
+        {11, 110, 111},
+    ),
 }
 
 

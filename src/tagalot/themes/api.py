@@ -217,6 +217,10 @@ class Entity:
     - ``double_click``: ``"page"`` (open the detail page, the default) or ``"open_file"``.
     - ``card_lines``: field names shown, in order, under the title on grid cards (default:
       none, just the title). Users can choose other lines per view.
+    - ``contents_sort``: for a container, the order of what it holds, in the tree layout and
+      on its page, as :class:`SortBy` keys naming fields of the types it can contain
+      (``(SortBy("disc"), SortBy("track"), SortBy("title"))`` for an album). Items without
+      a field sort first on it. Default: by title.
     - ``table_name`` / ``type_id``: override the defaults ``<theme id>_<class name>`` and
       ``<theme id>.<class name>`` (lowercased).
     """
@@ -227,6 +231,7 @@ class Entity:
     roles: ClassVar[Sequence[Role]] = ()
     double_click: ClassVar[Literal["page", "open_file"]] = "page"
     card_lines: ClassVar[Sequence[str]] = ()
+    contents_sort: ClassVar[Sequence["SortBy"]] = ()
     table_name: ClassVar[str | None] = None
     type_id: ClassVar[str | None] = None
 
