@@ -225,7 +225,7 @@ def _load_section(
             if role is None:
                 return None
             title = role.label or (section.name or "").replace("_", " ").capitalize()
-            files = _files(conn, entity_id, role.name, root_path)
+            files = role_files(conn, entity_id, role.name, root_path)
             return DetailSection(section.kind, title, files=files)
         case "related":
             return _related(conn, schema, entity, entity_id, section.name or "")
@@ -267,25 +267,37 @@ def _fields(
     )
 
 
-def _files(
-    conn: Connection, entity_id: int, role: str, root_path: Callable[[str], str | None]
+def role_files(
+    conn: Connection,
+    entity_id: int,
+    role: str | None,
+    root_path: Callable[[str], str | None],
+    *,
+    resource_id: int | None = None,
 ) -> tuple[FileRow, ...]:
-    rows = conn.execute(
-        select(
-            Resource.id,
-            Resource.root_id,
-            Root.name,
-            Resource.relpath,
-            Resource.kind,
-            Resource.size,
-            Resource.status,
+    """The entity's files in ``role`` (every role if ``None``), in their sort order; or,
+    with ``resource_id``, just that resource (whatever links it)."""
+    query = select(
+        Resource.id,
+        Resource.root_id,
+        Root.name,
+        Resource.relpath,
+        Resource.kind,
+        Resource.size,
+        Resource.status,
+    ).join(Root, Root.id == Resource.root_id)
+    if resource_id is not None:
+        query = query.where(Resource.id == resource_id)
+    else:
+        query = (
+            query.join(EntityResource, EntityResource.resource_id == Resource.id)
+            .where(EntityResource.entity_id == entity_id)
+            .order_by(EntityResource.sort_order, Resource.relpath)
+            .limit(MAX_ROWS)
         )
-        .join(EntityResource, EntityResource.resource_id == Resource.id)
-        .join(Root, Root.id == Resource.root_id)
-        .where(EntityResource.entity_id == entity_id, EntityResource.role == role)
-        .order_by(EntityResource.sort_order, Resource.relpath)
-        .limit(MAX_ROWS)
-    ).all()
+        if role is not None:
+            query = query.where(EntityResource.role == role)
+    rows = conn.execute(query).all()
     found = []
     for rid, root_id, root_name, relpath, kind, size, status in rows:
         base = root_path(root_id)
