@@ -7,6 +7,7 @@ Usage (from the repository folder):
     uv run tagalot scratch/Demo.keep
     uv run python scripts/make_demo_keep.py --reset --media   # the media keep instead
     uv run python scripts/make_demo_keep.py --reset --assets  # the 2D assets keep instead
+    uv run python scripts/make_demo_keep.py --reset --music   # the music keep instead
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
 it watches): a few real images, documents, nested folders, and names with accents and spaces,
@@ -25,6 +26,11 @@ delete that file when you're done with the media demo.
 ``--assets`` creates ``scratch/Assets.keep`` watching ``scratch/asset-files`` with the built-in
 assets2d theme: two artists' images (one with a ``folder.jpg``), a font, a zip and a 7z
 archive of images, and a picture directly in the root (no artist), with a few tags.
+
+``--music`` creates ``scratch/Music.keep`` watching ``scratch/music-files`` with the built-in
+music theme: short silent MP3s with tags. There is an album with a cover and a song in two
+versions (MP3 and FLAC; the FLAC holds no audio), an album with embedded cover art, a
+two-disc album, a compilation, an untagged folder, and a song directly in the root.
 """
 
 import argparse
@@ -38,6 +44,9 @@ import zipfile
 from pathlib import Path
 
 import py7zr
+from mutagen.easyid3 import EasyID3
+from mutagen.flac import FLAC
+from mutagen.id3 import APIC, ID3
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import Connection, insert, select
 
@@ -335,6 +344,124 @@ def make_assets_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     return keep_dir
 
 
+MP3_FRAME = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(413)
+"""One silent MPEG-1 Layer III frame: 128 kbit/s, 44.1 kHz, about 26 ms."""
+KIND_OF_BLUE = {"artist": "Miles Davis", "album": "Kind of Blue", "date": "1959", "genre": "Jazz"}
+PASTEL = {"artist": "Nina Simone", "album": "Pastel Blues", "date": "1965", "genre": "Blues"}
+LIVE = {"artist": "Queen", "albumartist": "Queen", "album": "Live Box", "genre": "Rock"}
+HITS = {"album": "Jazz Hits", "genre": "Jazz"}
+SONGS: dict[str, tuple[dict[str, str], int]] = {
+    # relative path: (tags, seconds)
+    "Miles Davis/Kind of Blue/01 So What.mp3": ({**KIND_OF_BLUE, "title": "So What"}, 9),
+    "Miles Davis/Kind of Blue/02 Freddie Freeloader.mp3": (
+        {**KIND_OF_BLUE, "title": "Freddie Freeloader"},
+        8,
+    ),
+    "Miles Davis/Kind of Blue/03 Blue in Green.mp3": (
+        {**KIND_OF_BLUE, "title": "Blue in Green"},
+        5,
+    ),
+    "Nina Simone/Pastel Blues/01 Be My Husband.mp3": ({**PASTEL, "title": "Be My Husband"}, 4),
+    "Nina Simone/Pastel Blues/02 Trouble in Mind.mp3": (
+        {**PASTEL, "title": "Trouble in Mind"},
+        5,
+    ),
+    "Queen/Live Box/CD1/01 Intro.mp3": ({**LIVE, "title": "Intro"}, 2),
+    "Queen/Live Box/CD1/02 Tie Your Mother Down.mp3": (
+        {**LIVE, "title": "Tie Your Mother Down"},
+        4,
+    ),
+    "Queen/Live Box/CD2/01 Intro.mp3": ({**LIVE, "title": "Intro"}, 3),
+    "Jazz Hits/01 Take Five.mp3": ({**HITS, "title": "Take Five", "artist": "Dave Brubeck"}, 5),
+    "Jazz Hits/02 Blue.mp3": ({**HITS, "title": "Blue", "artist": "Joni Mitchell"}, 3),
+    "Untagged/03 - Lonely Road.mp3": ({}, 3),
+    "Demo Tape.mp3": ({"title": "Demo Tape", "artist": "Garage Band"}, 2),
+}
+MUSIC_TAGS = {
+    ("Mood", "Calm"): ["Blue in Green", "Blue", "Trouble in Mind"],
+    ("Mood", "Loud"): ["Tie Your Mother Down"],
+    ("Favorites",): ["So What", "Pastel Blues"],
+}
+
+
+def _track_numbers(relpath: str, tags: dict[str, str]) -> dict[str, str]:
+    """Tags with the track (and disc) numbers from a file name like ``CD2/01 Intro.mp3``."""
+    folder, _, name = relpath.rpartition("/")
+    if not tags or not name[0].isdigit():
+        return tags
+    numbered = dict(tags, tracknumber=str(int(name.split()[0])))
+    if folder.endswith(("CD1", "CD2")):
+        numbered["discnumber"] = folder[-1]
+    return numbered
+
+
+def _mp3(path: Path, tags: dict[str, str], seconds: int, cover: bytes | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(MP3_FRAME * (seconds * 38))
+    if cover:
+        art = ID3()
+        art.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="cover", data=cover))
+        art.save(path)
+    if tags:
+        easy = EasyID3(path) if cover else EasyID3()
+        for name, value in tags.items():
+            easy[name] = value
+        easy.save(path)
+
+
+def _flac(path: Path, tags: dict[str, str], seconds: int) -> None:
+    """A FLAC header claiming ``seconds`` of audio (it holds none), with ``tags``."""
+    stream = (44100 << 44) | (1 << 41) | (15 << 36) | (seconds * 44100)
+    info = bytes([16, 0, 16, 0]) + bytes(6) + stream.to_bytes(8, "big") + bytes(16)
+    path.write_bytes(b"fLaC" + bytes([0x80]) + len(info).to_bytes(3, "big") + info)
+    audio = FLAC(path)
+    for name, value in tags.items():
+        audio[name] = value
+    audio.save()
+
+
+def _cover(color: tuple[int, int, int], text: str) -> bytes:
+    image = _asset_image((300, 300), color, (240, 230, 200))
+    ImageDraw.Draw(image).text((16, 16), text, fill=(255, 255, 255))
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG")
+    return buffer.getvalue()
+
+
+def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+    """Create ``scratch/music-files`` and ``scratch/Music.keep`` (the music theme), scanned
+    and tagged; returns the keep folder."""
+    files, keep_dir = scratch / "music-files", scratch / "Music.keep"
+    if reset:
+        _remove([keep_dir, files])
+    elif keep_dir.exists():
+        raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
+    pastel = _cover((120, 40, 60), "Pastel Blues")
+    for relpath, (tags, seconds) in SONGS.items():
+        cover = pastel if relpath.startswith("Nina Simone/") else None
+        _mp3(files / relpath, _track_numbers(relpath, tags), seconds, cover)
+    so_what = "Miles Davis/Kind of Blue/01 So What.mp3"
+    _flac(
+        files / so_what.replace(".mp3", ".flac"),
+        _track_numbers(so_what, SONGS[so_what][0]),
+        545,
+    )
+    (files / "Miles Davis/Kind of Blue/cover.jpg").write_bytes(
+        _cover((30, 60, 120), "Kind of Blue")
+    )
+
+    create_keep(
+        keep_dir,
+        "Music",
+        ThemeRef("music", 1),
+        [RootConfig("music", "Music files", str(files), list(DEFAULT_EXCLUDES))],
+    )
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        _tag(session, MUSIC_TAGS, {}, {})
+    return keep_dir
+
+
 def _tag(
     session: KeepSession,
     tags: dict[tuple[str, ...], list[str]],
@@ -371,10 +498,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="create scratch/Assets.keep (the 2D assets theme) instead",
     )
+    parser.add_argument(
+        "--music",
+        action="store_true",
+        help="create scratch/Music.keep (the music theme) instead",
+    )
     args = parser.parse_args(argv)
     scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        if args.assets:
+        if args.music:
+            keep_dir = make_music_demo(scratch, reset=args.reset)
+        elif args.assets:
             keep_dir = make_assets_demo(scratch, reset=args.reset)
         elif args.media:
             keep_dir = make_media_demo(scratch, reset=args.reset)
@@ -383,7 +517,10 @@ def main(argv: list[str] | None = None) -> int:
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    if args.assets:
+    if args.music:
+        print(f"Created {keep_dir} watching music-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Music.keep")
+    elif args.assets:
         print(f"Created {keep_dir} watching asset-files (scanned and tagged).")
         print("Open it with:  uv run tagalot scratch/Assets.keep")
     elif args.media:

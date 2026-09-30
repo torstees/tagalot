@@ -30,6 +30,11 @@ demo-assets:
     uv run python scripts/make_demo_keep.py --reset --assets
     uv run tagalot scratch/Assets.keep
 
+# (Re)create Music.keep (the music theme) and open it; Demo.keep is left alone
+demo-music:
+    uv run python scripts/make_demo_keep.py --reset --music
+    uv run tagalot scratch/Music.keep
+
 # (Re)create scratch/Demo.keep and scratch/demo-files without opening them
 demo-reset:
     uv run python scripts/make_demo_keep.py --reset

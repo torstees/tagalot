@@ -274,6 +274,24 @@ def test_containment_is_applied_at_flush(env: Env) -> None:
         assert ctx.flush().edges_removed == 1
 
 
+def test_the_last_contain_or_uncontain_in_a_batch_wins(env: Env) -> None:
+    with env.engine.begin() as conn:
+        ctx = env.session(conn)
+        artist, album = ctx.upsert(Artist, "a"), ctx.upsert(Album, "b")
+        ctx.contain(artist, album)
+        ctx.uncontain(artist, album)
+        assert ctx.contents(artist) == []
+        assert ctx.flush().edges_added == 0
+        ctx.uncontain(artist, album)
+        ctx.contain(artist, album)
+        ctx.contain(artist, album)
+        assert ctx.contents(artist) == [album]
+        assert ctx.flush().edges_added == 1
+        ctx.contain(artist, album)  # already there
+        ctx.uncontain(artist, album)
+        assert ctx.flush().edges_removed == 1
+
+
 def test_undeclared_containment(env: Env) -> None:
     with env.engine.begin() as conn:
         ctx = env.session(conn)
