@@ -235,10 +235,6 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
         if target.kind in ("search", "view"):
-            # Which columns are hidden is remembered per view, in ui_state.json.
-            # So are its layout (list or grid) and the lines under grid cards.
-            state_key = f"{target.kind}:{target.key}"
-            hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
             layout = "list"
             if target.kind == "search":
                 spec = SearchSpec()
@@ -247,37 +243,22 @@ class MainWindow(QMainWindow):
                 view = next(v for v in views if v.name == target.key)
                 spec = view_spec(session.schema, view)
                 layout = view.layout
-            layout = self._ui_state.get("layouts", {}).get(state_key, layout)
-            card_lines = self._ui_state.get("card_lines", {}).get(state_key)
-            search = SearchPage(
-                session,
+            return self._search_page(
                 target.label,
                 spec,
+                f"{target.kind}:{target.key}",
                 grouped=target.kind == "search",
-                hidden_columns=hidden,
-                layout_mode=layout,
-                card_lines=card_lines if isinstance(card_lines, list) else None,
-                thumbnails=self.thumbnails,
-                thumbnail_size=self.thumbnail_size,
+                layout=layout,
             )
-            search.size_menu = self.size_menu
-            search.open_requested.connect(self.open_entity)
-            search.zoom_requested.connect(self.zoom)
-            search.layout_changed.connect(
-                lambda mode: self._save_view_state("layouts", state_key, mode)
-            )
-            search.card_lines_changed.connect(
-                lambda names: self._save_view_state("card_lines", state_key, names)
-            )
-            search.tags_dropped.connect(self.apply_tags)
-            search.selection_changed.connect(self._schedule_summary)
-            search.hidden_columns_changed.connect(
-                lambda keys: self._save_hidden_columns(state_key, keys)
-            )
-            return search
         if target.kind == "entity":
-            detail = DetailPage(session, int(target.key), thumbnails=self.thumbnails)
+            detail = DetailPage(
+                session,
+                int(target.key),
+                thumbnails=self.thumbnails,
+                make_contents=self._contents_search,
+            )
             detail.open_entity.connect(self.open_entity)
+            detail.selection_changed.connect(self._schedule_summary)
             return detail
         if target.kind == "tags":
             manager = TagManagerPage(session)
@@ -298,6 +279,54 @@ class MainWindow(QMainWindow):
         page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return page
+
+    def _search_page(
+        self,
+        title: str,
+        spec: SearchSpec,
+        state_key: str,
+        *,
+        grouped: bool = False,
+        layout: str = "list",
+    ) -> SearchPage:
+        """A search page wired to the window. What the user hides, the layout, and the card
+        lines are remembered under ``state_key`` in ui_state.json."""
+        session = self.session
+        assert session is not None
+        hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
+        layout = self._ui_state.get("layouts", {}).get(state_key, layout)
+        card_lines = self._ui_state.get("card_lines", {}).get(state_key)
+        search = SearchPage(
+            session,
+            title,
+            spec,
+            grouped=grouped,
+            hidden_columns=hidden,
+            layout_mode=layout,
+            card_lines=card_lines if isinstance(card_lines, list) else None,
+            thumbnails=self.thumbnails,
+            thumbnail_size=self.thumbnail_size,
+        )
+        search.size_menu = self.size_menu
+        search.open_requested.connect(self.open_entity)
+        search.zoom_requested.connect(self.zoom)
+        search.layout_changed.connect(
+            lambda mode: self._save_view_state("layouts", state_key, mode)
+        )
+        search.card_lines_changed.connect(
+            lambda names: self._save_view_state("card_lines", state_key, names)
+        )
+        search.tags_dropped.connect(self.apply_tags)
+        search.selection_changed.connect(self._schedule_summary)
+        search.hidden_columns_changed.connect(
+            lambda keys: self._save_hidden_columns(state_key, keys)
+        )
+        return search
+
+    def _contents_search(self, entity_type: str, spec: SearchSpec) -> SearchPage:
+        """The search embedded in a container's detail page. Pages of the same type share
+        their remembered layout and columns."""
+        return self._search_page("Contents", spec, f"contents:{entity_type}", layout="grid")
 
     def open_entity(self, entity_id: int) -> None:
         """Show an entity's detail page (double-click, Enter, or a link on another page)."""
@@ -494,8 +523,14 @@ class MainWindow(QMainWindow):
                 page.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
 
     def search_pages(self) -> list[SearchPage]:
-        """The search pages created so far."""
-        return [p for p in self._pages.values() if isinstance(p, SearchPage)]
+        """The search pages created so far, including those inside detail pages."""
+        pages = []
+        for page in self._pages.values():
+            if isinstance(page, SearchPage):
+                pages.append(page)
+            elif isinstance(page, DetailPage) and page.contents is not None:
+                pages.append(page.contents)
+        return pages
 
     def _save_hidden_columns(self, state_key: str, keys: list[str]) -> None:
         assert self.session is not None

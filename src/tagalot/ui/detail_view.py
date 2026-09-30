@@ -10,13 +10,16 @@ Folder ──────────────────────
   Jazz/Coltrane/Blue Train   NAS music
 Cover ───────────────────────
   [img] [img]
-Contents ────────────────────
-  5 items
+Contents                 5 items
+  [filter bar]
+  [results: list or grid]
 ```
 
 A header with the thumbnail and title, then the theme's sections top to bottom in a scroll
-area. Everything is read in a worker (:func:`~tagalot.core.detail.load_detail`); related
-entities are links that open their own pages.
+area. A container's contents are a search of their own below it (``within`` the entity),
+with a filter bar and the usual layouts; a splitter divides the page between them.
+Everything is read in a worker (:func:`~tagalot.core.detail.load_detail`); related entities
+are links that open their own pages.
 """
 
 import html
@@ -35,14 +38,17 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.models import ResourceStatus
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.models.results import display_value
+from tagalot.ui.search_view import SearchPage
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -58,7 +64,7 @@ class DetailPage(QWidget):
 
     open_entity = Signal(int)
     selection_changed = Signal()
-    """Never emitted: a detail page's "selection" is always its entity."""
+    """The selected contents changed (what tagging applies to)."""
     loaded = Signal()
     """The page's content arrived (or was refreshed)."""
 
@@ -68,6 +74,7 @@ class DetailPage(QWidget):
         entity_id: int,
         *,
         thumbnails: ThumbnailLoader | None = None,
+        make_contents: Callable[[str, SearchSpec], SearchPage] | None = None,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -75,6 +82,9 @@ class DetailPage(QWidget):
         self.session = session
         self.entity_id = entity_id
         self.thumbnails = thumbnails
+        self._make_contents = make_contents
+        self.contents: SearchPage | None = None
+        """The search of a container's contents, once the page knows it is one."""
         self._pool = pool
         self._generation = 0
         self.detail: EntityDetail | None = None
@@ -112,9 +122,12 @@ class DetailPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(scroll)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(scroll)
+        layout.addWidget(self.splitter)
 
         if thumbnails is not None:
             thumbnails.ready.connect(self._thumbnail_ready)
@@ -151,11 +164,35 @@ class DetailPage(QWidget):
             self.title.setText(detail.title)
             self.type_label.setText(detail.type_label)
             for section in detail.sections:
+                if section.kind == "contents" and self._show_contents(detail):
+                    continue
                 widget = self._section_widget(section)
                 if widget is not None:
                     self._sections.addWidget(widget)
             self._show_thumbnail()
         self.loaded.emit()
+
+    def _show_contents(self, detail: EntityDetail) -> bool:
+        """Put the search of the entity's contents below the sections (once). False when
+        the window gave no way to make one: then the section shows a count."""
+        if self._make_contents is None:
+            return False
+        if self.contents is None:
+            theme = self.session.theme
+            types = tuple(
+                dict.fromkeys(
+                    theme.type_id_of(c.child)
+                    for c in theme.containment
+                    if theme.type_id_of(c.parent) == detail.type
+                )
+            )
+            spec = SearchSpec(types=types, within=self.entity_id)
+            self.contents = self._make_contents(detail.type, spec)
+            self.contents.selection_changed.connect(self.selection_changed)
+            self.splitter.addWidget(self.contents)
+            self.splitter.setStretchFactor(0, 2)
+            self.splitter.setStretchFactor(1, 3)
+        return True
 
     # --- the header's thumbnail ---
 
@@ -291,8 +328,13 @@ class DetailPage(QWidget):
     # --- like a search page ---
 
     def selected_entity_ids(self, on_done: Callable[[list[int]], None]) -> None:
-        """A detail page's selection is its entity (for the Tags panel)."""
-        on_done([self.entity_id] if self.detail is not None else [])
+        """What tagging applies to: the items selected in the contents, else the page's
+        own entity."""
+        own = [self.entity_id] if self.detail is not None else []
+        if self.contents is None:
+            on_done(own)
+            return
+        self.contents.selected_entity_ids(lambda ids: on_done(ids or own))
 
 
 def _file_label(file: FileRow) -> QLabel:
