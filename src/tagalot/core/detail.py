@@ -12,6 +12,8 @@ from typing import Any
 
 from sqlalchemy import Connection, func, select
 
+from tagalot.core.fields import user_fields
+from tagalot.core.ingest import TITLE
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -61,6 +63,13 @@ class FieldRow:
     name: str
     label: str
     value: Any
+    type: type = str
+    """The field's Python type (``str``, ``int``, ``float``, ``bool``, ``date``,
+    ``datetime``)."""
+    nullable: bool = True
+    editable: bool = False
+    edited: bool = False
+    """The user set this value by hand (provenance ``user``): scans leave it alone."""
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,9 @@ class EntityDetail:
     type_label: str
     title: str
     sections: tuple[DetailSection, ...] = field(default_factory=tuple)
+    title_label: str = "Title"
+    title_edited: bool = False
+    """The user renamed it by hand."""
     breadcrumbs: tuple[EntityRow, ...] = ()
     """The containers above it, outermost first (for a song: its artist, then its album)."""
     other_parents: int = 0
@@ -132,15 +144,26 @@ def load_detail(
     try:
         table = schema.by_type_id(row.type)
     except KeyError:
-        return EntityDetail(entity_id, row.type, row.type, row.title, (), crumbs, others)
+        return EntityDetail(
+            entity_id, row.type, row.type, row.title, breadcrumbs=crumbs, other_parents=others
+        )
     entity = table.entity
+    edited = user_fields(conn, entity_id)
     sections: list[DetailSection] = []
     for section in detail_view_for(schema, entity).sections:
-        loaded = _load_section(conn, schema, entity, entity_id, section, root_path)
+        loaded = _load_section(conn, schema, entity, entity_id, section, root_path, edited)
         if loaded is not None:
             sections.append(loaded)
     return EntityDetail(
-        entity_id, row.type, entity_label(entity), row.title, tuple(sections), crumbs, others
+        entity_id,
+        row.type,
+        entity_label(entity),
+        row.title,
+        tuple(sections),
+        breadcrumbs=crumbs,
+        other_parents=others,
+        title_label=entity.title_label,
+        title_edited=TITLE in edited,
     )
 
 
@@ -183,12 +206,12 @@ def _load_section(
     entity_id: int,
     section: Section,
     root_path: Callable[[str], str | None],
+    edited: set[str],
 ) -> DetailSection | None:
     match section.kind:
         case "fields":
-            return DetailSection(
-                "fields", "Details", fields=_fields(conn, schema, entity, entity_id)
-            )
+            fields = _fields(conn, schema, entity, entity_id, edited)
+            return DetailSection("fields", "Details", fields=fields)
         case "role" | "gallery":
             role = next((r for r in entity.roles if r.name == section.name), None)
             if role is None:
@@ -208,7 +231,11 @@ def _load_section(
 
 
 def _fields(
-    conn: Connection, schema: ThemeSchema, entity: type[ThemeEntity], entity_id: int
+    conn: Connection,
+    schema: ThemeSchema,
+    entity: type[ThemeEntity],
+    entity_id: int,
+    edited: set[str],
 ) -> tuple[FieldRow, ...]:
     table = schema.entities[entity].table
     shown = [f for f in entity_fields(entity) if f.spec.detail]
@@ -218,7 +245,15 @@ def _fields(
         select(*(table.c[f.name] for f in shown)).where(table.c.id == entity_id)
     ).first()
     return tuple(
-        FieldRow(f.name, f.spec.label, values[i] if values is not None else None)
+        FieldRow(
+            f.name,
+            f.spec.label,
+            values[i] if values is not None else None,
+            f.type,
+            f.nullable,
+            f.spec.editable,
+            f.name in edited,
+        )
         for i, f in enumerate(shown)
     )
 

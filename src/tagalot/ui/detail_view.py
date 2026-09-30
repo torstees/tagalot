@@ -45,11 +45,12 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
+from tagalot.core.ingest import TITLE
 from tagalot.core.models import ResourceStatus
 from tagalot.core.search_fields import contained_types
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.ui.models.results import display_value
+from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
@@ -68,6 +69,8 @@ class DetailPage(QWidget):
     related entity's link is clicked."""
 
     open_entity = Signal(int)
+    field_edited = Signal(int, str, object)
+    """The user set a field (or ``"title"``) by hand: entity id, field name, new value."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
     selection_changed = Signal()
@@ -99,13 +102,17 @@ class DetailPage(QWidget):
         self.thumbnail = QLabel()
         self.thumbnail.setFixedSize(HEADER_THUMBNAIL, HEADER_THUMBNAIL)
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title = QLabel("Loading…")
+        # The title is editable in place, like the fields.
+        self.title_value = EditableValue("Loading…", str, label="the name")
+        self.title_value.committed.connect(
+            lambda value: self.field_edited.emit(self.entity_id, TITLE, value)
+        )
+        self.title = self.title_value.label
         font = QFont(self.title.font())
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() + 5)
         self.title.setFont(font)
-        self.title.setWordWrap(True)
-        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.title_value.box.setFont(font)
         self.type_label = QLabel()
         self.type_label.setStyleSheet("color: palette(placeholder-text);")
         self.breadcrumbs = QLabel()
@@ -115,7 +122,7 @@ class DetailPage(QWidget):
         self.breadcrumbs.setVisible(False)
         titles = QVBoxLayout()
         titles.addWidget(self.breadcrumbs)
-        titles.addWidget(self.title)
+        titles.addWidget(self.title_value)
         titles.addWidget(self.type_label)
         titles.addStretch(1)
         header = QHBoxLayout()
@@ -170,11 +177,14 @@ class DetailPage(QWidget):
             if item is not None and (widget := item.widget()) is not None:
                 widget.deleteLater()
         if detail is None:
-            self.title.setText("This item no longer exists")
+            self.title_value.editable = False
+            self.title_value.show_value("This item no longer exists", False)
             self.type_label.setText("")
             self.thumbnail.clear()
         else:
-            self.title.setText(detail.title)
+            self.title_value.editable = True
+            self.title_value.field_label = detail.title_label.lower()
+            self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
             self._show_breadcrumbs(detail)
             for section in detail.sections:
@@ -283,9 +293,13 @@ class DetailPage(QWidget):
         form = QFormLayout(body)
         form.setContentsMargins(12, 0, 0, 0)
         for row in section.fields:
-            value = QLabel(display_value(row.value))
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            value.setWordWrap(True)
+            value = EditableValue(
+                row.value, row.type, editable=row.editable, edited=row.edited, label=row.label
+            )
+            value.setObjectName(f"field_{row.name}")
+            value.committed.connect(
+                lambda new, name=row.name: self.field_edited.emit(self.entity_id, name, new)
+            )
             form.addRow(f"{row.label}:", value)
         return body
 

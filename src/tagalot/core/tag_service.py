@@ -6,6 +6,9 @@ after, plus the ``entity_tag`` rows the operation removed and added within its s
 restores the "before" tables and reverses the ``entity_tag`` delta; redo does the opposite.
 Neither re-runs the operation. Tagging done between an operation and its undo is untouched,
 because only the operation's own delta is reversed.
+
+Field edits on detail pages share the same history (:meth:`TagService.edit_field`): one
+step each, recorded as a :class:`~tagalot.core.fields.FieldChange`.
 """
 
 import logging
@@ -16,6 +19,7 @@ from typing import Any
 
 from sqlalchemy import Connection, delete, insert, select, tuple_, update
 
+from tagalot.core.fields import FieldChange, edit_field, restore_field
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
 from tagalot.core.tags import (
     PATH_SEPARATOR,
@@ -35,6 +39,7 @@ from tagalot.core.tags import (
     tag_entities,
     untag_entities,
 )
+from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
 
 logger = logging.getLogger(__name__)
@@ -64,15 +69,22 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-class TagService:
-    """Runs tag operations through the DB writer, records them for undo, and refreshes the
-    tag tree cache."""
+Step = TagChange | FieldChange
+"""One entry in the undo history."""
 
-    def __init__(self, writer: DbWriter, cache: TagTreeCache) -> None:
+
+class TagService:
+    """Runs tag operations (and field edits, with ``schema``) through the DB writer, records
+    them for undo, and refreshes the tag tree cache."""
+
+    def __init__(
+        self, writer: DbWriter, cache: TagTreeCache, schema: ThemeSchema | None = None
+    ) -> None:
         self.writer = writer
         self.cache = cache
-        self._undo: list[TagChange] = []
-        self._redo: list[TagChange] = []
+        self.schema = schema
+        self._undo: list[Step] = []
+        self._redo: list[Step] = []
 
     # --- operations ---
 
@@ -166,6 +178,17 @@ class TagService:
             lambda conn: remove_alias(conn, tag_id, alias),
         )
 
+    def edit_field(self, entity_id: int, name: str, value: Any) -> FieldChange:
+        """Set a field (or ``"title"``) by hand: provenance ``user``, one undo step.
+        Raises :class:`~tagalot.core.fields.FieldEditError` for a value that doesn't fit."""
+        schema = self.schema
+        if schema is None:
+            raise RuntimeError("field edits need the keep's schema")
+        change = self.writer.run(lambda conn: edit_field(conn, schema, entity_id, name, value))
+        if change.before != change.after or change.source_before != change.source_after:
+            self._push(change)
+        return change
+
     # --- history ---
 
     @property
@@ -182,7 +205,7 @@ class TagService:
         if not self._undo:
             return None
         change = self._undo.pop()
-        self._apply(lambda conn: _restore(conn, change, forward=False))
+        self._replay(change, forward=False)
         self._redo.append(change)
         return change.label
 
@@ -191,7 +214,7 @@ class TagService:
         if not self._redo:
             return None
         change = self._redo.pop()
-        self._apply(lambda conn: _restore(conn, change, forward=True))
+        self._replay(change, forward=True)
         self._undo.append(change)
         return change.label
 
@@ -200,6 +223,19 @@ class TagService:
         self._redo.clear()
 
     # --- internals ---
+
+    def _push(self, step: Step) -> None:
+        self._undo.append(step)
+        del self._undo[:-MAX_HISTORY]
+        self._redo.clear()
+
+    def _replay(self, step: Step, *, forward: bool) -> None:
+        if isinstance(step, FieldChange):
+            schema = self.schema
+            assert schema is not None  # field edits are only recorded with a schema
+            self.writer.run(lambda conn: restore_field(conn, schema, step, forward=forward))
+        else:
+            self._apply(lambda conn: _restore(conn, step, forward=forward))
 
     def _record[T](
         self,
@@ -227,9 +263,7 @@ class TagService:
             return result, change
 
         result, change = self._apply(job)
-        self._undo.append(change)
-        del self._undo[:-MAX_HISTORY]
-        self._redo.clear()
+        self._push(change)
         return result
 
     def _record_links(
@@ -249,9 +283,7 @@ class TagService:
 
         change = self.writer.run(job)  # the tag tree is unchanged: no cache refresh
         if change.added or change.removed:
-            self._undo.append(change)
-            del self._undo[:-MAX_HISTORY]
-            self._redo.clear()
+            self._push(change)
         return len(change.added) + len(change.removed)
 
     def _apply[T](self, job: Callable[[Connection], T]) -> T:
