@@ -23,12 +23,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
-from tagalot.core.models import Entity, EntityAncestor, EntityTag, entity_fts
+from tagalot.core.models import Entity, EntityAncestor, EntityContains, EntityTag, entity_fts
 from tagalot.core.search_spec import (
     ChoiceFilter,
     FieldFilter,
     RangeFilter,
     SearchSpec,
+    SortKey,
     TextFilter,
     TextMatch,
 )
@@ -292,3 +293,33 @@ def _order_by(
         keys.append(column.desc() if key.descending else column.asc())
     keys.append(Entity.id.asc())  # stable order, so paging never skips or repeats
     return keys
+
+
+MAX_CHILDREN = 1000
+"""Children listed under one container in the tree layout."""
+
+
+def child_hits(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    parent_id: int,
+    *,
+    limit: int = MAX_CHILDREN,
+) -> list[SearchHit]:
+    """What a container directly holds, for the tree layout (DESIGN.md §8 "Show
+    contained"): every type, by title, not re-filtered by the search's includes, text, or
+    fields (they are shown because of their container), but still without excluded items."""
+    children = (
+        select(EntityContains.child_id)
+        .where(EntityContains.parent_id == parent_id)
+        .scalar_subquery()
+    )
+    listing = SearchSpec(
+        exclude=spec.exclude,
+        inherit_tags=spec.inherit_tags,
+        within=parent_id,
+        sort=(SortKey("title"),),
+    )
+    query = build_query(listing, tree, CORE_FIELDS).where(Entity.id.in_(children)).limit(limit)
+    return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]

@@ -339,6 +339,11 @@ def grid_icon(kind: str, size: int = 16) -> QIcon:
     if kind == "list":
         for y in (3, 7, 11):
             painter.drawRect(2, y, 12, 2)
+    elif kind == "tree":
+        painter.drawRect(2, 2, 10, 2)
+        painter.drawRect(6, 7, 8, 2)
+        painter.drawRect(6, 12, 8, 2)
+        painter.drawRect(3, 4, 1, 10)
     else:
         for x in (2, 9):
             for y in (2, 9):

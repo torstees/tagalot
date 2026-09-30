@@ -46,7 +46,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
-from tagalot.ui.models.results import ResultsModel
+from tagalot.ui.models.results import ResultColumn, ResultsModel
 from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
@@ -56,10 +56,11 @@ from tagalot.ui.result_table import (
     make_result_table,
     set_column_widths,
 )
+from tagalot.ui.result_tree import ResultTree, ResultTreeModel
 from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
-LAYOUTS = ("list", "grid")
+LAYOUTS = ("list", "grid", "tree")
 
 PREVIEW_DELAY_MS = 120
 """How long the selection must settle before the preview strip updates."""
@@ -84,7 +85,10 @@ class SearchPage(QWidget):
     selection_changed = Signal()
     """The selected items may be different (a click, new results, grouped or not)."""
     layout_changed = Signal(str)
-    """The user switched between ``"list"`` and ``"grid"`` (to remember it)."""
+    """The user switched to ``"list"``, ``"grid"``, or ``"tree"`` (to remember it)."""
+    toggles_changed = Signal(dict)
+    """The user changed "Contained" or "Inherit tags": ``{"show_contained": …,
+    "inherit_tags": …}`` (to remember it)."""
     card_lines_changed = Signal(object)
     """The user chose card lines (a list of field names), or ``None`` for the theme's."""
     zoom_requested = Signal(int)
@@ -105,6 +109,7 @@ class SearchPage(QWidget):
         thumbnails: ThumbnailLoader | None = None,
         thumbnail_size: int = 128,
         preview: bool = True,
+        toggles: dict[str, bool] | None = None,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -139,15 +144,26 @@ class SearchPage(QWidget):
         header_row.addWidget(self.status)
         self.list_button = self._layout_button("list", "Show the results as a list")
         self.grid_button = self._layout_button("grid", "Show the results as thumbnails")
+        self.tree_button = self._layout_button(
+            "tree", "Show the results as a tree: expand an item to see what it contains"
+        )
         self._layout_buttons = QButtonGroup(self)
         self._layout_buttons.setExclusive(True)
-        for button in (self.list_button, self.grid_button):
+        for button in (self.list_button, self.grid_button, self.tree_button):
             self._layout_buttons.addButton(button)
             header_row.addWidget(button)
         self.list_button.clicked.connect(lambda: self._layout_clicked("list"))
         self.grid_button.clicked.connect(lambda: self._layout_clicked("grid"))
+        self.tree_button.clicked.connect(lambda: self._layout_clicked("tree"))
 
         self.filter_bar = FilterBar()
+        # The view's toggles, unless the user chose otherwise before.
+        chosen = toggles or {}
+        self._toggles = {
+            "show_contained": bool(chosen.get("show_contained", spec.show_contained)),
+            "inherit_tags": bool(chosen.get("inherit_tags", spec.inherit_tags)),
+        }
+        self.filter_bar.set_toggles(**self._toggles)
         self.filter_bar.changed.connect(self._filters_changed)
 
         self.table = make_result_table()
@@ -174,6 +190,19 @@ class SearchPage(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._table_menu)
 
+        self.tree_model = ResultTreeModel(self.model, session, pool)
+        self.tree_model.setParent(self)
+        self.tree = ResultTree()
+        self.tree.setModel(self.tree_model)
+        tree_header = self.tree.header()
+        tree_header.setSortIndicatorShown(True)
+        tree_header.setSectionsClickable(True)
+        tree_header.sortIndicatorChanged.connect(self._sort_clicked)
+        self.tree.selectionModel().selectionChanged.connect(self.selection_changed)
+        self.tree.activated.connect(self._tree_activated)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
+        self.tree.tags_dropped.connect(self.tags_dropped)
+
         self.groups = GroupedResults()
         self.groups.show_all.connect(self.show_all)
         self.groups.tags_dropped.connect(self.tags_dropped)
@@ -185,6 +214,7 @@ class SearchPage(QWidget):
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.grid)
+        self.results.addWidget(self.tree)
         self.results.addWidget(self.groups)
         self._show_layout_buttons()
 
@@ -239,7 +269,13 @@ class SearchPage(QWidget):
             text=text or None,
             sort=sort,
             within=within,
+            inherit_tags=filters.inherit_tags,
+            # In the tree, containers expand to show what they hold instead.
+            show_contained=filters.show_contained and not self._tree_layout(),
         )
+
+    def _tree_layout(self) -> bool:
+        return self.layout_mode == "tree" and not self.grouped
 
     def _types_within(self, types: tuple[str, ...], container: str) -> tuple[str, ...]:
         """The types listed within a container: the page's own, where the container can
@@ -286,6 +322,7 @@ class SearchPage(QWidget):
             self._run()
         else:
             self.model.refresh()
+            self.tree_model.refresh_children()  # expanded containers' rows too
         self._load_tags()
 
     def show_all(self, type_id: str) -> None:
@@ -329,6 +366,12 @@ class SearchPage(QWidget):
     def _show_list(self, spec: SearchSpec) -> None:
         self._apply_card_lines(spec.types)
         columns = list_columns(self.session.schema, spec.types)
+        shows_contents = self._tree_layout() or spec.show_contained
+        if shows_contents and not any(c.key == "type" for c in columns):
+            # Contents can be of other types (an artist's images and fonts): say which.
+            schema = self.session.schema
+            if any(contained_types(schema, t.type_id) for t in scoped_tables(schema, spec.types)):
+                columns.insert(1, ResultColumn("type", "Type", sortable=False))
         if columns != self.model.columns:
             self.model.set_search(spec, columns)
             set_column_widths(self.table, columns)
@@ -337,8 +380,20 @@ class SearchPage(QWidget):
         else:
             self.model.refresh()  # the same search again: keep the rows until new ones arrive
         self.table.set_columns(columns, self.hidden_columns)
-        self.results.setCurrentWidget(self.grid if self.layout_mode == "grid" else self.table)
+        self.tree.set_columns_hidden([c.key for c in columns], self.hidden_columns)
+        self._tree_column_widths()
+        self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
+
+    def _layout_widget(self) -> QWidget:
+        return {"grid": self.grid, "tree": self.tree}.get(self.layout_mode, self.table)
+
+    def _tree_column_widths(self) -> None:
+        header = self.table.horizontalHeader()
+        for i in range(self.model.columnCount()):
+            self.tree.setColumnWidth(i, max(header.sectionSize(i), 60))
+        title = next((i for i, c in enumerate(self.model.columns) if c.key == "title"), 0)
+        self.tree.setColumnWidth(title, max(self.tree.columnWidth(title), 260))
 
     # --- the preview strip ---
 
@@ -349,6 +404,10 @@ class SearchPage(QWidget):
 
     def _update_preview(self) -> None:
         if self.preview.isHidden():
+            return
+        if self.results.currentWidget() is self.tree:
+            hits = self.tree.selected_hits()
+            self.preview.show_selection([h.id for h in hits])
             return
         rows = self._selected_rows()
         if len(rows) == 1:
@@ -376,13 +435,17 @@ class SearchPage(QWidget):
         return button
 
     def set_layout(self, mode: str) -> None:
-        """Show the list or the grid (not reported: see :attr:`layout_changed`)."""
+        """Show the list, grid, or tree (not reported: see :attr:`layout_changed`)."""
         if mode not in LAYOUTS:
             return
+        was_tree = self._tree_layout()
         self.layout_mode = mode
-        if not self.showing_groups():
-            self.results.setCurrentWidget(self.grid if mode == "grid" else self.table)
+        if was_tree != self._tree_layout():
+            self._run()  # the tree's columns and contained items differ from the list's
+        elif not self.showing_groups():
+            self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
+        self.selection_changed.emit()
 
     def _layout_clicked(self, mode: str) -> None:
         if mode != self.layout_mode:
@@ -393,12 +456,21 @@ class SearchPage(QWidget):
         grouped = self.showing_groups()
         self.list_button.setChecked(self.layout_mode == "list")
         self.grid_button.setChecked(self.layout_mode == "grid")
-        for button in (self.list_button, self.grid_button):
+        self.tree_button.setChecked(self.layout_mode == "tree")
+        for button in (self.list_button, self.grid_button, self.tree_button):
             button.setEnabled(not grouped)
         if grouped:
             self.grid_button.setToolTip("Search all shows sections; pick Show all for the grid")
         else:
             self.grid_button.setToolTip("Show the results as thumbnails")
+        box = self.filter_bar.contained_box
+        box.setEnabled(not self._tree_layout())
+        box.setToolTip(
+            "In the tree, expand an item to see what it contains"
+            if self._tree_layout()
+            else "Show contained items: also list everything inside the matching items (an "
+            "artist's albums and songs)"
+        )
 
     def set_thumbnail_size(self, size: int) -> None:
         self.grid.set_thumbnail_size(size)
@@ -499,6 +571,7 @@ class SearchPage(QWidget):
         else:
             self.hidden_columns.add(key)
         self.table.set_columns(self.table.columns, self.hidden_columns)
+        self.tree.set_columns_hidden([c.key for c in self.table.columns], self.hidden_columns)
         self.groups.set_hidden_columns(self.hidden_columns)
         self.hidden_columns_changed.emit(sorted(self.hidden_columns))
 
@@ -523,8 +596,11 @@ class SearchPage(QWidget):
 
     def selected_entity_ids(self, on_done: Callable[[list[int]], None]) -> None:
         """Call ``on_done`` with the entity ids selected in the list (or, when grouped, in
-        every section). Selected rows that aren't loaded yet are looked up in a worker."""
-        if self.showing_groups():
+        every section; or in the tree). Selected rows that aren't loaded yet are looked up in
+        a worker."""
+        if self.results.currentWidget() is self.tree:
+            on_done([h.id for h in self.tree.selected_hits()])
+        elif self.showing_groups():
             ids = [
                 hit.id
                 for section in self.groups.sections
@@ -547,7 +623,21 @@ class SearchPage(QWidget):
         if hit is not None:
             self.open_requested.emit(hit.id)
 
-    def _filters_changed(self, _filters: Filters) -> None:
+    def _tree_activated(self, index: QModelIndex) -> None:
+        hit = self.tree_model.hit(index)
+        if hit is not None:
+            self.open_requested.emit(hit.id)
+
+    def _tree_menu(self, point: QPoint) -> None:
+        hit = self.tree_model.hit(self.tree.indexAt(point))
+        if hit is not None:
+            self.item_menu(hit).exec(self.tree.viewport().mapToGlobal(point))
+
+    def _filters_changed(self, filters: Filters) -> None:
+        toggles = {"show_contained": filters.show_contained, "inherit_tags": filters.inherit_tags}
+        if toggles != self._toggles:
+            self._toggles = toggles
+            self.toggles_changed.emit(dict(toggles))
         self._run()
 
     # --- the list's count and sorting ---
@@ -558,23 +648,23 @@ class SearchPage(QWidget):
     def _failed(self, message: str) -> None:
         self.status.setText(message)
 
-    def _sort_clicked(self, column: int, _order: object) -> None:
+    def _sort_clicked(self, column: int, order: Qt.SortOrder) -> None:
         if self._showing_sort:
             return
-        self.model.sort(column, self.table.horizontalHeader().sortIndicatorOrder())
+        self.model.sort(column, order)
         if self.model.spec is not None:
             self._sort = self.model.spec.sort  # kept when the filters change
         self._show_sort()  # a column that can't sort puts the indicator back
 
     def _show_sort(self) -> None:
         current = self.model.sort_column()
-        header = self.table.horizontalHeader()
         self._showing_sort = True
         try:
-            if current is None:
-                header.setSortIndicator(-1, header.sortIndicatorOrder())
-            else:
-                header.setSortIndicator(*current)
+            for header in (self.table.horizontalHeader(), self.tree.header()):
+                if current is None:
+                    header.setSortIndicator(-1, header.sortIndicatorOrder())
+                else:
+                    header.setSortIndicator(*current)
         finally:
             self._showing_sort = False
         if self.model.searching:

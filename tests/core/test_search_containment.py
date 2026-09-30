@@ -10,7 +10,7 @@ from tagalot.core import closure
 from tagalot.core.db import create_keep_engine
 from tagalot.core.fts import sync_entities
 from tagalot.core.models import Base, Entity, EntityTag, Tag
-from tagalot.core.search import count_matches, run_search
+from tagalot.core.search import child_hits, count_matches, run_search
 from tagalot.core.search_spec import SearchSpec, TextFilter
 from tagalot.core.tags import TagTree
 
@@ -211,3 +211,36 @@ def test_containment_semantics(
     assert set(ids) == expected
     assert len(ids) == len(set(ids)), "no entity is listed twice"
     assert count == len(ids)
+
+
+# --- the tree layout's children (#91) ---
+
+CHILD_CASES = {
+    "an artist's albums, by title": (1, SearchSpec(), ["A Beatles Christmas", "Abbey Road"]),
+    "an album's songs": (10, SearchSpec(), ["Come Together", "Something"]),
+    "a compilation shares songs": (30, SearchSpec(), ["Come Together", "So What"]),
+    "includes and text don't filter children": (
+        10,
+        SearchSpec(include=(JAZZ,), text="zzz"),
+        ["Come Together", "Something"],
+    ),
+    "excluded children are left out": (1, SearchSpec(exclude=(XMAS,)), ["Abbey Road"]),
+    "exclusion inherited from the album": (
+        11,
+        SearchSpec(exclude=(XMAS,), inherit_tags=True),
+        [],
+    ),
+    "without inheritance, only the song's own tags": (
+        11,
+        SearchSpec(exclude=(FAV,)),
+        ["Christmas Time"],
+    ),
+    "a song holds nothing": (100, SearchSpec(), []),
+}
+
+
+@pytest.mark.parametrize("case", CHILD_CASES, ids=list(CHILD_CASES))
+def test_child_hits(engine: Engine, tree: TagTree, case: str) -> None:
+    parent, spec, expected = CHILD_CASES[case]
+    with engine.connect() as conn:
+        assert [h.title for h in child_hits(conn, spec, tree, parent)] == expected
