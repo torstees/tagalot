@@ -191,13 +191,14 @@ class ResultGrid(QListView):
     """Search results as cards. Accepts tags dragged from the tagging panel, like the list.
 
     Signals: :attr:`tags_dropped` (rows, tag ids), :attr:`zoom_requested` (+1 bigger, -1
-    smaller; from Ctrl+wheel), :attr:`menu_requested` (a global position, for the page's
+    smaller; from Ctrl+wheel), :attr:`menu_requested` (a global position and the row under
+    it, or -1, for the page's
     context menu).
     """
 
     tags_dropped = Signal(list, list)
     zoom_requested = Signal(int)
-    menu_requested = Signal(QPoint)
+    menu_requested = Signal(QPoint, int)
 
     def __init__(
         self,
@@ -228,7 +229,9 @@ class ResultGrid(QListView):
         self.setDropIndicatorShown(False)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(
-            lambda point: self.menu_requested.emit(self.viewport().mapToGlobal(point))
+            lambda point: self.menu_requested.emit(
+                self.viewport().mapToGlobal(point), self.indexAt(point).row()
+            )
         )
         self.delegate = CardDelegate(self)
         self.setItemDelegate(self.delegate)

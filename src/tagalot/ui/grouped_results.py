@@ -17,7 +17,7 @@ a worker; :class:`GroupedResults` shows its result.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -94,6 +94,8 @@ class TypeSection(QWidget):
     column_toggled = Signal(str, bool)
     open_requested = Signal(int)
     """A row was double-clicked (or Enter pressed): the entity id."""
+    item_menu_requested = Signal(object, QPoint)
+    """A row was right-clicked: its :class:`SearchHit` and the global position."""
 
     def __init__(
         self,
@@ -128,6 +130,8 @@ class TypeSection(QWidget):
         self.table.set_columns(group.columns, hidden_columns)
         self.table.column_toggled.connect(self.column_toggled)
         self.table.activated.connect(self._activated)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._menu)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         rows_height = sum(self.table.rowHeight(r) for r in range(self.model.rowCount()))
@@ -159,6 +163,11 @@ class TypeSection(QWidget):
         layout.addWidget(self.header, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(self.body)
         self._toggled(expanded, notify=False)
+
+    def _menu(self, point: QPoint) -> None:
+        hit = self.model.hit(self.table.indexAt(point).row())
+        if hit is not None:
+            self.item_menu_requested.emit(hit, self.table.viewport().mapToGlobal(point))
 
     def _activated(self, index: QModelIndex) -> None:
         hit = self.model.hit(index.row())
@@ -192,6 +201,7 @@ class GroupedResults(QScrollArea):
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
     open_requested = Signal(int)
+    item_menu_requested = Signal(object, QPoint)
     selection_changed = Signal()
     """Any section's selection changed (or the sections were replaced)."""
 
@@ -229,6 +239,7 @@ class GroupedResults(QScrollArea):
             section.tags_dropped.connect(self.tags_dropped)
             section.column_toggled.connect(self.column_toggled)
             section.open_requested.connect(self.open_requested)
+            section.item_menu_requested.connect(self.item_menu_requested)
             section.table.selectionModel().selectionChanged.connect(self.selection_changed)
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)

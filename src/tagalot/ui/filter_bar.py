@@ -56,13 +56,16 @@ CLOSE_MARK = chr(0x00D7)  # MULTIPLICATION SIGN, the usual "remove" mark on a ch
 @dataclass(frozen=True)
 class Filters:
     """What the filter bar currently asks for: tag ids to include (each must match, with
-    its descendants), tag ids to exclude, the search text, and ``only``, a type id the
-    global search is narrowed to ("Show all" on one of its sections)."""
+    its descendants), tag ids to exclude, the search text, ``only``, a type id the
+    global search is narrowed to ("Show all" on one of its sections), and ``within``, the
+    entity whose contents are listed ("Show contents in search"), with its type."""
 
     include: tuple[int, ...] = ()
     exclude: tuple[int, ...] = ()
     text: str = ""
     only: str | None = None
+    within: int | None = None
+    within_type: str | None = None
 
 
 class FlowLayout(QLayout):
@@ -177,27 +180,39 @@ class Chip(QFrame):
 
 
 class ScopeChip(QFrame):
-    """``[Only: Album x]``: the global search narrowed to one type."""
+    """A grey chip that narrows what is searched: ``[Only: Album x]`` (the global search
+    narrowed to one type) or ``[Within: Aurora Studio x]`` (a container's contents)."""
 
     removed = Signal()
 
-    def __init__(self, type_id: str, label: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        type_id: str,
+        label: str,
+        parent: QWidget | None = None,
+        *,
+        prefix: str = "Only",
+        remove_tip: str = "Show every type again",
+        tip: str | None = None,
+        entity_id: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.type_id = type_id
+        self.entity_id = entity_id
         self.setObjectName("scope_chip")
-        self.label = QLabel(f"Only: {label}")
+        self.label = QLabel(f"{prefix}: {label}")
         self.close_button = QToolButton()
         self.close_button.setText(CLOSE_MARK)
         self.close_button.setAutoRaise(True)
         self.close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.close_button.setToolTip("Show every type again")
+        self.close_button.setToolTip(remove_tip)
         self.close_button.clicked.connect(self.removed)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 1, 2, 1)
         layout.setSpacing(2)
         layout.addWidget(self.label)
         layout.addWidget(self.close_button)
-        self.setToolTip(f"Only {label} results are listed")
+        self.setToolTip(tip or f"Only {label} results are listed")
         self.setStyleSheet(
             "#scope_chip { background: rgba(128, 128, 128, 0.18);"
             " border: 1px solid rgba(128, 128, 128, 0.8); border-radius: 11px; }"
@@ -361,6 +376,7 @@ class FilterBar(QWidget):
         self._exclude: list[int] = []
         self._chips: dict[int, Chip] = {}
         self._only: ScopeChip | None = None
+        self._within: ScopeChip | None = None
         self._applied_text = ""
 
         self.text_edit = QLineEdit()
@@ -406,7 +422,37 @@ class FilterBar(QWidget):
 
     def filters(self) -> Filters:
         only = self._only.type_id if self._only is not None else None
-        return Filters(tuple(self._include), tuple(self._exclude), self._applied_text, only)
+        within = self._within
+        return Filters(
+            tuple(self._include),
+            tuple(self._exclude),
+            self._applied_text,
+            only,
+            within.entity_id if within is not None else None,
+            within.type_id if within is not None else None,
+        )
+
+    def set_within(self, entity_id: int | None, title: str = "", type_id: str = "") -> None:
+        """Show a "Within: <title>" chip (first), listing only that entity's contents, or
+        remove it with ``None``."""
+        if self._within is not None:
+            if self._within.entity_id == entity_id:
+                return
+            self.chip_layout.removeWidget(self._within)
+            self._within.deleteLater()
+            self._within = None
+        if entity_id is not None:
+            self._within = ScopeChip(
+                type_id,
+                title,
+                prefix="Within",
+                remove_tip="Stop listing only its contents",
+                tip=f"Only what {title} contains is listed",
+                entity_id=entity_id,
+            )
+            self._within.removed.connect(lambda: self.set_within(None))
+            self.chip_layout.insert_widget(0, self._within)
+        self._changed()
 
     def set_only(self, type_id: str | None, label: str = "") -> None:
         """Show an "Only: <label>" chip (first), or remove it with ``None``."""
@@ -419,7 +465,7 @@ class FilterBar(QWidget):
         if type_id is not None:
             self._only = ScopeChip(type_id, label)
             self._only.removed.connect(lambda: self.set_only(None))
-            self.chip_layout.insert_widget(0, self._only)
+            self.chip_layout.insert_widget(int(self._within is not None), self._only)
         self._changed()
 
     def set_tree(self, tree: TagTree) -> None:
@@ -441,9 +487,15 @@ class FilterBar(QWidget):
         chip.set_tree(self.tree)
         chip.removed.connect(self.remove_tag)
         self._chips[tag_id] = chip
-        # The "Only" chip, include chips, exclude chips, then "Clear all".
-        position = int(self._only is not None) + (
-            len(self._include) - 1 if not exclude else len(self._include) + len(self._exclude) - 1
+        # The "Within" and "Only" chips, include chips, exclude chips, then "Clear all".
+        position = (
+            int(self._within is not None)
+            + int(self._only is not None)
+            + (
+                len(self._include) - 1
+                if not exclude
+                else len(self._include) + len(self._exclude) - 1
+            )
         )
         self.chip_layout.insert_widget(position, chip)
         self._changed()
@@ -457,10 +509,11 @@ class FilterBar(QWidget):
         """Remove every chip and the text."""
         for tag_id in list(self._chips):
             self._drop(tag_id)
-        if self._only is not None:
-            self.chip_layout.removeWidget(self._only)
-            self._only.deleteLater()
-            self._only = None
+        for scope in (self._only, self._within):
+            if scope is not None:
+                self.chip_layout.removeWidget(scope)
+                scope.deleteLater()
+        self._only = self._within = None
         self.text_edit.clear()
         self._text_timer.stop()
         self._applied_text = ""
@@ -484,6 +537,8 @@ class FilterBar(QWidget):
             self._changed()
 
     def _changed(self) -> None:
-        self.chip_area.setVisible(bool(self._chips) or self._only is not None)
+        self.chip_area.setVisible(
+            bool(self._chips) or self._only is not None or self._within is not None
+        )
         self.chip_layout.invalidate()
         self.changed.emit(self.filters())

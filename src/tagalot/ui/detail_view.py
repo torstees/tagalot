@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QListView,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
@@ -45,6 +46,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.models import ResourceStatus
+from tagalot.core.search_fields import contained_types
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.models.results import display_value
@@ -66,6 +68,8 @@ class DetailPage(QWidget):
     related entity's link is clicked."""
 
     open_entity = Signal(int)
+    show_in_search = Signal(int)
+    """The user asked to see this entity's contents in Search all (a Within chip)."""
     selection_changed = Signal()
     """The selected contents changed (what tagging applies to)."""
     loaded = Signal()
@@ -188,17 +192,16 @@ class DetailPage(QWidget):
         if self._make_contents is None:
             return False
         if self.contents is None:
-            theme = self.session.theme
-            types = tuple(
-                dict.fromkeys(
-                    theme.type_id_of(c.child)
-                    for c in theme.containment
-                    if theme.type_id_of(c.parent) == detail.type
-                )
-            )
+            types = tuple(contained_types(self.session.schema, detail.type))
             spec = SearchSpec(types=types, within=self.entity_id)
             self.contents = self._make_contents(detail.type, spec)
             self.contents.selection_changed.connect(self.selection_changed)
+            in_search = QPushButton("Show in search")
+            in_search.setFlat(True)
+            in_search.setCursor(Qt.CursorShape.PointingHandCursor)
+            in_search.setToolTip("Open Search all with a Within chip for these contents")
+            in_search.clicked.connect(lambda: self.show_in_search.emit(self.entity_id))
+            self.contents.header_row.insertWidget(1, in_search)
             self.splitter.addWidget(self.contents)
             self.splitter.setStretchFactor(0, 2)
             self.splitter.setStretchFactor(1, 3)

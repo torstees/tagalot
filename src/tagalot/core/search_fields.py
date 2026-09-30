@@ -21,6 +21,22 @@ from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import FieldInfo, SearchView, entity_label, entity_plural
 
 
+def contained_types(schema: ThemeSchema, type_id: str) -> list[str]:
+    """The types an entity of ``type_id`` can contain, at any depth (an artist: albums
+    and songs), in the theme's type order."""
+    theme = schema.theme
+    edges = [(theme.type_id_of(c.parent), theme.type_id_of(c.child)) for c in theme.containment]
+    found: set[str] = set()
+    frontier = [type_id]
+    while frontier:
+        current = frontier.pop()
+        for parent, child in edges:
+            if parent == current and child not in found:
+                found.add(child)
+                frontier.append(child)
+    return [t.type_id for t in schema.entities.values() if t.type_id in found]
+
+
 def scoped_tables(schema: ThemeSchema, types: Sequence[str]) -> list[EntityTable]:
     """The entity tables a search covers: those of ``types``, or every type if it is empty.
 
