@@ -399,6 +399,7 @@ class MainWindow(QMainWindow):
         hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
         layout = self._ui_state.get("layouts", {}).get(state_key, layout)
         card_lines = self._ui_state.get("card_lines", {}).get(state_key)
+        toggles = self._ui_state.get("toggles", {}).get(state_key)
         search = SearchPage(
             session,
             title,
@@ -410,6 +411,7 @@ class MainWindow(QMainWindow):
             thumbnails=self.thumbnails,
             thumbnail_size=self.thumbnail_size,
             preview=self.preview_action.isChecked(),
+            toggles=toggles if isinstance(toggles, dict) else None,
         )
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
@@ -419,6 +421,9 @@ class MainWindow(QMainWindow):
         )
         search.card_lines_changed.connect(
             lambda names: self._save_view_state("card_lines", state_key, names)
+        )
+        search.toggles_changed.connect(
+            lambda toggles: self._save_view_state("toggles", state_key, toggles)
         )
         search.tags_dropped.connect(self.apply_tags)
         search.selection_changed.connect(self._schedule_summary)

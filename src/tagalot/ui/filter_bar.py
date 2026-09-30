@@ -25,6 +25,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -66,6 +67,10 @@ class Filters:
     only: str | None = None
     within: int | None = None
     within_type: str | None = None
+    show_contained: bool = False
+    """Also list what matching containers hold (DESIGN.md §8)."""
+    inherit_tags: bool = False
+    """Tags on containers count as their contents' own."""
 
 
 class FlowLayout(QLayout):
@@ -393,10 +398,25 @@ class FilterBar(QWidget):
         self.tag_edit = TagBox()
         self.tag_edit.picked.connect(lambda tag_id, exclude: self.add_tag(tag_id, exclude=exclude))
 
+        self.contained_box = QCheckBox("Contained")
+        self.contained_box.setToolTip(
+            "Show contained items: also list everything inside the matching items (an "
+            "artist's albums and songs)"
+        )
+        self.inherit_box = QCheckBox("Inherit tags")
+        self.inherit_box.setToolTip(
+            "Inherit tags: a tag on a container counts for everything inside it (tag an "
+            "album, and its songs match)"
+        )
+        for box in (self.contained_box, self.inherit_box):
+            box.toggled.connect(lambda _on: self._changed())
+
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self.text_edit, 3)
         top.addWidget(self.tag_edit, 2)
+        top.addWidget(self.contained_box)
+        top.addWidget(self.inherit_box)
 
         self.chip_area = QWidget()
         self.chip_layout = FlowLayout(self.chip_area)
@@ -430,7 +450,17 @@ class FilterBar(QWidget):
             only,
             within.entity_id if within is not None else None,
             within.type_id if within is not None else None,
+            self.contained_box.isChecked(),
+            self.inherit_box.isChecked(),
         )
+
+    def set_toggles(self, *, show_contained: bool, inherit_tags: bool) -> None:
+        """Set the two toggles (a view's defaults, or what the user chose before) without
+        reporting a change."""
+        for box, on in ((self.contained_box, show_contained), (self.inherit_box, inherit_tags)):
+            blocked = box.blockSignals(True)
+            box.setChecked(on)
+            box.blockSignals(blocked)
 
     def set_within(self, entity_id: int | None, title: str = "", type_id: str = "") -> None:
         """Show a "Within: <title>" chip (first), listing only that entity's contents, or
