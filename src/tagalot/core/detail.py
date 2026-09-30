@@ -70,6 +70,8 @@ class FieldRow:
     editable: bool = False
     edited: bool = False
     """The user set this value by hand (provenance ``user``): scans leave it alone."""
+    display: str | None = None
+    """The field's display format (``"bytes"``, ``"duration"``), if any."""
 
 
 @dataclass(frozen=True)
@@ -259,6 +261,7 @@ def _fields(
             f.nullable,
             f.spec.editable,
             f.name in edited,
+            f.spec.display,
         )
         for i, f in enumerate(shown)
     )
@@ -362,7 +365,10 @@ def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Previ
             select(*(table.table.c[f.name] for f in shown)).where(table.table.c.id == entity_id)
         ).first()
         if values is not None:
-            facts = tuple(FieldRow(f.name, f.spec.label, values[i]) for i, f in enumerate(shown))
+            facts = tuple(
+                FieldRow(f.name, f.spec.label, values[i], display=f.spec.display)
+                for i, f in enumerate(shown)
+            )
     primary = next((r for r in entity.roles if r.primary), None)
     file = None
     if primary is not None:

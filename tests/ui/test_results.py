@@ -229,7 +229,7 @@ def test_list_columns(session: KeepSession) -> None:
         ("tags", "Tags", False),  # the item's own tags, next to the title; hidden by default
         ("extension", "Extension", False),
         ("folder", "Folder", False),
-        ("size", "Size (bytes)", True),  # right-aligned
+        ("size", "Size", True),  # right-aligned
         ("modified", "Modified", False),
     ]  # then the card fields, in declaration order
     everything = [c.key for c in list_columns(session.schema, ())]

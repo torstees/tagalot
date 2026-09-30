@@ -136,9 +136,11 @@ class EditableValue(QWidget):
         editable: bool = False,
         edited: bool = False,
         label: str = "value",
+        display: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.display = display
         self.value = value
         self.kind = kind
         self.editable = editable
@@ -186,7 +188,7 @@ class EditableValue(QWidget):
     def show_value(self, value: Any, edited: bool) -> None:
         """Show ``value`` (after a save, or a reload), leaving edit mode."""
         self.value = value
-        self.label.setText(display_value(value))
+        self.label.setText(display_value(value, self.display))
         self.stack.updateGeometry()
         self.marker.setVisible(edited)
         if self.check is not None:
@@ -230,7 +232,7 @@ class EditableValue(QWidget):
             value = value.astimezone(UTC)  # local time, compared as stored
         self.stack.setCurrentWidget(self.label)
         if value != self.value:
-            self.label.setText(display_value(value))  # shown at once; the page reloads it
+            self.label.setText(display_value(value, self.display))  # at once; the page reloads
             self.committed.emit(value)
 
     def _toggled(self, on: bool) -> None:

@@ -35,7 +35,7 @@ class File(Entity):
     double_click = "open_file"
     extension: str = field("Extension", card=True, search="choice", editable=False)
     folder: str = field("Folder", card=True, search="text", editable=False)
-    size: int | None = field("Size (bytes)", card=True, search="range", editable=False)
+    size: int | None = field("Size", card=True, search="range", editable=False, display="bytes")
     modified: datetime | None = field("Modified", card=True, search="range", editable=False)
     roles = [role("file", kinds={"any"}, primary=True, thumbnail=True)]
 

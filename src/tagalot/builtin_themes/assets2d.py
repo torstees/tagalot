@@ -76,7 +76,7 @@ class _Asset(Entity):
     artist: str | None = field("Artist", card=True, search="choice", editable=False)
     extension: str = field("Extension", card=True, search="choice", editable=False)
     folder: str = field("Folder", search="text", editable=False)
-    size: int | None = field("Size (bytes)", card=True, search="range", editable=False)
+    size: int | None = field("Size", card=True, search="range", editable=False, display="bytes")
     modified: datetime | None = field("Modified", search="range", editable=False)
 
 

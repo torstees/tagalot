@@ -150,7 +150,7 @@ class CardDelegate(QStyledItemDelegate):
             painter.setPen(muted)
             for key, _label in grid.card_lines.get(found[0].type, ()):
                 line.translate(0, metrics.height())
-                text = display_value(found[1].get(key))
+                text = display_value(found[1].get(key), grid.displays.get(key))
                 painter.drawText(
                     line,
                     Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
@@ -180,7 +180,7 @@ class CardDelegate(QStyledItemDelegate):
             return False
         lines = [found[0].title]
         for key, label in self.grid.card_lines.get(found[0].type, ()):
-            value = display_value(found[1].get(key))
+            value = display_value(found[1].get(key), self.grid.displays.get(key))
             if value:
                 lines.append(f"{label}: {value}")
         QToolTip.showText(event.globalPos(), "\n".join(lines), view)
@@ -210,6 +210,8 @@ class ResultGrid(QListView):
         self.loader = loader
         self.thumbnail_size = thumbnail_size
         self.card_lines: dict[str, list[tuple[str, str]]] = {}
+        self.displays: dict[str, str] = {}
+        """Display formats of the card lines' fields, by field name."""
         self.drop_rows: set[int] = set()
         self.setViewMode(QListView.ViewMode.ListMode)
         self.setFlow(QListView.Flow.LeftToRight)

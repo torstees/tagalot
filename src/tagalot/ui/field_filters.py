@@ -60,21 +60,27 @@ class FilterField:
     kind: str
     """``"text"``, ``"range"``, or ``"choice"``: the field's ``search``."""
     type: type = str
+    display: str | None = None
+    """The field's display format, for chips and choices."""
 
 
-def describe(filter_: FieldFilter, label: str) -> str:
-    """How a filter reads on its chip."""
+def describe(filter_: FieldFilter, label: str, display: str | None = None) -> str:
+    """How a filter reads on its chip (numbers in the field's display format)."""
+
+    def show(value: Any) -> str:
+        return display_value(value, display)
+
     match filter_:
         case ChoiceFilter(values=values):
-            shown = [display_value(v) for v in values[:CHOICES_SHOWN]]
+            shown = [show(v) for v in values[:CHOICES_SHOWN]]
             more = len(values) - CHOICES_SHOWN
             return f"{label}: {', '.join(shown)}" + (f" +{more}" if more > 0 else "")
         case RangeFilter(low=low, high=high):
             if low is not None and high is not None:
-                return f"{label}: {display_value(low)}{DASH}{display_value(high)}"
+                return f"{label}: {show(low)}{DASH}{show(high)}"
             if low is not None:
-                return f"{label} ≥ {display_value(low)}"
-            return f"{label} ≤ {display_value(high)}"
+                return f"{label} ≥ {show(low)}"
+            return f"{label} ≤ {show(high)}"
         case TextFilter(text=text, match=match):
             how = "starts with" if match is TextMatch.STARTS_WITH else "contains"
             return f'{label} {how} "{text}"'
@@ -92,7 +98,7 @@ class FieldChip(QFrame):
         self.field = field
         self.filter = filter_
         self.setObjectName("field_chip")
-        self.label = QLabel(describe(filter_, field.label))
+        self.label = QLabel(describe(filter_, field.label, field.display))
         self.close_button = QToolButton()
         self.close_button.setText(CLOSE_MARK)
         self.close_button.setAutoRaise(True)
@@ -171,8 +177,9 @@ class FieldFilterPopup(QFrame):
                 self.low.setText(editor_text(current.low))
                 self.high.setText(editor_text(current.high))
             row = QHBoxLayout()
+            unit = {"bytes": " number of bytes", "duration": " number of seconds"}
             for label, box in (("From", self.low), ("To", self.high)):
-                box.setPlaceholderText("any")
+                box.setPlaceholderText("any" + unit.get(field.display or "", ""))
                 box.returnPressed.connect(self._apply)
                 row.addWidget(QLabel(label))
                 row.addWidget(box)
@@ -215,9 +222,9 @@ class FieldFilterPopup(QFrame):
         seen = set()
         for value, count in counts:
             seen.add(value)
-            self._add_choice(value, f"{display_value(value)}  ({count:,})")
+            self._add_choice(value, f"{display_value(value, self.field.display)}  ({count:,})")
         for value in sorted(self._chosen - seen, key=str):
-            self._add_choice(value, f"{display_value(value)}  (0)")
+            self._add_choice(value, f"{display_value(value, self.field.display)}  (0)")
         if values.count() == 0:
             values.addItem("No values among these results")
         # As tall as its rows (up to ten, then it scrolls), not a fixed box.

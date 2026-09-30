@@ -3,9 +3,10 @@
 import pytest
 from pytestqt.qtbot import QtBot
 
+from tagalot.core.formats import format_bytes
 from tagalot.core.session import KeepSession
 from tagalot.core.thumbnails.cache import CacheStats
-from tagalot.ui.main_window import MainWindow, format_bytes
+from tagalot.ui.main_window import MainWindow
 from tests.ui.test_grid import _close, _grid_page, _row, _window, keep_dir, session
 
 pytestmark = pytest.mark.gui
@@ -21,7 +22,7 @@ __all__ = ["keep_dir", "session"]  # fixtures
         (1024, "1.0 KB"),
         (980 * 1024, "980 KB"),
         (int(12.4 * 1024 * 1024), "12.4 MB"),
-        (3 * 1024**4, "3,072 GB"),
+        (3 * 1024**4, "3.0 TB"),
     ],
 )
 def test_format_bytes(size: int, text: str) -> None:

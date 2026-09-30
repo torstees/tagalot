@@ -26,6 +26,9 @@ FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 SearchKind = Literal["text", "range", "choice"]
 SEARCH_KINDS: frozenset[str] = frozenset(typing.get_args(SearchKind))
 
+DISPLAY_FORMATS: frozenset[str] = frozenset({"bytes", "duration"})
+"""How a number field may be shown (:func:`field`'s ``display``)."""
+
 
 class Kind(enum.StrEnum):
     """Resource kinds a :func:`role` can accept; the core classifies files by extension."""
@@ -75,6 +78,8 @@ class FieldSpec:
     editable: bool = True
     detail: bool = True
     """Show in the detail page's fields section."""
+    display: str | None = None
+    """How a number reads: ``"bytes"`` (3.0 MB) or ``"duration"`` (seconds as 3:25)."""
     name: str = ""
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -88,18 +93,27 @@ def field(
     search: SearchKind | None = None,
     editable: bool = True,
     detail: bool = True,
+    display: str | None = None,
 ) -> Any:
     """Declare a field: ``year: int | None = field("Year", card=True, search="range")``.
 
-    Typed ``Any`` so the declaration type-checks against its annotation.
+    ``display`` formats a number field for people: ``"bytes"`` shows a size as ``3.0 MB``,
+    ``"duration"`` shows seconds as ``3:25``. Sorting, filtering, and editing still use the
+    number. Typed ``Any`` so the declaration type-checks against its annotation.
     """
+    if display is not None and display not in DISPLAY_FORMATS:
+        raise ThemeDeclarationError(
+            f"display={display!r} is not one of {', '.join(sorted(DISPLAY_FORMATS))}"
+        )
     if search is not None and search not in SEARCH_KINDS:
         raise ThemeDeclarationError(
             f"search={search!r} is not one of {', '.join(sorted(SEARCH_KINDS))}"
         )
     if not label.strip():
         raise ThemeDeclarationError("a field needs a label")
-    return FieldSpec(label, card=card, search=search, editable=editable, detail=detail)
+    return FieldSpec(
+        label, card=card, search=search, editable=editable, detail=detail, display=display
+    )
 
 
 @dataclass(frozen=True)
@@ -848,6 +862,7 @@ class Theme:
 
 __all__ = [
     "API_VERSION",
+    "DISPLAY_FORMATS",
     "FIELD_TYPES",
     "FOLDER_IMAGE_EXTENSIONS",
     "FOLDER_IMAGE_NAMES",

@@ -5,12 +5,14 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.search_spec import ChoiceFilter, RangeFilter, TextFilter, TextMatch
+from tagalot.core.session import KeepSession
+from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import FieldFilterPopup, FilterField, describe
 from tagalot.ui.filter_bar import FilterBar
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
-from tests.ui.test_contents_search import session, window
+from tests.ui.test_contents_search import _open, session, window
 from tests.ui.test_within import _search
 
 pytestmark = pytest.mark.gui
@@ -67,7 +69,7 @@ def test_the_field_menu_lists_fields_every_type_has(qtbot: QtBot, window: MainWi
         "Artist",
         "Extension",
         "Folder",
-        "Size (bytes)",
+        "Size",
         "Modified",
         "Width",
         "Height",
@@ -150,3 +152,30 @@ def test_a_filter_on_a_field_the_scope_lacks_is_kept_but_not_applied(qtbot: QtBo
     assert bar.filters().fields == ()
     bar.set_filter_fields([width, folder])
     assert bar.filters().fields == (RangeFilter("width", 500, None),)
+
+
+# --- display formats (#184) ---
+
+
+def test_sizes_read_as_sizes_everywhere(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _search(qtbot, window, IMAGES, "9 items")
+    qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
+    column = [c.key for c in page.model.columns].index("size")
+    assert page.model.columns[column].label == "Size"
+    cells = [str(page.model.index(r, column).data()) for r in range(page.model.rowCount())]
+    assert all(c.endswith(("KB", "MB", "bytes")) for c in cells), cells
+
+    # A range chip shows its bound as a size; sorting and filtering use the number.
+    popup = _popup(qtbot, page, "size")
+    assert popup.low is not None
+    assert popup.low.placeholderText() == "any number of bytes"  # typed as a number
+    popup.close()
+    page.filter_bar.set_field_filter("size", RangeFilter("size", 2048, None))
+    assert _chip_texts(page) == ["Size \u2265 2.0 KB"]
+
+    detail = _open(qtbot, window, session, "forest.png")
+    size = detail.findChild(EditableValue, "field_size")
+    assert isinstance(size, EditableValue)
+    assert size.label.text().endswith(("KB", "MB"))

@@ -28,6 +28,7 @@ from PySide6.QtCore import (
 )
 from sqlalchemy import ColumnElement, Connection
 
+from tagalot.core.formats import format_value
 from tagalot.core.search import SearchError, SearchHit, count_matches, run_search
 from tagalot.core.search_fields import field_values, search_fields
 from tagalot.core.search_spec import SearchSpec, SortKey
@@ -57,6 +58,8 @@ class ResultColumn:
     label: str
     sortable: bool = True
     numeric: bool = False
+    display: str | None = None
+    """The field's display format (``"bytes"``, ``"duration"``), if any."""
 
 
 TAGS = "tags"
@@ -99,8 +102,11 @@ def row_values(
     return values
 
 
-def display_value(value: object) -> str:
-    """How a field value reads in a list cell."""
+def display_value(value: object, display: str | None = None) -> str:
+    """How a field value reads in a list cell (in the field's display format, if any)."""
+    formatted = format_value(value, display)
+    if formatted is not None:
+        return formatted
     match value:
         case None:
             return ""
@@ -129,7 +135,7 @@ def cell_text(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) ->
         return hit.title
     if column.key == "type":
         return type_labels.get(hit.type, hit.type)
-    return display_value(values.get(column.key))
+    return display_value(values.get(column.key), column.display)
 
 
 class PreviewModel(QAbstractTableModel):

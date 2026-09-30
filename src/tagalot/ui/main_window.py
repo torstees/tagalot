@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import select
 
+from tagalot.core.formats import format_bytes
 from tagalot.core.models import SavedSearch
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
@@ -873,18 +874,6 @@ class MainWindow(QMainWindow):
                 self.thumbnails.clear()
                 self.thumbnails.wait()
             self.closed.emit()
-
-
-def format_bytes(size: int) -> str:
-    """A size for people: ``"980 KB"``, ``"12.4 MB"``."""
-    value = float(size)
-    for unit in ("bytes", "KB", "MB", "GB"):
-        if value < 1024 or unit == "GB":
-            break
-        value /= 1024
-    if unit == "bytes":
-        return f"{size:,} bytes"
-    return f"{value:,.0f} {unit}" if value >= 100 else f"{value:,.1f} {unit}"
 
 
 def scan_summary(reports: list[ScanReport]) -> str:
