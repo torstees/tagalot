@@ -173,7 +173,7 @@ def test_selecting_and_opening_in_the_tree(qtbot: QtBot, window: MainWindow) -> 
     qtbot.waitUntil(lambda: page.preview.title.text().startswith("forest.png"), timeout=5000)
 
     labels = [a.text() for a in page.item_menu(page.tree_model.hit(forest)).actions()]  # type: ignore[arg-type]
-    assert labels == ["Open", "Show contents in search"]
+    assert labels[:2] == ["Open", "Show contents in search"]
     page.tree.activated.emit(forest)
     detail = window.stack.currentWidget()
     assert isinstance(detail, DetailPage)

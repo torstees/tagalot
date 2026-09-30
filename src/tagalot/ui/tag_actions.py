@@ -12,6 +12,7 @@ import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.fields import FieldEditError
+from tagalot.core.reextract import ReextractReport
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
@@ -184,6 +185,25 @@ class TagActions(QObject):
             lambda: self.session.tags.edit_extra(entity_id, name, text, new=new),
             lambda change: f"{change.label}.",
         )
+
+    def reread(self, entity_ids: Iterable[int], replace_edits: bool) -> None:
+        """Read these items' files again now (keeping, or replacing, what the user edited);
+        one undo step."""
+        ids = list(entity_ids)
+        if not ids:
+            return
+
+        def describe(report: ReextractReport) -> str:
+            items = items_text(len(ids))
+            text = f"Re-read {items} from their files"
+            text += ", replacing your edits." if replace_edits else "."
+            if report.offline:
+                text += f" {items_text(report.offline)} couldn't be reached (offline or missing)."
+            if report.errors:
+                text += f" {len(report.errors)} files couldn't be read."
+            return text
+
+        self._run(lambda: self.session.reextract(ids, replace_edits=replace_edits), describe)
 
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")

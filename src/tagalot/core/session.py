@@ -6,6 +6,7 @@ worker. It never imports Qt.
 
 import logging
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from sqlalchemy import Engine
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, open_keep
+from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.scanjob import Progress, ScanReport, scan_root
 from tagalot.core.settings import Settings
 from tagalot.core.tag_service import TagService
@@ -140,6 +142,28 @@ class KeepSession:
                 )
             )
         return reports
+
+    def reextract(
+        self, entity_ids: Iterable[int], *, replace_edits: bool = False
+    ) -> ReextractReport:
+        """Read these entities' files again, now; one undo step if anything changed. With
+        ``replace_edits``, the files' values replace what the user edited. Runs in a worker."""
+        report = reextract(
+            self.writer,
+            self.reader,
+            self.schema,
+            self.theme,
+            self.keep.config.roots,
+            self.root_path,
+            entity_ids,
+            replace_edits=replace_edits,
+            theme_options=self.keep.config.theme_options,
+        )
+        change = report.change
+        if change.before != change.after:
+            self.tags.record(change)
+        self.thumbnails.forget_failures()  # files may be readable again
+        return report
 
     def close(self) -> None:
         """Finish queued writes and release the database. Safe to call twice, and from two

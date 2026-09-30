@@ -241,6 +241,37 @@ def _record_options(root_id: str, fingerprint: str, conn: Connection) -> None:
 # --- Ingest (DESIGN.md §6 step 5) ---
 
 
+def ingest_pending(
+    writer: DbWriter,
+    reader: Engine,
+    root: RootConfig,
+    path: str,
+    *,
+    theme: type[Theme],
+    schema: ThemeSchema,
+    theme_options: Mapping[str, Any] | None = None,
+    when: datetime | None = None,
+    progress: Progress | None = None,
+) -> ScanReport:
+    """Ingest the root's pending resources now, without walking it (re-reading chosen files,
+    DESIGN.md §6). The root's theme options apply as in a scan."""
+    report = ScanReport(root.id, online=True)
+    options = effective_options(theme, theme_options or {}, root.options)
+    _ingest_pending(
+        writer,
+        reader,
+        root,
+        path,
+        theme,
+        schema,
+        when or datetime.now(UTC),
+        report,
+        progress or (lambda message: None),
+        options.values,
+    )
+    return report
+
+
 def _ingest_pending(
     writer: DbWriter,
     reader: Engine,

@@ -28,6 +28,7 @@ from tagalot.core.fields import (
     restore_field,
 )
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
+from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
@@ -76,7 +77,7 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-Step = TagChange | FieldChange | ExtraChange
+Step = TagChange | FieldChange | ExtraChange | ReextractChange
 """One entry in the undo history."""
 
 
@@ -210,6 +211,10 @@ class TagService:
             self._push(change)
         return change
 
+    def record(self, step: Step) -> None:
+        """Add a step done elsewhere (a re-read of files) to the history."""
+        self._push(step)
+
     # --- history ---
 
     @property
@@ -258,6 +263,9 @@ class TagService:
         elif isinstance(step, ExtraChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_extra(conn, schema, step, forward=forward))
+        elif isinstance(step, ReextractChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_entities(conn, schema, step, forward=forward))
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 

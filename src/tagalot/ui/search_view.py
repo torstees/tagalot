@@ -63,6 +63,11 @@ from tagalot.ui.result_tree import ResultTree, ResultTreeModel
 from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
+REREAD_TIP = (
+    "Read the item's details from its file again (for example after changing the file); "
+    "what you edited stays"
+)
+
 logger = logging.getLogger(__name__)
 
 LAYOUTS = ("list", "grid", "tree")
@@ -71,6 +76,16 @@ PREVIEW_DELAY_MS = 120
 """How long the selection must settle before the preview strip updates."""
 
 __all__ = ["SearchPage", "count_text", "list_columns"]
+
+
+def add_reread_actions(menu: QMenu, reread: Callable[[bool], None]) -> None:
+    """Add "Re-read from file" and its replacing variant to ``menu``; ``reread(replace)``."""
+    keep = menu.addAction("Re-read from file")
+    keep.setToolTip(REREAD_TIP)
+    keep.triggered.connect(lambda: reread(False))
+    replace = menu.addAction("Re-read from file, replacing my edits\u2026")
+    replace.setToolTip("Read the details from the file again, and use them instead of your edits")
+    replace.triggered.connect(lambda: reread(True))
 
 
 class SearchPage(QWidget):
@@ -100,6 +115,8 @@ class SearchPage(QWidget):
     """Ctrl+wheel over the grid: +1 for bigger thumbnails, -1 for smaller."""
     open_requested = Signal(int)
     """An item was double-clicked (or Enter pressed on it): its entity id."""
+    reread_requested = Signal(list, bool)
+    """Read these entities' files again; true: replacing what the user edited."""
 
     def __init__(
         self,
@@ -339,7 +356,17 @@ class SearchPage(QWidget):
             f"List only what {hit.title} contains" if holds else "This item contains nothing"
         )
         within.triggered.connect(lambda: self.show_within(hit.id, hit.title, hit.type))
+        menu.addSeparator()
+        add_reread_actions(menu, lambda replace: self._reread(hit, replace))
         return menu
+
+    def _reread(self, hit: SearchHit, replace: bool) -> None:
+        """Re-read the selection if the item is in it, else just the item."""
+
+        def chosen(ids: list[int]) -> None:
+            self.reread_requested.emit(ids if hit.id in ids else [hit.id], replace)
+
+        self.selected_entity_ids(chosen)
 
     def _table_menu(self, point: QPoint) -> None:
         hit = self.model.hit(self.table.indexAt(point).row())
