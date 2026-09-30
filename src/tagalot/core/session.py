@@ -102,7 +102,7 @@ class KeepSession:
             writer=writer,
             reader=reader,
             tag_cache=cache,
-            tags=TagService(writer, cache),
+            tags=TagService(writer, cache, opened.schema),
             settings=settings,
             catalog=catalog,
             thumbnails=thumbnails,

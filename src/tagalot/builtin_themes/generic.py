@@ -28,14 +28,15 @@ from tagalot.themes.api import (
 
 
 class File(Entity):
-    """Any file under a root."""
+    """Any file under a root. Its fields come from the file, so only its name can be edited
+    by hand (which never renames the file)."""
 
     title_label = "Name"
     double_click = "open_file"
-    extension: str = field("Extension", card=True, search="choice")
-    folder: str = field("Folder", card=True, search="text")
-    size: int | None = field("Size (bytes)", card=True, search="range")
-    modified: datetime | None = field("Modified", card=True, search="range")
+    extension: str = field("Extension", card=True, search="choice", editable=False)
+    folder: str = field("Folder", card=True, search="text", editable=False)
+    size: int | None = field("Size (bytes)", card=True, search="range", editable=False)
+    modified: datetime | None = field("Modified", card=True, search="range", editable=False)
     roles = [role("file", kinds={"any"}, primary=True, thumbnail=True)]
 
 

@@ -68,23 +68,24 @@ class Artist(Entity):
 
 
 class _Asset(Entity):
-    """Fields every asset file has. Not a type of its own."""
+    """Fields every asset file has. Not a type of its own. They come from the file and
+    its place, so they can't be edited by hand (a font's family and style can)."""
 
     title_label = "Name"
     double_click = "open_file"
-    artist: str | None = field("Artist", card=True, search="choice")
-    extension: str = field("Extension", card=True, search="choice")
-    folder: str = field("Folder", search="text")
-    size: int | None = field("Size (bytes)", card=True, search="range")
-    modified: datetime | None = field("Modified", search="range")
+    artist: str | None = field("Artist", card=True, search="choice", editable=False)
+    extension: str = field("Extension", card=True, search="choice", editable=False)
+    folder: str = field("Folder", search="text", editable=False)
+    size: int | None = field("Size (bytes)", card=True, search="range", editable=False)
+    modified: datetime | None = field("Modified", search="range", editable=False)
 
 
 class Image(_Asset):
     """A picture: PNG, JPEG, PSD, and the other image formats."""
 
-    width: int | None = field("Width", search="range")
-    height: int | None = field("Height", search="range")
-    dimensions: str | None = field("Dimensions", card=True)
+    width: int | None = field("Width", search="range", editable=False)
+    height: int | None = field("Height", search="range", editable=False)
+    dimensions: str | None = field("Dimensions", card=True, editable=False)
     roles = [role("file", kinds={"image"}, primary=True, thumbnail=True)]
     card_lines = ("dimensions",)
 
@@ -101,7 +102,7 @@ class Font(_Asset):
 class Archive(_Asset):
     """A zip, 7z, or rar archive; its thumbnail is the best image inside."""
 
-    images: int | None = field("Images inside", card=True, search="range")
+    images: int | None = field("Images inside", card=True, search="range", editable=False)
     roles = [role("file", kinds={"archive"}, primary=True, thumbnail=True)]
     card_lines = ("images",)
 

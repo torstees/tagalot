@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
+from tagalot.core.fields import FieldEditError
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
@@ -167,6 +168,15 @@ class TagActions(QObject):
             ),
         )
 
+    # --- field edits (detail pages, §12) ---
+
+    def edit_field(self, entity_id: int, name: str, value: object) -> None:
+        """Set a field (or ``"title"``) by hand; one undo step."""
+        self._run(
+            lambda: self.session.tags.edit_field(entity_id, name, value),
+            lambda change: f"{change.label}.",
+        )
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 
@@ -200,7 +210,7 @@ class TagActions(QObject):
             if not shiboken6.isValid(self):
                 return
             self.busy -= 1
-            if isinstance(error, TagError):
+            if isinstance(error, TagError | FieldEditError):
                 self.message.emit(str(error))
             else:
                 logger.error("Tagging failed", exc_info=error)

@@ -360,6 +360,7 @@ class MainWindow(QMainWindow):
                 make_contents=self._contents_search,
             )
             detail.open_entity.connect(self.open_entity)
+            detail.field_edited.connect(self.tag_actions.edit_field)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
@@ -624,6 +625,7 @@ class MainWindow(QMainWindow):
 
     def _tags_changed(self, message: str) -> None:
         self.statusBar().showMessage(message)
+        self._refresh_details()  # a field edit (or its undo) shows on the page
         self._schedule_summary()
         for page in self.search_pages():
             page.refresh()  # tag filters may now match differently
@@ -636,6 +638,7 @@ class MainWindow(QMainWindow):
     def _tag_message(self, message: str) -> None:
         self.statusBar().showMessage(message)
         self._update_undo_actions()
+        self._refresh_details()  # a refused edit: show the stored value again
 
     def _update_undo_actions(self) -> None:
         for action, verb, label in (
@@ -647,6 +650,11 @@ class MainWindow(QMainWindow):
         for page in self._pages.values():
             if isinstance(page, TagManagerPage):
                 page.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
+
+    def _refresh_details(self) -> None:
+        for page in self._pages.values():
+            if isinstance(page, DetailPage):
+                page.refresh()
 
     def search_pages(self) -> list[SearchPage]:
         """The search pages created so far, including those inside detail pages."""
