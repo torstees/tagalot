@@ -44,6 +44,7 @@ from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.detail_view import DetailPage
+from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
@@ -145,6 +146,8 @@ class MainWindow(QMainWindow):
 
         # Edit: undo and redo tagging and tag operations (DESIGN.md §7).
         self.tag_actions = TagActions(session, self)
+        self.files = FileOpener(session, None, self)
+        self.files.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
         self.undo_action = QAction("Undo", self)
@@ -364,6 +367,8 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
+            detail.file_requested.connect(self.files.open_entity)
+            detail.resource_requested.connect(self.files.open_resource)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
@@ -420,6 +425,7 @@ class MainWindow(QMainWindow):
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
         search.reread_requested.connect(self.reread)
+        search.file_requested.connect(self.files.open_entity)
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
             lambda mode: self._save_view_state("layouts", state_key, mode)
