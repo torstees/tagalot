@@ -17,7 +17,7 @@ a worker; :class:`GroupedResults` shows its result.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
-from PySide6.QtCore import QItemSelectionModel, Qt, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -92,6 +92,8 @@ class TypeSection(QWidget):
     toggled = Signal(str, bool)
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
+    open_requested = Signal(int)
+    """A row was double-clicked (or Enter pressed): the entity id."""
 
     def __init__(
         self,
@@ -125,6 +127,7 @@ class TypeSection(QWidget):
         set_column_widths(self.table, group.columns)
         self.table.set_columns(group.columns, hidden_columns)
         self.table.column_toggled.connect(self.column_toggled)
+        self.table.activated.connect(self._activated)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         rows_height = sum(self.table.rowHeight(r) for r in range(self.model.rowCount()))
@@ -157,6 +160,11 @@ class TypeSection(QWidget):
         layout.addWidget(self.body)
         self._toggled(expanded, notify=False)
 
+    def _activated(self, index: QModelIndex) -> None:
+        hit = self.model.hit(index.row())
+        if hit is not None:
+            self.open_requested.emit(hit.id)
+
     def _tags_dropped(self, rows: list[int], tag_ids: list[int]) -> None:
         ids = [hit.id for r in rows if (hit := self.model.hit(r)) is not None]
         if ids:
@@ -183,6 +191,7 @@ class GroupedResults(QScrollArea):
     show_all = Signal(str)
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
+    open_requested = Signal(int)
     selection_changed = Signal()
     """Any section's selection changed (or the sections were replaced)."""
 
@@ -219,6 +228,7 @@ class GroupedResults(QScrollArea):
             section.show_all.connect(self.show_all)
             section.tags_dropped.connect(self.tags_dropped)
             section.column_toggled.connect(self.column_toggled)
+            section.open_requested.connect(self.open_requested)
             section.table.selectionModel().selectionChanged.connect(self.selection_changed)
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)

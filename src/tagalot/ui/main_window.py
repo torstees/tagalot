@@ -41,6 +41,7 @@ from tagalot.core.tags import (
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
+from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
@@ -260,6 +261,7 @@ class MainWindow(QMainWindow):
                 thumbnail_size=self.thumbnail_size,
             )
             search.size_menu = self.size_menu
+            search.open_requested.connect(self.open_entity)
             search.zoom_requested.connect(self.zoom)
             search.layout_changed.connect(
                 lambda mode: self._save_view_state("layouts", state_key, mode)
@@ -273,6 +275,10 @@ class MainWindow(QMainWindow):
                 lambda keys: self._save_hidden_columns(state_key, keys)
             )
             return search
+        if target.kind == "entity":
+            detail = DetailPage(session, int(target.key), thumbnails=self.thumbnails)
+            detail.open_entity.connect(self.open_entity)
+            return detail
         if target.kind == "tags":
             manager = TagManagerPage(session)
             manager.add_requested.connect(self.tag_actions.add_tag)
@@ -293,6 +299,15 @@ class MainWindow(QMainWindow):
         page.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return page
 
+    def open_entity(self, entity_id: int) -> None:
+        """Show an entity's detail page (double-click, Enter, or a link on another page)."""
+        self.show_target(NavTarget("entity", key=str(entity_id)))
+
+    def current_items_page(self) -> SearchPage | DetailPage | None:
+        """The current page if it has items to tag: a search, or a detail page."""
+        page = self.stack.currentWidget()
+        return page if isinstance(page, SearchPage | DetailPage) else None
+
     # --- tagging ---
 
     def apply_tags(self, entity_ids: list[int], tag_ids: list[int]) -> None:
@@ -302,8 +317,8 @@ class MainWindow(QMainWindow):
     def tag_selection(self, tag_ids: list[int], remove: bool = False) -> None:
         """Apply (or remove) tags on the current page's selected items (Enter or
         Shift+Enter in the Tags panel)."""
-        page = self.stack.currentWidget()
-        if not isinstance(page, SearchPage):
+        page = self.current_items_page()
+        if page is None:
             self.statusBar().showMessage("Open a search to tag its items.")
             return
         names = self.tag_names(tag_ids)
@@ -327,8 +342,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(str(e))
             return
         path = repr(PATH_SEPARATOR.join(names))
-        page = self.stack.currentWidget()
-        if isinstance(page, SearchPage):
+        page = self.current_items_page()
+        if page is not None:
             page.selected_entity_ids(lambda ids: self.tag_actions.create(names, ids, path))
         else:
             self.tag_actions.create(names, [], path)
@@ -428,10 +443,10 @@ class MainWindow(QMainWindow):
         """Count, in a worker, which tags the current page's selected items carry, and
         show it in the Tags panel."""
         session = self.session
-        page = self.stack.currentWidget()
+        page = self.current_items_page()
         self._summary_generation += 1
         generation = self._summary_generation
-        if session is None or not isinstance(page, SearchPage):
+        if session is None or page is None:
             self.tag_panel.set_selection(0, {})
             return
 
@@ -640,6 +655,9 @@ class MainWindow(QMainWindow):
         self.busy.setVisible(False)
         self.statusBar().showMessage(scan_summary(reports))
         self.thumbnails.clear()  # files may have changed
+        for detail in self._pages.values():
+            if isinstance(detail, DetailPage):
+                detail.refresh()
         for page in self.search_pages():
             page.refresh()
 

@@ -103,6 +103,14 @@ class ThumbnailResolver:
         with self.reader.connect() as conn:
             return _Resolution(self, conn).resolve(entity_id)
 
+    def resource_thumbnail(self, resource_id: int) -> Thumbnail | None:
+        """The thumbnail of one resource (a detail page's gallery), made and cached if
+        needed; ``None`` if it has no picture. Does I/O: call it from a worker."""
+        with self.reader.connect() as conn:
+            resolution = _Resolution(self, conn)
+            resource = resolution.resource(resource_id)
+            return None if resource is None else resolution.picture(resource)
+
     # --- used by _Resolution ---
 
     def chain(self, type_id: str) -> list[ThumbnailProvider]:
@@ -174,9 +182,9 @@ class _Resolution:
         entity = EntityRef(entity_id, row.type)
         memo: int | None = row.thumb_resource_id
         if memo is not None:
-            resource = self._resource(memo)
+            resource = self.resource(memo)
             if resource is not None:
-                picture = self._picture(resource)
+                picture = self.picture(resource)
                 if picture is not None:
                     return self._result(entity, picture, None, resource.id)
                 if self._status.get(memo) == ResourceStatus.OFFLINE:
@@ -197,7 +205,7 @@ class _Resolution:
                     if candidate.id in tried:
                         continue
                     tried.add(candidate.id)
-                    picture = self._picture(candidate)
+                    picture = self.picture(candidate)
                     if picture is not None:
                         return picture, None, candidate.id
             except Exception as e:  # a theme's provider must not break thumbnails
@@ -216,7 +224,7 @@ class _Resolution:
 
     # --- pictures ---
 
-    def _picture(self, resource: ResourceInfo) -> Thumbnail | None:
+    def picture(self, resource: ResourceInfo) -> Thumbnail | None:
         """The resource's thumbnail: from the cache, else read from the file when it's
         online. ``None`` when it has no picture or can't be read."""
         renderer = renderer_for(resource)
@@ -313,11 +321,11 @@ class _Resolution:
         if entity.id in self._resolving:  # a containment cycle: don't loop
             return None
         source = self.resolve(entity.id).resource_id
-        return None if source is None else self._resource(source)
+        return None if source is None else self.resource(source)
 
     # --- resources ---
 
-    def _resource(self, resource_id: int) -> ResourceInfo | None:
+    def resource(self, resource_id: int) -> ResourceInfo | None:
         row = self.conn.execute(
             select(*_RESOURCE_COLUMNS).where(Resource.id == resource_id)
         ).first()
