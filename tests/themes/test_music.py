@@ -22,13 +22,15 @@ from tagalot.builtin_themes.music import (
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
-from tagalot.core.models import Entity, EntityContains, EntityResource
+from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.thumbnails.cache import ThumbCache
+from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
 from tagalot.themes.loader import validate_theme
-from tests.core.media_files import write_flac, write_image, write_mp3
+from tests.core.media_files import png_bytes, write_flac, write_image, write_mp3
 
 T0 = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -124,7 +126,11 @@ def library(tmp_path: Path) -> Path:
     )
     write_image(blue / "cover.jpg", (64, 64))
     # Two discs of one album, each with a track 1 called "Intro".
-    write_mp3(files / "Box Set/CD1/01 Intro.mp3", tags={**BOX, "title": "Intro"})
+    write_mp3(
+        files / "Box Set/CD1/01 Intro.mp3",
+        pictures=[(3, png_bytes((30, 30), "green"))],  # embedded front cover
+        tags={**BOX, "title": "Intro"},
+    )
     write_mp3(files / "Box Set/CD2/01 Intro.mp3", tags={**BOX, "title": "Intro"}, frames=40)
     # A compilation: no album artist, and its songs' artists differ.
     hits = {"album": "Jazz Hits"}
@@ -291,3 +297,32 @@ def test_album_folder(folder: str, album: tuple[str, int | None]) -> None:
 
 def test_normalize() -> None:
     assert normalize("So What!") == normalize("so  what") == "so what"
+
+
+def test_thumbnail_chains(env: Env, tmp_path: Path) -> None:
+    env.scan()
+    cache = ThumbCache(tmp_path / "thumbs.db")
+    resolver = ThumbnailResolver(
+        env.reader, env.writer, MusicTheme, cache, lambda _: str(env.files), 64
+    )
+
+    def source(title: str) -> str | None:
+        result = resolver.resolve(env.entity(title))
+        if result.resource_id is None:
+            return result.icon
+        with env.reader.connect() as conn:
+            return conn.scalar(select(Resource.relpath).where(Resource.id == result.resource_id))
+
+    try:
+        cover = "Miles Davis/Kind of Blue/cover.jpg"
+        intro = "Box Set/CD1/01 Intro.mp3"
+        assert source("Kind of Blue") == cover  # its folder image
+        assert source("So What") == cover  # no art of its own: its album's
+        assert source("Miles Davis") == cover  # one of its albums'
+        assert source("The Box") == intro  # no folder image: its first songs' art
+        assert source("Queen") == intro
+        assert source("Take Five") == "audio"  # no art anywhere
+        assert source("Jazz Hits") == "dir"
+        assert source("Dave Brubeck") == "entity"
+    finally:
+        cache.close()

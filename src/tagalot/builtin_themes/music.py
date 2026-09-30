@@ -13,6 +13,9 @@ Artist ⊃ Album (a folder)  ⊃ Song (one or more audio files: versions)
 - **The album's artist** is its songs' ``ALBUMARTIST`` tag, else their ``ARTIST``; when its
   songs disagree it is by "Various Artists". A song whose own artist differs from its album's
   also sits under its own artist, so an artist's page finds their songs on compilations.
+- **Thumbnails:** a song shows its embedded art, else its album's; an album its folder image
+  (``folder.jpg``, ``cover.jpg``…), else its first songs' embedded art; an artist one of its
+  albums' or songs'.
 - Tags are read with mutagen in :meth:`MusicTheme.prepare` (the scan worker); a file without
   tags is named from its file name ("01 - So What.mp3": track 1, "So What").
 """
@@ -21,7 +24,7 @@ import logging
 import os
 import posixpath
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import mutagen
@@ -29,12 +32,17 @@ import mutagen
 from tagalot.themes.api import (
     FOLDER_IMAGE_EXTENSIONS,
     KIND_EXTENSIONS,
+    EmbeddedAudioArt,
     Entity,
     EntityRef,
+    FolderImage,
+    Icon,
     IngestContext,
     Kind,
     ResourceInfo,
     Theme,
+    ThumbnailContext,
+    ThumbnailProvider,
     contains,
     field,
     kind_of,
@@ -88,12 +96,48 @@ class Song(Entity):
     card_lines = ("artist", "duration")
 
 
+class AlbumThumbnail(ThumbnailProvider):
+    """A song shows its album's thumbnail (not that of an artist it also sits under)."""
+
+    id = "music.album"
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        album = MusicTheme.type_id_of(Album)
+        for parent in ctx.parents(entity):
+            if parent.type == album:
+                found = ctx.thumbnail_of(parent)
+                if found is not None:
+                    yield found
+
+
+class ContentsThumbnail(ThumbnailProvider):
+    """An artist shows the thumbnail of one of its first albums or songs."""
+
+    id = "music.contents"
+    tried = 5
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        for child in ctx.children(entity)[: self.tried]:
+            found = ctx.thumbnail_of(child)
+            if found is not None:
+                yield found
+
+
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 1
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS)
     dirs = True
     entities = [Artist, Album, Song]
     containment = [contains(Artist, Album), contains(Album, Song), contains(Artist, Song)]
+
+    def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
+        if entity_type is Song:
+            return [EmbeddedAudioArt(), AlbumThumbnail(), Icon("audio")]
+        if entity_type is Album:
+            return [FolderImage(), EmbeddedAudioArt(), Icon("dir")]
+        if entity_type is Artist:
+            return [ContentsThumbnail(), Icon("entity")]
+        return super().thumbnail_chain(entity_type)
 
     # --- reading files (scan worker) ---
 
