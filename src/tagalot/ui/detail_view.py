@@ -57,6 +57,9 @@ HEADER_THUMBNAIL = 192
 
 GALLERY_THUMBNAIL = 128
 
+CRUMB = "\u203a"
+"""Between breadcrumbs."""
+
 
 class DetailPage(QWidget):
     """The detail page of one entity. Emits :attr:`open_entity` with an entity id when a
@@ -101,7 +104,13 @@ class DetailPage(QWidget):
         self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.type_label = QLabel()
         self.type_label.setStyleSheet("color: palette(placeholder-text);")
+        self.breadcrumbs = QLabel()
+        self.breadcrumbs.setTextFormat(Qt.TextFormat.RichText)
+        self.breadcrumbs.setWordWrap(True)
+        self.breadcrumbs.linkActivated.connect(lambda href: self.open_entity.emit(int(href)))
+        self.breadcrumbs.setVisible(False)
         titles = QVBoxLayout()
+        titles.addWidget(self.breadcrumbs)
         titles.addWidget(self.title)
         titles.addWidget(self.type_label)
         titles.addStretch(1)
@@ -163,6 +172,7 @@ class DetailPage(QWidget):
         else:
             self.title.setText(detail.title)
             self.type_label.setText(detail.type_label)
+            self._show_breadcrumbs(detail)
             for section in detail.sections:
                 if section.kind == "contents" and self._show_contents(detail):
                     continue
@@ -193,6 +203,18 @@ class DetailPage(QWidget):
             self.splitter.setStretchFactor(0, 2)
             self.splitter.setStretchFactor(1, 3)
         return True
+
+    def _show_breadcrumbs(self, detail: EntityDetail) -> None:
+        """The containers above the entity, each a link to its page."""
+        crumbs = [f'<a href="{c.id}">{html.escape(c.title)}</a>' for c in detail.breadcrumbs]
+        text = f" {CRUMB} ".join(crumbs)
+        if crumbs:
+            text += f" {CRUMB}"
+        if detail.other_parents:
+            places = "1 other" if detail.other_parents == 1 else f"{detail.other_parents} others"
+            text += f" <span style='color:gray'>(also in {places})</span>"
+        self.breadcrumbs.setText(text)
+        self.breadcrumbs.setVisible(bool(crumbs))
 
     # --- the header's thumbnail ---
 

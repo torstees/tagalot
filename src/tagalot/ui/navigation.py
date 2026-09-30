@@ -119,6 +119,31 @@ class NavigationPane(QTreeView):
                         self.setCurrentIndex(child.index())
                     return
 
+    def index_of(self, target: NavTarget | None) -> QModelIndex:
+        """The item for ``target``, or an invalid index if the pane doesn't list it."""
+        for heading in self._headings.values():
+            for row in range(heading.rowCount()):
+                child = heading.child(row)
+                if child.data(_TARGET) == target:
+                    return child.index()
+        return QModelIndex()
+
+    def show_current(self, target: NavTarget | None) -> None:
+        """Highlight ``target`` (or nothing, for a page the pane doesn't list, such as a
+        detail page) without navigating."""
+        index = self.index_of(target)
+        if index == self.currentIndex():
+            return
+        blocked = self.selectionModel().blockSignals(True)
+        try:
+            if index.isValid():
+                self.setCurrentIndex(index)
+            else:
+                self.selectionModel().clear()
+        finally:
+            self.selectionModel().blockSignals(blocked)
+        self.viewport().update()
+
     # --- folding ---
 
     def folded(self) -> set[str]:

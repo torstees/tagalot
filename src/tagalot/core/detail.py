@@ -84,6 +84,10 @@ class EntityDetail:
     type_label: str
     title: str
     sections: tuple[DetailSection, ...] = field(default_factory=tuple)
+    breadcrumbs: tuple[EntityRow, ...] = ()
+    """The containers above it, outermost first (for a song: its artist, then its album)."""
+    other_parents: int = 0
+    """How many more containers hold it directly, besides the one the crumbs follow."""
 
 
 MAX_ROWS = 200
@@ -121,17 +125,52 @@ def load_detail(
     row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
     if row is None:
         return None
+    crumbs, others = breadcrumbs(conn, entity_id)
     try:
         table = schema.by_type_id(row.type)
     except KeyError:
-        return EntityDetail(entity_id, row.type, row.type, row.title)
+        return EntityDetail(entity_id, row.type, row.type, row.title, (), crumbs, others)
     entity = table.entity
     sections: list[DetailSection] = []
     for section in detail_view_for(schema, entity).sections:
         loaded = _load_section(conn, schema, entity, entity_id, section, root_path)
         if loaded is not None:
             sections.append(loaded)
-    return EntityDetail(entity_id, row.type, entity_label(entity), row.title, tuple(sections))
+    return EntityDetail(
+        entity_id, row.type, entity_label(entity), row.title, tuple(sections), crumbs, others
+    )
+
+
+MAX_DEPTH = 64
+"""Breadcrumbs stop here (containment is shallow; this only guards against bad data)."""
+
+
+def breadcrumbs(conn: Connection, entity_id: int) -> tuple[tuple[EntityRow, ...], int]:
+    """The chain of containers above an entity, outermost first, and how many other
+    direct containers it has. Where an entity has several containers, the chain follows the
+    first by title, so the crumbs are stable."""
+    chain: list[EntityRow] = []
+    seen = {entity_id}
+    others = 0
+    current = entity_id
+    for depth in range(MAX_DEPTH):
+        parents = conn.execute(
+            select(Entity.id, Entity.type, Entity.title)
+            .join(EntityContains, EntityContains.parent_id == Entity.id)
+            .where(EntityContains.child_id == current)
+            .order_by(Entity.title, Entity.id)
+        ).all()
+        if not parents:
+            break
+        if depth == 0:
+            others = len(parents) - 1
+        parent = EntityRow(*parents[0])
+        if parent.id in seen:
+            break  # a cycle: bad data, but no endless loop
+        seen.add(parent.id)
+        chain.append(parent)
+        current = parent.id
+    return tuple(reversed(chain)), others
 
 
 def _load_section(

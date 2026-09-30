@@ -9,9 +9,10 @@ import logging
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QLabel,
     QMainWindow,
@@ -68,6 +69,13 @@ _COMING = {
 }
 
 
+MAX_HISTORY = 100
+"""Pages remembered for Back."""
+
+MAX_DETAIL_PAGES = 30
+"""Detail pages kept alive; older ones are made again when shown."""
+
+
 class MainWindow(QMainWindow):
     """The top-level window, for an open keep or (with no session) an empty placeholder.
 
@@ -99,6 +107,8 @@ class MainWindow(QMainWindow):
         self._ui_state = load_ui_state(session.keep.ui_state_path)
         self.scans = scans or ScanController()
         self._pages: dict[NavTarget, QWidget] = {}
+        self._history: list[NavTarget] = []
+        self._history_index = -1
         self.thumbnails = ThumbnailLoader(session.thumbnails, self)
         self.thumbnail_size = clamp_size(
             self._ui_state.get("thumbnail_size"),
@@ -155,11 +165,39 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.tag_selection_action)
         self._update_undo_actions()
 
+        # Back and forward through the pages shown (DESIGN.md §12).
+        self.back_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "Back", self
+        )
+        self.back_action.setShortcuts(
+            [QKeySequence(QKeySequence.StandardKey.Back), QKeySequence("Alt+Left")]
+        )
+        self.back_action.setToolTip("Back to the previous page (Alt+Left)")
+        self.back_action.triggered.connect(self.back)
+        self.forward_action = QAction(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "Forward", self
+        )
+        self.forward_action.setShortcuts(
+            [QKeySequence(QKeySequence.StandardKey.Forward), QKeySequence("Alt+Right")]
+        )
+        self.forward_action.setToolTip("Forward again (Alt+Right)")
+        self.forward_action.triggered.connect(self.forward)
+        go_menu = self.menuBar().addMenu("&Go")
+        go_menu.addAction(self.back_action)
+        go_menu.addAction(self.forward_action)
+        self._show_history()
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self)  # the mouse's back and forward buttons
+
         # Toolbar.
         toolbar = QToolBar("Main toolbar", self)
         toolbar.setObjectName("main_toolbar")
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toolbar.addAction(self.back_action)
+        toolbar.addAction(self.forward_action)
+        toolbar.addSeparator()
         toolbar.addAction(self.scan_action)
         keep_label = QLabel(f"  {session.keep.config.name}")
         keep_label.setToolTip(str(session.keep.dir))
@@ -221,15 +259,73 @@ class MainWindow(QMainWindow):
 
     # --- navigation ---
 
-    def show_target(self, target: NavTarget) -> None:
-        """Show the page for ``target``, creating it on first use."""
-        page = self._pages.get(target)
+    def show_target(self, target: NavTarget, *, record: bool = True) -> None:
+        """Show the page for ``target``, creating it on first use. ``record`` adds it to
+        the back/forward history (going back and forward doesn't)."""
+        page = self._pages.pop(target, None)
         if page is None:
             page = self._make_page(target)
-            self._pages[target] = page
             self.stack.addWidget(page)
+        self._pages[target] = page  # most recently shown last
         self.stack.setCurrentWidget(page)
+        if record:
+            self._record(target)
+        self.navigation.show_current(target)
+        self._forget_old_details()
         self._schedule_summary()
+
+    # --- back and forward ---
+
+    def back(self) -> None:
+        if self._history_index > 0:
+            self._history_index -= 1
+            self.show_target(self._history[self._history_index], record=False)
+            self._show_history()
+
+    def forward(self) -> None:
+        if self._history_index < len(self._history) - 1:
+            self._history_index += 1
+            self.show_target(self._history[self._history_index], record=False)
+            self._show_history()
+
+    def _record(self, target: NavTarget) -> None:
+        index = self._history_index
+        if 0 <= index < len(self._history) and self._history[index] == target:
+            return  # showing the current page again
+        del self._history[self._history_index + 1 :]  # a new path drops the forward pages
+        self._history.append(target)
+        del self._history[:-MAX_HISTORY]
+        self._history_index = len(self._history) - 1
+        self._show_history()
+
+    def _show_history(self) -> None:
+        self.back_action.setEnabled(self._history_index > 0)
+        self.forward_action.setEnabled(self._history_index < len(self._history) - 1)
+
+    def _forget_old_details(self) -> None:
+        """Keep the most recently shown detail pages; older ones are made again if the
+        user goes back to them."""
+        details = [t for t, p in self._pages.items() if isinstance(p, DetailPage)]
+        for target in details[:-MAX_DETAIL_PAGES]:
+            page = self._pages.pop(target)
+            self.stack.removeWidget(page)
+            page.deleteLater()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """The mouse's back and forward buttons, anywhere in this window."""
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and isinstance(event, QMouseEvent)
+            and isinstance(watched, QWidget)
+            and watched.window() is self
+        ):
+            if event.button() == Qt.MouseButton.BackButton:
+                self.back()
+                return True
+            if event.button() == Qt.MouseButton.ForwardButton:
+                self.forward()
+                return True
+        return super().eventFilter(watched, event)
 
     def _make_page(self, target: NavTarget) -> QWidget:
         session = self.session
@@ -708,6 +804,9 @@ class MainWindow(QMainWindow):
             return
         super().closeEvent(event)
         if event.isAccepted():
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
             if self.session is not None:
                 # Thumbnail jobs read the keep: let them finish before it closes.
                 self.thumbnails.clear()
