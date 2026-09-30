@@ -162,3 +162,19 @@ def test_creates_an_assets_keep(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_assets_demo(tmp_path)
     assert script.make_assets_demo(tmp_path, reset=True) == keep_dir
+
+
+def test_creates_a_music_keep(tmp_path: Path) -> None:
+    script = _script()
+    keep_dir = script.make_music_demo(tmp_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        assert session.theme.id == "music"
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            calm = count_by_type(conn, SearchSpec(include=_ids(tree, "Calm")), tree)
+    assert everything == {"music.artist": 7, "music.album": 5, "music.song": 12}
+    assert calm == {"music.song": 3}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_music_demo(tmp_path)
+    assert script.make_music_demo(tmp_path, reset=True) == keep_dir

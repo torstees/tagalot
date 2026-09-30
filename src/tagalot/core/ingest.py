@@ -268,13 +268,21 @@ class IngestSession:
 
     # --- containment (applied at flush) ---
 
+    # Within a batch the last contain/uncontain of an edge wins, so each cancels the other.
+
     def contain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
-        self._added_edges.append((parent.id, child.id))
+        edge = (parent.id, child.id)
+        self._removed_edges = [e for e in self._removed_edges if e != edge]
+        if edge not in self._added_edges:
+            self._added_edges.append(edge)
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
-        self._removed_edges.append((parent.id, child.id))
+        edge = (parent.id, child.id)
+        self._added_edges = [e for e in self._added_edges if e != edge]
+        if edge not in self._removed_edges:
+            self._removed_edges.append(edge)
 
     # --- relationships ---
 

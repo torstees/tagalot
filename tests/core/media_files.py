@@ -8,9 +8,10 @@ import io
 import re
 import struct
 import zlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from mutagen.easyid3 import EasyID3
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import APIC, ID3
 from PIL import Image, ImageFont
@@ -30,21 +31,39 @@ def write_image(path: Path, size: tuple[int, int] = (200, 100), color: str = "re
     Image.new("RGB", size, color).save(path)
 
 
-def write_mp3(path: Path, pictures: Sequence[tuple[int, bytes]] = ()) -> None:
-    """An MP3 with ID3 ``APIC`` frames of the given (picture type, image bytes)."""
+def write_mp3(
+    path: Path,
+    pictures: Sequence[tuple[int, bytes]] = (),
+    tags: Mapping[str, str] | None = None,
+    frames: int = 20,
+) -> None:
+    """An MP3 with ID3 ``APIC`` frames of the given (picture type, image bytes), and ``tags``
+    by mutagen's easy names (``title``, ``albumartist``, ``tracknumber``…). Each frame is
+    about 26 ms."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(MP3_FRAME * 20)
+    path.write_bytes(MP3_FRAME * frames)
     if pictures:
-        tags = ID3()
+        id3 = ID3()
         for i, (kind, data) in enumerate(pictures):
-            tags.add(APIC(encoding=3, mime="image/png", type=kind, desc=f"picture {i}", data=data))
-        tags.save(path)
+            id3.add(APIC(encoding=3, mime="image/png", type=kind, desc=f"picture {i}", data=data))
+        id3.save(path)
+    if tags:
+        easy = EasyID3(path) if pictures else EasyID3()
+        for name, value in tags.items():
+            easy[name] = value
+        easy.save(path)
 
 
-def write_flac(path: Path, pictures: Sequence[tuple[int, bytes]] = ()) -> None:
-    """A FLAC stream header with no audio frames, plus the given pictures."""
+def write_flac(
+    path: Path,
+    pictures: Sequence[tuple[int, bytes]] = (),
+    tags: Mapping[str, str] | None = None,
+    seconds: int = 0,
+) -> None:
+    """A FLAC stream header with no audio frames (claiming ``seconds`` of audio), plus the
+    given pictures and Vorbis comment ``tags``."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    stream = (44100 << 44) | (1 << 41) | (15 << 36)  # 44.1 kHz, 2 channels, 16 bits
+    stream = (44100 << 44) | (1 << 41) | (15 << 36) | (seconds * 44100)  # 44.1 kHz, 2 ch, 16 bit
     info = struct.pack(">HH", 4096, 4096) + bytes(6) + stream.to_bytes(8, "big") + bytes(16)
     path.write_bytes(b"fLaC" + bytes([0x80]) + len(info).to_bytes(3, "big") + info)
     if pictures:
@@ -53,6 +72,11 @@ def write_flac(path: Path, pictures: Sequence[tuple[int, bytes]] = ()) -> None:
             picture = Picture()
             picture.type, picture.mime, picture.data = kind, "image/png", data
             audio.add_picture(picture)
+        audio.save()
+    if tags:
+        audio = FLAC(path)
+        for name, value in tags.items():
+            audio[name] = value
         audio.save()
 
 
