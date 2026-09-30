@@ -11,13 +11,14 @@ from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.detail import (
     DetailSection,
     EntityDetail,
+    breadcrumbs,
     default_detail_view,
     detail_view_for,
     load_detail,
 )
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import ThemeRef, create_keep
-from tagalot.core.models import Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import EntityContains, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
@@ -192,3 +193,72 @@ def test_the_theme_view_wins(env: Env) -> None:
 def test_a_deleted_entity_has_no_page(env: Env) -> None:
     with env.reader.connect() as conn:
         assert load_detail(conn, env.schema, 999_999, lambda r: None) is None
+
+
+# --- breadcrumbs (#88) ---
+
+
+class Folder(ThemeEntity):
+    pass
+
+
+class FoldersTheme(Theme):
+    id, name = "folders", "Folders"
+    entities = [Folder]
+    containment = [contains(Folder, Folder)]
+
+
+@pytest.fixture
+def folders(tmp_path: Path) -> Iterator[tuple[Engine, DbWriter, ThemeSchema, dict[str, int]]]:
+    keep, engine = open_keep_database(create_keep(tmp_path / "f", "F", ThemeRef("folders", 1)))
+    schema = open_theme(engine, keep, FoldersTheme).schema
+    ids: dict[str, int] = {}
+
+    def fill(conn: Connection) -> None:
+        ctx = IngestSession(conn, schema)
+        refs = {n: ctx.upsert(Folder, n, title=n) for n in ["Art", "Pixel", "Sprites", "Zoo"]}
+        ctx.contain(refs["Art"], refs["Pixel"])
+        ctx.contain(refs["Pixel"], refs["Sprites"])
+        ctx.contain(refs["Zoo"], refs["Sprites"])  # a second container
+        ctx.flush()
+        ids.update({n: r.id for n, r in refs.items()})
+
+    with DbWriter(engine) as writer:
+        writer.run(fill)
+        reader = create_keep_engine(keep.db_path, read_only=True)
+        yield reader, writer, schema, ids
+        reader.dispose()
+
+
+def _crumbs(reader: Engine, entity_id: int) -> tuple[list[str], int]:
+    with reader.connect() as conn:
+        chain, others = breadcrumbs(conn, entity_id)
+    return [c.title for c in chain], others
+
+
+def test_breadcrumbs_follow_the_first_container_by_title(
+    folders: tuple[Engine, DbWriter, ThemeSchema, dict[str, int]],
+) -> None:
+    reader, _, schema, ids = folders
+    assert _crumbs(reader, ids["Sprites"]) == (["Art", "Pixel"], 1)  # also in Zoo
+    assert _crumbs(reader, ids["Pixel"]) == (["Art"], 0)
+    assert _crumbs(reader, ids["Art"]) == ([], 0)
+    with reader.connect() as conn:
+        detail = load_detail(conn, schema, ids["Sprites"], lambda r: None)
+    assert detail is not None
+    assert [c.title for c in detail.breadcrumbs] == ["Art", "Pixel"]
+    assert detail.other_parents == 1
+
+
+def test_breadcrumbs_stop_at_a_cycle(
+    folders: tuple[Engine, DbWriter, ThemeSchema, dict[str, int]],
+) -> None:
+    reader, writer, _, ids = folders
+    # The closure maintenance refuses cycles; write one straight into the table (bad data).
+    writer.run(
+        lambda conn: conn.execute(
+            insert(EntityContains).values(parent_id=ids["Sprites"], child_id=ids["Art"])
+        )
+    )
+    chain, _ = _crumbs(reader, ids["Pixel"])  # Pixel < Art < Sprites < Pixel …
+    assert chain == ["Sprites", "Art"]  # each container once, then it stops

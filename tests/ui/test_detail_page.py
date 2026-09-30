@@ -94,16 +94,18 @@ def test_a_missing_entity(qtbot: QtBot, session: KeepSession) -> None:
     _close(window)
 
 
-def test_clicking_the_highlighted_view_leaves_a_detail_page(
-    qtbot: QtBot, session: KeepSession
-) -> None:
+def test_clicking_search_all_leaves_a_detail_page(qtbot: QtBot, session: KeepSession) -> None:
     window = _window(qtbot, session)
     search = _page(window)
     _open(qtbot, window, "glacier.jpg")
     nav = window.navigation
-    index = nav.currentIndex()  # still Search all
+    assert not nav.currentIndex().isValid()  # a detail page isn't in the navigation
+    target = NavTarget("search", label="Search all")
+    index = nav.index_of(target)
+    assert index.isValid()
     rect = nav.visualRect(index)
     with qtbot.waitSignal(nav.navigate):
         QTest.mouseClick(nav.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
     assert window.stack.currentWidget() is search
+    assert nav.currentIndex() == index  # highlighted again
     _close(window)
