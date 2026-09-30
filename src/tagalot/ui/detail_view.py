@@ -55,7 +55,7 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
-from tagalot.ui.file_actions import add_file_actions, file_kind
+from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.search_view import SearchPage, add_reread_actions
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
@@ -80,10 +80,6 @@ class DetailPage(QWidget):
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
     reread_requested = Signal(list, bool)
-    file_requested = Signal(int, str)
-    """Open the item's file: (entity id, how); see :mod:`tagalot.ui.file_actions`."""
-    resource_requested = Signal(int, str)
-    """Open one of its files, from its row: (resource id, how)."""
     """Read the entity's files again; true: replacing what the user edited."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
@@ -146,6 +142,8 @@ class DetailPage(QWidget):
         more = QMenu(self.more_button)
         self._more_menu = more
         self._file_actions_added = False
+        self.file_opener: FileOpener | None = None
+        """Opens the item's files (the window sets it); without one, no file actions."""
         add_reread_actions(
             more, lambda replace: self.reread_requested.emit([self.entity_id], replace)
         )
@@ -399,19 +397,13 @@ class DetailPage(QWidget):
     def _add_file_actions(self, detail: EntityDetail) -> None:
         """Open file, Show in file manager, Open with… at the top of More (once)."""
         kind = file_kind(self.session.schema, detail.type)
-        if self._file_actions_added or kind is None:
+        if self._file_actions_added or kind is None or self.file_opener is None:
             return
         self._file_actions_added = True
         first = self._more_menu.actions()[0] if self._more_menu.actions() else None
-        added = QMenu()
-        add_file_actions(
-            added,
-            lambda how: self.file_requested.emit(self.entity_id, how),
-            folder=kind == "folder",
-        )
-        actions = [*added.actions(), added.addSeparator()]
-        for action in actions:
-            action.setParent(self._more_menu)
+        added = QMenu(self._more_menu)
+        add_file_actions(added, self.file_opener, entity_id=self.entity_id, folder=kind == "folder")
+        for action in [*added.actions(), added.addSeparator()]:
             self._more_menu.insertAction(first, action)  # type: ignore[arg-type]
 
     def _files(self, section: DetailSection) -> QWidget:
@@ -433,11 +425,14 @@ class DetailPage(QWidget):
     def _file_menu(self, file: FileRow) -> QMenu:
         """The right-click menu of one file row."""
         menu = QMenu(self)
-        add_file_actions(
-            menu,
-            lambda how: self.resource_requested.emit(file.resource_id, how),
-            folder=file.kind == "dir",
-        )
+        if self.file_opener is not None:
+            add_file_actions(
+                menu,
+                self.file_opener,
+                entity_id=self.entity_id,
+                resource_id=file.resource_id,
+                folder=file.kind == "dir",
+            )
         return menu
 
     def _gallery(self, section: DetailSection) -> QWidget:

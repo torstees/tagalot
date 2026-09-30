@@ -47,6 +47,8 @@ class FileRow:
     status: ResourceStatus
     path: str | None
     """This machine's path, or ``None`` if its root isn't configured here."""
+    role: str | None = None
+    """The role it is linked in."""
 
 
 @dataclass(frozen=True)
@@ -275,31 +277,31 @@ def role_files(
     *,
     resource_id: int | None = None,
 ) -> tuple[FileRow, ...]:
-    """The entity's files in ``role`` (every role if ``None``), in their sort order; or,
-    with ``resource_id``, just that resource (whatever links it)."""
-    query = select(
-        Resource.id,
-        Resource.root_id,
-        Root.name,
-        Resource.relpath,
-        Resource.kind,
-        Resource.size,
-        Resource.status,
-    ).join(Root, Root.id == Resource.root_id)
+    """The entity's files in ``role`` (every role if ``None``), in their sort order; with
+    ``resource_id``, only that one of them."""
+    query = (
+        select(
+            Resource.id,
+            Resource.root_id,
+            Root.name,
+            Resource.relpath,
+            Resource.kind,
+            Resource.size,
+            Resource.status,
+            EntityResource.role,
+        )
+        .join(EntityResource, EntityResource.resource_id == Resource.id)
+        .join(Root, Root.id == Resource.root_id)
+        .where(EntityResource.entity_id == entity_id)
+        .order_by(EntityResource.sort_order, Resource.relpath)
+        .limit(MAX_ROWS)
+    )
+    if role is not None:
+        query = query.where(EntityResource.role == role)
     if resource_id is not None:
         query = query.where(Resource.id == resource_id)
-    else:
-        query = (
-            query.join(EntityResource, EntityResource.resource_id == Resource.id)
-            .where(EntityResource.entity_id == entity_id)
-            .order_by(EntityResource.sort_order, Resource.relpath)
-            .limit(MAX_ROWS)
-        )
-        if role is not None:
-            query = query.where(EntityResource.role == role)
-    rows = conn.execute(query).all()
     found = []
-    for rid, root_id, root_name, relpath, kind, size, status in rows:
+    for rid, root_id, root_name, relpath, kind, size, status, linked_as in conn.execute(query):
         base = root_path(root_id)
         found.append(
             FileRow(
@@ -310,6 +312,7 @@ def role_files(
                 size,
                 status,
                 local_path(base, relpath) if base is not None else None,
+                linked_as,
             )
         )
     return tuple(found)

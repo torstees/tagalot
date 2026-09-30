@@ -11,13 +11,18 @@ from tagalot.core.handlers import (
     Command,
     FileToOpen,
     choose_file,
+    expand_command,
     files_to_open,
     open_with_command,
+    program_command,
+    program_name,
     resource_to_open,
     reveal_command,
     reveal_folder,
+    split_command,
 )
 from tagalot.core.models import Resource, ResourceStatus
+from tagalot.core.settings import Settings
 from tests.themes.test_music import Env, env, library
 
 __all__ = ["env", "library"]  # fixtures
@@ -110,6 +115,66 @@ def test_a_missing_version_is_skipped(env: Env) -> None:
     with env.reader.connect() as conn:
         files = files_to_open(conn, env.schema, env.entity("So What"), lambda _: root)
         chosen = choose_file(files)
-        one = resource_to_open(conn, files[0].resource_id, lambda _: root)
+        one = resource_to_open(conn, env.entity("So What"), files[0].resource_id, lambda _: root)
     assert chosen.path.endswith("01 So What.mp3")
     assert [(f.relpath, f.status) for f in one] == [(flac, MISSING)]
+
+
+# --- per-user overrides (#105) ---
+
+
+@pytest.mark.parametrize(
+    ("template", "words"),
+    [
+        (
+            '"C:\\Program Files\\Krita\\krita.exe" "{path}"',
+            ["C:\\Program Files\\Krita\\krita.exe", "{path}"],
+        ),
+        ("vlc --play-and-exit {path}", ["vlc", "--play-and-exit", "{path}"]),
+        ('tool --title="{name}"  x', ["tool", "--title={name}", "x"]),
+        ('empty ""', ["empty", ""]),
+        ("   ", []),
+    ],
+)
+def test_split_command(template: str, words: list[str]) -> None:
+    assert split_command(template) == words
+
+
+def test_expand_command() -> None:
+    song = FileToOpen(1, UNC, False, "audio")
+    assert song.ext == ".flac"
+    assert expand_command('"C:\\vlc.exe" "{path}"', song) == Command("C:\\vlc.exe", (UNC,))
+    assert expand_command("tool {dir} {name}", song) == Command(
+        "tool", ("\\\\nas\\music\\Miles Davis", "01 So What.flac")
+    )
+    assert expand_command("vlc --fullscreen", song) == Command("vlc", ("--fullscreen", UNC))
+    unix = FileToOpen(1, "/home/me/a b/c.PSD", False)
+    assert unix.ext == ".psd"
+    assert expand_command("gimp {path}", unix) == Command("gimp", ("/home/me/a b/c.PSD",))
+    with pytest.raises(CannotOpen):
+        expand_command("  ", unix)
+
+
+def test_program_commands_and_names() -> None:
+    exe = "C:\\Program Files\\Krita (x64)\\bin\\krita.exe"
+    assert program_command(exe, "win32") == f'"{exe}" "{{path}}"'
+    assert program_name(program_command(exe, "win32")) == "krita"
+    app = "/Applications/Pixelmator Pro.app"
+    assert program_command(app, "darwin") == 'open -a "/Applications/Pixelmator Pro.app" "{path}"'
+    assert program_name(program_command(app, "darwin")) == "Pixelmator Pro"
+    assert program_name('"/usr/bin/gimp-2.10" "{path}"') == "gimp-2.10"
+
+
+def test_setting_and_removing_rules() -> None:
+    settings = Settings()
+    settings.set_handler("PSD", "krita {path}")
+    settings.set_handler(".psd", "gimp {path}")  # replaces it
+    settings.set_handler(".psd", "viewer {path}", role="preview")
+    assert [(h.ext, h.role, h.command) for h in settings.handlers] == [
+        (".psd", None, "gimp {path}"),
+        (".psd", "preview", "viewer {path}"),
+    ]
+    rule = settings.handler_for(".PSD", "preview")
+    assert rule is not None
+    settings.remove_handler(rule)
+    assert settings.handler_for(".psd", "preview") == settings.handler_for(".psd")
