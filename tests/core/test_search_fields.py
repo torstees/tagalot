@@ -12,7 +12,7 @@ from tagalot.builtin_themes.generic import GenericTheme
 from tagalot.core.db import open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import ThemeRef, create_keep
-from tagalot.core.search import SearchError, count_matches, run_search
+from tagalot.core.search import SearchError, choice_counts, count_matches, run_search
 from tagalot.core.search_fields import (
     field_values,
     scope_fields,
@@ -20,7 +20,13 @@ from tagalot.core.search_fields import (
     type_labels,
     view_spec,
 )
-from tagalot.core.search_spec import RangeFilter, SearchSpec, SortKey, TextFilter
+from tagalot.core.search_spec import (
+    ChoiceFilter,
+    RangeFilter,
+    SearchSpec,
+    SortKey,
+    TextFilter,
+)
 from tagalot.core.tags import TagTree
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema, build_theme_schema
@@ -168,3 +174,40 @@ def test_datetime_values_round_trip(tmp_path: Path) -> None:
         assert values["modified"] == when
     finally:
         engine.dispose()
+
+
+# --- choice counts, for the field filter popup (#94) ---
+
+
+def _counts(env: Env, spec: SearchSpec, name: str) -> list[tuple[object, int]]:
+    with env.engine.connect() as conn:
+        return choice_counts(
+            conn, spec, TagTree([], {}), name, search_fields(env.schema, spec.types)
+        )
+
+
+def test_choice_counts_among_the_results(env: Env) -> None:
+    with env.engine.begin() as conn:
+        ctx = IngestSession(conn, env.schema)
+        ctx.upsert(Song, "Foxtrot", title="Foxtrot", year=1999, genre="rock")
+        ctx.flush()
+    songs = SearchSpec(types=(SONG,))
+    assert _counts(env, songs, "genre") == [("rock", 2), ("jazz", 1)]  # most first; no NULL
+    older = SearchSpec(types=(SONG,), fields=(RangeFilter("year", None, 1990),))
+    assert _counts(env, older, "genre") == [("jazz", 1)]  # only among the results
+    assert _counts(env, SearchSpec(types=(SONG, VIDEO)), "year") == [
+        (1999, 2),
+        (1985, 1),
+        (2001, 1),
+    ]
+
+
+def test_choice_counts_ignore_the_fields_own_filter(env: Env) -> None:
+    spec = SearchSpec(types=(SONG,), fields=(ChoiceFilter("genre", ("rock",)),))
+    assert env.titles(spec) == ["Alpha"]
+    assert _counts(env, spec, "genre") == [("jazz", 1), ("rock", 1)]  # other values stay
+
+
+def test_choice_counts_of_an_unknown_field(env: Env) -> None:
+    with pytest.raises(SearchError, match="length"):
+        _counts(env, SearchSpec(types=(SONG, VIDEO, POSTER)), "length")

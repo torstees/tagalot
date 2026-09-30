@@ -8,6 +8,7 @@ it shows that type's full list. A search page is created once per navigation tar
 re-runs its search after a scan.
 """
 
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 
@@ -33,17 +34,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit
+from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
 from tagalot.core.search_fields import (
     contained_types,
     scope_fields,
     scoped_tables,
+    search_fields,
     type_labels,
     type_plurals,
 )
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
+from tagalot.ui.field_filters import ChoiceCounts, FilterField
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultColumn, ResultsModel
@@ -59,6 +62,8 @@ from tagalot.ui.result_table import (
 from tagalot.ui.result_tree import ResultTree, ResultTreeModel
 from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
+
+logger = logging.getLogger(__name__)
 
 LAYOUTS = ("list", "grid", "tree")
 
@@ -157,6 +162,7 @@ class SearchPage(QWidget):
         self.tree_button.clicked.connect(lambda: self._layout_clicked("tree"))
 
         self.filter_bar = FilterBar()
+        self.filter_bar.choice_loader = self._load_choices
         # The view's toggles, unless the user chose otherwise before.
         chosen = toggles or {}
         self._toggles = {
@@ -258,6 +264,10 @@ class SearchPage(QWidget):
                 within = filters.within
                 types = self._types_within(types, filters.within_type)
         text = " ".join(t for t in (base.text, filters.text) if t)
+        # Field filters apply where every listed type has the field (the others' chips
+        # stay, greyed, until it does).
+        filterable = {f.name for f in self._filter_fields(types)}
+        fields = tuple(f for f in filters.fields if f.field in filterable)
         # A sort chosen on one type's list (Year on albums) may not exist across types.
         valid = set(CORE_FIELDS) | {f.name for f in scope_fields(self.session.schema, types)}
         sort = self._sort if all(k.field in valid for k in self._sort) else base.sort
@@ -270,12 +280,36 @@ class SearchPage(QWidget):
             sort=sort,
             within=within,
             inherit_tags=filters.inherit_tags,
+            fields=base.fields + fields,
             # In the tree, containers expand to show what they hold instead.
             show_contained=filters.show_contained and not self._tree_layout(),
         )
 
     def _tree_layout(self) -> bool:
         return self.layout_mode == "tree" and not self.grouped
+
+    def _filter_fields(self, types: Sequence[str]) -> list[FilterField]:
+        """The fields the listed types can all be filtered on."""
+        return [
+            FilterField(f.name, f.spec.label, f.spec.search, f.type)
+            for f in scope_fields(self.session.schema, types)
+            if f.spec.search is not None
+        ]
+
+    def _load_choices(self, name: str, on_done: Callable[[ChoiceCounts], None]) -> None:
+        """A choice filter's values among the current results, in a worker."""
+        spec, session = self.current_spec(), self.session
+
+        def job() -> ChoiceCounts:
+            fields = search_fields(session.schema, spec.types)
+            with session.reader.connect() as conn:
+                return choice_counts(conn, spec, session.tag_cache.get(), name, fields)
+
+        def failed(error: BaseException) -> None:
+            logger.warning("Couldn't list the values of %s: %s", name, error)
+            on_done([])
+
+        run_in_pool(job, on_done=on_done, on_error=failed, pool=self._pool)
 
     def _types_within(self, types: tuple[str, ...], container: str) -> tuple[str, ...]:
         """The types listed within a container: the page's own, where the container can
@@ -332,6 +366,7 @@ class SearchPage(QWidget):
     def _run(self) -> None:
         self._generation += 1
         spec = self.current_spec()
+        self.filter_bar.set_filter_fields(self._filter_fields(spec.types))
         self.status.setText("Searching…")
         if not self.grouped or spec.types:
             self._show_list(spec)
