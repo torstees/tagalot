@@ -205,3 +205,18 @@ def restore_action(
 ) -> None:
     """Put the entities an action touched as they were before it (undo) or after (redo)."""
     restore_states(conn, schema, change.after if forward else change.before)
+
+
+def delete_items(conn: Connection, schema: ThemeSchema, ids: Sequence[int]) -> ActionChange:
+    """Delete items (with their tags; never files), recording an undo step."""
+    ctx = IngestSession(conn, schema)
+    recorder = ChangeRecorder(conn, schema)
+    ctx.recorder = recorder
+    types = dict(conn.execute(select(Entity.id, Entity.type).where(Entity.id.in_(ids))).all())
+    for entity_id in ids:
+        if entity_id in types:
+            ctx.delete(EntityRef(entity_id, types[entity_id]))
+    ctx.flush()
+    count = len(types)
+    label = f"Delete {count} item{'' if count == 1 else 's'}"
+    return ActionChange(label, recorder.before, recorder.after())

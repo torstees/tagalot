@@ -34,6 +34,7 @@ from tagalot.core.search_spec import (
     TextMatch,
 )
 from tagalot.core.tags import TagTree
+from tagalot.core.triage import triage_condition
 
 MIN_TRIGRAM = 3
 """Terms shorter than this can't use the trigram index and fall back to ``LIKE`` (§8)."""
@@ -201,6 +202,8 @@ class _Filter:
                 )
             )
         where.append(self._not_excluded(Entity.id))
+        if spec.triage is not None:
+            where.append(triage_condition(spec.triage, spec.inherit_tags))
         # Field filters always apply to the listed entity: they belong to its type.
         where.extend(_field_condition(f, self.fields) for f in spec.fields)
         own = self._positive(Entity.id)

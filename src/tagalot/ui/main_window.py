@@ -31,6 +31,7 @@ from tagalot.core.actions import ActionResult
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.models import SavedSearch
+from tagalot.core.root_admin import edit_root
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import SearchSpec
@@ -44,6 +45,7 @@ from tagalot.core.tags import (
 )
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.thumbnails.queue import QueueResult
+from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.detail_view import DetailPage
@@ -55,6 +57,7 @@ from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
+from tagalot.ui.triage import TriagePage
 from tagalot.ui.workers import ScanController, run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -70,7 +73,6 @@ NAVIGATION_MIN_WIDTH = 170
 _COMING = {
     "dashboard": "The dashboard arrives in M15.",
     "saved": "Saved searches arrive in M18.",
-    "triage": "Triage arrives in M14.",
     "dedupe": "Dedupe arrives in M16.",
 }
 
@@ -391,6 +393,20 @@ class MainWindow(QMainWindow):
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
+        if target.kind == "triage":
+            triage = TriagePage(
+                session,
+                lambda title, spec, key: self._search_page(title, spec, key),
+                self.files,
+            )
+            triage.dismiss_requested.connect(self.tag_actions.dismiss)
+            triage.delete_requested.connect(self.delete_items)
+            triage.skip_requested.connect(self._skip_files)
+            triage.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+            for listed in (triage.untagged, triage.missing):
+                listed.selection_changed.connect(self._schedule_summary)
+            triage.tabs.currentChanged.connect(lambda _: self._schedule_summary())
+            return triage
         if target.kind == "tags":
             manager = TagManagerPage(session)
             manager.add_requested.connect(self.tag_actions.add_tag)
@@ -407,9 +423,9 @@ class MainWindow(QMainWindow):
             manager.redo_requested.connect(self.tag_actions.redo)
             manager.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
             return manager
-        page = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
-        page.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        return page
+        coming = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
+        coming.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return coming
 
     def _search_page(
         self,
@@ -524,6 +540,8 @@ class MainWindow(QMainWindow):
     def current_items_page(self) -> SearchPage | DetailPage | None:
         """The current page if it has items to tag: a search, or a detail page."""
         page = self.stack.currentWidget()
+        if isinstance(page, TriagePage):
+            return page.current_search()  # the Untagged or Missing tab's results
         return page if isinstance(page, SearchPage | DetailPage) else None
 
     # --- tagging ---
@@ -696,6 +714,7 @@ class MainWindow(QMainWindow):
             if isinstance(manager, TagManagerPage):
                 manager.reload()  # usage counts, and the tree after an undo
         self._update_undo_actions()
+        self._refresh_triage()
 
     def _tag_message(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -726,7 +745,59 @@ class MainWindow(QMainWindow):
                 pages.append(page)
             elif isinstance(page, DetailPage) and page.contents is not None:
                 pages.append(page.contents)
+            elif isinstance(page, TriagePage):
+                pages += [page.untagged, page.missing]
         return pages
+
+    def _refresh_triage(self) -> None:
+        for page in self._pages.values():
+            if isinstance(page, TriagePage):
+                page.refresh()
+
+    def delete_items(self, ids: list[int]) -> None:
+        """Delete items from the triage list, after asking; Edit → Undo brings them back."""
+        if ids and self.confirm_delete_items(len(ids)):
+            self.tag_actions.delete_items(ids)
+
+    def confirm_delete_items(self, count: int) -> bool:
+        """Ask before deleting items (tests replace this)."""
+        items = "this item" if count == 1 else f"these {count:,} items"
+        answer = QMessageBox.question(
+            self,
+            "Delete items",
+            f"Delete {items} and their tags from this keep? No files are changed, and "
+            "Edit \u2192 Undo brings them back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _skip_files(self, files: list[UnlinkedFile]) -> None:
+        """Leave these files out of scans: an exact exclude pattern on each one's root."""
+        session = self.session
+        assert session is not None
+
+        def job() -> int:
+            config = session.keep.config
+            by_root: dict[str, list[str]] = {}
+            for file in files:
+                by_root.setdefault(file.root_id, []).append(exact_pattern(file.relpath))
+            for root_id, patterns in by_root.items():
+                root = next(r for r in config.roots if r.id == root_id)
+                new = [p for p in patterns if p not in root.exclude]
+                config = edit_root(config, session.keep.dir, root_id, exclude=root.exclude + new)
+            session.save_config(config)
+            return len(files)
+
+        def done(count: int) -> None:
+            self.statusBar().showMessage(
+                f"{count:,} file{'' if count == 1 else 's'} will be left out "
+                "from the next scan (Keep configuration \u2192 Folders \u2192 Skip)."
+            )
+            if self.keep_config is not None:
+                self.keep_config.reload()
+
+        run_in_pool(job, on_done=done, on_error=lambda e: self.statusBar().showMessage(str(e)))
 
     def _save_hidden_columns(self, state_key: str, keys: list[str]) -> None:
         assert self.session is not None
@@ -932,6 +1003,7 @@ class MainWindow(QMainWindow):
         self.thumbnails.clear()  # files may have changed
         if self.keep_config is not None:
             self.keep_config.reload()
+        self._refresh_triage()
         self._queue_thumbnails()
         for detail in self._pages.values():
             if isinstance(detail, DetailPage):

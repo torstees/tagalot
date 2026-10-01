@@ -73,7 +73,8 @@ def _glob_to_regex(pattern: str) -> str:
         elif pattern[i] == "[" and (end := pattern.find("]", i + 2)) != -1:
             body = pattern[i + 1 : end]
             negate = body.startswith("!")
-            chars = body[negate:].replace("\\", "\\\\").replace("^", "\\^")  # keep ranges
+            # Keep ranges; escape what a regex class would read otherwise ([ opens a set).
+            chars = body[negate:].replace("\\", "\\\\").replace("^", "\\^").replace("[", "\\[")
             out.append("[" + ("^" if negate else "") + chars + "]")
             i = end + 1
         else:

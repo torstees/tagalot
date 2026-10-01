@@ -134,9 +134,15 @@ def _v2_root_ingest_options(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE root ADD COLUMN ingest_options VARCHAR"))
 
 
+def _v3_triage_dismissals(conn: Connection) -> None:
+    """Format 4: what the user dismissed from triage lists (#110)."""
+    Base.metadata.tables["triage_dismissal"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
+    3: _v3_triage_dismissals,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

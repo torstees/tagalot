@@ -104,6 +104,8 @@ class SearchSpec:
     """Also list descendants of matching containers."""
     aggregate_up: bool = False
     """A container matches if any of its descendants does."""
+    triage: str | None = None
+    """A triage list to match (``"untagged"``, ``"missing"``; ``core.triage``)."""
     nest: bool = False
     """Leave out matches that one of their containers' matches holds (the tree layout lists
     them under it instead). Ignored with ``show_contained``."""
@@ -116,6 +118,8 @@ class SearchSpec:
             ids = getattr(self, name)
             if not all(isinstance(i, int) and not isinstance(i, bool) and i > 0 for i in ids):
                 raise SearchSpecError(f"{name} must list positive tag ids, not {ids!r}")
+        if self.triage not in (None, "untagged", "missing"):
+            raise SearchSpecError(f"triage must be 'untagged' or 'missing', not {self.triage!r}")
         within = self.within
         if within is not None and (
             not isinstance(within, int) or isinstance(within, bool) or within <= 0
@@ -138,6 +142,7 @@ class SearchSpec:
             "show_contained": self.show_contained,
             "aggregate_up": self.aggregate_up,
             "nest": self.nest,
+            "triage": self.triage,
             "sort": [{"field": k.field, "descending": k.descending} for k in self.sort],
         }
 
@@ -165,6 +170,7 @@ class SearchSpec:
                 show_contained=_bool(data, "show_contained", defaults.show_contained),
                 aggregate_up=_bool(data, "aggregate_up", defaults.aggregate_up),
                 nest=_bool(data, "nest", defaults.nest),
+                triage=_optional_str(data.get("triage"), "triage"),
                 sort=tuple(_sort_from_json(k) for k in _list(data.get("sort"), "sort"))
                 if "sort" in data
                 else defaults.sort,

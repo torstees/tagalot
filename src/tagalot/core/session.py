@@ -8,7 +8,7 @@ import logging
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy import Connection, Engine, update
 
-from tagalot.core.actions import ActionResult, run_action
+from tagalot.core.actions import ActionResult, delete_items, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
@@ -52,6 +52,7 @@ from tagalot.core.thumbnails.queue import (
     entities_needing_thumbnails,
 )
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
+from tagalot.core.triage import dismiss
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import Theme
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -240,6 +241,26 @@ class KeepSession:
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
+
+    # --- triage (core.triage) ---
+
+    def dismiss(self, name: str, ids: Sequence[int]) -> int:
+        """Hide files or items from a triage list until they change; one undo step.
+        Returns how many. Runs in a worker."""
+        change = self.writer.run(lambda conn: dismiss(conn, name, ids))
+        if change.before != change.after:
+            self.tags.record(change)
+        return len(change.after)
+
+    def delete_items(self, ids: Sequence[int]) -> int:
+        """Delete items (never their files); one undo step. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: delete_items(conn, schema, ids))
+        if change.before != change.after:
+            self.tags.record(change)
+        return sum(1 for state in change.before.values() if state is not None) - sum(
+            1 for state in change.after.values() if state is not None
+        )
 
     # --- background thumbnails (core.thumbnails.queue) ---
 

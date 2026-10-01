@@ -69,7 +69,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 3                          # core schema version
+format_version = 4                          # core schema version
 
 [theme]
 id = "music"
@@ -161,6 +161,8 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **field_provenance** — `entity_id`, `field`, `source` (`extracted`/`user`/`fetched`), `updated_at`. Extraction and fetching never overwrite a field whose provenance is `user` unless the user explicitly requests a refresh.
 
 **saved_search** — `id`, `name`, `definition` (JSON of the search model in §8).
+
+**triage_dismissal** (core format 4, #110) — `list` (`unlinked`/`untagged`), `target_id` (a resource or entity id), `marker` (how it looked when dismissed), `dismissed_at`. PK `(list, target_id)`. No foreign keys: rows of things since deleted are ignored (§12 Triage).
 
 **schema_version** — `component` (`core` or theme id), `version`.
 
@@ -306,6 +308,7 @@ class SearchSpec:
     show_contained: bool = False          # also list descendants of matching containers
     aggregate_up: bool = False            # containers match if any descendant matches
     nest: bool = False                    # leave out matches held by another match (tree layout)
+    triage: str | None = None             # a triage list: "untagged" or "missing" (§12)
     sort: tuple[SortKey, ...] = (SortKey("title"),)
 
 FieldFilter = TextFilter(field, text, match) | RangeFilter(field, low, high) | ChoiceFilter(field, values)
@@ -737,6 +740,16 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Triage.** Tabs: resources not linked to any entity; entities with no tags; entities whose linked resources are all missing. Bulk actions: link to entity/role, tag, dismiss (hide until changed).
 
+- **Page** (#110, `ui/triage.py`, `core/triage.py`): TOOLS → **Triage**, three tabs, each with its count.
+- **Unlinked files:** a table (folder, path, size, offline) of the first 10,000 files no item links; folders and missing files aren't listed. Actions: **Open file**, **Show in file manager**, **Skip in scans…** (adds an exact exclude pattern per file to its root, with `*`, `?`, `[` bracketed; the next scan marks them missing, which takes them off the list), and **Dismiss**.
+  - Linking a file to an item by hand is deferred to #243: it needs user-made links that scans respect.
+  - A theme may read files without linking them (a cover image found in its folder), so some files here are expected.
+- **Untagged items** and **Missing files** are ordinary search pages with `SearchSpec.triage` (`"untagged"`: no tag of its own, or none from a container with Inherit tags; `"missing"`: at least one linked file, and none that isn't missing; offline isn't missing). The Tags panel and drops tag their selection, as on any search page.
+  - Untagged items has **Dismiss**.
+  - Missing files has **Delete…** (after a question; the items and their tags go, never files; one undo step through the whole-entity snapshots of actions, §9) and **Show where they were** (opens the folder the first file was in, or says it's gone too).
+- **Dismissing** hides until changed: `triage_dismissal(list, target_id, marker)` stores how the thing looked. A file's marker is its size and modification time; an item's is its stored `updated_at`, which edits and re-reads change. The lists leave out rows whose marker still matches. It is one undo step.
+- Counts and the files table are read in a worker, and refreshed after tagging, undo, a scan, or a configuration change.
+
 **Dedupe.** Groups of exact duplicates (fingerprint) and theme-suggested near-duplicates. Side-by-side comparison of files and entities (format, size, resolution/bitrate, tags). Actions: merge entities (§13), keep both files as versions under one entity, or mark "not a duplicate." Never deletes files.
 
 **Activity panel.** Scan progress per root, fingerprint and thumbnail queues, offline roots, ingest and thumbnail errors with the affected paths.
@@ -854,6 +867,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Triage (#110): unlinked files, untagged items, and items with all files missing. Dismiss hides until changed, through a marker in a new `triage_dismissal` table (core format 4), undoably. Deleting missing items is undoable. Skip in scans adds an exact exclude pattern. Hand-made links are deferred to #243, since scans don't yet respect them (§5, §8, §12). |
 | 2026-10 | Background thumbnails after a scan (§6 step 7, never built until #241): entities with no remembered source or whose remembered file was re-ingested since the scan began, newest first, on one session-owned thread separate from the grids' workers; on by default, `[thumbnails] after_scan = false` turns it off. |
 | 2026-10 | The Keep configuration window has Folders, Thumbnails, and Keep tabs; the thumbnail size applies at once, theme options (keep-wide and per folder) at the next scan; Clear thumbnail cache moved from the Keep menu to the Thumbnails tab (§10, §12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |

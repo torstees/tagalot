@@ -82,11 +82,11 @@ def test_saved_searches_load_in_the_background(qtbot: QtBot, session: KeepSessio
 
 def test_navigating_switches_pages(qtbot: QtBot, session: KeepSession) -> None:
     window = _window(qtbot, session)
-    window.navigation.select(NavTarget("triage", label="Triage"))
+    window.navigation.select(NavTarget("dedupe", label="Dedupe"))
     page = window.stack.currentWidget()
-    assert isinstance(page, QLabel)
-    assert "Triage" in page.text()
-    assert "M14" in page.text()
+    assert isinstance(page, QLabel)  # still to come
+    assert "Dedupe" in page.text()
+    assert "M16" in page.text()
 
 
 def test_folded_sections_are_remembered_per_keep(qtbot: QtBot, session: KeepSession) -> None:
