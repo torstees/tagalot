@@ -96,6 +96,7 @@ max_size = 512                             # overrides the theme's thumbnail_max
 - **Resources store root id + relative POSIX-style path**, never absolute paths. Changing a root's path (new drive letter, new server) requires editing one value.
 - **Per-machine root overrides.** The per-user settings file (see below) can map `(keep id, root id) → local path`, so the same keep opened on two machines can reach a share through different mount points.
 - **Offline is not deleted.** If a root is unreachable at scan time, its resources are marked offline and nothing is removed. Resources are only marked missing when their root is reachable and the file is gone.
+- **Not watched.** A root with `watched = false` stays in `keep.toml` but isn't scanned; its resources are marked offline, and its items keep their tags. Watching it again (or adding the same folder) and scanning reconnects them. Only removing a root *with its items*, an explicit choice in the Keep configuration window (§12), deletes anything: the root's resources, the items with files only there, and containers left empty. Files on disk are never touched.
 - **Keep location.** `keep.db` should live on a local disk. SQLite locking over SMB is unreliable. The app warns (but does not refuse) when a keep is opened from a network path, and a keep is single-user in v1. Detection is best effort and never blocks opening: on Windows, UNC paths and drives that `GetDriveTypeW` reports as remote (mapped drives); on Linux and macOS, the mount's file-system type (nfs, cifs/smbfs, afpfs, sshfs, and similar; WSL's `/mnt/c` counts as local).
 - **Keeps and roots never contain each other.** Creating a keep inside one of its roots, or with a root inside the keep folder, is refused: the scanner would index the keep's own files.
 - **Creating a keep** requires a new or empty folder and writes `keep.toml` with a fresh UUID; the databases are created on first open.
@@ -660,6 +661,19 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Keep configuration.** Roots: add, remove, rename, change path, per-machine override, exclude patterns, status (online, item count, last scan, last error), "Scan now". Also thumbnail size, clear thumbnail cache, theme info.
 
+- **Roots** (#109, `ui/keep_config.py`, `core/root_admin.py`): **Keep → Configure keep…** opens a window of its own (one per main window). The roots are listed with their state (online, offline, not watched, not scanned yet). The selected root shows:
+  - **Name** and **Folder**.
+  - **On this computer:** the per-user override (§4), with Browse and Clear.
+  - **Skip:** the exclude patterns, one per line.
+  - **Status:** state, files and folders known (and how many are offline or missing), last scan, and last error.
+  - Buttons: **Scan now** (that root only), **Stop watching** / **Watch again**, and **Remove…**.
+- **Saving:** every change is checked and saved at once, in a worker: `keep.toml` (atomically), or `settings.toml` for this computer's folder. A refused value is explained under the form, and the field shows the saved value again. Checks: names and folders can't be blank; a folder can't be inside the keep folder (or the keep inside it), inside another root, or another root's folder; and the file must still load.
+- **Adding and scanning:** **Add folder…** watches a folder: its id comes from the folder name (`-2`… when taken), its name is the folder as chosen, and it starts with the default excludes. Adding the folder of a root that isn't watched watches that root again. Adding, watching again, or changing a folder or excludes offers a scan.
+- **Remove…** asks which it is, with the safe choice selected:
+  - **Stop watching it, and keep its items** (§4 "Not watched").
+  - **Delete its items from this keep**, with counts: items whose files are all in that root, and containers left with no files and nothing inside, go with their tags. Items with files in other roots only lose these. A second confirmation follows; this can't be undone. The root's per-user override is forgotten too.
+- Scans skip roots that aren't watched. The main window refreshes its pages after any change.
+
 **Dashboard.** Opening screen for a keep: counts per entity type, recently added items, untagged share (links to triage), root health, most/least used tags. Themes can add cards (for example, total runtime).
 
 **Search view.** Filter bar with include chips, exclude chips ("but not"), field filters (only valid ones for the scope), `Within` chip, text box, toggles for "Show contained items" and "Inherit tags" (plus advanced "Match via contents"). Results as grid (thumbnails), list (columns), or tree/grouped. Multi-select supported.
@@ -829,5 +843,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Theme actions get an `ActionContext`: the ingest context's writes (one undo step per run, by whole-entity snapshots of what it touched), plus contents in order, files with paths, a temp folder per session, and open/reveal/message outputs carried out after the commit. They run in the DB writer and appear in result menus and as detail-page buttons (§9). |
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
+| 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

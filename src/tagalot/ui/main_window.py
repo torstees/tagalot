@@ -47,6 +47,7 @@ from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
@@ -138,6 +139,11 @@ class MainWindow(QMainWindow):
         )
         self.clear_thumbnails_action.triggered.connect(self.clear_thumbnail_cache)
         keep_menu.addAction(self.clear_thumbnails_action)
+        self.configure_action = QAction("Configure keep\u2026", self)
+        self.configure_action.setToolTip("The folders this keep watches, and their status")
+        self.configure_action.triggered.connect(self.configure_keep)
+        keep_menu.addAction(self.configure_action)
+        self.keep_config: KeepConfigWindow | None = None
         keep_menu.addSeparator()
         if on_open_other is not None:
             self.open_other_action = QAction("Open another keep…", self)
@@ -859,6 +865,31 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.scans.scan(self.session)
 
+    def configure_keep(self) -> KeepConfigWindow:
+        """Show the Keep configuration window (one per main window)."""
+        assert self.session is not None
+        if self.keep_config is None:
+            window = KeepConfigWindow(self.session, parent=self)
+            window.changed.connect(self._config_changed)
+            window.scan_requested.connect(self._scan_roots)
+            self.keep_config = window
+        self.keep_config.show()
+        self.keep_config.raise_()
+        self.keep_config.activateWindow()
+        return self.keep_config
+
+    def _scan_roots(self, root_ids: list[str]) -> None:
+        if self.session is not None and not self.scans.scan(self.session, root_ids):
+            self.statusBar().showMessage("A scan is already running; try again when it's done.")
+
+    def _config_changed(self, message: str) -> None:
+        """Roots were renamed, moved, or removed: pages show the change."""
+        self.statusBar().showMessage(message)
+        self.thumbnails.clear()
+        self._refresh_details()
+        for page in self.search_pages():
+            page.refresh()
+
     def _scan_started(self) -> None:
         self.scan_action.setEnabled(False)
         self.busy.setVisible(True)
@@ -869,6 +900,8 @@ class MainWindow(QMainWindow):
         self.busy.setVisible(False)
         self.statusBar().showMessage(scan_summary(reports))
         self.thumbnails.clear()  # files may have changed
+        if self.keep_config is not None:
+            self.keep_config.reload()
         for detail in self._pages.values():
             if isinstance(detail, DetailPage):
                 detail.refresh()

@@ -146,14 +146,15 @@ class ScanController(QObject):
     def running(self) -> bool:
         return self._running
 
-    def scan(self, session: KeepSession) -> bool:
-        """Start scanning every root; returns False if a scan is already running."""
+    def scan(self, session: KeepSession, root_ids: list[str] | None = None) -> bool:
+        """Start scanning every watched root (or ``root_ids``); returns False if a scan is
+        already running."""
         if self._running:
             return False
         self._running = True
         self.started.emit()
         run_in_pool(
-            lambda: session.scan_all(progress=self._progress_from_worker.emit),
+            lambda: session.scan_all(progress=self._progress_from_worker.emit, root_ids=root_ids),
             on_done=self._done,
             on_error=self._failed,
             pool=self._pool,
