@@ -9,16 +9,25 @@ import shutil
 import tempfile
 import threading
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, update
 
 from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
-from tagalot.core.keep import Keep, open_keep
+from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
+from tagalot.core.models import Root
 from tagalot.core.reextract import ReextractReport, reextract
+from tagalot.core.root_admin import (
+    RemovalCounts,
+    delete_root,
+    edit_root,
+    unwatch,
+    without_root,
+)
+from tagalot.core.roots import sync_roots
 from tagalot.core.scanjob import Progress, ScanReport, scan_root
 from tagalot.core.settings import Settings
 from tagalot.core.tag_service import TagService
@@ -130,10 +139,16 @@ class KeepSession:
         root = next(r for r in self.keep.config.roots if r.id == root_id)
         return self.settings.root_path(self.keep.config.id, root)
 
-    def scan_all(self, progress: Progress | None = None) -> list[ScanReport]:
-        """Scan every root in turn with the keep's theme. Runs in a worker."""
+    def scan_all(
+        self, progress: Progress | None = None, root_ids: Iterable[str] | None = None
+    ) -> list[ScanReport]:
+        """Scan every watched root (or those of ``root_ids``) in turn with the keep's
+        theme. Runs in a worker."""
         reports = []
+        wanted = set(root_ids) if root_ids is not None else None
         for root in self.keep.config.roots:
+            if not root.watched or (wanted is not None and root.id not in wanted):
+                continue
             reports.append(
                 scan_root(
                     self.writer,
@@ -193,6 +208,37 @@ class KeepSession:
         if result.changed:
             self.tags.record(result.change)
         return result
+
+    # --- roots (the Keep configuration window; core.root_admin) ---
+
+    def save_config(self, config: KeepConfig) -> None:
+        """Write a changed ``keep.toml`` (checked by ``root_admin`` first) and bring the
+        ``root`` table in line. Runs in a worker."""
+        save_keep_config(config, self.keep.toml_path)
+        self.keep = replace(self.keep, config=config)
+        self.writer.run(lambda conn: sync_roots(conn, config.roots))
+
+    def stop_watching(self, root_id: str) -> None:
+        """Stop scanning a root; its items stay, shown offline. Runs in a worker."""
+        self.save_config(edit_root(self.keep.config, self.keep.dir, root_id, watched=False))
+        self.writer.run(lambda conn: unwatch(conn, root_id))
+
+    def watch_again(self, root_id: str) -> None:
+        """Scan a root again from now on (the next scan reconnects its items)."""
+        self.save_config(edit_root(self.keep.config, self.keep.dir, root_id, watched=True))
+        self.writer.run(
+            lambda conn: conn.execute(
+                update(Root).where(Root.id == root_id).values(last_error=None)
+            )
+        )
+
+    def delete_root(self, root_id: str) -> RemovalCounts:
+        """Remove a root with its items (never its files on disk). Runs in a worker."""
+        self.save_config(without_root(self.keep.config, root_id))
+        schema = self.schema
+        counts = self.writer.run(lambda conn: delete_root(conn, schema, root_id))
+        self.settings.set_root_override(self.keep.config.id, root_id, None)
+        return counts
 
     def temp_dir(self) -> Path:
         """A folder of this session's own for files actions write (a playlist); it is

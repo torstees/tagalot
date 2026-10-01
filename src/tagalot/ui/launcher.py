@@ -5,7 +5,6 @@ loading themes, creating and opening keeps) runs in a worker.
 """
 
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,7 +34,9 @@ from tagalot.core.keep import (
     RootConfig,
     ThemeRef,
     create_keep,
+    folder_name,
     load_keep_config,
+    root_id_for,
 )
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, save_settings
@@ -70,22 +71,6 @@ def describe_recent(paths: list[Path]) -> list[RecentKeep]:
         except KeepError as e:
             result.append(RecentKeep(path, None, str(e)))
     return result
-
-
-def folder_name(folder: str) -> str:
-    r"""The last segment of a folder as typed, with either slash style.
-
-    ``Path`` can't be used: for a share root like ``\\nas\music`` its ``name`` is empty
-    (Windows treats the share as a drive root).
-    """
-    parts = [p for p in re.split(r"[\\/]+", folder.strip()) if p]
-    return parts[-1] if parts else folder.strip()
-
-
-def root_id_for(folder: str) -> str:
-    """A stable, readable root id from a folder: ``"D:/My Photos"`` -> ``"my-photos"``."""
-    slug = re.sub(r"[^a-z0-9]+", "-", folder_name(folder).lower()).strip("-")
-    return slug or "root"
 
 
 class LauncherDialog(QDialog):

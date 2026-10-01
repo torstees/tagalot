@@ -1,9 +1,10 @@
 """Open and create keeps; ``keep.toml``."""
 
 import logging
+import re
 import tomllib
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,9 @@ class RootConfig:
     exclude: list[str] = field(default_factory=list)
     options: dict[str, Any] = field(default_factory=dict)
     """Theme options for this root only (``options = { … }``), over the keep's."""
+    watched: bool = True
+    """``watched = false``: not scanned; its items stay, shown offline, until it is
+    watched again."""
 
 
 @dataclass
@@ -152,6 +156,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         ]
         if root.options:
             lines.append(f"options = {toml_inline_table(root.options)}")
+        if not root.watched:
+            lines.append("watched = false")
     return "\n".join(lines) + "\n"
 
 
@@ -190,7 +196,10 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     roots: list[RootConfig] = []
     for i, raw in enumerate(raw_roots, start=1):
         where = f"[[roots]] #{i}"
-        reader.warn_unknown(raw, {"id", "name", "path", "exclude", "options"}, where)
+        reader.warn_unknown(raw, {"id", "name", "path", "exclude", "options", "watched"}, where)
+        watched = raw.get("watched", True)
+        if not isinstance(watched, bool):
+            raise KeepConfigError(path, f"{where} watched must be true or false")
         exclude = raw.get("exclude", [])
         if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
             raise KeepConfigError(path, f"{where} exclude must be a list of strings")
@@ -201,6 +210,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                 path=reader.string(raw, "path", where),
                 exclude=list(exclude),
                 options=reader.options(raw, f"{where} options"),
+                watched=watched,
             )
         )
     seen: set[str] = set()
@@ -344,6 +354,36 @@ def _opened(keep_dir: Path, config: KeepConfig) -> Keep:
 def _validate(config: KeepConfig, path: Path) -> None:
     """Apply the same checks as loading, before anything is written."""
     _parse(path, tomllib.loads(dump_keep_config(config)))
+
+
+validate_keep_config = _validate
+
+
+def folder_name(folder: str) -> str:
+    r"""The last segment of a folder as typed, with either slash style.
+
+    ``Path`` can't be used: for a share root like ``\\nas\music`` its ``name`` is empty
+    (Windows treats the share as a drive root).
+    """
+    parts = [p for p in re.split(r"[\\/]+", folder.strip()) if p]
+    return parts[-1] if parts else folder.strip()
+
+
+def root_id_for(folder: str, taken: Iterable[str] = ()) -> str:
+    """A stable, readable root id from a folder: ``"D:/My Photos"`` -> ``"my-photos"``;
+    ``-2``, ``-3``… are added to avoid the ids in ``taken``."""
+    slug = re.sub(r"[^a-z0-9]+", "-", folder_name(folder).lower()).strip("-") or "root"
+    used = set(taken)
+    candidate, n = slug, 1
+    while candidate in used:
+        n += 1
+        candidate = f"{slug}-{n}"
+    return candidate
+
+
+def nested_paths(a: Path, b: Path) -> bool:
+    """Whether either path is inside (or equal to) the other, compared as the OS would."""
+    return _nested(a, b)
 
 
 def _nested(a: Path, b: Path) -> bool:

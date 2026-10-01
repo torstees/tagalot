@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 from pytestqt.qtbot import QtBot
 
-from tagalot.core.keep import DEFAULT_EXCLUDES, load_keep_config
+from tagalot.core.keep import DEFAULT_EXCLUDES, folder_name, load_keep_config, root_id_for
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -17,8 +17,6 @@ from tagalot.ui.launcher import (
     LauncherDialog,
     NewKeepDialog,
     describe_recent,
-    folder_name,
-    root_id_for,
 )
 
 pytestmark = pytest.mark.gui
