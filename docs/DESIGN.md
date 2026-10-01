@@ -69,7 +69,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 4                          # core schema version
+format_version = 5                          # core schema version
 
 [theme]
 id = "music"
@@ -96,7 +96,7 @@ after_scan = false                         # don't make a scan's thumbnails in t
 
 - **Resources store root id + relative POSIX-style path**, never absolute paths. Changing a root's path (new drive letter, new server) requires editing one value.
 - **Per-machine root overrides.** The per-user settings file (see below) can map `(keep id, root id) → local path`, so the same keep opened on two machines can reach a share through different mount points.
-- **Offline is not deleted.** If a root is unreachable at scan time, its resources are marked offline and nothing is removed. Resources are only marked missing when their root is reachable and the file is gone.
+- **Offline is not deleted.** If a root is unreachable at scan time, its resources are marked offline and nothing is removed. Resources are only marked missing when their root is reachable and the file is gone. Files the scan now leaves out (a new exclude pattern, an extension the theme no longer takes) are flagged *skipped*, not missing (§6).
 - **Not watched.** A root with `watched = false` stays in `keep.toml` but isn't scanned; its resources are marked offline, and its items keep their tags. Watching it again (or adding the same folder) and scanning reconnects them. Only removing a root *with its items*, an explicit choice in the Keep configuration window (§12), deletes anything: the root's resources, the items with files only there, and containers left empty. Files on disk are never touched.
 - **Keep location.** `keep.db` should live on a local disk. SQLite locking over SMB is unreliable. The app warns (but does not refuse) when a keep is opened from a network path, and a keep is single-user in v1. Detection is best effort and never blocks opening: on Windows, UNC paths and drives that `GetDriveTypeW` reports as remote (mapped drives); on Linux and macOS, the mount's file-system type (nfs, cifs/smbfs, afpfs, sshfs, and similar; WSL's `/mnt/c` counts as local).
 - **Keeps and roots never contain each other.** Creating a keep inside one of its roots, or with a root inside the keep folder, is refused: the scanner would index the keep's own files.
@@ -135,7 +135,7 @@ Conventions for core tables:
 `id (text pk)`, `name`, `online (bool)`, `last_scan_at`, `last_error`.
 
 **resource** — a file or directory under a root.
-`id (int pk)`, `root_id`, `relpath` (POSIX), `kind` (`file`/`dir`), `ext` (lowercase), `size`, `mtime_ns` (integer nanoseconds, compared exactly when diffing), `fingerprint` (nullable), `status` (`ok`/`offline`/`missing`), `first_seen_at`, `last_seen_at`, `parent_resource_id` (nullable; reserved for archive members, §14).
+`id (int pk)`, `root_id`, `relpath` (POSIX), `kind` (`file`/`dir`), `ext` (lowercase), `size`, `mtime_ns` (integer nanoseconds, compared exactly when diffing), `fingerprint` (nullable), `status` (`ok`/`offline`/`missing`), `skipped` (bool: scans now leave it out, §6; core format 5), `first_seen_at`, `last_seen_at`, `parent_resource_id` (nullable; reserved for archive members, §14).
 Unique `(root_id, relpath)`. Index on `fingerprint`.
 
 **entity** — base table for every theme entity (joined-table layout: each theme type's table shares its `id`).
@@ -206,7 +206,7 @@ A scan runs per root in background workers:
 3. **Diff** against the database by `(root_id, relpath)`:
    - New path → insert resource.
    - Existing path with changed `size`/`mtime` → update and clear fingerprint (recomputed later) and invalidate thumbnails.
-   - Path not seen → mark `missing`.
+   - Path not seen → mark `missing`, unless the walk now leaves it out (#152, `scanner.walk_scope`): excluded itself or under an excluded folder, a file whose extension the theme no longer takes, or a folder the theme no longer records. Those are flagged `skipped` (`resource.skipped`, core format 5) with their status left as last seen, since the file may well still be there. That includes files an older scan wrongly marked `missing`. Skipped files aren't ingested; they aren't listed in Triage's unlinked files, don't make an item count as having all files missing, and are counted per root (Keep configuration, scan summary). A skipped path that's in scope and seen again is back to `ok`, no longer skipped.
    - A path seen again after being `offline` or `missing` → back to `ok`, keeping its id (and its fingerprint if size and mtime are unchanged).
    - Paths at or under a folder the walk could not read are left as they are, not marked `missing`: not being able to look is not the same as the file being gone.
    - `last_seen_at` moves only for resources the walk actually saw; `root.last_scan_at` records the completed scan. Nothing is deleted.
@@ -741,7 +741,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 **Triage.** Tabs: resources not linked to any entity; entities with no tags; entities whose linked resources are all missing. Bulk actions: link to entity/role, tag, dismiss (hide until changed).
 
 - **Page** (#110, `ui/triage.py`, `core/triage.py`): TOOLS → **Triage**, three tabs, each with its count.
-- **Unlinked files:** a table (folder, path, size, offline) of the first 10,000 files no item links; folders and missing files aren't listed. Actions: **Open file**, **Show in file manager**, **Skip in scans…** (adds an exact exclude pattern per file to its root, with `*`, `?`, `[` bracketed; the next scan marks them missing, which takes them off the list), and **Dismiss**.
+- **Unlinked files:** a table (folder, path, size, offline) of the first 10,000 files no item links; folders and missing files aren't listed. Actions: **Open file**, **Show in file manager**, **Skip in scans…** (adds an exact exclude pattern per file to its root, with `*`, `?`, `[` bracketed; the next scan flags them skipped, which takes them off the list), and **Dismiss**.
   - Linking a file to an item by hand is deferred to #243: it needs user-made links that scans respect.
   - A theme may read files without linking them (a cover image found in its folder), so some files here are expected.
 - **Untagged items** and **Missing files** are ordinary search pages with `SearchSpec.triage` (`"untagged"`: no tag of its own, or none from a container with Inherit tags; `"missing"`: at least one linked file, and none that isn't missing; offline isn't missing). The Tags panel and drops tag their selection, as on any search page.
@@ -811,7 +811,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Core schema versions: a newer keep is refused; an older one needs user confirmation, then is backed up with SQLite's backup API and migrated in a single transaction; `keep.toml` `format_version` tracks the database (§5). |
 | 2026-09 | Root reachability: a root is online if its folder can be listed within 10 s, checked on a daemon thread so a hung share can be abandoned; offline marks only `ok` resources `offline` (§6). |
 | 2026-09 | Walking: exclude globs are case-insensitive with `**` semantics and prune matching folders; symlinked folders and junctions are not followed; read errors are reported and skipped (§6). |
-| 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources currently become `missing` (issue #152) (§6). |
+| 2026-09 | Scan diff: resources under unreadable folders are not marked missing; returning files keep their id; `last_seen_at` moves only for resources actually seen. Newly excluded resources became `missing` until #152; they are now flagged `skipped` (§6). |
 | 2026-09 | Fingerprints are 16-byte blake2b digests; files up to 128 KiB are hashed whole; results are stored only if size and mtime still match (§5). |
 | 2026-09 | Move detection matches unlinked new files to missing files by fingerprint across roots with no time window; ambiguous groups pair only by unique file name, never by guess (§6). |
 | 2026-09 | The DB writer is a dedicated thread applying `Callable[[Connection], T]` jobs in their own transactions and returning futures; scans are applied in parts of at most 500 changes (§6). |
@@ -880,6 +880,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Files a scan now leaves out (excludes, extensions, the theme's folder rule) are flagged `skipped` rather than marked missing or deleted: a new boolean column (core format 5) rather than a status value, since status values have a CHECK constraint SQLite can't change without rebuilding the table. Status stays as last seen; seeing the file again in scope clears the flag (#152, §6). |
 | 2026-10 | Activity panel (#111): a bottom dock, hidden until opened from View → Activity (Ctrl+Shift+A) or the status bar's problem badge, never popping up by itself. It shows the scan's progress or summary, the thumbnail queue, folder states, and a session-only problem log (newest 1,000) from scans and thumbnails, with Show in file manager, Copy, and Clear (§12). |
 | 2026-10 | Triage (#110): unlinked files, untagged items, and items with all files missing. Dismiss hides until changed, through a marker in a new `triage_dismissal` table (core format 4), undoably. Deleting missing items is undoable. Skip in scans adds an exact exclude pattern. Hand-made links are deferred to #243, since scans don't yet respect them (§5, §8, §12). |
 | 2026-10 | Background thumbnails after a scan (§6 step 7, never built until #241): entities with no remembered source or whose remembered file was re-ingested since the scan began, newest first, on one session-owned thread separate from the grids' workers; on by default, `[thumbnails] after_scan = false` turns it off. |

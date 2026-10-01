@@ -49,6 +49,8 @@ class FileRow:
     """This machine's path, or ``None`` if its root isn't configured here."""
     role: str | None = None
     """The role it is linked in."""
+    skipped: bool = False
+    """Scans leave it out now (an exclude pattern); its status is as last seen."""
 
 
 @dataclass(frozen=True)
@@ -289,6 +291,7 @@ def role_files(
             Resource.size,
             Resource.status,
             EntityResource.role,
+            Resource.skipped,
         )
         .join(EntityResource, EntityResource.resource_id == Resource.id)
         .join(Root, Root.id == Resource.root_id)
@@ -301,7 +304,9 @@ def role_files(
     if resource_id is not None:
         query = query.where(Resource.id == resource_id)
     found = []
-    for rid, root_id, root_name, relpath, kind, size, status, linked_as in conn.execute(query):
+    for rid, root_id, root_name, relpath, kind, size, status, linked_as, skipped in conn.execute(
+        query
+    ):
         base = root_path(root_id)
         found.append(
             FileRow(
@@ -313,6 +318,7 @@ def role_files(
                 status,
                 local_path(base, relpath) if base is not None else None,
                 linked_as,
+                skipped,
             )
         )
     return tuple(found)

@@ -761,7 +761,11 @@ def describe_status(root: RootConfig, status: RootStatus | None) -> str:
     files = f"{status.files:,} files and folders"
     details = [
         f"{n:,} {what}"
-        for n, what in ((status.offline, "offline"), (status.missing, "missing"))
+        for n, what in (
+            (status.offline, "offline"),
+            (status.missing, "missing"),
+            (status.skipped, "skipped"),
+        )
         if n
     ]
     if details:
