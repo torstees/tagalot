@@ -8,8 +8,9 @@ import logging
 import shutil
 import tempfile
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,12 @@ from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
-from tagalot.core.keep_settings import with_name, with_option, with_thumbnail_max
+from tagalot.core.keep_settings import (
+    with_name,
+    with_option,
+    with_thumbnail_max,
+    with_thumbnails_after_scan,
+)
 from tagalot.core.models import Root
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.root_admin import (
@@ -37,6 +43,14 @@ from tagalot.core.tags import TagTreeCache
 from tagalot.core.theme_db import open_theme, resolve_theme
 from tagalot.core.theme_schema import ThemeSchema, build_theme_schema
 from tagalot.core.thumbnails.cache import ThumbCache
+from tagalot.core.thumbnails.queue import (
+    Progress as QueueProgress,
+)
+from tagalot.core.thumbnails.queue import (
+    QueueResult,
+    ThumbnailQueue,
+    entities_needing_thumbnails,
+)
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import Theme
@@ -64,6 +78,9 @@ class KeepSession:
     """True once :meth:`close` has finished: the database files are no longer open."""
     _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _temp: Path | None = field(default=None, init=False, repr=False)
+    _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
+    last_scan_started: datetime | None = field(default=None, init=False)
+    """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
@@ -150,6 +167,7 @@ class KeepSession:
         """Scan every watched root (or those of ``root_ids``) in turn with the keep's
         theme. Runs in a worker."""
         reports = []
+        self.last_scan_started = datetime.now(UTC)
         wanted = set(root_ids) if root_ids is not None else None
         for root in self.keep.config.roots:
             if not root.watched or (wanted is not None and root.id not in wanted):
@@ -223,6 +241,36 @@ class KeepSession:
         self.keep = replace(self.keep, config=config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
 
+    # --- background thumbnails (core.thumbnails.queue) ---
+
+    @property
+    def thumbnail_queue(self) -> ThumbnailQueue:
+        with self._temp_lock:  # created once, whichever thread asks first
+            if self._queue is None:
+                self._queue = ThumbnailQueue(self.thumbnails)
+            return self._queue
+
+    def queue_thumbnails(
+        self,
+        progress: QueueProgress | None = None,
+        done: Callable[[QueueResult], None] | None = None,
+    ) -> int:
+        """Make the latest scan's thumbnails in the background (if the keep does that);
+        returns how many entities were queued. Runs in a worker (it reads the database)."""
+        if not self.keep.config.thumbnails_after_scan or self.closed:
+            return 0
+        with self.reader.connect() as conn:
+            ids = entities_needing_thumbnails(conn, self.last_scan_started)
+        if ids:
+            self.thumbnail_queue.start(ids, progress, done)
+        return len(ids)
+
+    def set_thumbnails_after_scan(self, on: bool) -> None:
+        """Turn background thumbnails after scans on or off; off stops a run."""
+        self.save_config(with_thumbnails_after_scan(self.keep.config, on))
+        if not on and self._queue is not None:
+            self._queue.stop()
+
     def rename_keep(self, name: str) -> None:
         """Rename the keep. Runs in a worker."""
         self.save_config(with_name(self.keep.config, self.keep.dir, name))
@@ -280,6 +328,7 @@ class KeepSession:
         with self._closing:
             if self.closed:
                 return
+            self.thumbnail_queue.close()  # before the database it reads goes
             self.writer.close()
             if self._temp is not None:
                 shutil.rmtree(self._temp, ignore_errors=True)

@@ -43,6 +43,7 @@ from tagalot.core.tags import (
     tag_counts,
 )
 from tagalot.core.thumbnails.cache import CacheStats
+from tagalot.core.thumbnails.queue import QueueResult
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
 from tagalot.ui.detail_view import DetailPage
@@ -87,6 +88,11 @@ class MainWindow(QMainWindow):
     Emits :attr:`closed` once the window has actually closed (not when a close was refused
     because a scan is running), so its owner can close the keep.
     """
+
+    _queue_progress = Signal(int, int)
+    """From the background thumbnail thread: (done, total)."""
+    _queue_done = Signal(object)
+    """From the background thumbnail thread: its ``QueueResult``."""
 
     closed = Signal()
 
@@ -260,6 +266,12 @@ class MainWindow(QMainWindow):
         view_menu.addMenu(self.size_menu)
 
         # Status bar: a message plus a busy indicator while scanning.
+        self.thumbnail_status = QLabel()
+        self.thumbnail_status.setObjectName("thumbnail_status")
+        self.thumbnail_status.setVisible(False)
+        self.statusBar().addPermanentWidget(self.thumbnail_status)
+        self._queue_progress.connect(self._show_queue)
+        self._queue_done.connect(self._queue_finished)
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)
         self.busy.setMaximumWidth(120)
@@ -920,11 +932,45 @@ class MainWindow(QMainWindow):
         self.thumbnails.clear()  # files may have changed
         if self.keep_config is not None:
             self.keep_config.reload()
+        self._queue_thumbnails()
         for detail in self._pages.values():
             if isinstance(detail, DetailPage):
                 detail.refresh()
         for page in self.search_pages():
             page.refresh()
+
+    def _queue_thumbnails(self) -> None:
+        """After a scan: make its thumbnails in the background (§6 step 7)."""
+        session = self.session
+        if session is None:
+            return
+
+        def queued(count: int) -> None:
+            if count and shiboken6.isValid(self):
+                self._show_queue(0, count)
+
+        run_in_pool(
+            lambda: session.queue_thumbnails(
+                progress=self._queue_progress.emit, done=self._queue_done.emit
+            ),
+            on_done=queued,
+        )
+
+    def _show_queue(self, done: int, total: int) -> None:
+        left = total - done
+        self.thumbnail_status.setText(f"Making thumbnails: {left:,} left")
+        self.thumbnail_status.setToolTip(
+            f"New and changed items' thumbnails, {done:,} of {total:,} made. Pages you "
+            "look at go first."
+        )
+        self.thumbnail_status.setVisible(left > 0)
+
+    def _queue_finished(self, result: QueueResult) -> None:
+        self.thumbnail_status.setVisible(False)
+        self.thumbnails.clear()  # grids pick up what was made from the cache
+        for page in self.search_pages():
+            page.grid.viewport().update()
+        logger.info("Made %d background thumbnails (%d pictures)", result.done, result.pictures)
 
     def _scan_failed(self, error: BaseException) -> None:
         self.scan_action.setEnabled(True)

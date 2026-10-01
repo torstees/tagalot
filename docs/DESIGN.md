@@ -89,6 +89,7 @@ exclude = [                                # new roots start with DEFAULT_EXCLUD
 
 [thumbnails]                               # optional
 max_size = 512                             # overrides the theme's thumbnail_max
+after_scan = false                         # don't make a scan's thumbnails in the background
 ```
 
 ### Rules
@@ -220,7 +221,7 @@ A scan runs per root in background workers:
    - **Theme options** (#82): each root records, in `root.ingest_options`, the option values (§9) it was last ingested with. When the values in effect differ at the next scan, every resource of the root is marked pending and ingested again, so the theme can regroup (assets2d's artists). A root with nothing recorded counts as ingested with the defaults.
    - **Reading files happens before the transaction** (#176): for each batch the scan worker first calls the theme's optional `prepare(batch)`, outside any transaction, which returns `{resource id: value}` (tags, image sizes, font names); `ingest()` then reads each value with `ctx.prepared(resource)`. So the write lock is held only for database work, and tagging stays responsive while a batch is read from a slow share. If `prepare()` raises, the batch is prepared one resource at a time; a resource that still fails is reported with the error and left pending. Themes without `prepare()` skip the step (no "Reading…" progress).
 6. **Closure maintenance.** The core updates `entity_ancestor` for changed containment edges.
-7. **Thumbnail queue.** Affected entities are queued for thumbnail resolution (§10).
+7. **Thumbnail queue** (#241, `core/thumbnails/queue.py`). After a scan, its thumbnails are made in the background, so they're ready before anyone browses (unless the keep turns this off, `[thumbnails] after_scan = false`). The queue is every entity with no remembered thumbnail source (ingest clears it whenever links change, and new entities have none), plus those whose remembered file was ingested again since the scan began (changed in place); newest first. One thread of the session's own resolves them as a grid would (§10), while grids keep their own workers, so what's on screen isn't kept waiting. The next scan replaces a run in progress; closing the keep stops it first. The status bar shows "Making thumbnails: N left", and grids pick up the results when it finishes.
 
 ### Closure maintenance
 
@@ -676,6 +677,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 - **Tabs:** **Folders** (the above), **Thumbnails**, and **Keep**.
 - **Thumbnails tab:**
   - **Largest size:** "The theme's size (N px)", or a size of the keep's own (16 to 2048 px), written as `[thumbnails] max_size`. It applies at once: the resolver makes thumbnails at the new size (the size is part of the cache key, so others are remade as shown), and View → Thumbnail size's presets and zoom follow.
+  - **Make new and changed items' thumbnails after each scan** (on by default; `[thumbnails] after_scan`, §6 step 7): off for a huge keep on a slow share, so thumbnails are made only as pages show them. Turning it off stops a run.
   - **Stored:** how many thumbnails are stored and their size, with **Clear…** (§10). It is counted again (in a worker) whenever the tab comes into view or the window gets the focus, and every 3 seconds while the tab is in view, since grids store thumbnails as they show them.
 - **Keep tab:** the keep's name (editable) and folder; the theme (name, id, version, built in or its file), the types it holds, and its description; and the theme's **options**. Each option has an editor by type (checkbox, number box, or text box) showing the keep's value or the default, with **Default** to remove the keep's setting.
 - **Folder options:** on the Folders tab, each option has a checkbox to override it for the selected folder (unticked: the keep's value, named in the tooltip) and an editor. Ticking starts from the keep's value; unticking removes the override.
@@ -852,6 +854,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Background thumbnails after a scan (§6 step 7, never built until #241): entities with no remembered source or whose remembered file was re-ingested since the scan began, newest first, on one session-owned thread separate from the grids' workers; on by default, `[thumbnails] after_scan = false` turns it off. |
 | 2026-10 | The Keep configuration window has Folders, Thumbnails, and Keep tabs; the thumbnail size applies at once, theme options (keep-wide and per folder) at the next scan; Clear thumbnail cache moved from the Keep menu to the Thumbnails tab (§10, §12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

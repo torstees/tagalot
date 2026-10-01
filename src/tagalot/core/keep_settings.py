@@ -36,6 +36,11 @@ def with_thumbnail_max(config: KeepConfig, size: int | None) -> KeepConfig:
     return replace(config, thumbnail_max=size, roots=copy.deepcopy(config.roots))
 
 
+def with_thumbnails_after_scan(config: KeepConfig, on: bool) -> KeepConfig:
+    """``config`` making (or not) a scan's thumbnails in the background."""
+    return replace(config, thumbnails_after_scan=on, roots=copy.deepcopy(config.roots))
+
+
 def with_option(
     config: KeepConfig,
     theme: type[Theme],
