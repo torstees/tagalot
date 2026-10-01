@@ -171,3 +171,23 @@ def test_the_stored_count_follows_new_thumbnails(
 def _entity_ids(session: KeepSession) -> list[int]:
     with session.reader.connect() as conn:
         return list(conn.scalars(select(Entity.id).order_by(Entity.id)))
+
+
+def test_f5_makes_thumbnails_in_the_background(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, config: KeepConfigWindow
+) -> None:
+    assert config.after_scan.isChecked()
+    before = session.thumbnails.cache.stats().count
+    with qtbot.waitSignal(window._queue_done, timeout=30_000) as blocker:
+        window.scan_now()
+    assert blocker.args[0].done == len(_entity_ids(session))  # nothing was shown yet
+    assert session.thumbnails.cache.stats().count > before
+    assert not window.thumbnail_status.isVisible()  # gone when done
+
+    with qtbot.waitSignal(config.changed, timeout=5000):
+        config.after_scan.setChecked(False)
+    assert load_keep_config(session.keep.toml_path).thumbnails_after_scan is False
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+    qtbot.wait(200)
+    assert not session.thumbnail_queue.running

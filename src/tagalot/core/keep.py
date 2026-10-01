@@ -105,6 +105,8 @@ class KeepConfig:
     """``[theme.options]``: the keep's settings for its theme's options."""
     thumbnail_max: int | None = None
     """``[thumbnails] max_size``: overrides the theme's ``thumbnail_max`` for this keep."""
+    thumbnails_after_scan: bool = True
+    """``[thumbnails] after_scan``: make the thumbnails a scan affects in the background."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -143,8 +145,13 @@ def dump_keep_config(config: KeepConfig) -> str:
     if config.theme_options:
         lines += ["", "[theme.options]"]
         lines += [f"{toml_key(k)} = {toml_value(v)}" for k, v in config.theme_options.items()]
+    thumbnails = []
     if config.thumbnail_max is not None:
-        lines += ["", "[thumbnails]", f"max_size = {config.thumbnail_max}"]
+        thumbnails.append(f"max_size = {config.thumbnail_max}")
+    if not config.thumbnails_after_scan:
+        thumbnails.append("after_scan = false")
+    if thumbnails:
+        lines += ["", "[thumbnails]", *thumbnails]
     for root in config.roots:
         lines += [
             "",
@@ -184,11 +191,15 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     theme_options = reader.options(theme_table, "[theme.options]")
 
     thumbnail_max = None
+    after_scan = True
     if "thumbnails" in data:
         thumbnails = reader.table(data, "thumbnails")
-        reader.warn_unknown(thumbnails, {"max_size"}, "[thumbnails]")
+        reader.warn_unknown(thumbnails, {"max_size", "after_scan"}, "[thumbnails]")
         if "max_size" in thumbnails:
             thumbnail_max = reader.integer(thumbnails, "max_size", "[thumbnails]")
+        after_scan = thumbnails.get("after_scan", True)
+        if not isinstance(after_scan, bool):
+            raise KeepConfigError(path, "[thumbnails] after_scan must be true or false")
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -227,6 +238,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         roots=roots,
         theme_options=theme_options,
         thumbnail_max=thumbnail_max,
+        thumbnails_after_scan=after_scan,
     )
 
 

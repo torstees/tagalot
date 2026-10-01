@@ -239,8 +239,15 @@ class KeepConfigWindow(QWidget):
         cache_row = QHBoxLayout()
         cache_row.addWidget(self.cache_stats, 1)
         cache_row.addWidget(clear)
+        self.after_scan = QCheckBox("Make new and changed items' thumbnails after each scan")
+        self.after_scan.setToolTip(
+            "In the background, so they're ready when you browse. Turn it off for a huge "
+            "keep on a slow share: thumbnails are then made only as pages show them."
+        )
+        self.after_scan.toggled.connect(self._set_after_scan)
         form = QFormLayout()
         form.addRow("Largest size:", size_row)
+        form.addRow("", self.after_scan)
         form.addRow("Stored:", cache_row)
         tab = QWidget()
         column = QVBoxLayout(tab)
@@ -369,6 +376,9 @@ class KeepConfigWindow(QWidget):
         self.theme_size.setChecked(config.thumbnail_max is None)
         self.theme_size.blockSignals(False)
         self.max_size.setValue(self.session.thumbnail_max)
+        self.after_scan.blockSignals(True)
+        self.after_scan.setChecked(config.thumbnails_after_scan)
+        self.after_scan.blockSignals(False)
         self.max_size.setEnabled(config.thumbnail_max is not None)
         _clear_form(self.keep_options_form)
         for spec in self.session.theme.options:
@@ -474,6 +484,15 @@ class KeepConfigWindow(QWidget):
             lambda: session.set_thumbnail_max(size),
             f"Thumbnails are now made at {shown} px; they're made again as they're shown.",
             self.thumbnail_max_changed.emit,
+        )
+
+    def _set_after_scan(self, on: bool) -> None:
+        session = self.session
+        self._run(
+            lambda: session.set_thumbnails_after_scan(on),
+            "Scans now make thumbnails in the background."
+            if on
+            else "Thumbnails are now made only as pages show them.",
         )
 
     def _set_option(self, name: str, value: object, root_id: str | None = None) -> None:
