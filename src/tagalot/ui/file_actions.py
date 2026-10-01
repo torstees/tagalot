@@ -17,9 +17,9 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
+from PySide6.QtCore import QModelIndex, QObject, QProcess, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QMenu, QWidget
 
 from tagalot.core.detail import FileRow
 from tagalot.core.handlers import (
@@ -68,6 +68,33 @@ def file_kind(schema: ThemeSchema, type_id: str) -> str | None:
     return "file"
 
 
+def opens_file(schema: ThemeSchema, type_id: str) -> bool:
+    """Whether double-click (and Enter) opens an item's file rather than its page: its type
+    says ``double_click = "open_file"`` and can link files. Ctrl+Enter does the other."""
+    try:
+        entity = schema.by_type_id(type_id).entity
+    except KeyError:
+        return False
+    return entity.double_click == "open_file" and file_kind(schema, type_id) is not None
+
+
+OPEN_KEYS = (QKeySequence("Return"), QKeySequence("Enter"))
+"""Enter (main keyboard and keypad): what double-click does. Explicit, because on macOS item
+views don't treat Return as activation."""
+ALTERNATE_KEYS = (QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter"))
+"""Ctrl+Enter (Cmd+Enter on macOS): the other of page and file (DESIGN.md §12)."""
+
+
+def add_open_keys(view: QAbstractItemView, activate: Callable[[QModelIndex, bool], None]) -> None:
+    """Enter calls ``activate(current index, False)`` and Ctrl+Enter ``activate(current
+    index, True)`` in ``view``, on every platform."""
+    for keys, alternate in [(k, False) for k in OPEN_KEYS] + [(k, True) for k in ALTERNATE_KEYS]:
+        shortcut = QShortcut(keys, view, context=Qt.ShortcutContext.WidgetShortcut)
+        shortcut.activated.connect(
+            lambda alternate=alternate: activate(view.currentIndex(), alternate)
+        )
+
+
 def add_file_actions(
     menu: QMenu,
     opener: "FileOpener",
@@ -75,9 +102,10 @@ def add_file_actions(
     entity_id: int,
     resource_id: int | None = None,
     folder: bool = False,
-) -> None:
+) -> QAction:
     """Add "Open file" (or "Open folder"), "Show in file manager", and, for files, the "Open
-    with" submenu, for the entity's file (or one of them, ``resource_id``)."""
+    with" submenu, for the entity's file (or one of them, ``resource_id``). Returns the
+    "Open file" action."""
 
     def lookup(on_done: Callable[[FileToOpen | CannotOpen], None]) -> None:
         opener.lookup(entity_id, resource_id, on_done)
@@ -89,6 +117,7 @@ def add_file_actions(
     reveal.triggered.connect(lambda: lookup(lambda f: opener.act(f, REVEAL)))
     if not folder:
         menu.addMenu(OpenWithMenu(opener, lookup, menu))
+    return open_action
 
 
 class OpenWithMenu(QMenu):

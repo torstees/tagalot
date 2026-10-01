@@ -33,6 +33,7 @@ from tagalot.core.search import count_by_type, run_search
 from tagalot.core.search_fields import scoped_tables, search_fields, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
+from tagalot.ui.file_actions import add_open_keys
 from tagalot.ui.models.results import PreviewModel, ResultColumn, Row, row_values
 from tagalot.ui.result_table import list_columns, make_result_table, set_column_widths
 
@@ -92,7 +93,8 @@ class TypeSection(QWidget):
     toggled = Signal(str, bool)
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
-    open_requested = Signal(int)
+    hit_activated = Signal(object, bool)
+    """Double-click or Enter on a row (``False``), or Ctrl+Enter (``True``)."""
     """A row was double-clicked (or Enter pressed): the entity id."""
     item_menu_requested = Signal(object, QPoint)
     """A row was right-clicked: its :class:`SearchHit` and the global position."""
@@ -130,6 +132,7 @@ class TypeSection(QWidget):
         self.table.set_columns(group.columns, hidden_columns)
         self.table.column_toggled.connect(self.column_toggled)
         self.table.activated.connect(self._activated)
+        add_open_keys(self.table, self._activated)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._menu)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -169,10 +172,10 @@ class TypeSection(QWidget):
         if hit is not None:
             self.item_menu_requested.emit(hit, self.table.viewport().mapToGlobal(point))
 
-    def _activated(self, index: QModelIndex) -> None:
+    def _activated(self, index: QModelIndex, alternate: bool = False) -> None:
         hit = self.model.hit(index.row())
         if hit is not None:
-            self.open_requested.emit(hit.id)
+            self.hit_activated.emit(hit, alternate)
 
     def _tags_dropped(self, rows: list[int], tag_ids: list[int]) -> None:
         ids = [hit.id for r in rows if (hit := self.model.hit(r)) is not None]
@@ -200,7 +203,8 @@ class GroupedResults(QScrollArea):
     show_all = Signal(str)
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
-    open_requested = Signal(int)
+    hit_activated = Signal(object, bool)
+    """Double-click or Enter on a row (``False``), or Ctrl+Enter (``True``)."""
     item_menu_requested = Signal(object, QPoint)
     selection_changed = Signal()
     """Any section's selection changed (or the sections were replaced)."""
@@ -238,7 +242,7 @@ class GroupedResults(QScrollArea):
             section.show_all.connect(self.show_all)
             section.tags_dropped.connect(self.tags_dropped)
             section.column_toggled.connect(self.column_toggled)
-            section.open_requested.connect(self.open_requested)
+            section.hit_activated.connect(self.hit_activated)
             section.item_menu_requested.connect(self.item_menu_requested)
             section.table.selectionModel().selectionChanged.connect(self.selection_changed)
             section.toggled.connect(self._remember_fold)

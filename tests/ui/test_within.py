@@ -103,7 +103,7 @@ def test_items_that_contain_nothing(qtbot: QtBot, window: MainWindow) -> None:
     page = _search(qtbot, window, SEARCH_ALL, "14 items")
     menu = page.item_menu(_hit(page, "forest.png"))
     open_action, within = menu.actions()[:2]
-    assert open_action.text() == "Open"
+    assert open_action.text() == "Open page"
     assert not within.isEnabled()
     with qtbot.waitSignal(page.open_requested) as blocker:
         open_action.trigger()
@@ -115,9 +115,9 @@ def test_the_grid_menu_starts_with_the_cards_actions(qtbot: QtBot, window: MainW
     qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
     hit = page.model.hit(0)
     labels = [a.text() for a in page.grid_menu(hit).actions()]
-    assert labels[:3] == ["Open", "Show contents in search", ""]
+    assert labels[:3] == ["Open page", "Show contents in search", ""]
     assert "Card lines" in labels
-    assert "Open" not in [a.text() for a in page.grid_menu().actions()]  # empty space
+    assert "Open page" not in [a.text() for a in page.grid_menu().actions()]  # empty space
 
 
 def test_show_in_search_from_a_detail_page(

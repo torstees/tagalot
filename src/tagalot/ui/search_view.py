@@ -48,7 +48,13 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
-from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
+from tagalot.ui.file_actions import (
+    FileOpener,
+    add_file_actions,
+    add_open_keys,
+    file_kind,
+    opens_file,
+)
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.models.results import ResultColumn, ResultsModel
@@ -216,6 +222,8 @@ class SearchPage(QWidget):
         self.grid.menu_requested.connect(self._grid_menu)
         self.table.activated.connect(self._activated)
         self.grid.activated.connect(self._activated)
+        add_open_keys(self.table, self._activated)
+        add_open_keys(self.grid, self._activated)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._table_menu)
 
@@ -229,6 +237,7 @@ class SearchPage(QWidget):
         tree_header.sortIndicatorChanged.connect(self._sort_clicked)
         self.tree.selectionModel().selectionChanged.connect(self.selection_changed)
         self.tree.activated.connect(self._tree_activated)
+        add_open_keys(self.tree, self._tree_activated)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.tags_dropped.connect(self.tags_dropped)
 
@@ -238,7 +247,7 @@ class SearchPage(QWidget):
         self.groups.column_toggled.connect(self._column_toggled)
         self.groups.set_hidden_columns(self.hidden_columns)
         self.groups.selection_changed.connect(self.selection_changed)
-        self.groups.open_requested.connect(self.open_requested)
+        self.groups.hit_activated.connect(self.activate)
         self.groups.item_menu_requested.connect(lambda hit, at: self.item_menu(hit).exec(at))
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
@@ -355,8 +364,9 @@ class SearchPage(QWidget):
     def item_menu(self, hit: SearchHit) -> QMenu:
         """The right-click menu of one result."""
         menu = QMenu(self)
-        open_action = menu.addAction("Open")
+        open_action = menu.addAction("Open page")
         open_action.triggered.connect(lambda: self.open_requested.emit(hit.id))
+        menu.setDefaultAction(open_action)  # bold: what double-click does
         within = menu.addAction("Show contents in search")
         holds = contained_types(self.session.schema, hit.type)
         within.setEnabled(bool(holds))
@@ -367,7 +377,11 @@ class SearchPage(QWidget):
         kind = file_kind(self.session.schema, hit.type)
         if kind is not None and self.file_opener is not None:
             menu.addSeparator()
-            add_file_actions(menu, self.file_opener, entity_id=hit.id, folder=kind == "folder")
+            open_file = add_file_actions(
+                menu, self.file_opener, entity_id=hit.id, folder=kind == "folder"
+            )
+            if opens_file(self.session.schema, hit.type):
+                menu.setDefaultAction(open_file)
         menu.addSeparator()
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
         theme_actions = actions_for(self.session.schema, hit.type)
@@ -715,14 +729,24 @@ class SearchPage(QWidget):
             rows, lambda ids: self.tags_dropped.emit(ids, tag_ids) if ids else None
         )
 
-    def _activated(self, index: QModelIndex) -> None:
-        hit = self.model.hit(index.row())
+    def _activated(self, index: QModelIndex, alternate: bool = False) -> None:
+        hit = self.model.hit(index.row()) if index.isValid() else None
         if hit is not None:
-            self.open_requested.emit(hit.id)
+            self.activate(hit, alternate)
 
-    def _tree_activated(self, index: QModelIndex) -> None:
-        hit = self.tree_model.hit(index)
+    def _tree_activated(self, index: QModelIndex, alternate: bool = False) -> None:
+        hit = self.tree_model.hit(index) if index.isValid() else None
         if hit is not None:
+            self.activate(hit, alternate)
+
+    def activate(self, hit: SearchHit, alternate: bool = False) -> None:
+        """Double-click or Enter (``alternate`` for Ctrl+Enter): open the item's page, or
+        its file for types whose ``double_click`` is ``"open_file"``; Ctrl+Enter does the
+        other."""
+        wants_file = opens_file(self.session.schema, hit.type) != alternate
+        if wants_file and self.file_opener is not None and file_kind(self.session.schema, hit.type):
+            self.file_opener.open_entity(hit.id)
+        else:
             self.open_requested.emit(hit.id)
 
     def _tree_menu(self, point: QPoint) -> None:

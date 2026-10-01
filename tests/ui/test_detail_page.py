@@ -1,5 +1,7 @@
 """Opening an item's detail page and tagging from it (#86)."""
 
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
@@ -24,9 +26,10 @@ def _open(qtbot: QtBot, window: MainWindow, title: str) -> DetailPage:
     index = page.model.index(row, 0)
     page.table.scrollTo(index)
     rect = page.table.visualRect(index)
-    # A real double-click is a click and then a double-click event on the same spot.
+    # Files open on double-click (double_click="open_file"); Ctrl+Enter opens the page.
     QTest.mouseClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
-    QTest.mouseDClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    page.table.setFocus()
+    QTest.keyClick(page.table, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     detail = window.stack.currentWidget()
     assert isinstance(detail, DetailPage)
     qtbot.waitUntil(lambda: detail.detail is not None, timeout=5000)
@@ -39,7 +42,7 @@ def _texts(detail: DetailPage, section: str) -> list[str]:
     return [label.text() for label in box.findChildren(QLabel)]
 
 
-def test_double_click_opens_the_detail_page(qtbot: QtBot, session: KeepSession) -> None:
+def test_ctrl_enter_opens_the_detail_page(qtbot: QtBot, session: KeepSession) -> None:
     window = _window(qtbot, session)
     detail = _open(qtbot, window, "glacier.jpg")
     assert detail.title.text() == "glacier.jpg"
@@ -108,4 +111,39 @@ def test_clicking_search_all_leaves_a_detail_page(qtbot: QtBot, session: KeepSes
         QTest.mouseClick(nav.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
     assert window.stack.currentWidget() is search
     assert nav.currentIndex() == index  # highlighted again
+    _close(window)
+
+
+def test_double_click_and_enter_open_a_file(
+    qtbot: QtBot, session: KeepSession, nothing_is_launched: list[tuple[str, str]]
+) -> None:
+    window = _window(qtbot, session)
+    page = _page(window)
+    index = page.model.index(_row(page, "glacier.jpg"), 0)
+    page.table.scrollTo(index)
+    center = page.table.visualRect(index).center()
+    # A real double-click is a click and then a double-click event on the same spot.
+    QTest.mouseClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=center)
+    QTest.mouseDClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=center)
+    qtbot.waitUntil(lambda: len(nothing_is_launched) == 1, timeout=5000)
+    assert nothing_is_launched[0][0] == "open"
+    assert Path(nothing_is_launched[0][1]).name == "glacier.jpg"
+    assert window.stack.currentWidget() is page  # no page opened
+    page.table.setFocus()
+    QTest.keyClick(page.table, Qt.Key.Key_Return)
+    qtbot.waitUntil(lambda: len(nothing_is_launched) == 2, timeout=5000)
+    _close(window)
+
+
+def test_double_clicking_a_file_row_opens_that_file(
+    qtbot: QtBot, session: KeepSession, nothing_is_launched: list[tuple[str, str]]
+) -> None:
+    window = _window(qtbot, session)
+    detail = _open(qtbot, window, "glacier.jpg")
+    box = detail.findChild(QWidget, "section_role")
+    assert box is not None
+    row = next(label for label in box.findChildren(QLabel) if "glacier.jpg" in label.text())
+    QTest.mouseDClick(row, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: len(nothing_is_launched) == 1, timeout=5000)
+    assert Path(nothing_is_launched[0][1]).name == "glacier.jpg"
     _close(window)
