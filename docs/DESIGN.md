@@ -642,7 +642,7 @@ Case-insensitive, any of `.jpg .jpeg .png .webp` (`FOLDER_IMAGE_EXTENSIONS`): `f
 - **Left: navigation** as a grouped list with collapsible headings: LIBRARY (Dashboard, Search all), SEARCHES (the theme's search views), SAVED (saved searches), TOOLS (Triage, Dedupe, Tag manager). Clicking a heading folds it; a folded heading shows how many items it hides (`▸ SAVED (12)`); fold state is saved per keep in `ui_state.json`. Keyboard: arrows move, Left/Right fold.
 - **Center:** the current view.
 - **Right: tagging panel**, a dock (View menu toggles it; visible on search and detail views).
-- **Status bar:** scan progress messages with a busy indicator, then a one-line summary (new, changed, missing, moved; offline roots; files that couldn't be read). It will open the activity panel (M14).
+- **Status bar:** scan progress messages with a busy indicator, then a one-line summary (new, changed, missing, moved; offline roots; files that couldn't be read). Problems with files show as a badge ("⚠ 3") at the right, which opens the activity panel.
 
 Keep configuration and the keep launcher are separate windows/dialogs. `tagalot <keep folder>` opens a keep directly; opening always happens in a worker, asks before an upgrade, and warns if the keep is on a network drive.
 
@@ -753,6 +753,19 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 **Dedupe.** Groups of exact duplicates (fingerprint) and theme-suggested near-duplicates. Side-by-side comparison of files and entities (format, size, resolution/bitrate, tags). Actions: merge entities (§13), keep both files as versions under one entity, or mark "not a duplicate." Never deletes files.
 
 **Activity panel.** Scan progress per root, fingerprint and thumbnail queues, offline roots, ingest and thumbnail errors with the affected paths.
+
+- **Where** (#111, `ui/activity.py`): a dock under the results, which can be moved or floated, hidden until asked for. It opens with **View → Activity** (Ctrl+Shift+A) or the status bar's problem badge ("⚠ N", shown when there are problems). It never opens by itself.
+- **Now:** the scan's latest step while it runs (fingerprinting is part of each root's scan), then "Last scan, HH:MM: <summary>", or why it failed.
+- **Thumbnails:** "Making thumbnails: N left" while the background queue runs (§6 step 7).
+- **Folders:** each root's state: online, offline with the reason, not watched, or not scanned yet. It is read in a worker when the panel opens, after a scan, and after a configuration change.
+- **Problems:** a table, newest first: when, what (Can't read, Not added, Warning, No thumbnail, Offline, Scan failed), where (folder › path, or the file's path), and the message.
+  - **Show in file manager** (also double-click) for rows with a path.
+  - **Copy** puts every row on the clipboard as tab-separated text.
+  - **Clear** empties the log.
+- **The log** (`core/activity.py`, `KeepSession.problems`): kept for the session only, the newest 1,000. It is safe from any thread, with a version counter the window checks once a second.
+  - Scans add what each root's report holds: unreadable folders and files, ingest failures, the theme's warnings, and offline roots.
+  - The thumbnail resolver adds files it couldn't make a picture of (`ThumbnailResolver.report`), once each per session, since failures aren't retried.
+  - A scan that fails outright is added too.
 
 ## 13. Dedupe and entity merge
 
@@ -867,6 +880,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Activity panel (#111): a bottom dock, hidden until opened from View → Activity (Ctrl+Shift+A) or the status bar's problem badge, never popping up by itself. It shows the scan's progress or summary, the thumbnail queue, folder states, and a session-only problem log (newest 1,000) from scans and thumbnails, with Show in file manager, Copy, and Clear (§12). |
 | 2026-10 | Triage (#110): unlinked files, untagged items, and items with all files missing. Dismiss hides until changed, through a marker in a new `triage_dismissal` table (core format 4), undoably. Deleting missing items is undoable. Skip in scans adds an exact exclude pattern. Hand-made links are deferred to #243, since scans don't yet respect them (§5, §8, §12). |
 | 2026-10 | Background thumbnails after a scan (§6 step 7, never built until #241): entities with no remembered source or whose remembered file was re-ingested since the scan began, newest first, on one session-owned thread separate from the grids' workers; on by default, `[thumbnails] after_scan = false` turns it off. |
 | 2026-10 | The Keep configuration window has Folders, Thumbnails, and Keep tabs; the thumbnail size applies at once, theme options (keep-wide and per folder) at the next scan; Clear thumbnail cache moved from the Keep menu to the Thumbnails tab (§10, §12). |

@@ -7,6 +7,7 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
@@ -23,15 +24,17 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStyle,
     QToolBar,
+    QToolButton,
     QWidget,
 )
 from sqlalchemy import select
 
 from tagalot.core.actions import ActionResult
+from tagalot.core.activity import SCAN, Problem
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.models import SavedSearch
-from tagalot.core.root_admin import edit_root
+from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import SearchSpec
@@ -48,6 +51,7 @@ from tagalot.core.thumbnails.queue import QueueResult
 from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import SearchView
+from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
@@ -263,6 +267,22 @@ class MainWindow(QMainWindow):
         self.preview_action.setToolTip("Show the selected item under the results")
         self.preview_action.toggled.connect(self._preview_toggled)
         view_menu.addAction(self.preview_action)
+        # The activity panel: hidden until asked for (View menu or the problem badge).
+        self.activity = ActivityPanel(
+            lambda: session.keep.config.roots,
+            session._known_root_path,
+            lambda path: self.files.act(FileToOpen(0, path, False), REVEAL),
+            self,
+        )
+        self.activity.clear_button.clicked.connect(self._clear_problems)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity)
+        self.activity.hide()
+        activity_action = self.activity.toggleViewAction()
+        activity_action.setText("Activity")
+        activity_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
+        activity_action.setToolTip("Scans, background thumbnails, folders, and problems")
+        view_menu.addAction(activity_action)
+        self.activity.visibilityChanged.connect(self._activity_shown)
         view_menu.addSeparator()
         self.size_menu = self._make_size_menu()
         view_menu.addMenu(self.size_menu)
@@ -279,9 +299,22 @@ class MainWindow(QMainWindow):
         self.busy.setMaximumWidth(120)
         self.busy.setVisible(False)
         self.statusBar().addPermanentWidget(self.busy)
+        self.problem_badge = QToolButton()
+        self.problem_badge.setObjectName("problem_badge")
+        self.problem_badge.setAutoRaise(True)
+        self.problem_badge.setToolTip("Problems with files this session: show the activity panel")
+        self.problem_badge.clicked.connect(self.show_activity)
+        self.problem_badge.setVisible(False)
+        self.statusBar().addPermanentWidget(self.problem_badge)
+        self._problems_seen = -1
+        self._problem_timer = QTimer(self)
+        self._problem_timer.setInterval(1000)
+        self._problem_timer.timeout.connect(self._check_problems)
+        self._problem_timer.start()
         self.statusBar().showMessage("Ready")
         self.scans.started.connect(self._scan_started)
         self.scans.progress.connect(self.statusBar().showMessage)
+        self.scans.progress.connect(self.activity.set_now)
         self.scans.finished.connect(self._scan_finished)
         self.scans.failed.connect(self._scan_failed)
 
@@ -983,9 +1016,52 @@ class MainWindow(QMainWindow):
         if self.session is not None and not self.scans.scan(self.session, root_ids):
             self.statusBar().showMessage("A scan is already running; try again when it's done.")
 
+    # --- the activity panel ---
+
+    def show_activity(self) -> None:
+        self.activity.show()
+        self.activity.raise_()
+
+    def _activity_shown(self, shown: bool) -> None:
+        if shown:
+            self._show_folders()
+
+    def _check_problems(self) -> None:
+        """Show new problems (the log is written from workers) on the badge and panel."""
+        session = self.session
+        if session is None or session.problems.version == self._problems_seen:
+            return
+        self._problems_seen = session.problems.version
+        problems = session.problems.items()
+        self.problem_badge.setText(f"\u26a0 {len(problems):,}")
+        self.problem_badge.setVisible(bool(problems))
+        self.activity.show_problems(problems)
+
+    def _clear_problems(self) -> None:
+        if self.session is not None:
+            self.session.problems.clear()
+            self._check_problems()
+
+    def _show_folders(self) -> None:
+        """Read the roots' status in a worker for the activity panel."""
+        session = self.session
+        if session is None:
+            return
+
+        def job() -> dict[str, RootStatus]:
+            with session.reader.connect() as conn:
+                return root_statuses(conn)
+
+        def done(statuses: dict[str, RootStatus]) -> None:
+            if shiboken6.isValid(self):
+                self.activity.show_folders(statuses)
+
+        run_in_pool(job, on_done=done)
+
     def _config_changed(self, message: str) -> None:
         """Roots were renamed, moved, or removed: pages show the change."""
         self.statusBar().showMessage(message)
+        self._show_folders()
         self.thumbnails.clear()
         self._refresh_details()
         for page in self.search_pages():
@@ -995,11 +1071,15 @@ class MainWindow(QMainWindow):
         self.scan_action.setEnabled(False)
         self.busy.setVisible(True)
         self.statusBar().showMessage("Scanning…")
+        self.activity.set_now("Scanning…")
 
     def _scan_finished(self, reports: list[ScanReport]) -> None:
         self.scan_action.setEnabled(True)
         self.busy.setVisible(False)
         self.statusBar().showMessage(scan_summary(reports))
+        self.activity.set_now(f"Last scan, {datetime.now():%H:%M}: {scan_summary(reports)}")
+        self._show_folders()
+        self._check_problems()
         self.thumbnails.clear()  # files may have changed
         if self.keep_config is not None:
             self.keep_config.reload()
@@ -1036,9 +1116,11 @@ class MainWindow(QMainWindow):
             "look at go first."
         )
         self.thumbnail_status.setVisible(left > 0)
+        self.activity.set_queue(left)
 
     def _queue_finished(self, result: QueueResult) -> None:
         self.thumbnail_status.setVisible(False)
+        self.activity.set_queue(0)
         self.thumbnails.clear()  # grids pick up what was made from the cache
         for page in self.search_pages():
             page.grid.viewport().update()
@@ -1048,6 +1130,10 @@ class MainWindow(QMainWindow):
         self.scan_action.setEnabled(True)
         self.busy.setVisible(False)
         self.statusBar().showMessage(f"Scan failed: {error}")
+        self.activity.set_now(f"The last scan failed: {error}")
+        if self.session is not None:
+            self.session.problems.add([Problem(SCAN, str(error))])
+            self._check_problems()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.session is not None and self.scans.running:

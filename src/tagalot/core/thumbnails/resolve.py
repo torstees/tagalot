@@ -9,7 +9,7 @@ come from ``thumbs.db`` when cached, and files are only read for resources that 
 import contextlib
 import logging
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,6 +89,8 @@ class ThumbnailResolver:
         self.cache = cache
         self.root_path = root_path
         self.size = size
+        self.report: Callable[[Sequence[tuple[str, str]]], None] | None = None
+        """Told about files that couldn't be read (``(path, message)``), from workers."""
         self._theme = theme()
         self._types = {theme.type_id_of(e): e for e in theme.entities}
         self._chains: dict[str, list[ThumbnailProvider]] = {}
@@ -101,7 +103,10 @@ class ThumbnailResolver:
         """The thumbnail of an entity, making and caching it if needed. Does I/O: call it
         from a worker."""
         with self.reader.connect() as conn:
-            return _Resolution(self, conn).resolve(entity_id)
+            result = _Resolution(self, conn).resolve(entity_id)
+        if result.problems and self.report is not None:
+            self.report(result.problems)
+        return result
 
     def resource_thumbnail(self, resource_id: int) -> Thumbnail | None:
         """The thumbnail of one resource (a detail page's gallery), made and cached if
@@ -109,7 +114,10 @@ class ThumbnailResolver:
         with self.reader.connect() as conn:
             resolution = _Resolution(self, conn)
             resource = resolution.resource(resource_id)
-            return None if resource is None else resolution.picture(resource)
+            picture = None if resource is None else resolution.picture(resource)
+        if resolution._problems and self.report is not None:
+            self.report(resolution._problems)
+        return picture
 
     # --- used by _Resolution ---
 
