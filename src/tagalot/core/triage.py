@@ -27,6 +27,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    or_,
     select,
     type_coerce,
 )
@@ -101,7 +102,7 @@ def triage_condition(name: str, inherit_tags: bool = False) -> ColumnElement[boo
         present = (
             select(EntityResource.entity_id)
             .join(Resource, Resource.id == EntityResource.resource_id)
-            .where(Resource.status != ResourceStatus.MISSING)
+            .where(or_(Resource.status != ResourceStatus.MISSING, Resource.skipped))
         )
         return and_(
             Entity.id.in_(select(EntityResource.entity_id)),
@@ -127,6 +128,7 @@ def _unlinked_where() -> list[ColumnElement[bool]]:
     return [
         Resource.kind == ResourceKind.FILE,
         Resource.status != ResourceStatus.MISSING,
+        Resource.skipped.is_(False),
         Resource.id.not_in(select(EntityResource.resource_id)),
         _not_dismissed(UNLINKED, Resource.id, resource_marker()),
     ]

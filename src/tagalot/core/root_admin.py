@@ -146,6 +146,8 @@ class RootStatus:
     """Files (and folders) known in it, whatever their status."""
     offline: int
     missing: int
+    skipped: int = 0
+    """Known files the scans now leave out (#152)."""
 
 
 def root_statuses(conn: Connection) -> dict[str, RootStatus]:
@@ -158,6 +160,13 @@ def root_statuses(conn: Connection) -> dict[str, RootStatus]:
             )
         )
     }
+    skipped = dict(
+        conn.execute(
+            select(Resource.root_id, func.count())
+            .where(Resource.skipped.is_(True))
+            .group_by(Resource.root_id)
+        ).all()
+    )
     found = {}
     for root_id, online, scanned, error in conn.execute(
         select(Root.id, Root.online, Root.last_scan_at, Root.last_error)
@@ -174,6 +183,7 @@ def root_statuses(conn: Connection) -> dict[str, RootStatus]:
             files=sum(n(s) for s in ResourceStatus),
             offline=n(ResourceStatus.OFFLINE),
             missing=n(ResourceStatus.MISSING),
+            skipped=int(skipped.get(root_id, 0)),
         )
     return found
 

@@ -540,6 +540,8 @@ def _file_label(file: FileRow) -> QLabel:
         facts.append("<b>offline</b>")
     elif file.status is ResourceStatus.MISSING:
         facts.append('<b style="color:#c0392b">missing</b>')
+    if file.skipped:
+        facts.append("<b>skipped by the folder's settings</b>")
     label = QLabel(f"{text} <span style='color:gray'>· {' · '.join(facts)}</span>")
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

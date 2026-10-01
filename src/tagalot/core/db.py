@@ -139,10 +139,16 @@ def _v3_triage_dismissals(conn: Connection) -> None:
     Base.metadata.tables["triage_dismissal"].create(conn)
 
 
+def _v4_skipped_resources(conn: Connection) -> None:
+    """Format 5: files scans now leave out are flagged skipped, not missing (#152)."""
+    conn.execute(text("ALTER TABLE resource ADD COLUMN skipped BOOLEAN NOT NULL DEFAULT 0"))
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
     3: _v3_triage_dismissals,
+    4: _v4_skipped_resources,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

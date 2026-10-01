@@ -1161,6 +1161,9 @@ def scan_summary(reports: list[ScanReport]) -> str:
     parts = [f"{new} new", f"{changed} changed", f"{missing} missing"]
     if moved:
         parts.append(f"{moved} moved")
+    skipped = sum(r.skipped for r in reports)
+    if skipped:
+        parts.append(f"{skipped} skipped")
     text = "Scan finished: " + ", ".join(parts) + "."
     offline = [r.root_id for r in reports if not r.online]
     if offline:

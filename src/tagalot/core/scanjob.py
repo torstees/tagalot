@@ -38,6 +38,7 @@ from tagalot.core.scanner import (
     merge_applied,
     split_diff,
     walk_root,
+    walk_scope,
 )
 from tagalot.core.theme_options import effective_options
 from tagalot.core.theme_schema import ThemeSchema
@@ -66,6 +67,8 @@ class ScanReport:
     changed: int = 0
     restored: int = 0
     missing: int = 0
+    skipped: int = 0
+    """Known files the scan now leaves out (excludes, extensions): flagged, not missing."""
     unchanged: int = 0
     fingerprinted: int = 0
     moves: list[Move] = field(default_factory=list)
@@ -137,9 +140,11 @@ def scan_root(
         )
     )
     with reader.connect() as conn:
-        diff = diff_root(load_known(conn, root.id), entries, unreadable)
+        scope = walk_scope(root.exclude, extensions, dirs)
+        diff = diff_root(load_known(conn, root.id), entries, unreadable, scope)
     report.new, report.changed = len(diff.new), len(diff.changed)
     report.restored, report.missing = len(diff.restored), len(diff.missing)
+    report.skipped = len(diff.skipped)
     report.unchanged = len(diff.unchanged)
 
     say(f"Updating {root.name}: {len(diff.new)} new, {len(diff.changed)} changed…")
@@ -302,6 +307,7 @@ def _ingest_pending(
             .where(
                 Resource.root_id == root.id,
                 Resource.status == ResourceStatus.OK,
+                Resource.skipped.is_(False),
                 Resource.ingested_at.is_(None),
                 Resource.parent_resource_id.is_(None),
             )

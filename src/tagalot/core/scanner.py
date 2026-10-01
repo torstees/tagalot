@@ -165,6 +165,8 @@ class KnownResource:
     size: int | None
     mtime_ns: int | None
     status: ResourceStatus
+    ext: str = ""
+    skipped: bool = False
 
 
 @dataclass
@@ -179,10 +181,12 @@ class RootDiff:
     missing: list[int] = field(default_factory=list)
     unchanged: list[int] = field(default_factory=list)
     """Seen, unchanged, and already ok: only ``last_seen_at`` moves."""
+    skipped: list[int] = field(default_factory=list)
+    """Not seen because the scan now leaves them out (excludes, extensions): not missing."""
 
     @property
     def is_empty(self) -> bool:
-        return not (self.new or self.changed or self.restored or self.missing)
+        return not (self.new or self.changed or self.restored or self.missing or self.skipped)
 
 
 def load_known(conn: Connection, root_id: str) -> dict[str, KnownResource]:
@@ -195,24 +199,58 @@ def load_known(conn: Connection, root_id: str) -> dict[str, KnownResource]:
             Resource.size,
             Resource.mtime_ns,
             Resource.status,
+            Resource.ext,
+            Resource.skipped,
         ).where(Resource.root_id == root_id, Resource.parent_resource_id.is_(None))
     )
     return {
-        relpath: KnownResource(id, kind, size, mtime_ns, status)
-        for relpath, id, kind, size, mtime_ns, status in rows
+        relpath: KnownResource(id, kind, size, mtime_ns, status, ext, skipped)
+        for relpath, id, kind, size, mtime_ns, status, ext, skipped in rows
     }
+
+
+InScope = Callable[[str, ResourceKind, str], bool]
+"""``in_scope(relpath, kind, ext)``: whether a walk with these settings would list it."""
+
+
+def walk_scope(
+    exclude: Iterable[str] = (),
+    extensions: Collection[str] | None = None,
+    dirs: DirRule = False,
+) -> InScope:
+    """Whether :func:`walk_root` with these settings would list a path, if it's there: not
+    excluded (itself or a folder above it, since excluded folders are pruned), a wanted
+    extension for files, and wanted for folders."""
+    excluded = compile_excludes(exclude)
+    wanted = {e.lower() for e in extensions} if extensions is not None else None
+
+    def in_scope(relpath: str, kind: ResourceKind, ext: str) -> bool:
+        if excluded is not None:
+            parts = relpath.split("/")
+            if any(excluded.match("/".join(parts[:n])) for n in range(1, len(parts) + 1)):
+                return False
+        if kind is ResourceKind.DIR:
+            return dirs is True or (callable(dirs) and bool(dirs(relpath)))
+        return wanted is None or ext.lower() in wanted
+
+    return in_scope
 
 
 def diff_root(
     known: Mapping[str, KnownResource],
     entries: Iterable[WalkEntry],
     unreadable: Collection[str] = (),
+    in_scope: InScope | None = None,
 ) -> RootDiff:
     """Compare a walk with stored resources.
 
     ``unreadable`` lists relative paths the walk could not read (from its error callback).
     Stored resources at or under those paths are left as they are rather than marked missing:
     not being able to look is not the same as the file being gone.
+
+    ``in_scope`` (from :func:`walk_scope`) tells which stored resources the walk could have
+    listed: those it now leaves out (a new exclude pattern, an extension the theme no longer
+    takes) are *skipped*, not missing; the file may well still be there.
     """
     diff = RootDiff()
     seen: set[str] = set()
@@ -223,13 +261,19 @@ def diff_root(
             diff.new.append(entry)
         elif (old.kind, old.size, old.mtime_ns) != (entry.kind, entry.size, entry.mtime_ns):
             diff.changed.append((old.id, entry))
-        elif old.status is not ResourceStatus.OK:
+        elif old.status is not ResourceStatus.OK or old.skipped:
             diff.restored.append(old.id)
         else:
             diff.unchanged.append(old.id)
     blind = tuple(unreadable)
     for relpath, old in known.items():
-        if relpath in seen or old.status is ResourceStatus.MISSING:
+        if relpath in seen:
+            continue
+        if in_scope is not None and not in_scope(relpath, old.kind, old.ext):
+            if not old.skipped:
+                diff.skipped.append(old.id)
+            continue
+        if old.status is ResourceStatus.MISSING:
             continue
         if any(relpath == u or relpath.startswith(f"{u}/") or not u for u in blind):
             continue
@@ -297,8 +341,10 @@ def apply_diff(conn: Connection, root_id: str, diff: RootDiff, when: datetime) -
         conn.execute(
             update(Resource)
             .where(Resource.id.in_(ids))
-            .values(status=ResourceStatus.OK, last_seen_at=when)
+            .values(status=ResourceStatus.OK, last_seen_at=when, skipped=False)
         )
+    for ids in _chunks(diff.skipped):
+        conn.execute(update(Resource).where(Resource.id.in_(ids)).values(skipped=True))
     for ids in _chunks(diff.missing):
         conn.execute(
             update(Resource).where(Resource.id.in_(ids)).values(status=ResourceStatus.MISSING)
@@ -318,7 +364,7 @@ def split_diff(diff: RootDiff, size: int = BATCH_SIZE) -> list[RootDiff]:
     re-scanning after an interruption finishes the job, because the diff is recomputed.
     """
     parts: list[RootDiff] = []
-    for name in ("new", "changed", "restored", "missing", "unchanged"):
+    for name in ("new", "changed", "restored", "missing", "unchanged", "skipped"):
         items: list[Any] = getattr(diff, name)
         for chunk in _chunks(items, size):
             parts.append(RootDiff(**{name: list(chunk)}))

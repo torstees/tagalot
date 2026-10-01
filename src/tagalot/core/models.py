@@ -143,6 +143,9 @@ class Resource(Base):
     """When the theme last ingested this resource; ``None`` = pending (new, changed, or its
     ingest failed), so the next scan hands it to the theme again."""
     status: Mapped[ResourceStatus] = mapped_column(_enum(ResourceStatus), default=ResourceStatus.OK)
+    skipped: Mapped[bool] = mapped_column(default=False, server_default="0")
+    """Left out of scans now (an exclude pattern or an extension the theme no longer takes);
+    its status is as last seen. Not missing: the file may well be there (#152)."""
     first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
     parent_resource_id: Mapped[int | None] = mapped_column(
