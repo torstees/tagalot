@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, update
 
 from tagalot.core.actions import ActionResult, delete_items, run_action
+from tagalot.core.activity import ProblemLog, problems_from_report, thumbnail_problems
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
@@ -80,6 +81,8 @@ class KeepSession:
     _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _temp: Path | None = field(default=None, init=False, repr=False)
     _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
+    problems: ProblemLog = field(default_factory=ProblemLog, init=False)
+    """What went wrong while the keep was open: scans and thumbnails (the activity panel)."""
     last_scan_started: datetime | None = field(default=None, init=False)
     """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -145,6 +148,7 @@ class KeepSession:
         )
         # From now on, root paths follow the configuration (roots added, moved, overridden).
         thumbnails.root_path = session.root_path
+        thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         return session
 
     @property
@@ -185,6 +189,7 @@ class KeepSession:
                     progress=progress,
                 )
             )
+            self.problems.add(problems_from_report(reports[-1]))
         return reports
 
     def reextract(
