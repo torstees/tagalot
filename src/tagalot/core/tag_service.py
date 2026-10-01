@@ -19,6 +19,7 @@ from typing import Any
 
 from sqlalchemy import Connection, delete, insert, select, tuple_, update
 
+from tagalot.core.actions import ActionChange, restore_action
 from tagalot.core.fields import (
     ExtraChange,
     FieldChange,
@@ -77,7 +78,7 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-Step = TagChange | FieldChange | ExtraChange | ReextractChange
+Step = TagChange | FieldChange | ExtraChange | ReextractChange | ActionChange
 """One entry in the undo history."""
 
 
@@ -266,6 +267,9 @@ class TagService:
         elif isinstance(step, ReextractChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_entities(conn, schema, step, forward=forward))
+        elif isinstance(step, ActionChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 

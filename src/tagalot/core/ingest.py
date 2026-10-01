@@ -10,7 +10,7 @@ batches containment edges and search-index updates until :meth:`IngestSession.fl
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import Connection, delete, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -29,6 +29,16 @@ from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import EntityRef, Record, ResourceInfo
 
 logger = logging.getLogger(__name__)
+
+
+class Recorder(Protocol):
+    """Told about entities before they change (``core.entity_state.ChangeRecorder``, which
+    snapshots them so a theme action can be undone)."""
+
+    def touch(self, ids: Iterable[int]) -> None: ...
+
+    def created(self, entity_id: int) -> None: ...
+
 
 TITLE = "title"
 """The provenance name of the core ``title`` field."""
@@ -75,6 +85,8 @@ class IngestSession:
         self._added_edges: list[tuple[int, int]] = []
         self._removed_edges: list[tuple[int, int]] = []
         self._dirty: set[int] = set()
+        self.recorder: Recorder | None = None
+        """Set by actions, to undo them; ingest and migrations leave it ``None``."""
         self._containment = {
             (schema.theme.type_id_of(c.parent), schema.theme.type_id_of(c.child))
             for c in schema.theme.containment
@@ -109,9 +121,12 @@ class IngestSession:
             )
             self.conn.execute(insert(entity_table.table).values(id=entity_id, **fields))
             closure.add_entities(self.conn, [entity_id])
+            if self.recorder is not None:
+                self.recorder.created(entity_id)
             self._mark_extracted(entity_id, ([TITLE] if title is not None else []) + list(fields))
         else:
             entity_id = existing
+            self._touch(entity_id)
             self._apply_extracted(entity_id, entity_table, title, fields)
         self._dirty.add(entity_id)
         return EntityRef(entity_id, type_id)
@@ -124,6 +139,7 @@ class IngestSession:
             raise IngestError(f"{entity_table.entity.__name__} has no field {', '.join(unknown)}")
         if self.conn.scalar(select(Entity.id).where(Entity.id == entity.id)) is None:
             raise IngestError(f"entity {entity.id} no longer exists")
+        self._touch(entity.id)
         self._apply_extracted(entity.id, entity_table, title, fields)
         self._dirty.add(entity.id)
 
@@ -163,6 +179,8 @@ class IngestSession:
     def delete(self, entity: EntityRef) -> None:
         """Delete an entity and everything linked to it (not its resources)."""
         self._table_of(entity)
+        if self.recorder is not None:  # its neighbours lose their edges and relations to it
+            self._touch(entity.id, *self._neighbours(entity.id))
         # Pending edges first, so detaching sees the containment as it now stands.
         self._added_edges = [e for e in self._added_edges if entity.id not in e]
         self._removed_edges = [e for e in self._removed_edges if entity.id not in e]
@@ -236,6 +254,7 @@ class IngestSession:
         """Link a resource in a role. A single-valued role replaces its previous resource."""
         declared = self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        self._touch(entity.id)
         if not declared.many:
             self.conn.execute(
                 delete(EntityResource).where(
@@ -257,6 +276,7 @@ class IngestSession:
     def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None:
         self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        self._touch(entity.id)
         self.conn.execute(
             delete(EntityResource).where(
                 EntityResource.entity_id == entity.id,
@@ -272,6 +292,7 @@ class IngestSession:
 
     def contain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
+        self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._removed_edges = [e for e in self._removed_edges if e != edge]
         if edge not in self._added_edges:
@@ -279,6 +300,7 @@ class IngestSession:
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
+        self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._added_edges = [e for e in self._added_edges if e != edge]
         if edge not in self._removed_edges:
@@ -290,12 +312,16 @@ class IngestSession:
         """Link ``a`` and ``b``; for a ``many=False`` relationship this replaces ``b``'s
         previous partner."""
         table, rel = self._relationship(name, a, b)
+        self._touch(a.id, b.id)
         if not rel.many:
+            if self.recorder is not None:  # b's previous partner loses it
+                self._touch(*self.conn.scalars(select(table.c.a_id).where(table.c.b_id == b.id)))
             self.conn.execute(delete(table).where(table.c.b_id == b.id, table.c.a_id != a.id))
         self.conn.execute(insert(table).values(a_id=a.id, b_id=b.id).prefix_with("OR IGNORE"))
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None:
         table, _ = self._relationship(name, a, b)
+        self._touch(a.id, b.id)
         self.conn.execute(delete(table).where(table.c.a_id == a.id, table.c.b_id == b.id))
 
     # --- reporting ---
@@ -334,6 +360,31 @@ class IngestSession:
             for (parent, child), reason in result.rejected:
                 self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
             self._added_edges, self._removed_edges = [], []
+
+    def _touch(self, *ids: int) -> None:
+        if self.recorder is not None:
+            self.recorder.touch(ids)
+
+    def _neighbours(self, entity_id: int) -> set[int]:
+        """Entities with an edge (stored or pending) or a relationship to this one."""
+        found = set(
+            self.conn.scalars(
+                select(EntityContains.child_id).where(EntityContains.parent_id == entity_id)
+            )
+        ) | set(
+            self.conn.scalars(
+                select(EntityContains.parent_id).where(EntityContains.child_id == entity_id)
+            )
+        )
+        for parent, child in self._added_edges:
+            if entity_id in (parent, child):
+                found |= {parent, child}
+        for rel in self.schema.relationships.values():
+            t = rel.table
+            found |= set(self.conn.scalars(select(t.c.b_id).where(t.c.a_id == entity_id)))
+            found |= set(self.conn.scalars(select(t.c.a_id).where(t.c.b_id == entity_id)))
+        found.discard(entity_id)
+        return found
 
     def _entity_table(self, type: type[ThemeEntity]) -> EntityTable:
         try:

@@ -432,9 +432,16 @@ class ActionSpec:
 
 
 def action(label: str, applies_to: Iterable[type[Entity] | str]) -> Callable[[_F], _F]:
-    """Mark a :class:`Theme` method as a context-menu and detail-page action.
+    """Mark a :class:`Theme` method as an action: a command in the right-click menus of the
+    items it applies to, and a button on their pages (DESIGN.md §9 "Actions").
 
-    The method is called as ``method(entities, ctx)``. Actions must not modify user files.
+    ``applies_to`` lists entity types, or role names (the action then applies to types that
+    declare that role). The method is called as ``method(entities, ctx)``: ``entities`` is
+    the list of :class:`EntityRef` it applies to (the selected ones, or the page's item),
+    and ``ctx`` an :class:`ActionContext`. It runs in the DB writer, in one transaction: an
+    exception undoes everything it wrote, and what it changed is one Edit → Undo step. Keep
+    it quick (it holds up other writes), and never modify user files: write only to
+    :meth:`ActionContext.temp_path`.
     """
     spec = ActionSpec(label, tuple(applies_to))
 
@@ -547,6 +554,41 @@ class IngestContext(Protocol):
     def prepared(self, resource: ResourceInfo | int) -> Any:
         """What :meth:`Theme.prepare` returned for this resource, or ``None`` (it returned
         nothing for it, or there is no prepare step, as in ``migrate`` and actions)."""
+        ...
+
+
+class ActionContext(IngestContext, Protocol):
+    """What an action can do: everything :class:`IngestContext` can (its writes become one
+    undo step), plus look up files and produce output. Output (opening, revealing,
+    messages) happens after the action's changes are saved, in the order asked."""
+
+    def contents(self, entity: EntityRef) -> list[EntityRef]:
+        """The entities ``entity`` directly contains, in its type's ``contents_sort`` order
+        (an album's songs by disc and track)."""
+        ...
+
+    def resources(self, entity: EntityRef, role: str | None = None) -> list[ResourceInfo]:
+        """Files linked to ``entity`` (in ``role``, if given), in their sort order, with this
+        computer's paths. Files that are missing, offline, or on a root with no path here
+        are left out."""
+        ...
+
+    def temp_path(self, name: str) -> str:
+        """A path named ``name`` in a folder of Tagalot's own, to write a file to (a
+        playlist, say). The folder is deleted when the keep is closed."""
+        ...
+
+    def open(self, path: str) -> None:
+        """Open a file with this computer's program for it (the user's override for its
+        extension, else the default), once the action is done."""
+        ...
+
+    def reveal(self, path: str) -> None:
+        """Show a file in the file manager, once the action is done."""
+        ...
+
+    def message(self, text: str) -> None:
+        """Say something in the status bar when the action is done."""
         ...
 
 
@@ -874,6 +916,7 @@ __all__ = [
     "KIND_EXTENSIONS",
     "OPTION_TYPES",
     "SEARCH_KINDS",
+    "ActionContext",
     "ActionSpec",
     "ArchiveFirstImage",
     "Containment",

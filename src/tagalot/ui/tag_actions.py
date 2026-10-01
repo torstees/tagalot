@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable
 import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
+from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.session import KeepSession
@@ -205,6 +206,24 @@ class TagActions(QObject):
 
         self._run(lambda: self.session.reextract(ids, replace_edits=replace_edits), describe)
 
+    def run_action(
+        self,
+        method: str,
+        entity_ids: Iterable[int],
+        on_outputs: Callable[[ActionResult], None],
+    ) -> None:
+        """Run a theme action on these items in a worker; one undo step if it changed
+        anything. ``on_outputs`` then carries out what it asked for (opening files)."""
+        ids = list(entity_ids)
+        if not ids:
+            return
+
+        def describe(result: ActionResult) -> str:
+            on_outputs(result)
+            return result.text
+
+        self._run(lambda: self.session.run_action(method, ids), describe)
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 
@@ -238,7 +257,7 @@ class TagActions(QObject):
             if not shiboken6.isValid(self):
                 return
             self.busy -= 1
-            if isinstance(error, TagError | FieldEditError):
+            if isinstance(error, TagError | FieldEditError | ActionError):
                 self.message.emit(str(error))
             else:
                 logger.error("Tagging failed", exc_info=error)

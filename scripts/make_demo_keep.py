@@ -106,7 +106,7 @@ MEDIA_THEME = '''"""A tiny three-type theme for Tagalot's media demo (make_demo_
 Safe to delete; only scratch/Media.keep uses it.
 """
 
-from tagalot.themes.api import Entity, Theme, field
+from tagalot.themes.api import Entity, Theme, action, field
 
 
 class Artist(Entity):
@@ -125,6 +125,24 @@ class Song(Entity):
 class DemoMedia(Theme):
     id, name, version = "demo_media", "Demo media", 1
     entities = [Artist, Album, Song]
+
+    @action("Double the length", [Song])
+    def double_length(self, songs, ctx):
+        """Changes data, so Edit > Undo puts it back."""
+        for song in songs:
+            length = ctx.get(song).fields.get("length") or 0
+            ctx.update(song, length=length * 2)
+        ctx.message(f"Doubled the length of {len(songs)} songs.")
+
+    @action("Save the titles", [Artist, Album, Song])
+    def save_titles(self, items, ctx):
+        """Writes a file of its own and opens it; changes no data."""
+        path = ctx.temp_path("titles.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            for item in items:
+                print(ctx.get(item).title, file=f)
+        ctx.open(path)
+        ctx.message(f"Saved {len(items)} titles.")
 '''
 MEDIA: dict[str, list[tuple[str, dict[str, object]]]] = {
     "Artist": [

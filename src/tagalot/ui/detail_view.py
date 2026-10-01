@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.actions import actions_for
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.ingest import TITLE
 from tagalot.core.models import ResourceStatus
@@ -80,6 +81,8 @@ class DetailPage(QWidget):
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
     reread_requested = Signal(list, bool)
+    action_requested = Signal(str, list)
+    """Run a theme action on the page's item: (method name, [entity id])."""
     """Read the entity's files again; true: replacing what the user edited."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
@@ -152,6 +155,9 @@ class DetailPage(QWidget):
         header.addWidget(self.thumbnail, 0, Qt.AlignmentFlag.AlignTop)
         header.addSpacing(12)
         header.addLayout(titles, 1)
+        self._action_buttons = QHBoxLayout()
+        self._action_buttons.setSpacing(4)
+        header.addLayout(self._action_buttons)
         header.addWidget(self.more_button, 0, Qt.AlignmentFlag.AlignTop)
 
         self._sections = QVBoxLayout()
@@ -211,6 +217,7 @@ class DetailPage(QWidget):
             self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
             self._add_file_actions(detail)
+            self._show_action_buttons(detail)
             self._show_breadcrumbs(detail)
             extras = self._extra_widget(detail)
             for section in detail.sections:
@@ -393,6 +400,20 @@ class DetailPage(QWidget):
             )
             form.addRow(f"{row.label}:", value)
         return body
+
+    def _show_action_buttons(self, detail: EntityDetail) -> None:
+        """A button for each theme action that applies to the item (once)."""
+        if self._action_buttons.count():
+            return
+        for theme_action in actions_for(self.session.schema, detail.type):
+            button = QPushButton(theme_action.label)
+            button.setObjectName(f"action_{theme_action.method}")
+            button.clicked.connect(
+                lambda _=False, m=theme_action.method: self.action_requested.emit(
+                    m, [self.entity_id]
+                )
+            )
+            self._action_buttons.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
 
     def _add_file_actions(self, detail: EntityDetail) -> None:
         """Open file, Show in file manager, Open with… at the top of More (once)."""

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.actions import actions_for
 from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
 from tagalot.core.search_fields import (
     contained_types,
@@ -117,6 +118,8 @@ class SearchPage(QWidget):
     open_requested = Signal(int)
     """An item was double-clicked (or Enter pressed on it): its entity id."""
     reread_requested = Signal(list, bool)
+    action_requested = Signal(str, list)
+    """Run a theme action: (method name, entity ids)."""
     """Read these entities' files again; true: replacing what the user edited."""
 
     def __init__(
@@ -367,7 +370,24 @@ class SearchPage(QWidget):
             add_file_actions(menu, self.file_opener, entity_id=hit.id, folder=kind == "folder")
         menu.addSeparator()
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
+        theme_actions = actions_for(self.session.schema, hit.type)
+        if theme_actions:
+            menu.addSeparator()
+            for theme_action in theme_actions:
+                item = menu.addAction(theme_action.label)
+                item.triggered.connect(
+                    lambda _=False, m=theme_action.method: self._run_action(hit, m)
+                )
         return menu
+
+    def _run_action(self, hit: SearchHit, method: str) -> None:
+        """Run an action on the selection if the item is in it (the action takes those it
+        applies to), else just the item."""
+
+        def chosen(ids: list[int]) -> None:
+            self.action_requested.emit(method, ids if hit.id in ids else [hit.id])
+
+        self.selected_entity_ids(chosen)
 
     def _reread(self, hit: SearchHit, replace: bool) -> None:
         """Re-read the selection if the item is in it, else just the item."""
