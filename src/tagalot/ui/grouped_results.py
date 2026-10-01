@@ -33,7 +33,7 @@ from tagalot.core.search import count_by_type, run_search
 from tagalot.core.search_fields import scoped_tables, search_fields, type_plurals
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.ui.file_actions import add_alternate_keys
+from tagalot.ui.file_actions import add_open_keys
 from tagalot.ui.models.results import PreviewModel, ResultColumn, Row, row_values
 from tagalot.ui.result_table import list_columns, make_result_table, set_column_widths
 
@@ -132,7 +132,7 @@ class TypeSection(QWidget):
         self.table.set_columns(group.columns, hidden_columns)
         self.table.column_toggled.connect(self.column_toggled)
         self.table.activated.connect(self._activated)
-        add_alternate_keys(self.table, lambda: self._activated(self.table.currentIndex(), True))
+        add_open_keys(self.table, self._activated)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._menu)
         self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

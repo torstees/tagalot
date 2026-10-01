@@ -50,8 +50,8 @@ from tagalot.core.tags import TagTree
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
 from tagalot.ui.file_actions import (
     FileOpener,
-    add_alternate_keys,
     add_file_actions,
+    add_open_keys,
     file_kind,
     opens_file,
 )
@@ -222,8 +222,8 @@ class SearchPage(QWidget):
         self.grid.menu_requested.connect(self._grid_menu)
         self.table.activated.connect(self._activated)
         self.grid.activated.connect(self._activated)
-        add_alternate_keys(self.table, lambda: self._activated(self.table.currentIndex(), True))
-        add_alternate_keys(self.grid, lambda: self._activated(self.grid.currentIndex(), True))
+        add_open_keys(self.table, self._activated)
+        add_open_keys(self.grid, self._activated)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._table_menu)
 
@@ -237,7 +237,7 @@ class SearchPage(QWidget):
         tree_header.sortIndicatorChanged.connect(self._sort_clicked)
         self.tree.selectionModel().selectionChanged.connect(self.selection_changed)
         self.tree.activated.connect(self._tree_activated)
-        add_alternate_keys(self.tree, lambda: self._tree_activated(self.tree.currentIndex(), True))
+        add_open_keys(self.tree, self._tree_activated)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.tags_dropped.connect(self.tags_dropped)
 

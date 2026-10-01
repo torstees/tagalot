@@ -17,9 +17,9 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import QModelIndex, QObject, QProcess, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
-from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QMenu, QWidget
 
 from tagalot.core.detail import FileRow
 from tagalot.core.handlers import (
@@ -78,15 +78,21 @@ def opens_file(schema: ThemeSchema, type_id: str) -> bool:
     return entity.double_click == "open_file" and file_kind(schema, type_id) is not None
 
 
+OPEN_KEYS = (QKeySequence("Return"), QKeySequence("Enter"))
+"""Enter (main keyboard and keypad): what double-click does. Explicit, because on macOS item
+views don't treat Return as activation."""
 ALTERNATE_KEYS = (QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter"))
-"""Ctrl+Enter (main keyboard and keypad): the other of page and file (DESIGN.md §12)."""
+"""Ctrl+Enter (Cmd+Enter on macOS): the other of page and file (DESIGN.md §12)."""
 
 
-def add_alternate_keys(view: QWidget, handler: Callable[[], None]) -> None:
-    """Call ``handler`` on Ctrl+Enter in ``view`` (before the view sees it as Enter)."""
-    for keys in ALTERNATE_KEYS:
+def add_open_keys(view: QAbstractItemView, activate: Callable[[QModelIndex, bool], None]) -> None:
+    """Enter calls ``activate(current index, False)`` and Ctrl+Enter ``activate(current
+    index, True)`` in ``view``, on every platform."""
+    for keys, alternate in [(k, False) for k in OPEN_KEYS] + [(k, True) for k in ALTERNATE_KEYS]:
         shortcut = QShortcut(keys, view, context=Qt.ShortcutContext.WidgetShortcut)
-        shortcut.activated.connect(handler)
+        shortcut.activated.connect(
+            lambda alternate=alternate: activate(view.currentIndex(), alternate)
+        )
 
 
 def add_file_actions(
