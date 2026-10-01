@@ -1,8 +1,13 @@
-"""The Keep configuration window: the keep's roots (DESIGN.md §12 "Keep configuration").
+"""The Keep configuration window (DESIGN.md §12 "Keep configuration").
 
-A window of its own (Keep → Configure keep…), one per main window. The roots are listed on
-the left; the selected one's name, folder, this computer's folder, exclude patterns, and
-status are on the right, with Scan now, Stop watching / Watch again, and Remove….
+A window of its own (Keep → Configure keep…), one per main window, with three tabs:
+
+- **Folders:** the roots on the left; the selected one's name, folder, this computer's
+  folder, exclude patterns, theme option overrides, and status on the right, with Scan
+  now, Stop watching / Watch again, and Remove….
+- **Thumbnails:** the largest size thumbnails are made at, and the stored thumbnails, with
+  Clear….
+- **Keep:** the keep's name and folder, its theme, and the theme's options.
 
 Every change is checked and saved as soon as it's made (``keep.toml``, or ``settings.toml``
 for this computer's folder), in a worker; a bad value is explained under the form and the
@@ -15,13 +20,17 @@ from collections.abc import Callable
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -31,11 +40,15 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
+from tagalot.core.keep_settings import MIN_THUMBNAIL_SIZE, with_name, with_option
 from tagalot.core.root_admin import (
     RemovalCounts,
     RootStatus,
@@ -46,12 +59,19 @@ from tagalot.core.root_admin import (
 )
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import save_settings
+from tagalot.core.thumbnails.cache import CacheStats
+from tagalot.themes.api import ThemeOption, entity_plural
+from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
 
 KEEP, DELETE = "keep", "delete"
 """The two ways to remove a root."""
+
+THUMBNAILS_TAB = 1
+STATS_INTERVAL_MS = 3000
+"""How often the stored-thumbnail count is read while the Thumbnails tab is in view."""
 
 _ROOT_ID = Qt.ItemDataRole.UserRole
 
@@ -67,6 +87,10 @@ class KeepConfigWindow(QWidget):
     """Something was saved; a status-bar message."""
     scan_requested = Signal(list)
     """Scan these root ids now."""
+    thumbnail_max_changed = Signal()
+    """The largest thumbnail size changed (the main window's size menu follows)."""
+    clear_thumbnails_requested = Signal()
+    """Clear the thumbnail cache (the main window asks and does it)."""
 
     def __init__(
         self, session: KeepSession, pool: QThreadPool | None = None, parent: QWidget | None = None
@@ -152,17 +176,115 @@ class KeepConfigWindow(QWidget):
         self.detail = QWidget()
         right = QVBoxLayout(self.detail)
         right.addLayout(form)
+        self.root_options = QGroupBox("Theme options for this folder")
+        self.root_options.setToolTip(
+            "Settings of the theme for this folder only; unticked ones use the keep's "
+            "(Keep tab). They apply at the next scan."
+        )
+        self.root_options_form = QFormLayout(self.root_options)
+        self.root_options.setVisible(bool(session.theme.options))
+        right.addWidget(self.root_options)
         right.addWidget(self.error)
         right.addLayout(buttons)
         right.addStretch(1)
         self.empty = QLabel("This keep watches no folders yet. Add one to begin.")
         self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        layout = QHBoxLayout(self)
-        layout.addLayout(left, 2)
-        layout.addWidget(self.detail, 5)
-        layout.addWidget(self.empty, 5)
+        folders = QWidget()
+        folders_layout = QHBoxLayout(folders)
+        folders_layout.addLayout(left, 2)
+        folders_layout.addWidget(self.detail, 5)
+        folders_layout.addWidget(self.empty, 5)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(folders, "Folders")
+        self.tabs.addTab(self._thumbnails_tab(), "Thumbnails")
+        self.tabs.addTab(self._keep_tab(), "Keep")
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.tabs)
+        # Thumbnails are stored as the grids show them: count them again while the
+        # Thumbnails tab is in view, and whenever it comes into view.
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(STATS_INTERVAL_MS)
+        self._stats_timer.timeout.connect(self.show_cache_stats)
+        self.tabs.currentChanged.connect(lambda _: self._watch_stats())
         self.reload()
+
+    # --- tabs ---
+
+    def _thumbnails_tab(self) -> QWidget:
+        theme_size = self.session.theme.thumbnail_max
+        self.theme_size = QCheckBox(f"The theme's size ({theme_size} px)")
+        self.theme_size.setToolTip("Use the size the theme suggests for its pictures")
+        self.max_size = QSpinBox()
+        self.max_size.setRange(MIN_THUMBNAIL_SIZE, MAX_THUMBNAIL_SIZE)
+        self.max_size.setSingleStep(64)
+        self.max_size.setSuffix(" px")
+        self.max_size.setToolTip(
+            "Thumbnails are made (and stored) at this size; grids can show them smaller. "
+            "Bigger looks sharper when zoomed in, and takes more space."
+        )
+        self.theme_size.toggled.connect(self._theme_size_toggled)
+        self.max_size.editingFinished.connect(
+            lambda: self._set_thumbnail_max(self.max_size.value())
+        )
+        size_row = QHBoxLayout()
+        size_row.addWidget(self.theme_size)
+        size_row.addWidget(self.max_size)
+        size_row.addStretch(1)
+        self.cache_stats = QLabel()
+        self.cache_stats.setObjectName("cache_stats")
+        clear = QPushButton("Clear\u2026")
+        clear.setToolTip("Delete every stored thumbnail; they are made again as you browse")
+        clear.clicked.connect(self.clear_thumbnails_requested)
+        cache_row = QHBoxLayout()
+        cache_row.addWidget(self.cache_stats, 1)
+        cache_row.addWidget(clear)
+        form = QFormLayout()
+        form.addRow("Largest size:", size_row)
+        form.addRow("Stored:", cache_row)
+        tab = QWidget()
+        column = QVBoxLayout(tab)
+        column.addLayout(form)
+        column.addStretch(1)
+        return tab
+
+    def _keep_tab(self) -> QWidget:
+        session = self.session
+        self.keep_name = QLineEdit()
+        self.keep_name.editingFinished.connect(lambda: self._rename_keep(self.keep_name.text()))
+        folder = QLabel(str(session.keep.dir))
+        folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        theme = session.theme
+        loaded = session.catalog.get(theme.id)
+        where = "built in" if loaded is None or loaded.builtin else loaded.source
+        theme_label = QLabel(
+            f"{html.escape(theme.name)} (<code>{theme.id}</code>, version {theme.version}, "
+            f"{html.escape(where)})"
+        )
+        theme_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        types = QLabel(", ".join(entity_plural(e) for e in theme.entities))
+        about = QLabel(_first_paragraph(theme.__doc__))
+        about.setWordWrap(True)
+        form = QFormLayout()
+        form.addRow("Name:", self.keep_name)
+        form.addRow("Folder:", folder)
+        form.addRow("Theme:", theme_label)
+        form.addRow("Holds:", types)
+        if about.text():
+            form.addRow("", about)
+        self.keep_options = QGroupBox("Theme options")
+        self.keep_options.setToolTip(
+            "The theme's settings for this keep; a folder can override them (Folders tab). "
+            "They apply at the next scan, which reads the affected files again."
+        )
+        self.keep_options_form = QFormLayout(self.keep_options)
+        self.keep_options.setVisible(bool(theme.options))
+        tab = QWidget()
+        column = QVBoxLayout(tab)
+        column.addLayout(form)
+        column.addWidget(self.keep_options)
+        column.addStretch(1)
+        return tab
 
     # --- showing ---
 
@@ -181,6 +303,7 @@ class KeepConfigWindow(QWidget):
             self.roots.setCurrentRow(0)
         self.roots.blockSignals(False)
         self._show_root()
+        self._show_settings()
         session = self.session
 
         def job() -> dict[str, RootStatus]:
@@ -224,6 +347,7 @@ class KeepConfigWindow(QWidget):
             else "Scan it again; its items reconnect"
         )
         self.scan_button.setEnabled(root.watched)
+        self._show_root_options(root)
         self._show_status()
 
     def _show_status(self) -> None:
@@ -236,7 +360,133 @@ class KeepConfigWindow(QWidget):
         if root is not None:
             self.status.setText(describe_status(root, self.statuses.get(root.id)))
 
+    def _show_settings(self) -> None:
+        """The Thumbnails and Keep tabs, from the saved configuration."""
+        config = self.session.keep.config
+        self.keep_name.setText(config.name)
+        self.setWindowTitle(f"Configure {config.name}")
+        self.theme_size.blockSignals(True)
+        self.theme_size.setChecked(config.thumbnail_max is None)
+        self.theme_size.blockSignals(False)
+        self.max_size.setValue(self.session.thumbnail_max)
+        self.max_size.setEnabled(config.thumbnail_max is not None)
+        _clear_form(self.keep_options_form)
+        for spec in self.session.theme.options:
+            value = config.theme_options.get(spec.name, spec.default)
+            editor = OptionEditor(spec, value)
+            editor.committed.connect(lambda v, name=spec.name: self._set_option(name, v))
+            reset = QPushButton("Default")
+            reset.setToolTip(f"Use the theme's default: {_shown(spec.default)}")
+            reset.setEnabled(spec.name in config.theme_options)
+            reset.clicked.connect(lambda _=False, name=spec.name: self._set_option(name, None))
+            row = QHBoxLayout()
+            row.addWidget(editor, 1)
+            row.addWidget(reset)
+            label = QLabel(f"{spec.label}:")
+            label.setToolTip(spec.description)
+            self.keep_options_form.addRow(label, row)
+        self.show_cache_stats()
+
+    def _show_root_options(self, root: RootConfig) -> None:
+        _clear_form(self.root_options_form)
+        keep_values = self.session.keep.config.theme_options
+        for spec in self.session.theme.options:
+            inherited = keep_values.get(spec.name, spec.default)
+            overridden = spec.name in root.options
+            use_own = QCheckBox(spec.label)
+            use_own.setToolTip(
+                f"{spec.description}\n\nUnticked: the keep's setting ({_shown(inherited)})."
+            )
+            use_own.setChecked(overridden)
+            editor = OptionEditor(spec, root.options.get(spec.name, inherited))
+            editor.setEnabled(overridden)
+            editor.committed.connect(
+                lambda v, name=spec.name, rid=root.id: self._set_option(name, v, rid)
+            )
+            use_own.toggled.connect(
+                lambda on, name=spec.name, rid=root.id, e=editor: self._set_option(
+                    name, e.value() if on else None, rid
+                )
+            )
+            self.root_options_form.addRow(use_own, editor)
+
+    def _thumbnails_shown(self) -> bool:
+        return self.isVisible() and self.tabs.currentIndex() == THUMBNAILS_TAB
+
+    def _watch_stats(self) -> None:
+        """Count now if the Thumbnails tab is in view, and keep counting while it is."""
+        if self._thumbnails_shown():
+            self.show_cache_stats()
+            self._stats_timer.start()
+        else:
+            self._stats_timer.stop()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._watch_stats()
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        super().hideEvent(event)
+        self._stats_timer.stop()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._watch_stats()
+
+    def show_cache_stats(self) -> None:
+        """How many thumbnails are stored, read in a worker."""
+        cache = self.session.thumbnails.cache
+
+        def done(stats: CacheStats) -> None:
+            if shiboken6.isValid(self):
+                self.cache_stats.setText(
+                    f"{stats.count:,} thumbnails ({format_bytes(stats.bytes)})"
+                    if stats.count
+                    else "None yet"
+                )
+
+        run_in_pool(cache.stats, on_done=done, pool=self._pool)
+
     # --- editing (each change saved at once, in a worker) ---
+
+    def _rename_keep(self, name: str) -> None:
+        if name.strip() == self.session.keep.config.name:
+            return
+        try:
+            with_name(self.session.keep.config, self.session.keep.dir, name)
+        except KeepError as e:
+            self._refused(str(e))
+            return
+        session = self.session
+        self._run(lambda: session.rename_keep(name), f"Renamed the keep {name.strip()}.")
+
+    def _theme_size_toggled(self, use_theme: bool) -> None:
+        self.max_size.setEnabled(not use_theme)
+        self._set_thumbnail_max(None if use_theme else self.max_size.value())
+
+    def _set_thumbnail_max(self, size: int | None) -> None:
+        if size == self.session.keep.config.thumbnail_max:
+            return
+        session = self.session
+        shown = size or session.theme.thumbnail_max
+        self._run(
+            lambda: session.set_thumbnail_max(size),
+            f"Thumbnails are now made at {shown} px; they're made again as they're shown.",
+            self.thumbnail_max_changed.emit,
+        )
+
+    def _set_option(self, name: str, value: object, root_id: str | None = None) -> None:
+        session = self.session
+        try:
+            with_option(session.keep.config, session.theme, name, value, root_id=root_id)
+        except KeepError as e:
+            self._refused(str(e))
+            return
+        self._run(
+            lambda: session.set_option(name, value, root_id),
+            "Saved the theme option; it applies at the next scan (F5).",
+        )
 
     def _edit(self, **changes: object) -> None:
         root = self.current_root()
@@ -504,3 +754,67 @@ def describe_status(root: RootConfig, status: RootStatus | None) -> str:
     if status.last_error and root.watched:
         text += f'<br><span style="color:#c0392b">{html.escape(status.last_error)}</span>'
     return text
+
+
+class OptionEditor(QWidget):
+    """An editor for one theme option, by its type: a checkbox, a number box, or a text box.
+    Emits :attr:`committed` with the new value when the edit is done."""
+
+    committed = Signal(object)
+
+    def __init__(self, spec: ThemeOption, value: object, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.spec = spec
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setToolTip(spec.description)
+        self.widget: QCheckBox | QSpinBox | QDoubleSpinBox | QLineEdit
+        if spec.type is bool:
+            box = QCheckBox()
+            box.setChecked(bool(value))
+            box.toggled.connect(lambda on: self.committed.emit(on))
+            self.widget = box
+        elif spec.type is int:
+            spin = QSpinBox()
+            spin.setRange(-1_000_000, 1_000_000)
+            spin.setValue(int(value) if isinstance(value, int | float) else 0)
+            spin.editingFinished.connect(lambda: self.committed.emit(spin.value()))
+            self.widget = spin
+        elif spec.type is float:
+            number = QDoubleSpinBox()
+            number.setRange(-1e9, 1e9)
+            number.setDecimals(3)
+            number.setValue(float(value) if isinstance(value, int | float) else 0.0)
+            number.editingFinished.connect(lambda: self.committed.emit(number.value()))
+            self.widget = number
+        else:
+            text = QLineEdit(str(value))
+            text.editingFinished.connect(lambda: self.committed.emit(text.text()))
+            self.widget = text
+        self.widget.setObjectName(f"option_{spec.name}")
+        layout.addWidget(self.widget)
+
+    def value(self) -> object:
+        widget = self.widget
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, QSpinBox | QDoubleSpinBox):
+            return widget.value()
+        return widget.text()
+
+
+def _clear_form(form: QFormLayout) -> None:
+    while form.rowCount():
+        form.removeRow(0)
+
+
+def _shown(value: object) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    return str(value)
+
+
+def _first_paragraph(doc: str | None) -> str:
+    if not doc:
+        return ""
+    return " ".join(doc.strip().split("\n\n")[0].split())
