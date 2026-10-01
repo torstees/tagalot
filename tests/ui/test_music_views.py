@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QThreadPool
+from PySide6.QtWidgets import QPushButton
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
@@ -80,3 +81,27 @@ def test_an_album_page_lists_its_songs_in_track_order(
     qtbot.waitUntil(lambda: contents.model.hit(2) is not None, timeout=5000)
     hits = [contents.model.hit(r) for r in range(3)]
     assert [h.title for h in hits if h] == ["So What", "Freddie Freeloader", "Blue in Green"]
+
+
+def test_play_album_from_its_page(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    nothing_is_launched: list[tuple[str, str]],
+) -> None:
+    detail = _open(qtbot, window, session, "Kind of Blue")
+    play = detail.findChild(QPushButton, "action_play_album")
+    assert isinstance(play, QPushButton)
+    assert play.text() == "Play album"
+    play.click()
+    qtbot.waitUntil(lambda: len(nothing_is_launched) == 1, timeout=5000)
+    how, path = nothing_is_launched[0]
+    assert (how, Path(path).name) == ("open", "Kind of Blue.m3u8")
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    assert [Path(p).name for p in lines[2::2]] == [
+        "01 So What.flac",
+        "02 Freddie Freeloader.mp3",
+        "03 Blue in Green.mp3",
+    ]
+    assert window.statusBar().currentMessage() == "Playing 3 songs from Kind of Blue."
+    assert window.undo_action.text() == "Undo"  # playing changes nothing

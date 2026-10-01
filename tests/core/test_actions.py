@@ -160,7 +160,13 @@ def test_actions_for_a_type() -> None:
     }
     assert labels == {
         "Artist": [],
-        "Album": ["Add the year", "Make a playlist", "New artist", "Explode"],  # by type or role
+        "Album": [
+            "Play album",  # the music theme's own, first
+            "Add the year",
+            "Make a playlist",  # by role
+            "New artist",
+            "Explode",
+        ],
         "Song": ["Merge songs"],
     }
 

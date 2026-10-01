@@ -32,6 +32,7 @@ import mutagen
 from tagalot.themes.api import (
     FOLDER_IMAGE_EXTENSIONS,
     KIND_EXTENSIONS,
+    ActionContext,
     EmbeddedAudioArt,
     Entity,
     EntityRef,
@@ -45,6 +46,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    action,
     contains,
     field,
     kind_of,
@@ -165,6 +167,41 @@ class MusicTheme(Theme):
             ],
         ),
     ]
+
+    # --- actions ---
+
+    @action("Play album", [Album])
+    def play_album(self, albums: Sequence[EntityRef], ctx: ActionContext) -> None:
+        """Write the albums' songs, in disc and track order, to a playlist (``.m3u8``) in
+        Tagalot's temp folder and open it with the program for playlists. A song's first
+        version that's on this computer is played; songs with none are left out."""
+        lines = ["#EXTM3U"]
+        played = missing = 0
+        for album in albums:
+            for song in ctx.contents(album):
+                files = ctx.resources(song, "audio")
+                if not files:
+                    missing += 1
+                    continue
+                record = ctx.get(song)
+                seconds = record.fields.get("duration")
+                artist = record.fields.get("artist")
+                name = f"{artist} - {record.title}" if artist else record.title
+                length = max(1, round(seconds)) if seconds else -1  # -1: unknown
+                lines += [f"#EXTINF:{length},{name}", files[0].path]
+                played += 1
+        title = ctx.get(albums[0]).title if len(albums) == 1 else f"{len(albums)} albums"
+        if not played:
+            ctx.message(f"Nothing to play: {title} has no songs on this computer.")
+            return
+        path = playlist_path(ctx, title)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write("\n".join(lines) + "\n")
+        ctx.open(path)
+        text = f"Playing {played} {'song' if played == 1 else 'songs'} from {title}."
+        if missing:
+            text += f" {missing} not on this computer (offline or missing) were left out."
+        ctx.message(text)
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Song:
@@ -363,6 +400,17 @@ def folder_has_audio(path: str) -> bool:
                 except OSError:
                     continue
     return False
+
+
+def playlist_path(ctx: ActionContext, title: str) -> str:
+    """A new playlist file named after ``title`` in the temp folder. A new name each time,
+    so a player still holding the last one open doesn't stop the next."""
+    stem = re.sub(r'[\s<>:"/\\|?*\x00-\x1f]+', " ", title).strip(" .") or "Playlist"
+    for n in range(1, 1000):
+        path = ctx.temp_path(f"{stem}.m3u8" if n == 1 else f"{stem} ({n}).m3u8")
+        if not os.path.exists(path):
+            return path
+    raise OSError(f"too many playlists named {stem!r}")
 
 
 # --- tags ---
