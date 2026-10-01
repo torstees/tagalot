@@ -27,7 +27,9 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import select
 
+from tagalot.core.actions import ActionResult
 from tagalot.core.formats import format_bytes
+from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.models import SavedSearch
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
@@ -367,6 +369,7 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
+            detail.action_requested.connect(self.run_action)
             detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
@@ -424,6 +427,7 @@ class MainWindow(QMainWindow):
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
         search.reread_requested.connect(self.reread)
+        search.action_requested.connect(self.run_action)
         search.file_opener = self.files
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
@@ -470,6 +474,18 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage("Reading files again\u2026")
         self.tag_actions.reread(entity_ids, replace_edits)
+
+    def run_action(self, method: str, entity_ids: list[int]) -> None:
+        """Run a theme action (a menu entry or a page's button), then open what it asks."""
+        assert self.session is not None
+        spec = self.session.theme.actions().get(method)
+        self.statusBar().showMessage(f"{spec.label if spec else method}\u2026")
+        self.tag_actions.run_action(method, entity_ids, self._action_outputs)
+
+    def _action_outputs(self, result: ActionResult) -> None:
+        for kind, value in result.outputs:
+            if kind in ("open", "reveal"):
+                self.files.act(FileToOpen(0, value, False), OPEN if kind == "open" else REVEAL)
 
     def confirm_replace_edits(self, count: int) -> bool:
         """Ask before the files' values replace what the user edited (tests replace this)."""

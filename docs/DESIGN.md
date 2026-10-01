@@ -483,6 +483,7 @@ Themes read and write keep data only through the context object `ctx` passed to 
 - `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
 - `ctx.entities_of(resource, role=None) -> list[EntityRef]`: the entities linked to a resource. Because move detection (§6) carries links to a file's new path, this is how a file-based theme finds "the entity for this file"; keying such entities by path would let a new file at a vacated path take over a moved file's entity.
 - `ctx.warn(resource, message)`: report a problem with a file to the activity panel.
+- Actions get an `ActionContext`, a superset of this one; see Actions below.
 
 Batch items are read-only `ResourceInfo` values: root id, relative path, kind, extension, size, mtime, and a readable local path. Themes may open files for reading; they must never write under a root.
 
@@ -504,6 +505,14 @@ Implementation details (`core/ingest.py`, `IngestSession`):
 ### Actions
 
 `@action(label, applies_to=[types or roles])` registers a context-menu and detail-page action, for example "Play album" (write a temporary `.m3u` in track order and open it with the OS). Actions must not modify user files.
+
+Implementation (#106, `core/actions.py`, `core/entity_state.py`):
+
+- **Applies to** an entity type listed, or a type that declares a role listed. `actions_for(schema, type_id)` lists them in declaration order.
+- **Called as** `method(entities, ctx)`. `entities` are the selected items the action applies to (the clicked item if it isn't selected), or the page's item. `ctx` is an `ActionContext`: everything the ingest context offers (its writes keep the same provenance rules), plus `contents(entity)` in the container's `contents_sort` order, `resources(entity, role=None)` (files with this computer's paths, leaving out missing and offline ones), `temp_path(name)` (a file in a folder of the session's own, deleted when the keep closes; only the name's last part is used), and `open(path)`, `reveal(path)`, `message(text)`.
+- **Runs in the DB writer**, in one transaction: an exception rolls back everything it wrote, and the status bar says "<label> failed: …". Outputs are collected and carried out on the GUI thread after the commit, in order. `open` honors the user's overrides (§11). The status bar shows the action's last message, else "<label>: done."
+- **Undo:** while an action runs, the ingest session tells a `ChangeRecorder` about every entity before its first write. That covers both ends of a containment edge or relationship, a deleted entity's neighbours, and a many=False relationship's previous partner. A created entity is recorded as not existing. Each is snapshotted whole: row, theme fields, provenance, file links, tags, parents and children, and relationships. Snapshots are taken again at the end. The run is one undo step (`ActionChange`, labelled with the action), recorded only if something changed. Undo and redo restore the snapshots exactly: created entities are deleted, deleted ones are recreated with their id, tags, and edges, and the closure and search index are brought up to date. `updated_at` and the thumbnail memo are not restored; they are set afresh.
+- **Where:** a result's right-click menu lists the actions for its type, after Re-read. A detail page shows them as buttons beside More ▾. Contents searches on a page get the same menus.
 
 ### Theme schema versions
 
@@ -816,5 +825,6 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Containers order their contents with `Entity.contents_sort` (theme API), used by the tree layout's children and the container's page; the tree's top level leaves out matches held by another match (`SearchSpec.nest`), so a view of albums and songs shows songs under their albums rather than twice. Music views: Browse (tree), Artists and Albums (grids), Songs (list) (§8, §9). |
 | 2026-09 | Opening files: an item opens the first available file of its primary role; Open file, Show in file manager, and Open with… are in result menus, the detail page's More menu, and each file row's menu; Open with… is Windows' own dialog, else a program picked once (§11). |
 | 2026-09 | Handler overrides are made from the Open with submenu (Always open .ext files with… / Stop using …), filled once the file is known; templates split on spaces with double quotes and no backslash escapes, a template without placeholders gets the path appended; per-role and custom templates are hand-edited in settings.toml (§11). |
+| 2026-09 | Theme actions get an `ActionContext`: the ingest context's writes (one undo step per run, by whole-entity snapshots of what it touched), plus contents in order, files with paths, a temp folder per session, and open/reveal/message outputs carried out after the commit. They run in the DB writer and appear in result menus and as detail-page buttons (§9). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |

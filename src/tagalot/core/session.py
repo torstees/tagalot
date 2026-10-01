@@ -5,13 +5,16 @@ worker. It never imports Qt.
 """
 
 import logging
+import shutil
+import tempfile
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
+from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, open_keep
@@ -49,6 +52,8 @@ class KeepSession:
     closed: bool = field(default=False, init=False)
     """True once :meth:`close` has finished: the database files are no longer open."""
     _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _temp: Path | None = field(default=None, init=False, repr=False)
+    _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @classmethod
     def open(
@@ -165,6 +170,44 @@ class KeepSession:
         self.thumbnails.forget_failures()  # files may be readable again
         return report
 
+    def run_action(self, method: str, entity_ids: Iterable[int]) -> ActionResult:
+        """Run a theme action on these entities in the DB writer; one undo step if it
+        changed anything. Runs in a worker; raises ``ActionError`` if the action fails (its
+        writes are then rolled back)."""
+        ids = list(entity_ids)
+        theme = self.theme()
+        schema = self.schema
+
+        def job(conn: Connection) -> ActionResult:
+            return run_action(
+                conn,
+                schema,
+                theme,
+                method,
+                ids,
+                root_path=self._known_root_path,
+                temp_dir=self.temp_dir,
+            )
+
+        result = self.writer.run(job)
+        if result.changed:
+            self.tags.record(result.change)
+        return result
+
+    def temp_dir(self) -> Path:
+        """A folder of this session's own for files actions write (a playlist); it is
+        deleted when the keep closes."""
+        with self._temp_lock:  # not _closing: close() waits for writer jobs that call this
+            if self._temp is None:
+                self._temp = Path(tempfile.mkdtemp(prefix="tagalot-"))
+            return self._temp
+
+    def _known_root_path(self, root_id: str) -> str | None:
+        try:
+            return self.root_path(root_id)
+        except StopIteration:  # a root no longer in keep.toml
+            return None
+
     def close(self) -> None:
         """Finish queued writes and release the database. Safe to call twice, and from two
         threads: the second call waits for the first to finish."""
@@ -172,6 +215,8 @@ class KeepSession:
             if self.closed:
                 return
             self.writer.close()
+            if self._temp is not None:
+                shutil.rmtree(self._temp, ignore_errors=True)
             self.thumbnails.cache.close()
             self.reader.dispose()
             self.closed = True  # only now are the files released
