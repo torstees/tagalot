@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.music import (
@@ -19,10 +19,12 @@ from tagalot.builtin_themes.music import (
     album_folder,
     from_file_name,
     normalize,
+    playlist_path,
 )
+from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
-from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
+from tagalot.core.models import Entity, EntityContains, EntityResource, Resource, ResourceStatus
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.search import child_hits, run_search
 from tagalot.core.search_fields import contents_order, search_fields, view_spec
@@ -391,3 +393,79 @@ def test_an_albums_songs_are_in_track_order(env: Env) -> None:
     # An artist's contents (albums and songs) by year: a field both have.
     sort, _ = contents_order(env.schema, MusicTheme.type_id_of(Artist))
     assert [k.field for k in sort] == ["year", "title"]
+
+
+# --- Play album (#102) ---
+
+
+def _play(env: Env, tmp_path: Path, *titles: str) -> ActionResult:
+    ids = [env.entity(t) for t in titles]
+    return env.writer.run(
+        lambda conn: run_action(
+            conn,
+            env.schema,
+            MusicTheme(),
+            "play_album",
+            ids,
+            root_path=lambda _: str(env.files),
+            temp_dir=lambda: tmp_path / "temp",
+        )
+    )
+
+
+def test_play_album_writes_a_playlist_in_track_order(env: Env, tmp_path: Path) -> None:
+    env.scan()
+    result = _play(env, tmp_path, "Kind of Blue")
+    assert not result.changed  # nothing to undo
+    [(_, path)] = [o for o in result.outputs if o[0] == "open"]
+    assert Path(path) == tmp_path / "temp" / "Kind of Blue.m3u8"
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "#EXTM3U"
+    assert lines[1] == "#EXTINF:1,Miles Davis - So What"  # the song's length: its MP3's
+    assert Path(lines[2]) == env.files / "Miles Davis/Kind of Blue/01 So What.flac"  # first version
+    assert lines[3] == "#EXTINF:1,Miles Davis - Freddie Freeloader"
+    assert Path(lines[4]).name == "02 Freddie Freeloader.mp3"
+    assert result.text == "Playing 2 songs from Kind of Blue."
+
+    again = _play(env, tmp_path, "Kind of Blue")  # a player may still hold the first one
+    assert Path(again.outputs[0][1]).name == "Kind of Blue (2).m3u8"
+
+
+def test_play_album_leaves_out_songs_that_arent_here(env: Env, tmp_path: Path) -> None:
+    env.scan()
+    env.writer.run(
+        lambda conn: conn.execute(
+            update(Resource)
+            .where(Resource.relpath.endswith("02 Freddie Freeloader.mp3"))
+            .values(status=ResourceStatus.MISSING)
+        )
+    )
+    result = _play(env, tmp_path, "Kind of Blue", "The Box")
+    assert Path(result.outputs[0][1]).name == "2 albums.m3u8"
+    assert result.text == (
+        "Playing 3 songs from 2 albums. 1 not on this computer (offline or missing) were left out."
+    )
+
+
+def test_play_album_with_nothing_to_play(env: Env, tmp_path: Path) -> None:
+    env.scan()
+    env.writer.run(
+        lambda conn: conn.execute(
+            update(Resource)
+            .where(Resource.relpath.startswith("Jazz Hits/"))
+            .values(status=ResourceStatus.OFFLINE)
+        )
+    )
+    result = _play(env, tmp_path, "Jazz Hits")
+    assert result.outputs == [
+        ("message", "Nothing to play: Jazz Hits has no songs on this computer.")
+    ]
+
+
+def test_playlist_names_are_safe_file_names(tmp_path: Path) -> None:
+    class Ctx:
+        def temp_path(self, name: str) -> str:
+            return str(tmp_path / name)
+
+    assert Path(playlist_path(Ctx(), 'AC/DC: "Live"?')).name == "AC DC Live.m3u8"  # type: ignore[arg-type]
+    assert Path(playlist_path(Ctx(), "...")).name == "Playlist.m3u8"  # type: ignore[arg-type]
