@@ -14,6 +14,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QLabel,
     QMainWindow,
@@ -33,7 +34,8 @@ from tagalot.core.actions import ActionResult
 from tagalot.core.activity import SCAN, Problem
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
-from tagalot.core.models import SavedSearch
+from tagalot.core.links import kind_of_file
+from tagalot.core.models import ResourceKind, SavedSearch
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
@@ -50,11 +52,12 @@ from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.thumbnails.queue import QueueResult
 from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
-from tagalot.themes.api import SearchView
+from tagalot.themes.api import Kind, SearchView
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
+from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
@@ -421,6 +424,7 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
+            detail.unlink_requested.connect(self.tag_actions.unlink_file)
             detail.action_requested.connect(self.run_action)
             detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
@@ -435,6 +439,7 @@ class MainWindow(QMainWindow):
             triage.dismiss_requested.connect(self.tag_actions.dismiss)
             triage.delete_requested.connect(self.delete_items)
             triage.skip_requested.connect(self._skip_files)
+            triage.link_requested.connect(self.link_files)
             triage.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
             for listed in (triage.untagged, triage.missing):
                 listed.selection_changed.connect(self._schedule_summary)
@@ -805,6 +810,23 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def link_files(self, files: list[UnlinkedFile]) -> None:
+        """Ask which item (and role) to link files to, then link them by hand."""
+        session = self.session
+        assert session is not None
+        what = files[0].relpath.rpartition("/")[2] if len(files) == 1 else f"{len(files)} files"
+        kinds = [kind_of_file(ResourceKind.FILE, _ext(f.relpath)) for f in files]
+        target = self.choose_link_target(what, kinds)
+        if target is not None:
+            entity_id, role = target
+            self.tag_actions.link_files(entity_id, [f.resource_id for f in files], role)
+
+    def choose_link_target(self, what: str, kinds: list[Kind | None]) -> tuple[int, str] | None:
+        """The Link to item dialog: (entity id, role), or ``None`` (tests replace this)."""
+        assert self.session is not None
+        dialog = LinkDialog(self.session, what, kinds, self)
+        return dialog.chosen() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
     def _skip_files(self, files: list[UnlinkedFile]) -> None:
         """Leave these files out of scans: an exact exclude pattern on each one's root."""
         session = self.session
@@ -1172,3 +1194,10 @@ def scan_summary(reports: list[ScanReport]) -> str:
     if failed:
         text += f" {failed} file{'s' if failed != 1 else ''} couldn't be read."
     return text
+
+
+def _ext(relpath: str) -> str:
+    """A path's extension, lowercased with its dot (``".png"``), or ``""``."""
+    name = relpath.rpartition("/")[2]
+    stem, dot, ext = name.rpartition(".")
+    return f".{ext.lower()}" if dot and stem else ""

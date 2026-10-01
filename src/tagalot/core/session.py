@@ -27,6 +27,7 @@ from tagalot.core.keep_settings import (
     with_thumbnail_max,
     with_thumbnails_after_scan,
 )
+from tagalot.core.links import link_files, unlink_file
 from tagalot.core.models import Root
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.root_admin import (
@@ -246,6 +247,27 @@ class KeepSession:
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
+
+    # --- links made by hand (core.links) ---
+
+    def link_files(self, entity_id: int, resource_ids: Sequence[int], role: str) -> str:
+        """Link files to an item by hand; one undo step. Returns its label. Raises
+        ``LinkError`` for a link that can't be made. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(
+            lambda conn: link_files(conn, schema, entity_id, resource_ids, role)
+        )
+        self.tags.record(change)
+        return change.label
+
+    def unlink_file(self, entity_id: int, resource_id: int, role: str) -> str:
+        """Remove a link made by hand; one undo step. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(
+            lambda conn: unlink_file(conn, schema, entity_id, resource_id, role)
+        )
+        self.tags.record(change)
+        return change.label
 
     # --- triage (core.triage) ---
 

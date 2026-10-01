@@ -69,7 +69,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 5                          # core schema version
+format_version = 6                          # core schema version
 
 [theme]
 id = "music"
@@ -143,7 +143,7 @@ Unique `(root_id, relpath)`. Index on `fingerprint`.
 Unique `(type, ingest_key)`. The key lets re-ingest find an existing entity even after the user renames its title.
 
 **entity_resource** — role-based links.
-`entity_id`, `resource_id`, `role`, `sort_order`.
+`entity_id`, `resource_id`, `role`, `sort_order`, `by_user` (made by hand, core format 6, #243; §9 ingest context).
 PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 
 **entity_contains** — containment edges declared by the theme's ingester.
@@ -479,14 +479,14 @@ Fields are declared as annotated class attributes: `name: <type> = field(label, 
 Themes read and write keep data only through the context object `ctx` passed to `ingest()` (and to actions and `migrate()`). Entities are referred to by opaque `EntityRef` handles, not ORM objects. The core applies all writes through the DB writer (§6) and enforces provenance: extracted values never overwrite fields whose provenance is `user`.
 
 - `ctx.upsert(Type, key, *, title=None, **fields) -> EntityRef`: find the entity of that type with this `ingest_key` (§5) or create it, then set extracted fields. The key is the theme's stable natural key (for example, an album's folder path or a normalized artist name).
-- `ctx.link(entity, resource, role, sort_order=0)`, `ctx.unlink(...)`.
+- `ctx.link(entity, resource, role, sort_order=0)`, `ctx.unlink(...)`. Links the user made by hand (`by_user`, #243) are the user's: `unlink` never removes them, and in a one-file role a theme's `link` is skipped while the user's file is there (removing the user's link lets the theme's come back at the next re-read).
 - `ctx.contain(parent, child)`, `ctx.uncontain(parent, child)`. Within a batch the last call for an edge wins, so a theme may contain and later uncontain (or the reverse) as it works things out.
 - `ctx.relate(name, a, b)`, `ctx.unrelate(name, a, b)`.
 - `ctx.find(Type, **equals) -> list[EntityRef]` and `ctx.get(entity) -> Record` (read-only field values) for lookups.
 - `ctx.option(name)`: an option's value for the root being scanned (its override, else the keep's, else the default); `ctx.contents(entity)` (direct children, counting this batch's pending `contain`/`uncontain`) and `ctx.linked(entity, role=None)` (linked resource ids); `ctx.delete(entity)` deletes an entity the theme made (its links, containment, and tags go with it; resources stay), for example an artist left empty.
 - `ctx.prepared(resource)`: what `prepare()` returned for the resource, or `None` (nothing returned for it, or no prepare step, as in `migrate` and actions).
 - `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
-- `ctx.entities_of(resource, role=None) -> list[EntityRef]`: the entities linked to a resource. Because move detection (§6) carries links to a file's new path, this is how a file-based theme finds "the entity for this file"; keying such entities by path would let a new file at a vacated path take over a moved file's entity.
+- `ctx.entities_of(resource, role=None) -> list[EntityRef]`: the entities linked to a resource. Because move detection (§6) carries links to a file's new path, this is how a file-based theme finds "the entity for this file"; keying such entities by path would let a new file at a vacated path take over a moved file's entity. Links the user made by hand aren't returned: the file isn't the theme's to read into that item, so re-reading it never renames or regroups the user's item (the theme may make an item of its own for it). `ctx.linked(entity)` does count them, so an item with only the user's files isn't "empty".
 - `ctx.warn(resource, message)`: report a problem with a file to the activity panel.
 - Actions get an `ActionContext`, a superset of this one; see Actions below.
 
@@ -742,7 +742,10 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 - **Page** (#110, `ui/triage.py`, `core/triage.py`): TOOLS → **Triage**, three tabs, each with its count.
 - **Unlinked files:** a table (folder, path, size, offline) of the first 10,000 files no item links; folders and missing files aren't listed. Actions: **Open file**, **Show in file manager**, **Skip in scans…** (adds an exact exclude pattern per file to its root, with `*`, `?`, `[` bracketed; the next scan flags them skipped, which takes them off the list), and **Dismiss**.
-  - Linking a file to an item by hand is deferred to #243: it needs user-made links that scans respect.
+  - **Link to item…** (#243, `ui/link_dialog.py`, `core/links.py`): a dialog with a search box. It lists matching items (title and type) among the types with a role that takes every selected file, then offers those roles. Linking is one undo step, and in a one-file role the file replaces what was there.
+    - The link is marked `by_user`: scans respect it (§9 ingest context), Re-read leaves the user's files out, and the file leaves the Unlinked list.
+    - On the item's page the file row says "linked by you", and its menu has **Unlink from this item** (one undo step; only for links made by hand).
+    - A theme may have no role for some files (the music theme's albums hold only their folder, so a stray `cover.jpg` can't be linked); the dialog says so.
   - A theme may read files without linking them (a cover image found in its folder), so some files here are expected.
 - **Untagged items** and **Missing files** are ordinary search pages with `SearchSpec.triage` (`"untagged"`: no tag of its own, or none from a container with Inherit tags; `"missing"`: at least one linked file, and none that isn't missing; offline isn't missing). The Tags panel and drops tag their selection, as on any search page.
   - Untagged items has **Dismiss**.
@@ -880,6 +883,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Links made by hand (#243) are marked `by_user` (core format 6) and invisible to themes from the file's side (`entities_of`), so re-reading a file never renames or regroups the user's item. Themes can't unlink them or displace them in a one-file role, and `linked` still counts them. Made with Link to item… from Triage (search, then a role that takes the file); undone and unlinked from the item's page (§5, §9, §12). |
 | 2026-10 | Files a scan now leaves out (excludes, extensions, the theme's folder rule) are flagged `skipped` rather than marked missing or deleted: a new boolean column (core format 5) rather than a status value, since status values have a CHECK constraint SQLite can't change without rebuilding the table. Status stays as last seen; seeing the file again in scope clears the flag (#152, §6). |
 | 2026-10 | Activity panel (#111): a bottom dock, hidden until opened from View → Activity (Ctrl+Shift+A) or the status bar's problem badge, never popping up by itself. It shows the scan's progress or summary, the thumbnail queue, folder states, and a session-only problem log (newest 1,000) from scans and thumbnails, with Show in file manager, Copy, and Clear (§12). |
 | 2026-10 | Triage (#110): unlinked files, untagged items, and items with all files missing. Dismiss hides until changed, through a marker in a new `triage_dismissal` table (core format 4), undoably. Deleting missing items is undoable. Skip in scans adds an exact exclude pattern. Hand-made links are deferred to #243, since scans don't yet respect them (§5, §8, §12). |

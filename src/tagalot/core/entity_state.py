@@ -45,8 +45,8 @@ class EntitySnapshot:
     values: dict[str, Any]
     """The theme table's fields."""
     provenance: frozenset[tuple[str, FieldSource]]
-    links: frozenset[tuple[int, str, int]]
-    """(resource id, role, sort order)."""
+    links: frozenset[tuple[int, str, int, bool]]
+    """(resource id, role, sort order, made by the user)."""
     tags: frozenset[tuple[int, datetime]]
     """(tag id, when it was added)."""
     parents: frozenset[int]
@@ -95,7 +95,10 @@ def snapshot_entities(
             links=_rows(
                 conn.execute(
                     select(
-                        EntityResource.resource_id, EntityResource.role, EntityResource.sort_order
+                        EntityResource.resource_id,
+                        EntityResource.role,
+                        EntityResource.sort_order,
+                        EntityResource.by_user,
                     ).where(EntityResource.entity_id == entity_id)
                 )
             ),
@@ -229,9 +232,9 @@ def _replace_rows(conn: Connection, present: Mapping[int, EntitySnapshot]) -> No
         for name, source in s.provenance
     ]
     links = [
-        {"entity_id": i, "resource_id": r, "role": role, "sort_order": order}
+        {"entity_id": i, "resource_id": r, "role": role, "sort_order": order, "by_user": mine}
         for i, s in present.items()
-        for r, role, order in s.links
+        for r, role, order, mine in s.links
     ]
     tags = [
         {"entity_id": i, "tag_id": tag, "added_at": added}

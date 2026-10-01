@@ -80,7 +80,7 @@ def reextract(
         files = conn.execute(
             select(Resource.id, Resource.root_id, Resource.status, EntityResource.entity_id)
             .join(EntityResource, EntityResource.resource_id == Resource.id)
-            .where(EntityResource.entity_id.in_(ids))
+            .where(EntityResource.entity_id.in_(ids), EntityResource.by_user.is_(False))
         ).all()
     readable = {r.id: r.root_id for r in files if r.status == ResourceStatus.OK}
     reachable = {r.entity_id for r in files if r.status == ResourceStatus.OK}
