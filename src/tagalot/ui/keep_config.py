@@ -102,6 +102,9 @@ class KeepConfigWindow(QWidget):
         """Where this computer's folders are saved (``None``: the user's ``settings.toml``)."""
         self.statuses: dict[str, RootStatus] = {}
         self.busy = 0
+        self._scans_waiting: list[str] = []
+        """Roots whose Scan now waits for a save in progress (the edit that clicking the
+        button just finished), so the scan uses the saved settings."""
         self.setWindowTitle(f"Configure {session.keep.config.name}")
         self.resize(820, 520)
 
@@ -595,8 +598,18 @@ class KeepConfigWindow(QWidget):
 
     def _scan(self) -> None:
         root = self.current_root()
-        if root is not None:
-            self.scan_requested.emit([root.id])
+        if root is None:
+            return
+        if self.busy:  # clicking the button ended an edit that is still being saved
+            if root.id not in self._scans_waiting:
+                self._scans_waiting.append(root.id)
+            return
+        self.scan_requested.emit([root.id])
+
+    def _scan_when_saved(self) -> None:
+        if not self.busy and self._scans_waiting:
+            waiting, self._scans_waiting = self._scans_waiting, []
+            self.scan_requested.emit(waiting)
 
     def _remove(self) -> None:
         root = self.current_root()
@@ -639,6 +652,7 @@ class KeepConfigWindow(QWidget):
             self.changed.emit(message)
             if then is not None:
                 then()
+            self._scan_when_saved()
 
         def failed(error: BaseException) -> None:
             if not shiboken6.isValid(self):
@@ -646,6 +660,7 @@ class KeepConfigWindow(QWidget):
             self.busy -= 1
             logger.error("Saving the keep's configuration failed", exc_info=error)
             self._refused(str(error))
+            self._scan_when_saved()
 
         run_in_pool(work, on_done=done, on_error=failed, pool=self._pool)
 

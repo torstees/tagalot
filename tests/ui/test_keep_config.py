@@ -178,3 +178,25 @@ def test_adding_a_folder_watches_and_scans_it(
 
     config.add_folder(str(more))  # again
     assert "already watches" in config.error.text()
+
+
+def test_scan_now_waits_for_the_edit_it_ends(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, config: KeepConfigWindow
+) -> None:
+    """Clicking Scan now right after typing a pattern: the click ends the edit (saved in a
+    worker), and the scan must use the saved pattern, not the old settings."""
+    seen: list[list[str]] = []
+
+    def scanned(root_ids: list[str]) -> None:
+        seen.append(list(session.keep.config.roots[0].exclude))
+
+    config.scan_requested.connect(scanned)
+    config.exclude.setPlainText("**/Untagged/**")
+    QApplication.sendEvent(config.exclude, QFocusEvent(QEvent.Type.FocusOut))  # the click
+    config.scan_button.click()
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        qtbot.waitUntil(lambda: bool(seen), timeout=5000)
+    assert seen == [["**/Untagged/**"]]  # scanned once, with the new pattern
+    with session.reader.connect() as conn:
+        skipped = conn.scalars(select(Resource.relpath).where(Resource.skipped.is_(True))).all()
+    assert sorted(skipped) == ["Untagged", "Untagged/03 - Lonely Road.mp3"]
