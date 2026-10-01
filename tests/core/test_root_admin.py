@@ -255,3 +255,13 @@ def test_removing_the_root_with_its_items(music: KeepSession) -> None:
     with music.reader.connect() as conn:
         assert conn.scalar(select(func.count()).select_from(Entity)) == 0
         assert conn.scalar(select(func.count()).select_from(Resource)) == 0
+
+
+def test_thumbnails_follow_root_changes(music: KeepSession, tmp_path: Path) -> None:
+    """Paths for thumbnails come from the current configuration, not the one at opening."""
+    more = tmp_path / "more"
+    more.mkdir()
+    music.save_config(add_root(music.keep.config, music.keep.dir, "More", str(more)))
+    assert music.thumbnails.root_path("more") == str(more)
+    music.settings.set_root_override(music.keep.config.id, "music", "Z:/music")
+    assert music.thumbnails.root_path("music") == "Z:/music"

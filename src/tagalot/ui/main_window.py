@@ -138,7 +138,6 @@ class MainWindow(QMainWindow):
             "Delete every stored thumbnail; they are made again as you browse"
         )
         self.clear_thumbnails_action.triggered.connect(self.clear_thumbnail_cache)
-        keep_menu.addAction(self.clear_thumbnails_action)
         self.configure_action = QAction("Configure keep\u2026", self)
         self.configure_action.setToolTip("The folders this keep watches, and their status")
         self.configure_action.triggered.connect(self.configure_keep)
@@ -760,6 +759,8 @@ class MainWindow(QMainWindow):
                 page.grid.viewport().update()
             self.clear_thumbnails_action.setEnabled(True)
             self.statusBar().showMessage(f"Cleared {count:,} thumbnails.")
+            if self.keep_config is not None:
+                self.keep_config.show_cache_stats()
 
         def failed(error: BaseException) -> None:
             self.clear_thumbnails_action.setEnabled(True)
@@ -783,8 +784,15 @@ class MainWindow(QMainWindow):
     # --- thumbnail sizes ---
 
     def _make_size_menu(self) -> QMenu:
-        assert self.session is not None
         menu = QMenu("Thumbnail size", self)
+        self._fill_size_menu(menu)
+        return menu
+
+    def _fill_size_menu(self, menu: QMenu) -> None:
+        """The size presets for the keep's largest size, then zooming (filled again when
+        the largest size changes)."""
+        assert self.session is not None
+        menu.clear()
         self._size_group = QActionGroup(self)
         self._size_group.setExclusive(True)
         self.size_actions: dict[int, QAction] = {}
@@ -809,7 +817,15 @@ class MainWindow(QMainWindow):
         menu.addAction(self.zoom_in_action)
         menu.addAction(self.zoom_out_action)
         self._show_size()
-        return menu
+
+    def thumbnail_max_changed(self) -> None:
+        """The keep's largest thumbnail size changed: new presets, a size within them, and
+        pictures made again at the new size."""
+        self._fill_size_menu(self.size_menu)
+        self.thumbnails.clear()
+        self.set_thumbnail_size(self.thumbnail_size)
+        for page in self.search_pages():
+            page.grid.viewport().update()
 
     def set_thumbnail_size(self, size: int) -> None:
         """Show grid thumbnails at ``size`` pixels in every page, and remember it."""
@@ -872,6 +888,8 @@ class MainWindow(QMainWindow):
             window = KeepConfigWindow(self.session, parent=self)
             window.changed.connect(self._config_changed)
             window.scan_requested.connect(self._scan_roots)
+            window.thumbnail_max_changed.connect(self.thumbnail_max_changed)
+            window.clear_thumbnails_requested.connect(self.clear_thumbnails_action.trigger)
             self.keep_config = window
         self.keep_config.show()
         self.keep_config.raise_()

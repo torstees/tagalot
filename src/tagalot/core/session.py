@@ -11,6 +11,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import Connection, Engine, update
 
@@ -18,6 +19,7 @@ from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
+from tagalot.core.keep_settings import with_name, with_option, with_thumbnail_max
 from tagalot.core.models import Root
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.root_admin import (
@@ -111,7 +113,7 @@ class KeepSession:
             thumbnail_max,
         )
         logger.info("Opened keep %r with the %r theme", opened.keep.config.name, theme.id)
-        return cls(
+        session = cls(
             keep=opened.keep,
             theme=theme,
             schema=opened.schema,
@@ -123,6 +125,9 @@ class KeepSession:
             catalog=catalog,
             thumbnails=thumbnails,
         )
+        # From now on, root paths follow the configuration (roots added, moved, overridden).
+        thumbnails.root_path = session.root_path
+        return session
 
     @property
     def thumbnail_max(self) -> int:
@@ -217,6 +222,21 @@ class KeepSession:
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
+
+    def rename_keep(self, name: str) -> None:
+        """Rename the keep. Runs in a worker."""
+        self.save_config(with_name(self.keep.config, self.keep.dir, name))
+
+    def set_thumbnail_max(self, size: int | None) -> None:
+        """Make thumbnails at ``size`` pixels from now on (``None``: the theme's size);
+        cached ones at another size are made again as they're shown. Runs in a worker."""
+        self.save_config(with_thumbnail_max(self.keep.config, size))
+        self.thumbnails.size = size or self.theme.thumbnail_max
+
+    def set_option(self, name: str, value: Any, root_id: str | None = None) -> None:
+        """Set a theme option for the keep or one root (``None`` removes the setting).
+        It applies at the next scan, which reads the affected roots' files again."""
+        self.save_config(with_option(self.keep.config, self.theme, name, value, root_id=root_id))
 
     def stop_watching(self, root_id: str) -> None:
         """Stop scanning a root; its items stay, shown offline. Runs in a worker."""
