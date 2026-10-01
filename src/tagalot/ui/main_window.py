@@ -54,6 +54,7 @@ from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import Kind, SearchView
 from tagalot.ui.activity import ActivityPanel
+from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
@@ -64,7 +65,7 @@ from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
-from tagalot.ui.triage import TriagePage
+from tagalot.ui.triage import UNTAGGED_TAB, TriagePage
 from tagalot.ui.workers import ScanController, run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,6 @@ NAVIGATION_MIN_WIDTH = 170
 """The navigation pane never gets narrower than this, however wide a page wants to be."""
 
 _COMING = {
-    "dashboard": "The dashboard arrives in M15.",
     "saved": "Saved searches arrive in M18.",
     "dedupe": "Dedupe arrives in M16.",
 }
@@ -430,6 +430,16 @@ class MainWindow(QMainWindow):
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
+        if target.kind == "dashboard":
+            dashboard = DashboardPage(session, self.thumbnails)
+            dashboard.open_type.connect(self._open_type)
+            dashboard.open_triage.connect(self._open_triage)
+            dashboard.configure_root.connect(
+                lambda root_id: self.configure_keep().select_root(root_id)
+            )
+            dashboard.open_entity.connect(self.open_entity)
+            dashboard.search_tag.connect(lambda tag_id: self.add_tags_to_search([tag_id]))
+            return dashboard
         if target.kind == "triage":
             triage = TriagePage(
                 session,
@@ -788,9 +798,23 @@ class MainWindow(QMainWindow):
         return pages
 
     def _refresh_triage(self) -> None:
+        """Recount the pages that summarize the keep (Triage, the dashboard)."""
         for page in self._pages.values():
-            if isinstance(page, TriagePage):
+            if isinstance(page, TriagePage | DashboardPage):
                 page.refresh()
+
+    def _open_type(self, type_id: str) -> None:
+        """Search all, narrowed to one type (from the dashboard)."""
+        self.navigation.select(NavTarget("search", label="Search all"))
+        page = self.stack.currentWidget()
+        if isinstance(page, SearchPage):
+            page.show_all(type_id)
+
+    def _open_triage(self) -> None:
+        self.navigation.select(NavTarget("triage", label="Triage"))
+        page = self.stack.currentWidget()
+        if isinstance(page, TriagePage):
+            page.tabs.setCurrentIndex(UNTAGGED_TAB)
 
     def delete_items(self, ids: list[int]) -> None:
         """Delete items from the triage list, after asking; Edit → Undo brings them back."""
@@ -1084,6 +1108,7 @@ class MainWindow(QMainWindow):
         """Roots were renamed, moved, or removed: pages show the change."""
         self.statusBar().showMessage(message)
         self._show_folders()
+        self._refresh_triage()
         self.thumbnails.clear()
         self._refresh_details()
         for page in self.search_pages():
