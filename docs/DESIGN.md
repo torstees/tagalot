@@ -676,7 +676,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 - **Tabs:** **Folders** (the above), **Thumbnails**, and **Keep**.
 - **Thumbnails tab:**
   - **Largest size:** "The theme's size (N px)", or a size of the keep's own (16 to 2048 px), written as `[thumbnails] max_size`. It applies at once: the resolver makes thumbnails at the new size (the size is part of the cache key, so others are remade as shown), and View → Thumbnail size's presets and zoom follow.
-  - **Stored:** how many thumbnails are stored and their size, with **Clear…** (§10).
+  - **Stored:** how many thumbnails are stored and their size, with **Clear…** (§10). It is counted again (in a worker) whenever the tab comes into view or the window gets the focus, and every 3 seconds while the tab is in view, since grids store thumbnails as they show them.
 - **Keep tab:** the keep's name (editable) and folder; the theme (name, id, version, built in or its file), the types it holds, and its description; and the theme's **options**. Each option has an editor by type (checkbox, number box, or text box) showing the keep's value or the default, with **Default** to remove the keep's setting.
 - **Folder options:** on the Folders tab, each option has a checkbox to override it for the selected folder (unticked: the keep's value, named in the tooltip) and an editor. Ticking starts from the keep's value; unticking removes the override.
 - Option changes apply at the next scan; changed values make it read the affected roots' files again (§4).

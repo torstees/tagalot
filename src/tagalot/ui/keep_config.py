@@ -20,7 +20,8 @@ from collections.abc import Callable
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -67,6 +68,10 @@ logger = logging.getLogger(__name__)
 
 KEEP, DELETE = "keep", "delete"
 """The two ways to remove a root."""
+
+THUMBNAILS_TAB = 1
+STATS_INTERVAL_MS = 3000
+"""How often the stored-thumbnail count is read while the Thumbnails tab is in view."""
 
 _ROOT_ID = Qt.ItemDataRole.UserRole
 
@@ -196,6 +201,12 @@ class KeepConfigWindow(QWidget):
         self.tabs.addTab(self._keep_tab(), "Keep")
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
+        # Thumbnails are stored as the grids show them: count them again while the
+        # Thumbnails tab is in view, and whenever it comes into view.
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(STATS_INTERVAL_MS)
+        self._stats_timer.timeout.connect(self.show_cache_stats)
+        self.tabs.currentChanged.connect(lambda _: self._watch_stats())
         self.reload()
 
     # --- tabs ---
@@ -398,6 +409,30 @@ class KeepConfigWindow(QWidget):
                 )
             )
             self.root_options_form.addRow(use_own, editor)
+
+    def _thumbnails_shown(self) -> bool:
+        return self.isVisible() and self.tabs.currentIndex() == THUMBNAILS_TAB
+
+    def _watch_stats(self) -> None:
+        """Count now if the Thumbnails tab is in view, and keep counting while it is."""
+        if self._thumbnails_shown():
+            self.show_cache_stats()
+            self._stats_timer.start()
+        else:
+            self._stats_timer.stop()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._watch_stats()
+
+    def hideEvent(self, event: QHideEvent) -> None:
+        super().hideEvent(event)
+        self._stats_timer.stop()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._watch_stats()
 
     def show_cache_stats(self) -> None:
         """How many thumbnails are stored, read in a worker."""

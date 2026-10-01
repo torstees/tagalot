@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 from PySide6.QtWidgets import QCheckBox, QLabel, QMenu, QSpinBox
 from pytestqt.qtbot import QtBot
+from sqlalchemy import select
 
 from tagalot.core.keep import load_keep_config
+from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.thumbnails.cache import CacheStats
-from tagalot.ui.keep_config import KeepConfigWindow
+from tagalot.ui.keep_config import THUMBNAILS_TAB, KeepConfigWindow
 from tagalot.ui.main_window import MainWindow
 from tests.ui.test_contents_search import session, window
 
@@ -145,3 +147,27 @@ def test_theme_info(config: KeepConfigWindow) -> None:
     texts = [label.text() for label in tab.findChildren(QLabel)]
     assert any("2D assets" in t and "built in" in t for t in texts)
     assert "Artists, Images, Fonts, Archives" in texts
+
+
+def test_the_stored_count_follows_new_thumbnails(
+    qtbot: QtBot, session: KeepSession, config: KeepConfigWindow
+) -> None:
+    """Thumbnails stored while browsing show up without reopening anything."""
+    config.tabs.setCurrentIndex(THUMBNAILS_TAB)
+    assert config._stats_timer.isActive()  # counting while the tab is in view
+    before = session.thumbnails.cache.stats().count
+    for entity_id in _entity_ids(session)[:3]:
+        session.thumbnails.resolve(entity_id)  # what showing a grid does
+    after = session.thumbnails.cache.stats().count
+    assert after > before
+    config._stats_timer.timeout.emit()
+    qtbot.waitUntil(
+        lambda: config.cache_stats.text().startswith(f"{after:,} thumbnails"), timeout=5000
+    )
+    config.tabs.setCurrentIndex(0)
+    assert not config._stats_timer.isActive()  # not while another tab is shown
+
+
+def _entity_ids(session: KeepSession) -> list[int]:
+    with session.reader.connect() as conn:
+        return list(conn.scalars(select(Entity.id).order_by(Entity.id)))
