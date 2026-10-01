@@ -224,6 +224,22 @@ class TagActions(QObject):
 
         self._run(lambda: self.session.run_action(method, ids), describe)
 
+    def dismiss(self, name: str, ids: list[int]) -> None:
+        """Hide files or items from a triage list until they change; one undo step."""
+
+        def describe(count: int) -> str:
+            what = "file" if name == "unlinked" else "item"
+            return f"Dismissed {count:,} {what}{'' if count == 1 else 's'} until they change."
+
+        self._run(lambda: self.session.dismiss(name, ids), describe)
+
+    def delete_items(self, ids: list[int]) -> None:
+        """Delete items (never their files); one undo step."""
+        self._run(
+            lambda: self.session.delete_items(ids),
+            lambda count: f"Deleted {items_text(count)}. Edit \u2192 Undo brings them back.",
+        )
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 

@@ -49,6 +49,7 @@ from tagalot.core.tags import (
     untag_entities,
 )
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.triage import DismissChange, restore_dismissals
 from tagalot.core.writer import DbWriter
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-Step = TagChange | FieldChange | ExtraChange | ReextractChange | ActionChange
+Step = TagChange | FieldChange | ExtraChange | ReextractChange | ActionChange | DismissChange
 """One entry in the undo history."""
 
 
@@ -267,6 +268,8 @@ class TagService:
         elif isinstance(step, ReextractChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_entities(conn, schema, step, forward=forward))
+        elif isinstance(step, DismissChange):
+            self.writer.run(lambda conn: restore_dismissals(conn, step, forward=forward))
         elif isinstance(step, ActionChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))

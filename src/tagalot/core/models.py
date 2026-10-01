@@ -275,6 +275,23 @@ class FieldProvenance(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
+class TriageDismissal(Base):
+    """Something the user dismissed from a triage list (§12): hidden until it changes.
+
+    ``target_id`` is a resource id (``unlinked``) or an entity id (``untagged``). ``marker``
+    is what it looked like when dismissed (a file's size and time, an item's
+    ``updated_at``); once that differs, it shows again. Rows of things since deleted are
+    harmless and ignored.
+    """
+
+    __tablename__ = "triage_dismissal"
+
+    list: Mapped[str] = mapped_column(primary_key=True)
+    target_id: Mapped[int] = mapped_column(primary_key=True)
+    marker: Mapped[str]
+    dismissed_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is the JSON form of a ``SearchSpec`` (§8)."""
 

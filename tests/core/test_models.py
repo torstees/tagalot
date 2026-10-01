@@ -40,6 +40,7 @@ CORE_TABLES = {
     "entity_tag",
     "field_provenance",
     "saved_search",
+    "triage_dismissal",
     "schema_version",
 }
 FTS_TABLES = {
