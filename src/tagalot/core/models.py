@@ -189,6 +189,10 @@ class EntityResource(Base):
     )
     role: Mapped[str] = mapped_column(primary_key=True)
     sort_order: Mapped[int] = mapped_column(default=0)
+    by_user: Mapped[bool] = mapped_column(default=False, server_default="0")
+    """Made by hand (#243). Themes don't see it from the file's side (``entities_of``),
+    can't unlink it, and can't displace it in a one-file role; it counts as the item's
+    file everywhere else."""
 
 
 class EntityContains(Base):

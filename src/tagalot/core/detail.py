@@ -51,6 +51,8 @@ class FileRow:
     """The role it is linked in."""
     skipped: bool = False
     """Scans leave it out now (an exclude pattern); its status is as last seen."""
+    by_user: bool = False
+    """Linked by hand (#243); it can be unlinked from the item's page."""
 
 
 @dataclass(frozen=True)
@@ -292,6 +294,7 @@ def role_files(
             Resource.status,
             EntityResource.role,
             Resource.skipped,
+            EntityResource.by_user,
         )
         .join(EntityResource, EntityResource.resource_id == Resource.id)
         .join(Root, Root.id == Resource.root_id)
@@ -304,21 +307,20 @@ def role_files(
     if resource_id is not None:
         query = query.where(Resource.id == resource_id)
     found = []
-    for rid, root_id, root_name, relpath, kind, size, status, linked_as, skipped in conn.execute(
-        query
-    ):
-        base = root_path(root_id)
+    for row in conn.execute(query):
+        base = root_path(row.root_id)
         found.append(
             FileRow(
-                rid,
-                root_name,
-                relpath,
-                kind.value,
-                size,
-                status,
-                local_path(base, relpath) if base is not None else None,
-                linked_as,
-                skipped,
+                row.id,
+                row.name,
+                row.relpath,
+                row.kind.value,
+                row.size,
+                row.status,
+                local_path(base, row.relpath) if base is not None else None,
+                row.role,
+                row.skipped,
+                row.by_user,
             )
         )
     return tuple(found)

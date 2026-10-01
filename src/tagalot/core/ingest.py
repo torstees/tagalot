@@ -194,12 +194,14 @@ class IngestSession:
         return self._prepared.get(resource.id if isinstance(resource, ResourceInfo) else resource)
 
     def entities_of(self, resource: ResourceInfo | int, role: str | None = None) -> list[EntityRef]:
-        """Entities linked to a resource (in ``role``, if given), of this theme's types."""
+        """Entities linked to a resource (in ``role``, if given), of this theme's types.
+        Links the user made by hand aren't included: the file isn't the theme's to read into
+        that item."""
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
         query = (
             select(Entity.id, Entity.type)
             .join(EntityResource, EntityResource.entity_id == Entity.id)
-            .where(EntityResource.resource_id == resource_id)
+            .where(EntityResource.resource_id == resource_id, EntityResource.by_user.is_(False))
             .distinct()
             .order_by(Entity.id)
         )
@@ -251,11 +253,21 @@ class IngestSession:
     def link(
         self, entity: EntityRef, resource: ResourceInfo | int, role: str, sort_order: int = 0
     ) -> None:
-        """Link a resource in a role. A single-valued role replaces its previous resource."""
+        """Link a resource in a role. A single-valued role replaces its previous resource,
+        unless the user linked one there by hand: then this link is skipped."""
         declared = self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
         self._touch(entity.id)
         if not declared.many:
+            by_hand = self.conn.scalar(
+                select(EntityResource.resource_id).where(
+                    EntityResource.entity_id == entity.id,
+                    EntityResource.role == role,
+                    EntityResource.by_user.is_(True),
+                )
+            )
+            if by_hand is not None:
+                return  # the user's file stays in the role
             self.conn.execute(
                 delete(EntityResource).where(
                     EntityResource.entity_id == entity.id,
@@ -282,6 +294,7 @@ class IngestSession:
                 EntityResource.entity_id == entity.id,
                 EntityResource.resource_id == resource_id,
                 EntityResource.role == role,
+                EntityResource.by_user.is_(False),  # the user's links stay
             )
         )
         self._forget_thumbnail(entity)

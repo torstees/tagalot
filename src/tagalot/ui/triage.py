@@ -119,6 +119,8 @@ class TriagePage(QWidget):
     """(list name, ids): hide them until they change."""
     delete_requested = Signal(list)
     """Entity ids to delete (the window asks first)."""
+    link_requested = Signal(list)
+    """``UnlinkedFile`` values to link to an item by hand."""
     skip_requested = Signal(list)
     """``UnlinkedFile`` values to leave out of scans."""
     message = Signal(str)
@@ -156,11 +158,14 @@ class TriagePage(QWidget):
             "leave it out (Keep configuration → Folders → Skip)"
         )
         self.skip_button.clicked.connect(self._skip)
+        link = QPushButton("Link to item\u2026")
+        link.setToolTip("Make the selected files an item's, in one of its roles (Edit → Undo)")
+        link.clicked.connect(self._link)
         dismiss_files = QPushButton("Dismiss")
         dismiss_files.setToolTip("Hide the selected files here until they change")
         dismiss_files.clicked.connect(self._dismiss_files)
         files_tab = _tab(
-            self.table, [open_file, reveal, self.skip_button, dismiss_files], self.files_note
+            self.table, [open_file, reveal, link, self.skip_button, dismiss_files], self.files_note
         )
 
         self.untagged = make_search(
@@ -254,6 +259,11 @@ class TriagePage(QWidget):
         self.file_opener.act(
             FileToOpen(file.resource_id, local_path(base, file.relpath), False), how
         )
+
+    def _link(self) -> None:
+        files = self.selected_files()
+        if files:
+            self.link_requested.emit(files)
 
     def _skip(self) -> None:
         files = self.selected_files()

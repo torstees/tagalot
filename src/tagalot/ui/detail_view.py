@@ -82,6 +82,8 @@ class DetailPage(QWidget):
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
     reread_requested = Signal(list, bool)
+    unlink_requested = Signal(int, int, str)
+    """Remove a link made by hand: (entity id, resource id, role)."""
     action_requested = Signal(str, list)
     """Run a theme action on the page's item: (method name, [entity id])."""
     """Read the entity's files again; true: replacing what the user edited."""
@@ -467,6 +469,14 @@ class DetailPage(QWidget):
                 resource_id=file.resource_id,
                 folder=file.kind == "dir",
             )
+        if file.by_user and file.role is not None:
+            menu.addSeparator()
+            unlink = menu.addAction("Unlink from this item")
+            unlink.setToolTip("You linked this file here; remove the link (Edit → Undo)")
+            role = file.role
+            unlink.triggered.connect(
+                lambda: self.unlink_requested.emit(self.entity_id, file.resource_id, role)
+            )
         return menu
 
     def _gallery(self, section: DetailSection) -> QWidget:
@@ -542,6 +552,8 @@ def _file_label(file: FileRow) -> QLabel:
         facts.append('<b style="color:#c0392b">missing</b>')
     if file.skipped:
         facts.append("<b>skipped by the folder's settings</b>")
+    if file.by_user:
+        facts.append("linked by you")
     label = QLabel(f"{text} <span style='color:gray'>· {' · '.join(facts)}</span>")
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

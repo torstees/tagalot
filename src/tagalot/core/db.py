@@ -144,11 +144,17 @@ def _v4_skipped_resources(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE resource ADD COLUMN skipped BOOLEAN NOT NULL DEFAULT 0"))
 
 
+def _v5_user_links(conn: Connection) -> None:
+    """Format 6: links made by hand are marked, so scans respect them (#243)."""
+    conn.execute(text("ALTER TABLE entity_resource ADD COLUMN by_user BOOLEAN NOT NULL DEFAULT 0"))
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
     3: _v3_triage_dismissals,
     4: _v4_skipped_resources,
+    5: _v5_user_links,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -206,7 +206,8 @@ def test_database_without_core_row_is_reported(tmp_path: Path) -> None:
 def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
     """The real steps: 1 -> 2 gives tags a description (#192), 2 -> 3 gives roots the
     options they were ingested with (#82), 3 -> 4 adds triage dismissals (#110), 4 -> 5
-    flags skipped files (#152); nothing else changes."""
+    flags skipped files (#152), 5 -> 6 marks links made by hand (#243); nothing else
+    changes."""
     keep, engine = open_keep_database(_keep(tmp_path))
     with engine.begin() as conn:
         conn.exec_driver_sql("INSERT INTO tag (id, name, sort_order) VALUES (1, 'Iceland', 0)")
@@ -216,6 +217,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("ALTER TABLE root DROP COLUMN ingest_options")
         conn.exec_driver_sql("DROP TABLE triage_dismissal")
         conn.exec_driver_sql("ALTER TABLE resource DROP COLUMN skipped")
+        conn.exec_driver_sql("ALTER TABLE entity_resource DROP COLUMN by_user")
         conn.execute(update(SchemaVersion).values(version=1))
     engine.dispose()
     keep.config.format_version = 1
@@ -223,7 +225,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 5)
+    assert (info.value.stored, info.value.current) == (1, 6)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -231,6 +233,8 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "ingest_options" in {c["name"] for c in inspect(engine).get_columns("root")}
         assert "triage_dismissal" in inspect(engine).get_table_names()
         assert "skipped" in {c["name"] for c in inspect(engine).get_columns("resource")}
+        links = {c["name"] for c in inspect(engine).get_columns("entity_resource")}
+        assert "by_user" in links
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT id, name, description FROM tag")).all()
             roots = conn.execute(text("SELECT id, name, ingest_options FROM root")).all()
@@ -238,5 +242,5 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 5
+    assert migrated.config.format_version == 6
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]

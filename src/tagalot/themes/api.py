@@ -504,9 +504,14 @@ class IngestContext(Protocol):
 
     def link(
         self, entity: EntityRef, resource: ResourceInfo | int, role: str, sort_order: int = 0
-    ) -> None: ...
+    ) -> None:
+        """Link a resource to an entity in a role; a one-file role's previous resource is
+        replaced, except a file the user linked by hand, which stays (this link is skipped)."""
+        ...
 
-    def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None: ...
+    def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None:
+        """Remove a link the theme made (links the user made by hand stay)."""
+        ...
 
     def contain(self, parent: EntityRef, child: EntityRef) -> None: ...
 
@@ -522,7 +527,9 @@ class IngestContext(Protocol):
 
     def entities_of(self, resource: ResourceInfo | int, role: str | None = None) -> list[EntityRef]:
         """Entities linked to a resource (in ``role``, if given). After a file is moved, its
-        links follow it, so this is how file-based themes find "the entity for this file"."""
+        links follow it, so this is how file-based themes find "the entity for this file".
+        Links the user made by hand aren't returned: that file isn't the theme's to read into
+        the user's item."""
         ...
 
     def find(self, type: type[Entity], **equals: Any) -> list[EntityRef]: ...

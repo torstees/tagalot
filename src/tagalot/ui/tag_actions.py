@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
+from tagalot.core.links import LinkError
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
@@ -240,6 +241,20 @@ class TagActions(QObject):
             lambda count: f"Deleted {items_text(count)}. Edit \u2192 Undo brings them back.",
         )
 
+    def link_files(self, entity_id: int, resource_ids: list[int], role: str) -> None:
+        """Link files to an item by hand; one undo step."""
+        self._run(
+            lambda: self.session.link_files(entity_id, resource_ids, role),
+            lambda label: f"{label}.",
+        )
+
+    def unlink_file(self, entity_id: int, resource_id: int, role: str) -> None:
+        """Remove a link made by hand; one undo step."""
+        self._run(
+            lambda: self.session.unlink_file(entity_id, resource_id, role),
+            lambda label: f"{label}.",
+        )
+
     def undo(self) -> None:
         self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
 
@@ -273,7 +288,7 @@ class TagActions(QObject):
             if not shiboken6.isValid(self):
                 return
             self.busy -= 1
-            if isinstance(error, TagError | FieldEditError | ActionError):
+            if isinstance(error, TagError | FieldEditError | ActionError | LinkError):
                 self.message.emit(str(error))
             else:
                 logger.error("Tagging failed", exc_info=error)
