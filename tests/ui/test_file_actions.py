@@ -4,6 +4,8 @@
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
 from sqlalchemy import update
@@ -225,3 +227,51 @@ def test_a_broken_template_is_reported(
         timeout=5000,
     )
     assert started == []
+
+
+# --- gestures (#107) ---
+
+
+def test_enter_and_ctrl_enter_follow_each_type(
+    qtbot: QtBot, window: MainWindow, opened: list[tuple[str, FileToOpen]]
+) -> None:
+    songs = _search(qtbot, window, SONGS, "12 items")
+    song = _hit(qtbot, songs, "Take Five")
+    menu = songs.item_menu(song)
+    assert menu.defaultAction() is not None
+    assert menu.defaultAction().text() == "Open file"  # bold: what double-click does
+    songs.activate(song)  # double-click or Enter: a song plays
+    qtbot.waitUntil(lambda: len(opened) == 1, timeout=5000)
+    assert Path(opened[0][1].path).name == "01 Take Five.mp3"
+    songs.activate(song, alternate=True)  # Ctrl+Enter: its page
+    detail = window.stack.currentWidget()
+    assert isinstance(detail, DetailPage)
+    assert detail.entity_id == song.id
+
+    albums = _search(qtbot, window, ALBUMS, "5 items")
+    album = _hit(qtbot, albums, "Kind of Blue")
+    assert albums.item_menu(album).defaultAction().text() == "Open page"
+    albums.activate(album, alternate=True)  # Ctrl+Enter on an album: its folder
+    qtbot.waitUntil(lambda: len(opened) == 2, timeout=5000)
+    assert opened[1][1].is_dir
+
+    artists = _search(qtbot, window, ARTISTS, "7 items")
+    with qtbot.waitSignal(artists.open_requested):
+        artists.activate(_hit(qtbot, artists, "Queen"), alternate=True)  # no files: the page
+    assert len(opened) == 2
+
+
+def test_ctrl_enter_in_a_list(
+    qtbot: QtBot, window: MainWindow, opened: list[tuple[str, FileToOpen]]
+) -> None:
+    songs = _search(qtbot, window, SONGS, "12 items")
+    _hit(qtbot, songs, "Take Five")
+    index = songs.model.index(0, 0)
+    center = songs.table.visualRect(index).center()
+    QTest.mouseClick(songs.table.viewport(), Qt.MouseButton.LeftButton, pos=center)
+    window.activateWindow()  # shortcuts need the list to have the keyboard focus
+    songs.table.setFocus()
+    qtbot.waitUntil(songs.table.hasFocus, timeout=5000)
+    QTest.keyClick(songs.table, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert isinstance(window.stack.currentWidget(), DetailPage)
+    assert opened == []

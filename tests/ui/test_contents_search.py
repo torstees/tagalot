@@ -144,8 +144,10 @@ def test_opening_an_asset_from_the_contents(
 ) -> None:
     contents = _contents(qtbot, _open(qtbot, window, session, "Kenji Sato"), "4 items")
     qtbot.waitUntil(lambda: contents.model.hit(0) is not None, timeout=5000)
+    hit = contents.model.hit(0)
+    assert hit is not None
     with qtbot.waitSignal(contents.open_requested):
-        contents.grid.activated.emit(contents.model.index(0, 0))
+        contents.activate(hit, alternate=True)  # an asset's page: Ctrl+Enter
     page = window.stack.currentWidget()
     assert isinstance(page, DetailPage)
     assert page.entity_id == contents.model.hit(0).id  # type: ignore[union-attr]

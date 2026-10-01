@@ -26,7 +26,7 @@ import html
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import QSize, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.actions import actions_for
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
+from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
 from tagalot.core.models import ResourceStatus
 from tagalot.core.search_fields import contained_types, contents_order
@@ -434,6 +435,8 @@ class DetailPage(QWidget):
         column.setSpacing(2)
         for file in section.files:
             label = _file_label(file)
+            label.installEventFilter(self)
+            label.setProperty("resource_id", file.resource_id)
             label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             label.customContextMenuRequested.connect(
                 lambda point, f=file, w=label: self._file_menu(f).exec(w.mapToGlobal(point))
@@ -442,6 +445,16 @@ class DetailPage(QWidget):
         if not section.files:
             column.addWidget(QLabel("None"))
         return body
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Double-clicking a file row opens that file."""
+        if event.type() == QEvent.Type.MouseButtonDblClick and self.file_opener is not None:
+            resource_id = watched.property("resource_id")
+            if isinstance(resource_id, int):
+                opener = self.file_opener
+                opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
+                return True
+        return super().eventFilter(watched, event)
 
     def _file_menu(self, file: FileRow) -> QMenu:
         """The right-click menu of one file row."""

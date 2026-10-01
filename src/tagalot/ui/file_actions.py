@@ -17,8 +17,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, QThreadPool, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QObject, QProcess, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import QFileDialog, QMenu, QWidget
 
 from tagalot.core.detail import FileRow
@@ -68,6 +68,27 @@ def file_kind(schema: ThemeSchema, type_id: str) -> str | None:
     return "file"
 
 
+def opens_file(schema: ThemeSchema, type_id: str) -> bool:
+    """Whether double-click (and Enter) opens an item's file rather than its page: its type
+    says ``double_click = "open_file"`` and can link files. Ctrl+Enter does the other."""
+    try:
+        entity = schema.by_type_id(type_id).entity
+    except KeyError:
+        return False
+    return entity.double_click == "open_file" and file_kind(schema, type_id) is not None
+
+
+ALTERNATE_KEYS = (QKeySequence("Ctrl+Return"), QKeySequence("Ctrl+Enter"))
+"""Ctrl+Enter (main keyboard and keypad): the other of page and file (DESIGN.md §12)."""
+
+
+def add_alternate_keys(view: QWidget, handler: Callable[[], None]) -> None:
+    """Call ``handler`` on Ctrl+Enter in ``view`` (before the view sees it as Enter)."""
+    for keys in ALTERNATE_KEYS:
+        shortcut = QShortcut(keys, view, context=Qt.ShortcutContext.WidgetShortcut)
+        shortcut.activated.connect(handler)
+
+
 def add_file_actions(
     menu: QMenu,
     opener: "FileOpener",
@@ -75,9 +96,10 @@ def add_file_actions(
     entity_id: int,
     resource_id: int | None = None,
     folder: bool = False,
-) -> None:
+) -> QAction:
     """Add "Open file" (or "Open folder"), "Show in file manager", and, for files, the "Open
-    with" submenu, for the entity's file (or one of them, ``resource_id``)."""
+    with" submenu, for the entity's file (or one of them, ``resource_id``). Returns the
+    "Open file" action."""
 
     def lookup(on_done: Callable[[FileToOpen | CannotOpen], None]) -> None:
         opener.lookup(entity_id, resource_id, on_done)
@@ -89,6 +111,7 @@ def add_file_actions(
     reveal.triggered.connect(lambda: lookup(lambda f: opener.act(f, REVEAL)))
     if not folder:
         menu.addMenu(OpenWithMenu(opener, lookup, menu))
+    return open_action
 
 
 class OpenWithMenu(QMenu):
