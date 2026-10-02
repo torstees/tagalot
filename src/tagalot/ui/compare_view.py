@@ -14,8 +14,10 @@ from PySide6.QtCore import QModelIndex, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -38,6 +40,8 @@ class ComparePane(QWidget):
     """See the module docstring."""
 
     open_entity = Signal(int)
+    merge_requested = Signal(list)
+    """Merge… was pressed: the items, as (id, title, where), in column order."""
 
     def __init__(
         self,
@@ -55,6 +59,13 @@ class ComparePane(QWidget):
         self.summary = QLabel()
         self.summary.setObjectName("compare_summary")
         self.summary.setWordWrap(True)
+        self.merge_button = QPushButton("Merge\u2026")
+        self.merge_button.setObjectName("merge")
+        self.merge_button.clicked.connect(self._merge)
+        self.merge_button.setVisible(False)
+        header = QHBoxLayout()
+        header.addWidget(self.summary, 1)
+        header.addWidget(self.merge_button)
         self.table = QTableWidget()
         self.table.setObjectName("compare")
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -70,7 +81,7 @@ class ComparePane(QWidget):
         self.table.horizontalHeader().sectionDoubleClicked.connect(self._open_column)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.summary)
+        layout.addLayout(header)
         layout.addWidget(self.table, 1)
         if thumbnails is not None:
             thumbnails.ready.connect(self._thumbnail_ready)
@@ -84,6 +95,7 @@ class ComparePane(QWidget):
         self.table.setRowCount(0)
         self.table.setColumnCount(0)
         self.table.setVisible(False)
+        self.merge_button.setVisible(False)
         self.summary.setText(message)
 
     def compare(self, entity_ids: Sequence[int], note: str = "") -> None:
@@ -147,8 +159,33 @@ class ComparePane(QWidget):
                     cell.setBackground(DIFFERS)
                 table.setItem(n, column, cell)
         table.setVisible(True)
+        self._enable_merge(found)
         for item in found.items:
             self._show_thumbnail(item.id)
+
+    def _enable_merge(self, found: Comparison) -> None:
+        """Merge… shows for two items or more; it works on items of one type."""
+        self.merge_button.setVisible(len(found.items) > 1)
+        same = len({i.type_label for i in found.items}) == 1
+        self.merge_button.setEnabled(same)
+        self.merge_button.setToolTip(
+            "Make these one item: choose which to keep, and what it takes from the others"
+            if same
+            else "Only items of the same type can be merged"
+        )
+
+    def _merge(self) -> None:
+        found = self.comparison
+        if found is None:
+            return
+        files = found.row("files")
+        places = files.values if files is not None else ("",) * len(found.items)
+        self.merge_requested.emit(
+            [
+                (i.id, i.title, where.split("\n")[0])
+                for i, where in zip(found.items, places, strict=True)
+            ]
+        )
 
     def _show_thumbnail(self, entity_id: int) -> None:
         if self.thumbnails is None or self.comparison is None:

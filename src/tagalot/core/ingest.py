@@ -12,13 +12,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from sqlalchemy import Connection, delete, insert, select, update
+from sqlalchemy import Connection, delete, func, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
 from tagalot.core.models import (
     Entity,
     EntityContains,
+    EntityMerge,
+    EntityMergeResource,
     EntityResource,
     FieldProvenance,
     FieldSource,
@@ -87,6 +89,9 @@ class IngestSession:
         self._dirty: set[int] = set()
         self.recorder: Recorder | None = None
         """Set by actions, to undo them; ingest and migrations leave it ``None``."""
+        self._merged: set[int] = set()
+        """Refs ``upsert`` gave for items the user merged away (#120): writes to them are
+        dropped, so the item stays merged."""
         self._containment = {
             (schema.theme.type_id_of(c.parent), schema.theme.type_id_of(c.child))
             for c in schema.theme.containment
@@ -99,7 +104,9 @@ class IngestSession:
     ) -> EntityRef:
         """Find the ``type`` entity with this ingest key, or create it; set extracted values.
 
-        Values the user edited (provenance ``user``) are left alone, title included.
+        Values the user edited (provenance ``user``) are left alone, title included. An
+        item the user merged into another (§13) isn't made again: the ref returned stands
+        for it, and links, edges, relations, and values given for it are dropped.
         """
         entity_table = self._entity_table(type)
         unknown = sorted(set(fields) - {f.name for f in entity_table.fields})
@@ -112,10 +119,24 @@ class IngestSession:
             select(Entity.id).where(Entity.type == type_id, Entity.ingest_key == key)
         )
         if existing is None:
+            merged = self.conn.scalar(
+                select(EntityMerge.merged_id)
+                .where(EntityMerge.type == type_id, EntityMerge.ingest_key == key)
+                .order_by(EntityMerge.merged_at.desc())
+                .limit(1)
+            )
+            if merged is not None:
+                self._merged.add(merged)
+                return EntityRef(merged, type_id)
             entity_id = int(
                 self.conn.execute(
                     insert(Entity)
-                    .values(type=type_id, title=title if title is not None else key, ingest_key=key)
+                    .values(
+                        id=next_entity_id(self.conn),
+                        type=type_id,
+                        title=title if title is not None else key,
+                        ingest_key=key,
+                    )
                     .returning(Entity.id)
                 ).scalar_one()
             )
@@ -137,6 +158,8 @@ class IngestSession:
         unknown = sorted(set(fields) - {f.name for f in entity_table.fields})
         if unknown:
             raise IngestError(f"{entity_table.entity.__name__} has no field {', '.join(unknown)}")
+        if self._gone(entity):
+            return
         if self.conn.scalar(select(Entity.id).where(Entity.id == entity.id)) is None:
             raise IngestError(f"entity {entity.id} no longer exists")
         self._touch(entity.id)
@@ -154,6 +177,8 @@ class IngestSession:
 
     def contents(self, entity: EntityRef) -> list[EntityRef]:
         """Direct children, counting this batch's ``contain``/``uncontain`` not yet flushed."""
+        if self._gone(entity):
+            return []
         rows = self.conn.execute(
             select(EntityContains.child_id).where(EntityContains.parent_id == entity.id)
         ).scalars()
@@ -171,6 +196,8 @@ class IngestSession:
         return [EntityRef(c, types[c]) for c in children if c in types]
 
     def linked(self, entity: EntityRef, role: str | None = None) -> list[int]:
+        if self._gone(entity):
+            return []
         query = select(EntityResource.resource_id).where(EntityResource.entity_id == entity.id)
         if role is not None:
             query = query.where(EntityResource.role == role)
@@ -179,6 +206,8 @@ class IngestSession:
     def delete(self, entity: EntityRef) -> None:
         """Delete an entity and everything linked to it (not its resources)."""
         self._table_of(entity)
+        if self._gone(entity):
+            return
         if self.recorder is not None:  # its neighbours lose their edges and relations to it
             self._touch(entity.id, *self._neighbours(entity.id))
         # Pending edges first, so detaching sees the containment as it now stands.
@@ -196,7 +225,8 @@ class IngestSession:
     def entities_of(self, resource: ResourceInfo | int, role: str | None = None) -> list[EntityRef]:
         """Entities linked to a resource (in ``role``, if given), of this theme's types.
         Links the user made by hand aren't included: the file isn't the theme's to read into
-        that item."""
+        that item. An item the user merged away that had the file is (§13): writes to it are
+        dropped, so the theme doesn't make a new item for the file."""
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
         query = (
             select(Entity.id, Entity.type)
@@ -208,7 +238,21 @@ class IngestSession:
         if role is not None:
             query = query.where(EntityResource.role == role)
         types = {t.type_id for t in self.schema.entities.values()}
-        return [EntityRef(i, t) for i, t in self.conn.execute(query) if t in types]
+        found = [EntityRef(i, t) for i, t in self.conn.execute(query) if t in types]
+        merged = (
+            select(EntityMerge.merged_id, EntityMerge.type)
+            .join(EntityMergeResource, EntityMergeResource.merged_id == EntityMerge.merged_id)
+            .where(EntityMergeResource.resource_id == resource_id)
+            .distinct()
+            .order_by(EntityMerge.merged_id)
+        )
+        if role is not None:
+            merged = merged.where(EntityMergeResource.role == role)
+        for merged_id, type_id in self.conn.execute(merged):
+            if type_id in types:
+                self._merged.add(merged_id)
+                found.append(EntityRef(merged_id, type_id))
+        return found
 
     def find(self, type: type[ThemeEntity], **equals: Any) -> list[EntityRef]:
         """Entities of ``type`` whose fields (or ``title``, ``ingest_key``) equal the values."""
@@ -230,8 +274,18 @@ class IngestSession:
         return [EntityRef(i, entity_table.type_id) for i in self.conn.scalars(query)]
 
     def get(self, entity: EntityRef) -> Record:
-        """The entity's current title, fields, and ``extra``."""
+        """The entity's current title, fields, and ``extra`` (for an item merged away, the
+        item it was merged into's, or nothing)."""
         entity_table = self._table_of(entity)
+        if self._gone(entity):
+            into = merged_into(self.conn, [entity.id]).get(entity.id)
+            if (
+                into is None
+                or self.conn.scalar(select(Entity.type).where(Entity.id == into)) != entity.type
+            ):
+                return Record(entity, "", {f.name: None for f in entity_table.fields}, {})
+            found = self.get(EntityRef(into, entity.type))
+            return Record(entity, found.title, found.fields, found.extra)
         table = entity_table.table
         row = self.conn.execute(
             select(
@@ -257,6 +311,8 @@ class IngestSession:
         unless the user linked one there by hand: then this link is skipped."""
         declared = self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        if self._gone(entity):
+            return
         self._touch(entity.id)
         if not declared.many:
             by_hand = self.conn.scalar(
@@ -288,6 +344,8 @@ class IngestSession:
     def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None:
         self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        if self._gone(entity):
+            return
         self._touch(entity.id)
         self.conn.execute(
             delete(EntityResource).where(
@@ -305,6 +363,8 @@ class IngestSession:
 
     def contain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
+        if self._gone(parent, child):
+            return
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._removed_edges = [e for e in self._removed_edges if e != edge]
@@ -313,6 +373,8 @@ class IngestSession:
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
+        if self._gone(parent, child):
+            return
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._added_edges = [e for e in self._added_edges if e != edge]
@@ -325,6 +387,8 @@ class IngestSession:
         """Link ``a`` and ``b``; for a ``many=False`` relationship this replaces ``b``'s
         previous partner."""
         table, rel = self._relationship(name, a, b)
+        if self._gone(a, b):
+            return
         self._touch(a.id, b.id)
         if not rel.many:
             if self.recorder is not None:  # b's previous partner loses it
@@ -334,6 +398,8 @@ class IngestSession:
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None:
         table, _ = self._relationship(name, a, b)
+        if self._gone(a, b):
+            return
         self._touch(a.id, b.id)
         self.conn.execute(delete(table).where(table.c.a_id == a.id, table.c.b_id == b.id))
 
@@ -373,6 +439,10 @@ class IngestSession:
             for (parent, child), reason in result.rejected:
                 self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
             self._added_edges, self._removed_edges = [], []
+
+    def _gone(self, *entities: EntityRef) -> bool:
+        """Any of these stands for an item merged away (see :meth:`upsert`)."""
+        return any(e.id in self._merged for e in entities)
 
     def _touch(self, *ids: int) -> None:
         if self.recorder is not None:
@@ -501,6 +571,32 @@ class IngestSession:
                 where=FieldProvenance.source != FieldSource.USER,
             )
         )
+
+
+def next_entity_id(conn: Connection) -> int:
+    """The id for a new entity: past every entity's and every merged item's (§13), so a
+    merge record never names a living item."""
+    used = conn.scalar(select(func.max(Entity.id))) or 0
+    merged = conn.scalar(select(func.max(EntityMerge.merged_id))) or 0
+    return max(used, merged) + 1
+
+
+def merged_into(conn: Connection, ids: Iterable[int]) -> dict[int, int]:
+    """For each of these ids that was merged away, the item it is now part of, following
+    later merges (§13); ids never merged are absent. The result may itself no longer exist
+    (the kept item was deleted)."""
+    found: dict[int, int] = {}
+    for start in dict.fromkeys(ids):
+        current, seen = start, {start}
+        while True:
+            into = conn.scalar(select(EntityMerge.into_id).where(EntityMerge.merged_id == current))
+            if into is None or into in seen:
+                break
+            seen.add(into)
+            current = into
+        if current != start:
+            found[start] = current
+    return found
 
 
 def default_options(theme: type[Any]) -> dict[str, Any]:

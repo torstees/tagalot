@@ -248,6 +248,13 @@ class TagActions(QObject):
             lambda label: f"{label}.",
         )
 
+    def merge_items(self, keep_id: int, other_ids: list[int], choices: dict[str, int]) -> None:
+        """Merge items into one (never their files); one undo step."""
+        self._run(
+            lambda: self.session.merge_items(keep_id, other_ids, choices),
+            lambda label: f"{label}. Edit \u2192 Undo separates them again.",
+        )
+
     def unlink_file(self, entity_id: int, resource_id: int, role: str) -> None:
         """Remove a link made by hand; one undo step."""
         self._run(

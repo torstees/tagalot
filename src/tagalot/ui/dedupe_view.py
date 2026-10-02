@@ -14,7 +14,7 @@ opens the first item, and the menu either one.
 Under both lists, the **compare pane** (#119, ``ui.compare_view``) shows the current
 group's items, or the current pair, side by side, highlighting what differs.
 
-Merging items and keeping both as versions come next (#120, #121).
+Its **Merge…** opens ``ui.merge_dialog`` (#120); keeping both as versions comes next (#121).
 """
 
 from functools import partial
@@ -66,6 +66,8 @@ class DedupePage(QWidget):
     """See the module docstring."""
 
     open_entity = Signal(int)
+    merge_requested = Signal(list)
+    """The compare pane's Merge…: (id, title, where) of each item."""
 
     def __init__(
         self,
@@ -152,6 +154,7 @@ class DedupePage(QWidget):
         self.tabs.addTab(similar, "Similar items")
         self.compare_pane = ComparePane(session, thumbnails)
         self.compare_pane.open_entity.connect(self.open_entity)
+        self.compare_pane.merge_requested.connect(self.merge_requested)
         self.tree.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.similar_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.tabs.currentChanged.connect(lambda _: self._compare())

@@ -41,6 +41,8 @@ CORE_TABLES = {
     "field_provenance",
     "saved_search",
     "triage_dismissal",
+    "entity_merge",
+    "entity_merge_resource",
     "schema_version",
 }
 FTS_TABLES = {

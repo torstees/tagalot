@@ -8,7 +8,7 @@ import logging
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +29,7 @@ from tagalot.core.keep_settings import (
     with_thumbnails_after_scan,
 )
 from tagalot.core.links import link_files, unlink_file
+from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.root_admin import (
@@ -259,6 +260,24 @@ class KeepSession:
         schema = self.schema
         change = self.writer.run(
             lambda conn: link_files(conn, schema, entity_id, resource_ids, role)
+        )
+        self.tags.record(change)
+        return change.label
+
+    def plan_merge(self, keep_id: int, other_ids: Sequence[int]) -> MergePlan:
+        """What merging these items would do (for the dialog). Raises ``MergeError``.
+        Runs in a worker."""
+        with self.reader.connect() as conn:
+            return plan_merge(conn, self.schema, keep_id, other_ids)
+
+    def merge_items(
+        self, keep_id: int, other_ids: Sequence[int], choices: Mapping[str, int]
+    ) -> str:
+        """Merge items into one (§13); one undo step. Returns its label. Raises
+        ``MergeError``. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(
+            lambda conn: merge_items(conn, schema, keep_id, other_ids, choices)
         )
         self.tags.record(change)
         return change.label

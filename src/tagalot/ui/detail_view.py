@@ -136,7 +136,12 @@ class DetailPage(QWidget):
         self.breadcrumbs.setWordWrap(True)
         self.breadcrumbs.linkActivated.connect(lambda href: self.open_entity.emit(int(href)))
         self.breadcrumbs.setVisible(False)
+        self.merged_note = QLabel("The item opened here was merged into this one.")
+        self.merged_note.setObjectName("merged_note")
+        self.merged_note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        self.merged_note.setVisible(False)
         titles = QVBoxLayout()
+        titles.addWidget(self.merged_note)
         titles.addWidget(self.breadcrumbs)
         titles.addWidget(self.title_value)
         titles.addWidget(self.type_label)
@@ -204,6 +209,10 @@ class DetailPage(QWidget):
         run_in_pool(job, on_done=done, pool=self._pool)
 
     def _show(self, detail: EntityDetail | None) -> None:
+        if detail is not None and detail.merged_from is not None:
+            # The item was merged into another (§13): the page is now that one's.
+            self.entity_id = detail.id
+            self.merged_note.setVisible(True)
         self.detail = detail
         while self._sections.count():
             item = self._sections.takeAt(0)

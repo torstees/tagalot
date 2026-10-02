@@ -149,12 +149,19 @@ def _v5_user_links(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE entity_resource ADD COLUMN by_user BOOLEAN NOT NULL DEFAULT 0"))
 
 
+def _v6_entity_merges(conn: Connection) -> None:
+    """Format 7: items merged into others are remembered (#120)."""
+    Base.metadata.tables["entity_merge"].create(conn)
+    Base.metadata.tables["entity_merge_resource"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
     3: _v3_triage_dismissals,
     4: _v4_skipped_resources,
     5: _v5_user_links,
+    6: _v6_entity_merges,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 
