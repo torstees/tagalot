@@ -81,6 +81,14 @@ def test_merging_from_the_compare_pane(
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
         window.tag_actions.undo()
     qtbot.waitUntil(lambda: _shown(pane.summary.text(), "2 items use these copies."), timeout=5000)
+    # The page opened for the merged item is its own again, and edits there go to it.
+    qtbot.waitUntil(lambda: detail.entity_id == second, timeout=5000)
+    assert not detail.merged_note.isVisibleTo(detail)
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        detail.field_edited.emit(detail.entity_id, "title", "Blue (B)")
+    qtbot.waitUntil(lambda: detail.detail is not None and detail.detail.title == "Blue (B)")
+    assert detail.entity_id == second
+    assert not detail.merged_note.isVisibleTo(detail)
 
 
 def _shown(summary: str, note: str) -> bool:
