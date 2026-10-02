@@ -7,6 +7,10 @@ worker), marking each copy *same* or *differs* (or why it couldn't be read); **C
 does every group. A copy's menu opens it or shows it in the file manager; double-clicking
 a copy opens the item using it.
 
+A second tab, **Similar items**, lists pairs of items the theme finds alike (#118: the
+same song in two places, a resized picture), most alike first, with how alike; double-click
+opens the first item, and the menu either one.
+
 Comparing items side by side, merging them, and keeping both as versions come next
 (#119-#121).
 """
@@ -24,19 +28,30 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QTableView,
+    QTabWidget,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
-from tagalot.core.dedupe import DuplicateFile, DuplicateGroup, Verification, exact_groups
+from tagalot.core.dedupe import (
+    DuplicateFile,
+    DuplicateGroup,
+    NearDuplicates,
+    Verification,
+    exact_groups,
+    near_duplicates,
+)
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.workers import run_in_pool
 
 COLUMNS = ("Name", "Where", "Size", "Items", "Check")
+SIMILAR_COLUMNS = ("Alike", "Type", "Item", "And")
 NAME, WHERE, SIZE, ITEMS, CHECK = range(5)
 _GROUP = Qt.ItemDataRole.UserRole
 _FILE = Qt.ItemDataRole.UserRole + 1
@@ -92,9 +107,44 @@ class DedupePage(QWidget):
         self.tree.selectionModel().selectionChanged.connect(lambda *_: self._enable_check())
         self.tree.header().setSectionResizeMode(WHERE, QHeaderView.ResizeMode.Stretch)
 
+        identical = QWidget()
+        column = QVBoxLayout(identical)
+        column.addLayout(header)
+        column.addWidget(self.tree, 1)
+
+        self.similar_summary = QLabel()
+        self.similar_summary.setObjectName("similar_summary")
+        self.similar_summary.setWordWrap(True)
+        self.pairs: NearDuplicates | None = None
+        self.similar = QStandardItemModel(0, len(SIMILAR_COLUMNS))
+        self.similar.setHorizontalHeaderLabels(list(SIMILAR_COLUMNS))
+        self.similar_table = QTableView()
+        self.similar_table.setObjectName("similar")
+        self.similar_table.setModel(self.similar)
+        self.similar_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.similar_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.similar_table.verticalHeader().hide()
+        self.similar_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch
+        )
+        self.similar_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
+        self.similar_table.doubleClicked.connect(
+            lambda index: self._open_pair(index.row(), first=True)
+        )
+        self.similar_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.similar_table.customContextMenuRequested.connect(self._pair_menu)
+        similar = QWidget()
+        column = QVBoxLayout(similar)
+        column.addWidget(self.similar_summary)
+        column.addWidget(self.similar_table, 1)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(identical, "Identical files")
+        self.tabs.addTab(similar, "Similar items")
         layout = QVBoxLayout(self)
-        layout.addLayout(header)
-        layout.addWidget(self.tree, 1)
+        layout.addWidget(self.tabs)
         self.refresh()
 
     # --- reading ---
@@ -114,6 +164,62 @@ class DedupePage(QWidget):
                 self._show(groups)
 
         run_in_pool(job, on_done=done)
+        self.similar_summary.setText("Looking for similar items\u2026")
+
+        def similar_job() -> NearDuplicates:
+            with session.reader.connect() as conn:
+                return near_duplicates(conn, session.schema)
+
+        def similar_done(found: NearDuplicates) -> None:
+            if shiboken6.isValid(self) and generation == self._generation:
+                self._show_pairs(found)
+
+        run_in_pool(similar_job, on_done=similar_done)
+
+    # --- similar items ---
+
+    def _show_pairs(self, found: NearDuplicates) -> None:
+        self.pairs = found
+        self.similar.removeRows(0, self.similar.rowCount())
+        labels = type_labels(self.session.schema)
+        for pair in found.pairs:
+            cells = [
+                QStandardItem(f"{round(pair.score * 100)}%"),
+                QStandardItem(labels.get(pair.type_id, pair.type_id)),
+                QStandardItem(pair.a[1]),
+                QStandardItem(pair.b[1]),
+            ]
+            self.similar.appendRow(cells)
+        n = len(found.pairs)
+        text = (
+            f"{n:,} {'pair' if n == 1 else 'pairs'} of items that look alike, most alike first."
+            if n
+            else "No similar items found."
+        )
+        if found.skipped_keys:
+            text += (
+                f" {found.skipped_keys:,} groups too large to compare were skipped "
+                "(the theme's keys are too loose for them)."
+            )
+        self.similar_summary.setText(text)
+        self.tabs.setTabText(1, f"Similar items ({n:,})" if n else "Similar items")
+        self.similar_table.resizeColumnToContents(0)
+        self.similar_table.resizeColumnToContents(1)
+
+    def _open_pair(self, row: int, first: bool) -> None:
+        if self.pairs is not None and 0 <= row < len(self.pairs.pairs):
+            pair = self.pairs.pairs[row]
+            self.open_entity.emit((pair.a if first else pair.b)[0])
+
+    def _pair_menu(self, point: QPoint) -> None:
+        row = self.similar_table.indexAt(point).row()
+        if self.pairs is None or not 0 <= row < len(self.pairs.pairs):
+            return
+        pair = self.pairs.pairs[row]
+        menu = QMenu(self)
+        menu.addAction(f"Open {pair.a[1]}").triggered.connect(lambda: self._open_pair(row, True))
+        menu.addAction(f"Open {pair.b[1]}").triggered.connect(lambda: self._open_pair(row, False))
+        menu.exec(self.similar_table.viewport().mapToGlobal(point))
 
     def _show(self, groups: list[DuplicateGroup]) -> None:
         self.groups = groups

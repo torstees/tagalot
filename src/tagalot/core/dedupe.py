@@ -8,19 +8,28 @@ full hashes, splitting the group if some differ in the middle. That reads whole 
 session (:class:`Verifier`), keyed by each file's size and time as it is when checked
 (so a file changed since the last scan is read again), not in the keep.
 
+**Near-duplicates** (:func:`near_duplicates`) are items the theme finds alike: it gives each
+item cheap blocking keys from its fields, only items of a type that share a key are scored
+with its ``similarity``, and pairs at or above its threshold are listed, most alike first.
+
 Merging items and "keep both as versions" come with the compare view (§13, #119-#121).
 """
 
 import hashlib
+import logging
 import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import Connection, Table, func, select
 
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.roots import local_path
+from tagalot.core.theme_schema import ThemeSchema
+from tagalot.themes.api import EntityRef, Record
+
+logger = logging.getLogger(__name__)
 
 CHUNK = 1 << 20
 """Bytes read at a time for a full hash."""
@@ -183,3 +192,92 @@ class Verifier:
         identical = tuple(tuple(ids) for ids in by_hash.values() if len(ids) > 1)
         different = tuple(ids[0] for ids in by_hash.values() if len(ids) == 1)
         return Verification(identical, different, unread, tuple(changed))
+
+
+# --- near-duplicates (the theme's blocking keys and similarity) ---
+
+MAX_BUCKET = 200
+"""Items sharing one blocking key that are compared at most (a key shared by more is too
+loose to be useful, and comparing every pair would be slow); bigger buckets are skipped."""
+
+
+@dataclass(frozen=True)
+class NearPair:
+    type_id: str
+    a: tuple[int, str]
+    """``(entity id, title)``."""
+    b: tuple[int, str]
+    score: float
+
+
+@dataclass
+class NearDuplicates:
+    pairs: list[NearPair]
+    skipped_keys: int = 0
+    """Blocking keys shared by more than :data:`MAX_BUCKET` items, left out."""
+
+
+def near_duplicates(
+    conn: Connection, schema: ThemeSchema, max_bucket: int = MAX_BUCKET
+) -> NearDuplicates:
+    """Pairs of items the theme finds alike, most alike first (call it from a worker)."""
+    theme = schema.theme()
+    threshold = schema.theme.near_duplicate_threshold
+    found: list[NearPair] = []
+    skipped = 0
+    for entity_table in schema.entities.values():
+        entity, table = entity_table.entity, entity_table.table
+        records = _records(conn, entity_table.type_id, table, [f.name for f in entity_table.fields])
+        buckets: dict[str, list[Record]] = {}
+        for record in records:
+            try:
+                keys = set(theme.blocking_keys(entity, record))
+            except Exception:
+                logger.exception("blocking_keys failed for %s", record.ref.id)
+                continue
+            for key in keys:
+                buckets.setdefault(key, []).append(record)
+        seen: set[tuple[int, int]] = set()
+        for key, members in buckets.items():
+            if len(members) > max_bucket:
+                skipped += 1
+                logger.info(
+                    "Near-duplicates: key %r is shared by %d items; skipped", key, len(members)
+                )
+                continue
+            for i, a in enumerate(members):
+                for b in members[i + 1 :]:
+                    pair = (min(a.ref.id, b.ref.id), max(a.ref.id, b.ref.id))
+                    if pair in seen:
+                        continue
+                    seen.add(pair)
+                    try:
+                        score = float(theme.similarity(entity, a, b))
+                    except Exception:
+                        logger.exception("similarity failed for %s and %s", a.ref.id, b.ref.id)
+                        continue
+                    if score >= threshold:
+                        first, second = sorted((a, b), key=lambda r: r.ref.id)
+                        found.append(
+                            NearPair(
+                                entity_table.type_id,
+                                (first.ref.id, first.title),
+                                (second.ref.id, second.title),
+                                score,
+                            )
+                        )
+    found.sort(key=lambda p: (-p.score, p.a[1].casefold(), p.b[1].casefold()))
+    return NearDuplicates(found, skipped)
+
+
+def _records(conn: Connection, type_id: str, table: Table, names: list[str]) -> list[Record]:
+    columns = [table.c[n] for n in names]
+    rows = conn.execute(
+        select(Entity.id, Entity.title, *columns)
+        .join(table, table.c.id == Entity.id)
+        .order_by(Entity.id)
+    )
+    return [
+        Record(EntityRef(row[0], type_id), row[1], dict(zip(names, row[2:], strict=True)), {})
+        for row in rows
+    ]

@@ -40,6 +40,7 @@ from tagalot.themes.api import (
     Icon,
     IngestContext,
     Kind,
+    Record,
     ResourceInfo,
     SearchView,
     SortBy,
@@ -137,8 +138,37 @@ class MusicTheme(Theme):
     dirs = True
     entities = [Artist, Album, Song]
     containment = [contains(Artist, Album), contains(Album, Song), contains(Artist, Song)]
+
     # Tags on an album count for its songs (tag an album "Calm" and Songs with Calm lists
     # its songs); Browse also lists a matching album's songs, under it in the tree.
+    def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
+        """Songs by the same artist with the same title (ignoring case and punctuation)."""
+        if entity_type is not Song:
+            return ()
+        artist = record.fields.get("artist") or ""
+        return [f"{normalize(artist)}|{normalize(record.title)}"]
+
+    def similarity(self, entity_type: type[Entity], a: Record, b: Record) -> float:
+        """Same artist and title (the blocking key) on different albums: 1 when the lengths
+        are within 2 seconds (or unknown), falling to 0 at 30 seconds apart (a live take, an
+        edit)."""
+        if normalize(a.title) != normalize(b.title):
+            return 0.0
+        # Within one album, versions of a song are already one song: two songs there with
+        # the same title are different tracks (a box set's two "Intro"s).
+        if (
+            album_folder(a.fields.get("folder") or "")[0]
+            == album_folder(b.fields.get("folder") or "")[0]
+        ):
+            return 0.0
+        lengths = a.fields.get("duration"), b.fields.get("duration")
+        if None in lengths:
+            return 0.95
+        apart = abs(lengths[0] - lengths[1])  # type: ignore[operator]
+        if apart <= 2:
+            return 1.0
+        return max(0.0, 1 - float(apart) / 30)
+
     dashboard = [
         stat("Total running time", Song, "duration", "sum"),
         stat("Average song", Song, "duration", "avg"),

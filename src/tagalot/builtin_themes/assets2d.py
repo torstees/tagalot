@@ -38,6 +38,7 @@ from tagalot.themes.api import (
     Icon,
     IngestContext,
     Kind,
+    Record,
     ResourceInfo,
     SearchView,
     SortBy,
@@ -91,6 +92,9 @@ class Image(_Asset):
     width: int | None = field("Width", search="range", editable=False)
     height: int | None = field("Height", search="range", editable=False)
     dimensions: str | None = field("Dimensions", card=True, editable=False)
+    phash: str | None = field("Picture hash", editable=False, detail=False)
+    """What the picture looks like, as 16 hex digits (a difference hash): pictures that
+    look alike have hashes that differ in few bits (near-duplicates, DESIGN.md §13)."""
     roles = [role("file", kinds={"image"}, primary=True, thumbnail=True)]
     card_lines = ("dimensions",)
 
@@ -133,7 +137,8 @@ class ContentsThumbnail(ThumbnailProvider):
 
 
 class Assets2DTheme(Theme):
-    id, name, version = "assets2d", "2D assets", 1
+    # Version 2 reads a picture hash from images: existing keeps read their files again once.
+    id, name, version = "assets2d", "2D assets", 2
     extensions = frozenset(
         KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.FONT] | KIND_EXTENSIONS[Kind.ARCHIVE]
     )
@@ -160,6 +165,23 @@ class Assets2DTheme(Theme):
         stat("Space used by images", Image, "size", "sum"),
         top_values("Image types", Image, "extension"),
     ]
+
+    near_duplicate_threshold = 58 / 64  # at most 6 of the 64 bits differ
+
+    def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
+        """An image's picture hash in four quarters: hashes within 3 bits of each other
+        always share a quarter, and most within 6 do."""
+        phash = record.fields.get("phash")
+        if entity_type is not Image or not phash:
+            return ()
+        return [f"{n}:{phash[n * 4 : n * 4 + 4]}" for n in range(4)]
+
+    def similarity(self, entity_type: type[Entity], a: Record, b: Record) -> float:
+        """The share of the picture hashes' bits that match."""
+        hashes = a.fields.get("phash"), b.fields.get("phash")
+        if not all(hashes):
+            return 0.0
+        return 1 - hash_distance(*hashes) / 64  # type: ignore[arg-type]
 
     @dashboard_card("Biggest artists", description="Artists with the most assets")
     def biggest_artists(self, ctx: DashboardContext) -> CardRows:
@@ -282,10 +304,39 @@ def file_values(resource: ResourceInfo) -> tuple[str, dict[str, Any]]:
 
 
 def read_image(path: str) -> dict[str, Any]:
-    """An image's size, from its header (the pixels aren't decoded)."""
+    """An image's size, and a hash of what it looks like (:func:`picture_hash`)."""
     with PILImage.open(path) as image:
         width, height = image.size
-    return {"width": width, "height": height, "dimensions": f"{width} \u00d7 {height}"}
+        try:
+            phash: str | None = picture_hash(image)
+        except Exception:  # an odd format Pillow sizes but can't decode: no hash
+            phash = None
+    return {
+        "width": width,
+        "height": height,
+        "dimensions": f"{width} \u00d7 {height}",
+        "phash": phash,
+    }
+
+
+def picture_hash(image: PILImage.Image) -> str:
+    """A 64-bit difference hash, as 16 hex digits: the picture shrunk to 9 x 8 grey
+    pixels, one bit for whether each pixel is brighter than its right-hand neighbour.
+    Resizing, recompressing, or small edits change few bits."""
+    image.draft("L", (64, 64))  # JPEGs decode small: much faster
+    small = image.convert("L").resize((9, 8), PILImage.Resampling.LANCZOS)
+    pixels = small.tobytes()
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            left, right = pixels[row * 9 + col], pixels[row * 9 + col + 1]
+            bits = (bits << 1) | (left > right)
+    return f"{bits:016x}"
+
+
+def hash_distance(a: str, b: str) -> int:
+    """How many of two picture hashes' 64 bits differ."""
+    return (int(a, 16) ^ int(b, 16)).bit_count()
 
 
 def read_font(path: str) -> dict[str, Any]:

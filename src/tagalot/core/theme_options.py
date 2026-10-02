@@ -12,6 +12,9 @@ from typing import Any
 
 from tagalot.themes.api import Theme
 
+THEME_VERSION_KEY = "__theme_version__"
+"""Where a root's ingest record keeps the theme version (not an option name themes use)."""
+
 
 @dataclass(frozen=True)
 class EffectiveOptions:
@@ -20,9 +23,15 @@ class EffectiveOptions:
     values: dict[str, Any]
     problems: list[str] = field(default_factory=list)
 
-    def fingerprint(self) -> str:
-        """A stable text form, stored per root to notice when the values change."""
-        return json.dumps(self.values, sort_keys=True)
+    def fingerprint(self, theme_version: int = 1) -> str:
+        """A stable text form, stored per root to notice when the values change, or the
+        theme's version: a new version may read more from files (an image hash), so its
+        roots are read again once. Version 1 isn't written, so records made before versions
+        counted still match."""
+        values = dict(self.values)
+        if theme_version != 1:
+            values[THEME_VERSION_KEY] = theme_version
+        return json.dumps(values, sort_keys=True)
 
 
 def effective_options(

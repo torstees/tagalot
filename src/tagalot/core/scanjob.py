@@ -178,13 +178,15 @@ def scan_root(
         for problem in options.problems:
             logger.warning("Root %s: %s", root.id, problem)
             report.ingest_warnings.append(IngestWarning(root.id, None, problem))
-        defaults = effective_options(theme, {}, {}).fingerprint()
-        if writer.run(partial(_options_changed, root.id, options.fingerprint(), defaults)):
+        defaults = effective_options(theme, {}, {}).fingerprint(1)  # recorded before versions
+        if writer.run(
+            partial(_options_changed, root.id, options.fingerprint(theme.version), defaults)
+        ):
             say(f"Theme options changed: ingesting {root.name} again…")
         _ingest_pending(
             writer, reader, root, path, theme, schema, when, report, say, options.values
         )
-        writer.run(partial(_record_options, root.id, options.fingerprint()))
+        writer.run(partial(_record_options, root.id, options.fingerprint(theme.version)))
     logger.info(
         "Scanned %s: %d new, %d changed, %d restored, %d missing, %d moved, %d fingerprinted, "
         "%d ingested, %d ingest errors",
