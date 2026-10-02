@@ -8,7 +8,9 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
 from tagalot.core.handlers import Command, FileToOpen
+from tagalot.ui import main_window
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.navigation import NavTarget
 
 LAUNCHED: list[tuple[str, str]] = []
 """What GUI tests asked the OS to launch, instead of launching it: (how, path or program)."""
@@ -31,6 +33,13 @@ def nothing_is_launched(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[
     LAUNCHED.clear()
     yield LAUNCHED
     LAUNCHED.clear()
+
+
+@pytest.fixture(autouse=True)
+def windows_open_on_search_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Most GUI tests start from Search all, as windows did before the dashboard became the
+    opening page (#115); ``test_opening.py`` checks the real opening page."""
+    monkeypatch.setattr(main_window, "OPENING_PAGE", NavTarget("search", label="Search all"))
 
 
 @pytest.fixture(autouse=True)

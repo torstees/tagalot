@@ -708,7 +708,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Dashboard.** Opening screen for a keep: counts per entity type, recently added items, untagged share (links to triage), root health, most/least used tags. Themes can add cards (for example, total runtime).
 
-- **Page** (#113, `ui/dashboard.py`, `core/dashboard.py`): LIBRARY → **Dashboard**, the keep's name over a grid of cards. Every number is a link.
+- **Page** (#113, `ui/dashboard.py`, `core/dashboard.py`): LIBRARY → **Dashboard**, the keep's name over a grid of cards. Every number is a link. A keep opens on it (#115; `main_window.OPENING_PAGE`), highlighted in the navigation, as where Back starts.
 - **Items:** each type's plural and count, and the total. A type opens Search all narrowed to it (its "Only" chip).
 - **Untagged:** "N of M items (P%) have no tag of their own", counted as Triage's list (dismissed items aren't counted), with a bar. "Tag them in Triage →" opens Triage on Untagged items.
 - **Folders:** each root as online and scanned when ("just now", "12 minutes ago", "3 hours ago", or a date), offline, not watched, or not scanned yet, with its file count. A root opens Keep configuration on it.
@@ -912,6 +912,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | A keep opens on its dashboard (#115). GUI tests keep starting from Search all through a conftest fixture, and one test checks the real opening page (§12). |
 | 2026-10 | Theme dashboard cards (#114) come both ways: declared statistics and most common values computed in SQL (`stat`, `top_values` in `Theme.dashboard`), and `@dashboard_card` methods given a read-only `DashboardContext` as an escape hatch. A failing card shows its error. Top values link by the field's search kind, and fields that aren't searchable aren't linked (§9, §12). |
 | 2026-10 | Dashboard (#113): a grid of cards whose numbers link onward (types to Search all narrowed, untagged to Triage, folders to Keep configuration, tags to a search), with a thumbnail strip of the 12 newest items; least used tags list unused ones first and don't repeat the most used (§12). |
 | 2026-10 | Links made by hand (#243) are marked `by_user` (core format 6) and invisible to themes from the file's side (`entities_of`), so re-reading a file never renames or regroups the user's item. Themes can't unlink them or displace them in a one-file role, and `linked` still counts them. Made with Link to item… from Triage (search, then a role that takes the file); undone and unlinked from the item's page (§5, §9, §12). |

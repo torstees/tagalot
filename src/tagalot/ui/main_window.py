@@ -78,6 +78,9 @@ SUMMARY_DELAY_MS = 150
 NAVIGATION_MIN_WIDTH = 170
 """The navigation pane never gets narrower than this, however wide a page wants to be."""
 
+OPENING_PAGE = NavTarget("dashboard", label="Dashboard")
+"""What a keep opens on."""
+
 _COMING = {
     "saved": "Saved searches arrive in M18.",
     "dedupe": "Dedupe arrives in M16.",
@@ -322,7 +325,7 @@ class MainWindow(QMainWindow):
         self.scans.failed.connect(self._scan_failed)
 
         self._load_saved_searches()
-        self.navigation.select(NavTarget("search", label="Search all"))
+        self.navigation.select(OPENING_PAGE)  # the keep at a glance (DESIGN.md §12)
 
     # --- navigation ---
 
