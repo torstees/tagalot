@@ -39,7 +39,7 @@ from tagalot.core.models import ResourceKind, SavedSearch
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
-from tagalot.core.search_spec import SearchSpec
+from tagalot.core.search_spec import FieldFilter, SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import (
     PATH_SEPARATOR,
@@ -439,6 +439,7 @@ class MainWindow(QMainWindow):
             )
             dashboard.open_entity.connect(self.open_entity)
             dashboard.search_tag.connect(lambda tag_id: self.add_tags_to_search([tag_id]))
+            dashboard.search_value.connect(self._search_value)
             return dashboard
         if target.kind == "triage":
             triage = TriagePage(
@@ -809,6 +810,13 @@ class MainWindow(QMainWindow):
         page = self.stack.currentWidget()
         if isinstance(page, SearchPage):
             page.show_all(type_id)
+
+    def _search_value(self, type_id: str, value_filter: FieldFilter) -> None:
+        """Search all, narrowed to one type's items with a value (a dashboard card)."""
+        self._open_type(type_id)
+        page = self.stack.currentWidget()
+        if isinstance(page, SearchPage):
+            page.filter_bar.set_field_filter(value_filter.field, value_filter)
 
     def _open_triage(self) -> None:
         self.navigation.select(NavTarget("triage", label="Triage"))

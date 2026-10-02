@@ -828,6 +828,105 @@ def default_thumbnail_chain(entity: type[Entity]) -> list[ThumbnailProvider]:
 DirRule = bool | Callable[[str], bool]
 
 
+# --- Dashboard cards (DESIGN.md §12 "Dashboard") ---
+
+STAT_KINDS = ("sum", "avg", "min", "max", "count")
+"""What :func:`stat` can compute."""
+
+
+@dataclass(frozen=True)
+class StatCard:
+    """A number computed over a field of one type; see :func:`stat`."""
+
+    title: str
+    type: type["Entity"]
+    field: str
+    how: str
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class TopValuesCard:
+    """A field's most common values; see :func:`top_values`."""
+
+    title: str
+    type: type["Entity"]
+    field: str
+    limit: int = 5
+    description: str = ""
+
+
+DashboardCard = StatCard | TopValuesCard
+
+
+def stat(
+    title: str, type: type["Entity"], field: str, how: str = "sum", *, description: str = ""
+) -> StatCard:
+    """A dashboard card with one number over a field of ``type``'s items: ``how`` is
+    ``"sum"``, ``"avg"``, ``"min"``, ``"max"``, or ``"count"`` (items with a value). It is
+    shown in the field's display format: ``stat("Total running time", Song, "duration")``
+    reads "1:02:33"."""
+    if how not in STAT_KINDS:
+        raise ThemeDeclarationError(f"stat {title!r}: how={how!r} is not one of {STAT_KINDS}")
+    return StatCard(title, type, field, how, description)
+
+
+def top_values(
+    title: str, type: type["Entity"], field: str, *, limit: int = 5, description: str = ""
+) -> TopValuesCard:
+    """A dashboard card listing the most common values of a field of ``type``'s items, with
+    how many have each; a value opens a search of those items:
+    ``top_values("Top genres", Album, "genre")``."""
+    if limit < 1:
+        raise ThemeDeclarationError(f"top_values {title!r}: limit must be at least 1")
+    return TopValuesCard(title, type, field, limit, description)
+
+
+@dataclass(frozen=True)
+class CardSpec:
+    title: str
+    description: str = ""
+
+
+CardRows = Sequence[tuple[str, str]] | str
+"""What a :func:`dashboard_card` method returns: ``(label, value)`` rows, or a text."""
+
+
+class DashboardContext(Protocol):
+    """What a :func:`dashboard_card` method can read (read-only; it runs in a worker
+    whenever the dashboard is read, so keep it quick)."""
+
+    def count(self, type: type["Entity"], **equals: Any) -> int:
+        """How many items of ``type`` have these field values (all of them, without any)."""
+        ...
+
+    def find(self, type: type["Entity"], **equals: Any) -> list[EntityRef]:
+        """The items of ``type`` with these field values."""
+        ...
+
+    def get(self, entity: EntityRef) -> Record:
+        """An item's title, fields, and extra fields."""
+        ...
+
+    def stat(self, type: type["Entity"], field: str, how: str = "sum") -> float | None:
+        """What :func:`stat` computes, as a number (``None`` with no values)."""
+        ...
+
+
+def dashboard_card(title: str, *, description: str = "") -> Callable[[_F], _F]:
+    """Mark a :class:`Theme` method as a dashboard card computed by the theme, for what
+    :func:`stat` and :func:`top_values` can't express. It is called as
+    ``method(ctx)`` with a :class:`DashboardContext` and returns :data:`CardRows`. If it
+    raises, the card shows the error and the rest of the dashboard is unaffected."""
+    spec = CardSpec(title, description)
+
+    def mark(method: _F) -> _F:
+        method.__tagalot_card__ = spec  # type: ignore[attr-defined]
+        return method
+
+    return mark
+
+
 class Theme:
     """Base for themes. A theme module defines exactly one subclass.
 
@@ -835,9 +934,11 @@ class Theme:
     schema version), ``api_version``, ``extensions`` (accepted file extensions, lowercase,
     with the dot; empty = all), ``dirs`` (whether folders become resources: ``bool`` or a
     predicate on the relative path), ``entities``, ``containment``, ``relationships``,
-    ``views``, and thumbnail sizes: ``thumbnail_max`` (the resolution thumbnails are made
-    and cached at; a keep can override it) and ``thumbnail_default`` (how big grid cards
-    start; users zoom between small sizes and the max).
+    ``views``, ``dashboard`` (cards declared with :func:`stat` and :func:`top_values`, shown
+    before cards from :func:`dashboard_card` methods), and thumbnail sizes:
+    ``thumbnail_max`` (the resolution thumbnails are made and cached at; a keep can override
+    it) and ``thumbnail_default`` (how big grid cards start; users zoom between small sizes
+    and the max).
     """
 
     id: ClassVar[str]
@@ -851,6 +952,7 @@ class Theme:
     relationships: ClassVar[Sequence[Relationship]] = ()
     views: ClassVar[Sequence[View]] = ()
     options: ClassVar[Sequence[ThemeOption]] = ()
+    dashboard: ClassVar[Sequence[DashboardCard]] = ()
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
 
@@ -913,6 +1015,18 @@ class Theme:
                     found[name] = spec
         return found
 
+    @classmethod
+    def card_methods(cls) -> dict[str, CardSpec]:
+        """Method name -> card, for methods marked with :func:`dashboard_card`, in
+        declaration order."""
+        found: dict[str, CardSpec] = {}
+        for klass in reversed(cls.__mro__):
+            for name, value in vars(klass).items():
+                spec = getattr(value, "__tagalot_card__", None)
+                if isinstance(spec, CardSpec):
+                    found[name] = spec
+        return found
+
 
 __all__ = [
     "API_VERSION",
@@ -926,7 +1040,10 @@ __all__ = [
     "ActionContext",
     "ActionSpec",
     "ArchiveFirstImage",
+    "CardRows",
     "Containment",
+    "DashboardCard",
+    "DashboardContext",
     "DetailView",
     "EmbeddedAudioArt",
     "Entity",
@@ -947,14 +1064,17 @@ __all__ = [
     "SearchView",
     "Section",
     "SortBy",
+    "StatCard",
     "Theme",
     "ThemeDeclarationError",
     "ThemeOption",
     "ThumbnailContext",
     "ThumbnailProvider",
+    "TopValuesCard",
     "View",
     "action",
     "contains",
+    "dashboard_card",
     "default_thumbnail_chain",
     "entity_fields",
     "entity_label",
@@ -965,4 +1085,6 @@ __all__ = [
     "plural_of",
     "related",
     "role",
+    "stat",
+    "top_values",
 ]
