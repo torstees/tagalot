@@ -784,6 +784,8 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Dedupe.** Groups of exact duplicates (fingerprint) and theme-suggested near-duplicates. Side-by-side comparison of files and entities (format, size, resolution/bitrate, tags). Actions: merge entities (§13), keep both files as versions under one entity, or mark "not a duplicate." Never deletes files.
 
+- **Page** (exact duplicates, #117, `ui/dedupe_view.py`): TOOLS → **Dedupe** shows a summary ("3 groups of identical files; the extra copies take 12.4 MB") over a tree of groups. Each group shows its first name and copy count, the space wasted, its size, and its check result; it expands to its copies, showing where each is, its size, its items, and same / differs. **Check** verifies the selected groups (a copy's row selects its group); it is greyed out, with a tooltip saying why, until something is selected. **Check all** verifies every group (greyed out with none). A copy's menu has Open file, Show in file manager, and Open <item>, and double-clicking a copy opens its item. The page refreshes after a scan or a change.
+
 **Activity panel.** Scan progress per root, fingerprint and thumbnail queues, offline roots, ingest and thumbnail errors with the affected paths.
 
 - **Where** (#111, `ui/activity.py`): a dock under the results, which can be moved or floated, hidden until asked for. It opens with **View → Activity** (Ctrl+Shift+A) or the status bar's problem badge ("⚠ N", shown when there are problems). It never opens by itself.
@@ -802,6 +804,9 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 ## 13. Dedupe and entity merge
 
 - **Exact duplicates:** resources with equal fingerprints (optionally verified with a full hash).
+  - **Grouping** (#117, `core/dedupe.py`): files with a fingerprint, not missing or skipped, that share it with another. Each group lists its copies with the items using them. Groups come most space wasted first (size × extra copies). Offline copies are listed but can't be checked.
+  - **Checking** reads a group's files whole (blake2b) only when asked, in a worker, and splits a group whose files share a fingerprint but differ in the middle. The results are *same*, *differs*, or *couldn't read* (offline, no path here, or an error).
+  - Full hashes are kept for the session only (`KeepSession.verifier`), keyed by each file's id and its size and time **as they are when checked** (a quick `stat`, not the last scan's values), so a file changed even since the last scan is read again. Nothing is stored in the keep. A copy that changed since the last scan says so ("changed since the last scan; press F5"); a scan updates the groups.
 - **Near-duplicates:** the theme's `similarity(a, b)` hook scores candidate pairs within a type (music: normalized artist + title + duration; images: a perceptual hash). The core only compares candidates produced by cheap blocking keys the theme supplies, never all pairs.
 - **Entity merge:** the kept entity absorbs the other's tags, role links, containment edges, relationships, and `user`-provenance field values (conflicts are shown for the user to choose). The merged entity id is recorded so saved searches and history can redirect. Files are never touched.
 - "Keep both as versions" links the second file to the kept entity under the same primary role.
@@ -912,6 +917,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Exact duplicates (#117): grouped by fingerprint, most space wasted first; checking by full hash happens only when asked and is kept for the session, not stored, so the keep's schema doesn't change (§13). |
 | 2026-10 | A keep opens on its dashboard (#115). GUI tests keep starting from Search all through a conftest fixture, and one test checks the real opening page (§12). |
 | 2026-10 | Theme dashboard cards (#114) come both ways: declared statistics and most common values computed in SQL (`stat`, `top_values` in `Theme.dashboard`), and `@dashboard_card` methods given a read-only `DashboardContext` as an escape hatch. A failing card shows its error. Top values link by the field's search kind, and fields that aren't searchable aren't linked (§9, §12). |
 | 2026-10 | Dashboard (#113): a grid of cards whose numbers link onward (types to Search all narrowed, untagged to Triage, folders to Keep configuration, tags to a search), with a thumbnail strip of the 12 newest items; least used tags list unused ones first and don't repeat the most used (§12). |

@@ -19,6 +19,7 @@ from sqlalchemy import Connection, Engine, update
 from tagalot.core.actions import ActionResult, delete_items, run_action
 from tagalot.core.activity import ProblemLog, problems_from_report, thumbnail_problems
 from tagalot.core.db import create_keep_engine, open_keep_database
+from tagalot.core.dedupe import Verifier
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
@@ -83,6 +84,8 @@ class KeepSession:
     _temp: Path | None = field(default=None, init=False, repr=False)
     _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
     problems: ProblemLog = field(default_factory=ProblemLog, init=False)
+    verifier: Verifier = field(default_factory=Verifier, init=False)
+    """Full-hash checks of duplicate files, kept for the session (core.dedupe)."""
     """What went wrong while the keep was open: scans and thumbnails (the activity panel)."""
     last_scan_started: datetime | None = field(default=None, init=False)
     """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
