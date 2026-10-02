@@ -55,6 +55,7 @@ from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.themes.api import Kind, SearchView
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
+from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
@@ -83,7 +84,6 @@ OPENING_PAGE = NavTarget("dashboard", label="Dashboard")
 
 _COMING = {
     "saved": "Saved searches arrive in M18.",
-    "dedupe": "Dedupe arrives in M16.",
 }
 
 
@@ -444,6 +444,10 @@ class MainWindow(QMainWindow):
             dashboard.search_tag.connect(lambda tag_id: self.add_tags_to_search([tag_id]))
             dashboard.search_value.connect(self._search_value)
             return dashboard
+        if target.kind == "dedupe":
+            dedupe = DedupePage(session, self.files)
+            dedupe.open_entity.connect(self.open_entity)
+            return dedupe
         if target.kind == "triage":
             triage = TriagePage(
                 session,
@@ -804,7 +808,7 @@ class MainWindow(QMainWindow):
     def _refresh_triage(self) -> None:
         """Recount the pages that summarize the keep (Triage, the dashboard)."""
         for page in self._pages.values():
-            if isinstance(page, TriagePage | DashboardPage):
+            if isinstance(page, TriagePage | DashboardPage | DedupePage):
                 page.refresh()
 
     def _open_type(self, type_id: str) -> None:

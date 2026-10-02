@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QThreadPool
-from PySide6.QtWidgets import QLabel, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 from sqlalchemy import insert
 
@@ -17,10 +17,12 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.core.ui_state import load_ui_state
+from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.main_window import MainWindow, scan_summary
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.opening import open_keep_async
 from tagalot.ui.search_view import SearchPage
+from tagalot.ui.triage import TriagePage
 from tagalot.ui.workers import ScanController
 
 pytestmark = pytest.mark.gui
@@ -83,10 +85,9 @@ def test_saved_searches_load_in_the_background(qtbot: QtBot, session: KeepSessio
 def test_navigating_switches_pages(qtbot: QtBot, session: KeepSession) -> None:
     window = _window(qtbot, session)
     window.navigation.select(NavTarget("dedupe", label="Dedupe"))
-    page = window.stack.currentWidget()
-    assert isinstance(page, QLabel)  # still to come
-    assert "Dedupe" in page.text()
-    assert "M16" in page.text()
+    assert isinstance(window.stack.currentWidget(), DedupePage)
+    window.navigation.select(NavTarget("triage", label="Triage"))
+    assert isinstance(window.stack.currentWidget(), TriagePage)
 
 
 def test_folded_sections_are_remembered_per_keep(qtbot: QtBot, session: KeepSession) -> None:

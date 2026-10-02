@@ -1,0 +1,56 @@
+"""The Dedupe page: exact duplicates and checking them (#117), on the music demo."""
+
+import shutil
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QItemSelectionModel
+from pytestqt.qtbot import QtBot
+
+from tagalot.core.session import KeepSession
+from tagalot.ui.dedupe_view import CHECK, ITEMS, DedupePage
+from tagalot.ui.main_window import MainWindow
+from tagalot.ui.navigation import NavTarget
+from tests.ui.test_music_views import session, window
+
+pytestmark = pytest.mark.gui
+
+__all__ = ["session", "window"]  # fixtures
+
+
+def test_a_copied_song_is_found_checked_and_shown(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+) -> None:
+    root = Path(session.root_path("music"))
+    copy = root / "Copies" / "Blue (copy).mp3"
+    copy.parent.mkdir()
+    shutil.copy(root / "Jazz Hits" / "02 Blue.mp3", copy)
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+
+    window.navigation.select(NavTarget("dedupe", label="Dedupe"))
+    page = window.stack.currentWidget()
+    assert isinstance(page, DedupePage)
+    qtbot.waitUntil(lambda: page.groups is not None, timeout=5000)
+    assert page.summary.text().startswith("1 group of identical files")
+    group = page.model.item(0, 0)
+    assert group.text().endswith("\u00d72")
+    assert group.rowCount() == 2
+    assert {group.child(n, ITEMS).text() for n in range(2)} == {"Blue"}
+
+    page.tree.selectionModel().select(
+        page.model.index(0, 0),
+        QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    page.check_button.click()
+    qtbot.waitUntil(lambda: page.model.item(0, CHECK).text() == "identical", timeout=5000)
+    assert [group.child(n, CHECK).text() for n in range(2)] == ["same", "same"]
+
+    copy_row = next(n for n in range(2) if "Copies" in group.child(n, 1).text())
+    file = page._file_at(page.model.index(copy_row, 0, page.model.index(0, 0)))
+    assert file is not None
+    with qtbot.waitSignal(page.open_entity) as blocker:
+        page._activated(page.model.index(copy_row, 0, page.model.index(0, 0)))
+    assert blocker.args == [file.items[0][0]]
