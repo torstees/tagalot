@@ -38,6 +38,7 @@ from tagalot.themes.api import (
     Icon,
     IngestContext,
     Kind,
+    Record,
     ResourceInfo,
     SearchView,
     SortBy,
@@ -91,6 +92,10 @@ class Image(_Asset):
     width: int | None = field("Width", search="range", editable=False)
     height: int | None = field("Height", search="range", editable=False)
     dimensions: str | None = field("Dimensions", card=True, editable=False)
+    phash: str | None = field("Picture hash", editable=False, detail=False)
+    """What the picture looks like: a 64-bit difference hash (16 hex digits) and its
+    average color (6 more). Pictures that look alike have hashes that differ in few bits
+    and similar colors (near-duplicates, DESIGN.md §13)."""
     roles = [role("file", kinds={"image"}, primary=True, thumbnail=True)]
     card_lines = ("dimensions",)
 
@@ -133,7 +138,8 @@ class ContentsThumbnail(ThumbnailProvider):
 
 
 class Assets2DTheme(Theme):
-    id, name, version = "assets2d", "2D assets", 1
+    # Version 2 reads a picture hash from images: existing keeps read their files again once.
+    id, name, version = "assets2d", "2D assets", 2
     extensions = frozenset(
         KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.FONT] | KIND_EXTENSIONS[Kind.ARCHIVE]
     )
@@ -160,6 +166,27 @@ class Assets2DTheme(Theme):
         stat("Space used by images", Image, "size", "sum"),
         top_values("Image types", Image, "extension"),
     ]
+
+    near_duplicate_threshold = 58 / 64  # at most 6 of the 64 bits differ
+
+    def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
+        """An image's difference hash in four quarters: hashes within 3 bits of each other
+        always share a quarter, and most within 6 do."""
+        phash = record.fields.get("phash")
+        if entity_type is not Image or not phash:
+            return ()
+        return [f"{n}:{phash[n * 4 : n * 4 + 4]}" for n in range(4)]
+
+    def similarity(self, entity_type: type[Entity], a: Record, b: Record) -> float:
+        """The share of the difference hashes' bits that match, for pictures of about the
+        same average color: the hash only sees light and dark, so a recolored picture of
+        the same layout would otherwise count as the same."""
+        first, second = a.fields.get("phash"), b.fields.get("phash")
+        if not first or not second:
+            return 0.0
+        if color_distance(first, second) > MAX_COLOR_DISTANCE:
+            return 0.0
+        return 1 - hash_distance(first, second) / 64
 
     @dashboard_card("Biggest artists", description="Artists with the most assets")
     def biggest_artists(self, ctx: DashboardContext) -> CardRows:
@@ -282,10 +309,66 @@ def file_values(resource: ResourceInfo) -> tuple[str, dict[str, Any]]:
 
 
 def read_image(path: str) -> dict[str, Any]:
-    """An image's size, from its header (the pixels aren't decoded)."""
+    """An image's size, and a hash of what it looks like (:func:`picture_hash`)."""
     with PILImage.open(path) as image:
         width, height = image.size
-    return {"width": width, "height": height, "dimensions": f"{width} \u00d7 {height}"}
+        try:
+            color = picture_color(image)  # first: it decodes in color
+            phash: str | None = picture_hash(image) + color
+        except Exception:  # an odd format Pillow sizes but can't decode: no hash
+            phash = None
+    return {
+        "width": width,
+        "height": height,
+        "dimensions": f"{width} \u00d7 {height}",
+        "phash": phash,
+    }
+
+
+def picture_hash(image: PILImage.Image) -> str:
+    """A 64-bit difference hash, as 16 hex digits: the picture shrunk to 9 x 8 grey
+    pixels, one bit for whether each pixel is brighter than its right-hand neighbour.
+    Resizing, recompressing, or small edits change few bits."""
+    image.draft("L", (64, 64))  # JPEGs decode small: much faster
+    small = image.convert("L").resize((9, 8), PILImage.Resampling.LANCZOS)
+    pixels = small.tobytes()
+    bits = 0
+    for row in range(8):
+        for col in range(8):
+            left, right = pixels[row * 9 + col], pixels[row * 9 + col + 1]
+            bits = (bits << 1) | (left > right)
+    return f"{bits:016x}"
+
+
+def picture_color(image: PILImage.Image) -> str:
+    """The picture's average color as 6 hex digits (``"3c2878"``); transparent parts
+    count as mid grey."""
+    image.draft("RGB", (64, 64))  # JPEGs decode small: much faster
+    rgba = image.convert("RGBA")
+    grey = PILImage.new("RGBA", rgba.size, (128, 128, 128, 255))
+    average = (
+        PILImage.alpha_composite(grey, rgba).convert("RGB").resize((1, 1), PILImage.Resampling.BOX)
+    )
+    red, green, blue = average.getpixel((0, 0))  # type: ignore[misc]
+    return f"{red:02x}{green:02x}{blue:02x}"
+
+
+MAX_COLOR_DISTANCE = 40
+"""How far apart (in RGB) two pictures' average colors can be and still look alike."""
+
+
+def hash_distance(a: str, b: str) -> int:
+    """How many of two picture hashes' 64 bits differ (their first 16 hex digits)."""
+    return (int(a[:16], 16) ^ int(b[:16], 16)).bit_count()
+
+
+def color_distance(a: str, b: str) -> float:
+    """How far apart two picture hashes' average colors are (0 when either has none)."""
+    if len(a) < 22 or len(b) < 22:
+        return 0.0
+    first = [int(a[16 + n : 18 + n], 16) for n in (0, 2, 4)]
+    second = [int(b[16 + n : 18 + n], 16) for n in (0, 2, 4)]
+    return float(sum((x - y) ** 2 for x, y in zip(first, second, strict=True)) ** 0.5)
 
 
 def read_font(path: str) -> dict[str, Any]:

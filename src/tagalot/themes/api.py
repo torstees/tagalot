@@ -931,14 +931,16 @@ class Theme:
     """Base for themes. A theme module defines exactly one subclass.
 
     Class attributes: ``id`` (lowercase identifier), ``name``, ``version`` (the theme's
-    schema version), ``api_version``, ``extensions`` (accepted file extensions, lowercase,
-    with the dot; empty = all), ``dirs`` (whether folders become resources: ``bool`` or a
-    predicate on the relative path), ``entities``, ``containment``, ``relationships``,
-    ``views``, ``dashboard`` (cards declared with :func:`stat` and :func:`top_values`, shown
-    before cards from :func:`dashboard_card` methods), and thumbnail sizes:
-    ``thumbnail_max`` (the resolution thumbnails are made and cached at; a keep can override
-    it) and ``thumbnail_default`` (how big grid cards start; users zoom between small sizes
-    and the max).
+    schema version; a new version reads every file again once), ``api_version``,
+    ``extensions`` (accepted file extensions, lowercase, with the dot; empty = all),
+    ``dirs`` (whether folders become resources: ``bool`` or a predicate on the relative
+    path), ``entities``, ``containment``, ``relationships``, ``views``,
+    ``near_duplicate_threshold`` (see :meth:`similarity`), ``dashboard`` (cards declared
+    with :func:`stat` and :func:`top_values`, shown before cards from
+    :func:`dashboard_card` methods), and thumbnail sizes: ``thumbnail_max`` (the
+    resolution thumbnails are made and cached at; a keep can override it) and
+    ``thumbnail_default`` (how big grid cards start; users zoom between small sizes and
+    the max).
     """
 
     id: ClassVar[str]
@@ -953,6 +955,9 @@ class Theme:
     views: ClassVar[Sequence[View]] = ()
     options: ClassVar[Sequence[ThemeOption]] = ()
     dashboard: ClassVar[Sequence[DashboardCard]] = ()
+    near_duplicate_threshold: ClassVar[float] = 0.9
+    """How similar (0 to 1, from :meth:`similarity`) two items must be to be listed as
+    near-duplicates."""
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
 
@@ -983,6 +988,19 @@ class Theme:
         called, so a theme that only adds things needs no ``migrate`` at all; the default does
         nothing.
         """
+
+    def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
+        """Cheap keys for finding near-duplicates (DESIGN.md §13): only items of a type
+        that share a key are compared with :meth:`similarity`, never all pairs. Build them
+        from the record's fields (normalized artist and title; parts of an image hash).
+        The default gives none, so the theme has no near-duplicates."""
+        return ()
+
+    def similarity(self, entity_type: type[Entity], a: Record, b: Record) -> float:
+        """How alike two items of ``entity_type`` that share a blocking key are, from 0
+        (not at all) to 1 (the same); pairs at or above :attr:`near_duplicate_threshold`
+        are listed. Keep it quick: it runs for every pair sharing a key."""
+        return 0.0
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         """The providers tried, in order, for thumbnails of ``entity_type`` (DESIGN.md §10).
