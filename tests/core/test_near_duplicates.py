@@ -10,7 +10,15 @@ import pytest
 from PIL import Image as PILImage
 from sqlalchemy import select, update
 
-from tagalot.builtin_themes.assets2d import hash_distance, picture_hash
+from tagalot.builtin_themes.assets2d import (
+    MAX_COLOR_DISTANCE,
+    Assets2DTheme,
+    Image,
+    color_distance,
+    hash_distance,
+    picture_color,
+    picture_hash,
+)
 from tagalot.builtin_themes.music import MusicTheme
 from tagalot.core.dedupe import near_duplicates
 from tagalot.core.models import Root
@@ -18,6 +26,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.theme_options import effective_options
 from tagalot.core.theme_schema import build_theme_schema
+from tagalot.themes.api import EntityRef, Record
 from tests.themes.test_music import Env, env, library
 
 __all__ = ["env", "library"]  # fixtures
@@ -35,11 +44,35 @@ def _picture(size: tuple[int, int], shift: int = 0) -> PILImage.Image:
     return image
 
 
+def test_recolored_pictures_of_one_layout_dont_count() -> None:
+    """The difference hash sees only light and dark: the demo's icons share a shape in
+    different colors, and must not pair."""
+    theme = Assets2DTheme()
+    layout = _picture((120, 80))
+    red = PILImage.merge(
+        "RGB", (layout, layout.point(lambda v: v // 4), layout.point(lambda v: v // 4))
+    )
+    blue = PILImage.merge(
+        "RGB", (layout.point(lambda v: v // 4), layout.point(lambda v: v // 4), layout)
+    )
+    hashes = [picture_hash(i) + picture_color(i.copy()) for i in (red, blue, red.resize((60, 40)))]
+    assert hash_distance(hashes[0], hashes[1]) <= 6  # the same layout…
+    assert color_distance(hashes[0], hashes[1]) > MAX_COLOR_DISTANCE  # …in other colors
+
+    def record(n: int) -> Record:
+        return Record(EntityRef(n, "assets2d.image"), str(n), {"phash": hashes[n]}, {})
+
+    assert theme.similarity(Image, record(0), record(1)) == 0.0
+    assert theme.similarity(Image, record(0), record(2)) >= 58 / 64  # resized: alike
+
+
 def test_picture_hashes() -> None:
     big = picture_hash(_picture((300, 200)))
     small = picture_hash(_picture((150, 100)))  # the same picture, resized
     other = picture_hash(_picture((300, 200)).transpose(PILImage.Transpose.FLIP_LEFT_RIGHT))
     assert len(big) == 16
+    assert picture_color(PILImage.new("RGB", (4, 4), (60, 40, 120))) == "3c2878"
+    assert picture_color(PILImage.new("RGBA", (4, 4), (0, 0, 0, 0))) == "808080"
     assert hash_distance(big, small) <= 6
     assert hash_distance(big, other) > 20
     assert hash_distance(big, big) == 0
@@ -86,7 +119,8 @@ def test_a_resized_picture_is_a_near_duplicate(assets: KeepSession) -> None:
     with assets.reader.connect() as conn:
         found = near_duplicates(conn, assets.schema)
     titles = {(p.a[1], p.b[1]) for p in found.pairs}
-    assert ("forest.png", "forest small.png") in titles
+    # the demo's icons share layouts in other colors: they don't pair
+    assert titles == {("forest.png", "forest small.png")}
     forest = next(p for p in found.pairs if p.b[1] == "forest small.png")
     assert forest.score >= 58 / 64
     assert forest.type_id == "assets2d.image"
