@@ -82,3 +82,20 @@ def test_missing_and_offline_files(env: Env) -> None:
     result = Verifier().verify_group(pictures)
     assert list(result.unread.values()) == ["offline"]
     assert result.identical == ()  # only one file could be read
+
+
+def test_a_file_changed_after_a_check_is_read_again(env: Env) -> None:
+    """Check, change a copy without scanning, check again: it must differ now (the
+    session's hash for its old contents can't be reused)."""
+    _setup(env)
+    env.scan()
+    _, songs = _groups(env)
+    verifier = Verifier()
+    assert verifier.verify_group(songs).confirmed
+    with (env.files / "Copies" / "So What (copy).mp3").open("ab") as f:
+        f.write(b"x")  # what the PR's PowerShell step does
+    result = verifier.verify_group(songs)  # the group as the last scan saw it
+    assert not result.confirmed
+    assert len(result.different) == 2
+    copy = next(f for f in songs.files if f.relpath.startswith("Copies/"))
+    assert result.changed == (copy.resource_id,)  # the page suggests a scan

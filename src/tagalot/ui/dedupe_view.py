@@ -211,6 +211,8 @@ class DedupePage(QWidget):
                 if rid in result.unread
                 else "differs"
             )
+            if rid in result.changed:
+                text += " (changed since the last scan; press F5)"
             row.child(n, CHECK).setText(text)
         if result.confirmed:
             summary = "identical"

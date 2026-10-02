@@ -5,12 +5,14 @@ Files are **exact duplicates** when their fingerprints match (size, first and la
 first. To be sure, :func:`verify_group` reads every file of a group whole and compares
 full hashes, splitting the group if some differ in the middle. That reads whole files
 (slow on a share), so it runs only when asked, in a worker; results are kept for the
-session (:class:`Verifier`), keyed by each file's size and time, not in the keep.
+session (:class:`Verifier`), keyed by each file's size and time as it is when checked
+(so a file changed since the last scan is read again), not in the keep.
 
 Merging items and "keep both as versions" come with the compare view (§13, #119-#121).
 """
 
 import hashlib
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -132,6 +134,8 @@ class Verification:
     """Ids whose contents match no other file of the group (fingerprints collided)."""
     unread: dict[int, str] = field(default_factory=dict)
     """Ids that couldn't be read (offline, no path here, or an error), and why."""
+    changed: tuple[int, ...] = ()
+    """Ids whose file changed since the last scan (a scan updates the groups)."""
 
     @property
     def confirmed(self) -> bool:
@@ -151,6 +155,7 @@ class Verifier:
         a worker."""
         by_hash: dict[bytes, list[int]] = {}
         unread: dict[int, str] = {}
+        changed: list[int] = []
         for file in group.files:
             if file.status is not ResourceStatus.OK:
                 unread[file.resource_id] = "offline"
@@ -158,18 +163,23 @@ class Verifier:
             if file.path is None:
                 unread[file.resource_id] = "its folder has no path on this computer"
                 continue
-            key = (file.resource_id, file.size, file.mtime_ns)
-            with self._lock:
-                digest = self._hashes.get(key)
-            if digest is None:
-                try:
-                    digest = full_hash(file.path)
-                except OSError as e:
-                    unread[file.resource_id] = e.strerror or str(e)
-                    continue
+            try:
+                # The file as it is now, not as the last scan saw it: it may have changed
+                # since (a hash cached for the old contents mustn't be reused).
+                st = os.stat(file.path)
+                if (st.st_size, st.st_mtime_ns) != (file.size, file.mtime_ns):
+                    changed.append(file.resource_id)
+                key = (file.resource_id, st.st_size, st.st_mtime_ns)
                 with self._lock:
-                    self._hashes[key] = digest
+                    digest = self._hashes.get(key)
+                if digest is None:
+                    digest = full_hash(file.path)
+                    with self._lock:
+                        self._hashes[key] = digest
+            except OSError as e:
+                unread[file.resource_id] = e.strerror or str(e)
+                continue
             by_hash.setdefault(digest, []).append(file.resource_id)
         identical = tuple(tuple(ids) for ids in by_hash.values() if len(ids) > 1)
         different = tuple(ids[0] for ids in by_hash.values() if len(ids) == 1)
-        return Verification(identical, different, unread)
+        return Verification(identical, different, unread, tuple(changed))
