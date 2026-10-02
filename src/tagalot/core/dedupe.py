@@ -12,7 +12,8 @@ session (:class:`Verifier`), keyed by each file's size and time as it is when ch
 item cheap blocking keys from its fields, only items of a type that share a key are scored
 with its ``similarity``, and pairs at or above its threshold are listed, most alike first.
 
-Merging items and "keep both as versions" come with the compare view (§13, #119-#121).
+Comparing items side by side is ``core.compare`` (#119); merging items and "keep both
+as versions" come next (§13, #120, #121).
 """
 
 import hashlib
