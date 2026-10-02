@@ -11,16 +11,17 @@ A second tab, **Similar items**, lists pairs of items the theme finds alike (#11
 same song in two places, a resized picture), most alike first, with how alike; double-click
 opens the first item, and the menu either one.
 
-Comparing items side by side, merging them, and keeping both as versions come next
-(#119-#121).
+Under both lists, the **compare pane** (#119, ``ui.compare_view``) shows the current
+group's items, or the current pair, side by side, highlighting what differs.
+
+Merging items and keeping both as versions come next (#120, #121).
 """
 
-from collections.abc import Callable
 from functools import partial
 
 import shiboken6
 from PySide6.QtCore import QModelIndex, QPoint, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QShowEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMenu,
     QPushButton,
+    QSplitter,
     QTableView,
     QTabWidget,
     QTreeView,
@@ -39,6 +41,7 @@ from tagalot.core.dedupe import (
     DuplicateFile,
     DuplicateGroup,
     NearDuplicates,
+    NearPair,
     Verification,
     exact_groups,
     near_duplicates,
@@ -47,7 +50,9 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
+from tagalot.ui.compare_view import ComparePane, known_root
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 COLUMNS = ("Name", "Where", "Size", "Items", "Check")
@@ -67,6 +72,8 @@ class DedupePage(QWidget):
         session: KeepSession,
         file_opener: FileOpener | None = None,
         parent: QWidget | None = None,
+        *,
+        thumbnails: ThumbnailLoader | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
@@ -143,9 +150,27 @@ class DedupePage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(identical, "Identical files")
         self.tabs.addTab(similar, "Similar items")
+        self.compare_pane = ComparePane(session, thumbnails)
+        self.compare_pane.open_entity.connect(self.open_entity)
+        self.tree.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
+        self.similar_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
+        self.tabs.currentChanged.connect(lambda _: self._compare())
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.tabs)
+        self.splitter.addWidget(self.compare_pane)
+        self._split = False
         layout = QVBoxLayout(self)
-        layout.addWidget(self.tabs)
+        layout.addWidget(self.splitter)
         self.refresh()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """The first time it's shown, the compare pane gets the larger share."""
+        super().showEvent(event)
+        if not self._split:
+            self._split = True
+            height = self.splitter.height()
+            self.splitter.setSizes([height * 2 // 5, height - height * 2 // 5])
 
     # --- reading ---
 
@@ -157,7 +182,7 @@ class DedupePage(QWidget):
 
         def job() -> list[DuplicateGroup]:
             with session.reader.connect() as conn:
-                return exact_groups(conn, _known_root(session))
+                return exact_groups(conn, known_root(session))
 
         def done(groups: list[DuplicateGroup]) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
@@ -179,6 +204,7 @@ class DedupePage(QWidget):
     # --- similar items ---
 
     def _show_pairs(self, found: NearDuplicates) -> None:
+        current = self._current_pair()
         self.pairs = found
         self.similar.removeRows(0, self.similar.rowCount())
         labels = type_labels(self.session.schema)
@@ -203,8 +229,54 @@ class DedupePage(QWidget):
             )
         self.similar_summary.setText(text)
         self.tabs.setTabText(1, f"Similar items ({n:,})" if n else "Similar items")
+        if current is not None:  # the same pair stays current (after tagging one, say)
+            ids = (current.a[0], current.b[0])
+            row = next((i for i, p in enumerate(found.pairs) if (p.a[0], p.b[0]) == ids), None)
+            if row is not None:
+                self.similar_table.setCurrentIndex(self.similar.index(row, 0))
+        if self.tabs.currentIndex() == 1:
+            self._compare()
         self.similar_table.resizeColumnToContents(0)
         self.similar_table.resizeColumnToContents(1)
+
+    # --- comparing ---
+
+    def _compare(self) -> None:
+        """Show the current tab's current group or pair in the compare pane."""
+        pane = self.compare_pane
+        if self.tabs.currentIndex() == 1:
+            pair = self._current_pair()
+            if pair is None:
+                pane.clear("Select a pair to compare its items here.")
+                return
+            pane.compare([pair.a[0], pair.b[0]], f"{round(pair.score * 100)}% alike.")
+            return
+        group = self._current_group()
+        if group is None:
+            pane.clear("Select a group to compare the items using its copies here.")
+            return
+        items = dict.fromkeys(i for file in group.files for i in file.items)
+        if not items:
+            pane.clear("No item uses these files.")
+        elif len(items) == 1:
+            [(entity_id, title)] = items
+            pane.compare([entity_id], f"Every copy belongs to one item, {title}.")
+        else:
+            pane.compare([i for i, _ in items], f"{len(items):,} items use these copies.")
+
+    def _current_pair(self) -> NearPair | None:
+        row = self.similar_table.currentIndex().row()
+        if self.pairs is None or not 0 <= row < len(self.pairs.pairs):
+            return None
+        return self.pairs.pairs[row]
+
+    def _current_group(self) -> DuplicateGroup | None:
+        index = self.tree.currentIndex()
+        if not index.isValid():
+            return None
+        top = index.parent() if index.parent().isValid() else index
+        fingerprint = self.model.item(top.row(), 0).data(_GROUP)
+        return next((g for g in self.groups or [] if g.fingerprint == fingerprint), None)
 
     def _open_pair(self, row: int, first: bool) -> None:
         if self.pairs is not None and 0 <= row < len(self.pairs.pairs):
@@ -222,6 +294,7 @@ class DedupePage(QWidget):
         menu.exec(self.similar_table.viewport().mapToGlobal(point))
 
     def _show(self, groups: list[DuplicateGroup]) -> None:
+        current = self._current_group()
         self.groups = groups
         self.model.removeRows(0, self.model.rowCount())
         for group in groups:
@@ -239,7 +312,13 @@ class DedupePage(QWidget):
             else "No duplicate files found."
         )
         self.check_all_button.setEnabled(bool(groups))
+        if current is not None:  # the same group stays current
+            item = self._row_of(current)
+            if item is not None:
+                self.tree.setCurrentIndex(item.index())
         self._enable_check()
+        if self.tabs.currentIndex() == 0:
+            self._compare()
         for column in (NAME, SIZE, ITEMS, CHECK):
             self.tree.resizeColumnToContents(column)
 
@@ -382,13 +461,3 @@ class DedupePage(QWidget):
         file = self._file_at(index)
         if file is not None and file.items:
             self.open_entity.emit(file.items[0][0])
-
-
-def _known_root(session: KeepSession) -> Callable[[str], str | None]:
-    def path(root_id: str) -> str | None:
-        try:
-            return session.root_path(root_id)
-        except StopIteration:
-            return None
-
-    return path

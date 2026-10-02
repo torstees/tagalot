@@ -445,7 +445,7 @@ class MainWindow(QMainWindow):
             dashboard.search_value.connect(self._search_value)
             return dashboard
         if target.kind == "dedupe":
-            dedupe = DedupePage(session, self.files)
+            dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
             dedupe.open_entity.connect(self.open_entity)
             return dedupe
         if target.kind == "triage":
