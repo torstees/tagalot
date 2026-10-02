@@ -40,10 +40,14 @@ def test_a_copied_song_is_found_checked_and_shown(
     assert group.rowCount() == 2
     assert {group.child(n, ITEMS).text() for n in range(2)} == {"Blue"}
 
+    assert not page.check_button.isEnabled()  # nothing selected yet
+    assert "Select a group" in page.check_button.toolTip()
+    assert page.check_all_button.isEnabled()
     page.tree.selectionModel().select(
         page.model.index(0, 0),
         QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
     )
+    assert page.check_button.isEnabled()
     page.check_button.click()
     qtbot.waitUntil(lambda: page.model.item(0, CHECK).text() == "identical", timeout=5000)
     assert [group.child(n, CHECK).text() for n in range(2)] == ["same", "same"]
@@ -54,3 +58,13 @@ def test_a_copied_song_is_found_checked_and_shown(
     with qtbot.waitSignal(page.open_entity) as blocker:
         page._activated(page.model.index(copy_row, 0, page.model.index(0, 0)))
     assert blocker.args == [file.items[0][0]]
+
+
+def test_check_is_greyed_out_without_a_selection(qtbot: QtBot, window: MainWindow) -> None:
+    window.navigation.select(NavTarget("dedupe", label="Dedupe"))
+    page = window.stack.currentWidget()
+    assert isinstance(page, DedupePage)
+    qtbot.waitUntil(lambda: page.groups is not None, timeout=5000)
+    assert page.groups == []
+    assert not page.check_button.isEnabled()
+    assert not page.check_all_button.isEnabled()  # nothing to check at all

@@ -89,6 +89,7 @@ class DedupePage(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.doubleClicked.connect(self._activated)
+        self.tree.selectionModel().selectionChanged.connect(lambda *_: self._enable_check())
         self.tree.header().setSectionResizeMode(WHERE, QHeaderView.ResizeMode.Stretch)
 
         layout = QVBoxLayout(self)
@@ -132,6 +133,7 @@ class DedupePage(QWidget):
             else "No duplicate files found."
         )
         self.check_all_button.setEnabled(bool(groups))
+        self._enable_check()
         for column in (NAME, SIZE, ITEMS, CHECK):
             self.tree.resizeColumnToContents(column)
 
@@ -174,6 +176,16 @@ class DedupePage(QWidget):
             if isinstance(fingerprint, bytes):
                 wanted[fingerprint] = None
         return [g for g in self.groups or [] if g.fingerprint in wanted]
+
+    def _enable_check(self) -> None:
+        """Check works on the selection: it's greyed out (and says why) without one."""
+        selected = bool(self.tree.selectionModel().selectedRows())
+        self.check_button.setEnabled(selected)
+        self.check_button.setToolTip(
+            "Read the selected groups' files whole and compare them (slow on a share)"
+            if selected
+            else "Select a group (or one of its copies) to check it, or use Check all"
+        )
 
     def check(self, groups: list[DuplicateGroup]) -> None:
         """Verify these groups by full hash, one worker job each."""
