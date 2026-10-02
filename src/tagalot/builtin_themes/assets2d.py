@@ -30,6 +30,8 @@ from PIL import ImageFont
 
 from tagalot.themes.api import (
     KIND_EXTENSIONS,
+    CardRows,
+    DashboardContext,
     Entity,
     EntityRef,
     FolderImage,
@@ -43,10 +45,13 @@ from tagalot.themes.api import (
     ThumbnailContext,
     ThumbnailProvider,
     contains,
+    dashboard_card,
     field,
     kind_of,
     option,
     role,
+    stat,
+    top_values,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +156,23 @@ class Assets2DTheme(Theme):
     thumbnail_max = 1024
     thumbnail_default = 256
     options = [ARTIST_LEVEL]
+    dashboard = [
+        stat("Space used by images", Image, "size", "sum"),
+        top_values("Image types", Image, "extension"),
+    ]
+
+    @dashboard_card("Biggest artists", description="Artists with the most assets")
+    def biggest_artists(self, ctx: DashboardContext) -> CardRows:
+        counts = []
+        for artist in ctx.find(Artist):
+            name = ctx.get(artist).title
+            n = sum(ctx.count(kind, artist=name) for kind in (Image, Font, Archive))
+            counts.append((n, name))
+        counts.sort(key=lambda c: (-c[0], c[1].casefold()))
+        if not counts:
+            return "No artists yet."
+        return [(name, f"{n:,} assets") for n, name in counts[:5]]
+
     dirs = True  # every folder: ingest decides which are artists (the level can change)
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:

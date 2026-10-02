@@ -51,6 +51,8 @@ from tagalot.themes.api import (
     field,
     kind_of,
     role,
+    stat,
+    top_values,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,6 +139,12 @@ class MusicTheme(Theme):
     containment = [contains(Artist, Album), contains(Album, Song), contains(Artist, Song)]
     # Tags on an album count for its songs (tag an album "Calm" and Songs with Calm lists
     # its songs); Browse also lists a matching album's songs, under it in the tree.
+    dashboard = [
+        stat("Total running time", Song, "duration", "sum"),
+        stat("Average song", Song, "duration", "avg"),
+        top_values("Top genres", Album, "genre"),
+        top_values("Top years", Album, "year"),
+    ]
     views = [
         SearchView(
             "Browse",

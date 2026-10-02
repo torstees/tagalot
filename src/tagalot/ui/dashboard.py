@@ -9,6 +9,9 @@ Cards in a grid, each number a link:
 - **Recently added:** the newest items' thumbnails; double-click opens a page.
 - **Most used tags** and **Least used tags** (unused ones first): a tag opens a search
   with it.
+- **The theme's cards** (``Theme.dashboard`` and ``@dashboard_card`` methods): statistics
+  ("Total running time"), most common values (a value opens a search of those items), or
+  rows a theme method computed; a card that failed shows why.
 
 It is read in a worker (``core.dashboard``) when shown, and again after a scan, tagging, or
 a configuration change.
@@ -35,7 +38,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tagalot.core.dashboard import Dashboard, TagUse, load_dashboard
+from tagalot.core.dashboard import CardRow, Dashboard, TagUse, load_dashboard
+from tagalot.core.search_spec import FieldFilter
 from tagalot.core.session import KeepSession
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
@@ -52,6 +56,8 @@ class DashboardPage(QWidget):
     configure_root = Signal(str)
     open_entity = Signal(int)
     search_tag = Signal(int)
+    search_value = Signal(str, object)
+    """(type id, field filter): items of that type with a theme card's value."""
 
     def __init__(
         self, session: KeepSession, thumbnails: ThumbnailLoader, parent: QWidget | None = None
@@ -100,10 +106,16 @@ class DashboardPage(QWidget):
         grid.addWidget(_card("Least used tags", self.least_used), 2, 1)
         for n in range(3):
             grid.setColumnStretch(n, 1)
+        self.theme_grid = QGridLayout()
+        self.theme_grid.setSpacing(12)
+        for n in range(3):
+            self.theme_grid.setColumnStretch(n, 1)
+        self._values: list[tuple[str, FieldFilter]] = []
         body = QWidget()
         column = QVBoxLayout(body)
         column.addLayout(header)
         column.addLayout(grid)
+        column.addLayout(self.theme_grid)
         column.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -157,6 +169,7 @@ class DashboardPage(QWidget):
         self.folders.setText(self._folders(data) or "No folders yet.")
         self.most_used.setText(_tags(data.most_used) or "No tags used yet.")
         self.least_used.setText(_tags(data.least_used) or "No tags yet.")
+        self._show_theme_cards(data)
         self.recent.clear()
         for hit in data.recent:
             item = QListWidgetItem(icon_for("entity"), hit.title)
@@ -165,6 +178,34 @@ class DashboardPage(QWidget):
             item.setSizeHint(QSize(THUMB + 24, THUMB + 48))
             self.recent.addItem(item)
             self._thumbnail_ready(hit.id)
+
+    def _show_theme_cards(self, data: Dashboard) -> None:
+        while self.theme_grid.count():
+            item = self.theme_grid.takeAt(0)
+            if item is not None and (widget := item.widget()) is not None:
+                widget.deleteLater()
+        self._values = []
+        for n, card in enumerate(data.theme_cards):
+            body = _links(self._clicked)
+            if card.error is not None:
+                body.setText(
+                    f'<span style="color:#c0392b">Couldn\'t work this out: '
+                    f"{html.escape(card.error)}</span>"
+                )
+            else:
+                body.setText("<br>".join(self._row(row) for row in card.rows) or "\u2014")
+            frame = _card(card.title, body)
+            frame.setToolTip(card.description)
+            self.theme_grid.addWidget(frame, n // 3, n % 3)
+
+    def _row(self, row: CardRow) -> str:
+        label = html.escape(row.label)
+        if row.search is not None:
+            self._values.append(row.search)
+            label = f'<a href="value:{len(self._values) - 1}">{label}</a>'
+        if not row.value:
+            return f"<span style='font-size: 14pt'>{label}</span>" if not row.search else label
+        return f"{label}: {html.escape(row.value)}"
 
     def _folders(self, data: Dashboard) -> str:
         rows = []
@@ -208,6 +249,8 @@ class DashboardPage(QWidget):
             self.configure_root.emit(value)
         elif kind == "tag":
             self.search_tag.emit(int(value))
+        elif kind == "value":
+            self.search_value.emit(*self._values[int(value)])
 
 
 def _links(on_link: object) -> QLabel:

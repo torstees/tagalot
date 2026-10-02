@@ -31,10 +31,12 @@ from tagalot.themes.api import (
     Entity,
     RoleImage,
     SearchView,
+    StatCard,
     Theme,
     ThemeDeclarationError,
     ThemeOption,
     ThumbnailProvider,
+    TopValuesCard,
     entity_fields,
 )
 
@@ -193,6 +195,7 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             elif inspect.isclass(target) and target not in declared:
                 problems.append(f"action {method!r} applies to undeclared {target.__name__}")
 
+    problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]
     if not all(isinstance(o, ThemeOption) for o in theme.options):
@@ -279,6 +282,35 @@ def _contained(theme: type[Theme], entity: type[Entity]) -> set[type[Entity]]:
                 found.add(child)
                 frontier.append(child)
     return found
+
+
+def _card_problems(theme: type[Theme], declared: set[type[Entity]]) -> list[str]:
+    """What's wrong with the theme's dashboard cards (DESIGN.md §12)."""
+    problems: list[str] = []
+    for card in getattr(theme, "dashboard", ()):
+        if not isinstance(card, StatCard | TopValuesCard):
+            problems.append(f"dashboard cards come from stat() or top_values(), not {card!r}")
+            continue
+        where = f"dashboard card {card.title!r}"
+        if card.type not in declared:
+            problems.append(
+                f"{where} uses {getattr(card.type, '__name__', card.type)}, "
+                "which the theme doesn't declare"
+            )
+            continue
+        try:
+            infos = {f.name: f for f in entity_fields(card.type)}
+        except ThemeDeclarationError:
+            continue  # reported by the schema build
+        info = infos.get(card.field)
+        if info is None:
+            problems.append(f"{where}: {card.type.__name__} has no field {card.field!r}")
+        elif isinstance(card, StatCard) and card.how != "count" and info.type not in (int, float):
+            problems.append(f"{where}: {card.how} needs a number field (int or float)")
+    for method in theme.card_methods():
+        if not callable(getattr(theme, method, None)):
+            problems.append(f"dashboard card {method!r} is not a method")
+    return problems
 
 
 def _safe_field_names(entity: type[Entity]) -> set[str]:

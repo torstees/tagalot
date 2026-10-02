@@ -519,6 +519,25 @@ Implementation (#106, `core/actions.py`, `core/entity_state.py`):
 - **Undo:** while an action runs, the ingest session tells a `ChangeRecorder` about every entity before its first write. That covers both ends of a containment edge or relationship, a deleted entity's neighbours, and a many=False relationship's previous partner. A created entity is recorded as not existing. Each is snapshotted whole: row, theme fields, provenance, file links, tags, parents and children, and relationships. Snapshots are taken again at the end. The run is one undo step (`ActionChange`, labelled with the action), recorded only if something changed. Undo and redo restore the snapshots exactly: created entities are deleted, deleted ones are recreated with their id, tags, and edges, and the closure and search index are brought up to date. `updated_at` and the thumbnail memo are not restored; they are set afresh.
 - **Where:** a result's right-click menu lists the actions for its type, after Re-read. A detail page shows them as buttons beside More ▾. Contents searches on a page get the same menus.
 
+### Dashboard cards
+
+A theme adds cards to the dashboard (§12) in two ways (#114, `themes/api.py`, `core/dashboard.py`):
+
+- **Declared**, in `Theme.dashboard`, computed by the core in SQL (fast; no theme code runs):
+  - `stat(title, Type, field, how="sum")` gives one number over the type's items: `"sum"`, `"avg"`, `"min"`, `"max"`, or `"count"` (items with a value). It is shown in the field's display format: `stat("Total running time", Song, "duration")` reads `1:02:33`. Other numbers read `1,234`, or with one decimal.
+  - `top_values(title, Type, field, limit=5)` gives the field's most common values with their counts, most first. A value links to Search all narrowed to the type, filtered by how the field is searched: a choice filter, an exact range for a range field, "starts with" for text. A field that isn't searchable shows its values without links.
+  - The loader checks the type is declared, the field exists, and a sum, average, minimum, or maximum is over a number field.
+- **Methods**, marked `@dashboard_card(title, description="")`, for anything the declared kinds can't express:
+  - Called as `method(ctx)` with a read-only `DashboardContext`: `count(Type, **equals)`, `find(Type, **equals)`, `get(entity)`, and `stat(Type, field, how)`.
+  - Returns `(label, value)` rows or a text.
+  - They run in the dashboard's worker on every read, so they should be quick.
+  - A method that raises shows the error on its card ("Couldn't work this out: …"), and the rest of the dashboard is unaffected.
+
+Declared cards come first, then method cards in declaration order. A card's `description` is its tooltip. The built-in themes' cards:
+
+- **music:** Total running time and Average song (from `duration`), Top genres, and Top years (albums).
+- **assets2d:** Space used by images, Image types (by extension), and the method card **Biggest artists** (assets per artist).
+
 ### Theme schema versions
 
 On opening a keep, the core compares the stored theme version with the loaded theme's version: equal → open; older stored → run `migrate()` after backing up `keep.db`; newer stored → refuse to open with a clear message.
@@ -696,6 +715,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 - **Recently added:** a strip of the 12 newest items' thumbnails (by `created_at`), from the window's thumbnail loader. Double-click (or Enter) opens a page.
 - **Most used tags:** the 5 tags applied directly to the most items, as full paths with counts.
 - **Least used tags:** the 5 least, unused first, not repeating those already shown as most used. A tag opens Search all with it as an include chip.
+- **The theme's cards** follow the built-in ones, three to a row (§9 "Dashboard cards").
 - **Reading:** one read in a worker; again when the page is shown again, on Refresh, and after tagging, undo, a scan, or a configuration change.
 
 **Search view.** Filter bar with include chips, exclude chips ("but not"), field filters (only valid ones for the scope), `Within` chip, text box, toggles for "Show contained items" and "Inherit tags" (plus advanced "Match via contents"). Results as grid (thumbnails), list (columns), or tree/grouped. Multi-select supported.
@@ -892,6 +912,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Theme dashboard cards (#114) come both ways: declared statistics and most common values computed in SQL (`stat`, `top_values` in `Theme.dashboard`), and `@dashboard_card` methods given a read-only `DashboardContext` as an escape hatch. A failing card shows its error. Top values link by the field's search kind, and fields that aren't searchable aren't linked (§9, §12). |
 | 2026-10 | Dashboard (#113): a grid of cards whose numbers link onward (types to Search all narrowed, untagged to Triage, folders to Keep configuration, tags to a search), with a thumbnail strip of the 12 newest items; least used tags list unused ones first and don't repeat the most used (§12). |
 | 2026-10 | Links made by hand (#243) are marked `by_user` (core format 6) and invisible to themes from the file's side (`entities_of`), so re-reading a file never renames or regroups the user's item. Themes can't unlink them or displace them in a one-file role, and `linked` still counts them. Made with Link to item… from Triage (search, then a role that takes the file); undone and unlinked from the item's page (§5, §9, §12). |
 | 2026-10 | Files a scan now leaves out (excludes, extensions, the theme's folder rule) are flagged `skipped` rather than marked missing or deleted: a new boolean column (core format 5) rather than a status value, since status values have a CHECK constraint SQLite can't change without rebuilding the table. Status stays as last seen; seeing the file again in scope clears the flag (#152, §6). |
