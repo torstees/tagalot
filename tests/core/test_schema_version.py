@@ -218,6 +218,8 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("DROP TABLE triage_dismissal")
         conn.exec_driver_sql("ALTER TABLE resource DROP COLUMN skipped")
         conn.exec_driver_sql("ALTER TABLE entity_resource DROP COLUMN by_user")
+        conn.exec_driver_sql("DROP TABLE entity_merge_resource")
+        conn.exec_driver_sql("DROP TABLE entity_merge")
         conn.execute(update(SchemaVersion).values(version=1))
     engine.dispose()
     keep.config.format_version = 1
@@ -225,7 +227,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 6)
+    assert (info.value.stored, info.value.current) == (1, 7)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -235,6 +237,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "skipped" in {c["name"] for c in inspect(engine).get_columns("resource")}
         links = {c["name"] for c in inspect(engine).get_columns("entity_resource")}
         assert "by_user" in links
+        assert "entity_merge" in inspect(engine).get_table_names()
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT id, name, description FROM tag")).all()
             roots = conn.execute(text("SELECT id, name, ingest_options FROM root")).all()
@@ -242,5 +245,5 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 6
+    assert migrated.config.format_version == 7
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]

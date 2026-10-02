@@ -60,6 +60,7 @@ from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.link_dialog import LinkDialog
+from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
@@ -447,6 +448,7 @@ class MainWindow(QMainWindow):
         if target.kind == "dedupe":
             dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
             dedupe.open_entity.connect(self.open_entity)
+            dedupe.merge_requested.connect(self.merge_items)
             return dedupe
         if target.kind == "triage":
             triage = TriagePage(
@@ -859,6 +861,24 @@ class MainWindow(QMainWindow):
         if target is not None:
             entity_id, role = target
             self.tag_actions.link_files(entity_id, [f.resource_id for f in files], role)
+
+    def merge_items(self, items: list[tuple[int, str, str]]) -> None:
+        """Ask which item to keep (and which values win), then merge; one undo step."""
+        chosen = self.choose_merge(items)
+        if chosen is not None:
+            keep, others, choices = chosen
+            self.tag_actions.merge_items(keep, others, choices)
+
+    def choose_merge(
+        self, items: list[tuple[int, str, str]]
+    ) -> tuple[int, list[int], dict[str, int]] | None:
+        """The Merge dialog: (kept id, the others, conflict choices), or ``None`` (tests
+        replace this)."""
+        assert self.session is not None
+        dialog = MergeDialog(self.session, items, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.keep_id, dialog.other_ids, dict(dialog.choices)
 
     def choose_link_target(self, what: str, kinds: list[Kind | None]) -> tuple[int, str] | None:
         """The Link to item dialog: (entity id, role), or ``None`` (tests replace this)."""

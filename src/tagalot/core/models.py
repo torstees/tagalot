@@ -299,6 +299,43 @@ class TriageDismissal(Base):
     dismissed_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class EntityMerge(Base):
+    """An item merged into another (§13, #120): it no longer exists, and this remembers it.
+
+    When a theme's ``upsert`` asks for ``(type, ingest_key)`` again, or ``entities_of``
+    for one of its files (:class:`EntityMergeResource`), the ingest session answers with the
+    merged item and drops what the theme writes to it: the item stays merged. Pages and
+    saved searches that name ``merged_id`` follow ``into_id``. Merged ids are never given to
+    new entities. No foreign keys to ``entity``: the merged item is gone, and the record
+    outlives the kept one, so a deleted kept item doesn't bring the merged one back.
+    """
+
+    __tablename__ = "entity_merge"
+
+    merged_id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str]
+    ingest_key: Mapped[str | None]
+    into_id: Mapped[int]
+    merged_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    __table_args__ = (Index("ix_entity_merge_key", "type", "ingest_key"),)
+
+
+class EntityMergeResource(Base):
+    """A file a merged item had from its theme (§13, #120): reading the file again finds
+    the merged item (``ctx.entities_of``), so the theme doesn't make a new one for it."""
+
+    __tablename__ = "entity_merge_resource"
+
+    merged_id: Mapped[int] = mapped_column(
+        ForeignKey("entity_merge.merged_id", ondelete=CASCADE), primary_key=True
+    )
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True, index=True
+    )
+    role: Mapped[str] = mapped_column(primary_key=True)
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is the JSON form of a ``SearchSpec`` (§8)."""
 

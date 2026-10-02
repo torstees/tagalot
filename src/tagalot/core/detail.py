@@ -7,13 +7,13 @@ following the theme's :class:`~tagalot.themes.api.DetailView` for the type, or
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy import Connection, func, select
 
 from tagalot.core.fields import user_fields
-from tagalot.core.ingest import TITLE
+from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -110,6 +110,8 @@ class EntityDetail:
     """The containers above it, outermost first (for a song: its artist, then its album)."""
     other_parents: int = 0
     """How many more containers hold it directly, besides the one the crumbs follow."""
+    merged_from: int | None = None
+    """The id asked for, when that item was merged into this one (§13)."""
 
 
 PATH_MARK = "\u203a"
@@ -151,7 +153,9 @@ def load_detail(
         select(Entity.type, Entity.title, Entity.extra).where(Entity.id == entity_id)
     ).first()
     if row is None:
-        return None
+        into = merged_into(conn, [entity_id]).get(entity_id)
+        found = load_detail(conn, schema, into, root_path) if into is not None else None
+        return replace(found, merged_from=entity_id) if found is not None else None
     crumbs, others = breadcrumbs(conn, entity_id)
     extra = tuple(sorted((row.extra or {}).items(), key=lambda item: item[0].casefold()))
     try:

@@ -28,6 +28,7 @@ from tagalot.core.fields import (
     restore_extra,
     restore_field,
 )
+from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.tags import (
@@ -79,7 +80,15 @@ class TagChange:
     """``entity_tag`` rows the operation created."""
 
 
-Step = TagChange | FieldChange | ExtraChange | ReextractChange | ActionChange | DismissChange
+Step = (
+    TagChange
+    | FieldChange
+    | ExtraChange
+    | ReextractChange
+    | ActionChange
+    | DismissChange
+    | MergeChange
+)
 """One entry in the undo history."""
 
 
@@ -273,6 +282,9 @@ class TagService:
         elif isinstance(step, ActionChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))
+        elif isinstance(step, MergeChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_merge(conn, schema, step, forward=forward))
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 

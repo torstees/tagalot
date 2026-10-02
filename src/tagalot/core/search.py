@@ -23,7 +23,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
-from tagalot.core.models import Entity, EntityAncestor, EntityContains, EntityTag, entity_fts
+from tagalot.core.models import (
+    Entity,
+    EntityAncestor,
+    EntityContains,
+    EntityMerge,
+    EntityTag,
+    entity_fts,
+)
 from tagalot.core.search_spec import (
     ChoiceFilter,
     FieldFilter,
@@ -194,10 +201,17 @@ class _Filter:
         if spec.types:
             where.append(Entity.type.in_(spec.types))
         if spec.within is not None:
+            # A saved search within an item merged since follows it (§13).
+            within = func.coalesce(
+                select(EntityMerge.into_id)
+                .where(EntityMerge.merged_id == spec.within)
+                .scalar_subquery(),
+                spec.within,
+            )
             where.append(
                 Entity.id.in_(
                     select(EntityAncestor.entity_id).where(
-                        EntityAncestor.ancestor_id == spec.within, EntityAncestor.depth > 0
+                        EntityAncestor.ancestor_id == within, EntityAncestor.depth > 0
                     )
                 )
             )

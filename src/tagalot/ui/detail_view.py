@@ -107,6 +107,10 @@ class DetailPage(QWidget):
         super().__init__(parent)
         self.session = session
         self.entity_id = entity_id
+        """The item shown: the one asked for, or the item it was merged into (§13)."""
+        self.requested_id = entity_id
+        """The item the page was opened for. Each refresh asks for it again, so undoing a
+        merge brings its page back to it."""
         self.thumbnails = thumbnails
         self._make_contents = make_contents
         self.contents: SearchPage | None = None
@@ -136,7 +140,12 @@ class DetailPage(QWidget):
         self.breadcrumbs.setWordWrap(True)
         self.breadcrumbs.linkActivated.connect(lambda href: self.open_entity.emit(int(href)))
         self.breadcrumbs.setVisible(False)
+        self.merged_note = QLabel("The item opened here was merged into this one.")
+        self.merged_note.setObjectName("merged_note")
+        self.merged_note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        self.merged_note.setVisible(False)
         titles = QVBoxLayout()
+        titles.addWidget(self.merged_note)
         titles.addWidget(self.breadcrumbs)
         titles.addWidget(self.title_value)
         titles.addWidget(self.type_label)
@@ -191,7 +200,7 @@ class DetailPage(QWidget):
     def refresh(self) -> None:
         """Read the entity again (after a scan or an edit)."""
         self._generation += 1
-        generation, session, entity_id = self._generation, self.session, self.entity_id
+        generation, session, entity_id = self._generation, self.session, self.requested_id
 
         def job() -> EntityDetail | None:
             with session.reader.connect() as conn:
@@ -204,6 +213,11 @@ class DetailPage(QWidget):
         run_in_pool(job, on_done=done, pool=self._pool)
 
     def _show(self, detail: EntityDetail | None) -> None:
+        # While the item asked for is merged into another (§13), the page is that one's;
+        # after an undo it is the item's own again.
+        merged = detail is not None and detail.merged_from is not None
+        self.entity_id = detail.id if detail is not None else self.requested_id
+        self.merged_note.setVisible(merged)
         self.detail = detail
         while self._sections.count():
             item = self._sections.takeAt(0)
@@ -244,7 +258,7 @@ class DetailPage(QWidget):
         if self.contents is None:
             types = tuple(contained_types(self.session.schema, detail.type))
             sort, _ = contents_order(self.session.schema, detail.type)
-            spec = SearchSpec(types=types, within=self.entity_id, sort=sort)
+            spec = SearchSpec(types=types, within=self.requested_id, sort=sort)
             self.contents = self._make_contents(detail.type, spec)
             self.contents.selection_changed.connect(self.selection_changed)
             in_search = QPushButton("Show in search")
