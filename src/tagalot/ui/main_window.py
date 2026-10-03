@@ -66,6 +66,7 @@ from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.search_view import SearchPage
+from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
@@ -311,6 +312,11 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         self.size_menu = self._make_size_menu()
         view_menu.addMenu(self.size_menu)
+
+        help_menu = self.menuBar().addMenu("&Help")
+        self.shortcuts_action = help_action(self)
+        self.shortcuts_action.triggered.connect(self.show_shortcuts)
+        help_menu.addAction(self.shortcuts_action)
 
         # Status bar: a message plus a busy indicator while scanning.
         self.thumbnail_status = QLabel()
@@ -1162,6 +1168,14 @@ class MainWindow(QMainWindow):
             self.navigation.select(NavTarget("search", label="Search all"))
         self.stack.removeWidget(page)
         page.deleteLater()
+
+    def show_shortcuts(self) -> ShortcutsDialog:
+        """Help → Keyboard shortcuts: a window listing them (not modal, so it can stay
+        open beside the work)."""
+        dialog = ShortcutsDialog(self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        return dialog
 
     # --- saved searches (#127) ---
 
