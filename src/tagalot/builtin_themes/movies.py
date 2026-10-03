@@ -14,26 +14,42 @@ A movie is one or more video files (#123), the way Plex and Kodi lay them out:
 - **Collections:** a folder below the root holding two or more movies' folders
   (``The Lord of the Rings/`` with a folder per film) is a collection containing them.
 
-Actors and the cast come from .nfo files (#258) and by hand (#260); posters, screenshots,
-and photos with the roles (#124).
+**Pictures** (#124):
+
+- In a movie's folder, ``poster.jpg`` is its **poster** (else ``…-poster``, ``folder``,
+  ``cover``, ``movie``, ``default``, or a picture named like the movie), and its other
+  pictures, and those in a ``screenshots``, ``extrafanart``, ``stills``, or ``backdrops``
+  subfolder, are **screenshots**.
+- Beside loose videos, ``Heat (1995)-poster.jpg`` (or ``Heat (1995).jpg``) is that movie's
+  poster, and ``Heat (1995)-fanart.jpg`` (``-landscape``, ``-thumb``…) a screenshot.
+- A collection's folder picture (``poster``, ``folder``, ``cover``) is its poster.
+- Actors' photos come with their .nfo files (#258); ``.actors`` folders are left for them.
+
+Actors and the cast come from .nfo files (#258) and by hand (#260).
 """
 
 import logging
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
 from tagalot.themes.api import (
     KIND_EXTENSIONS,
+    DetailView,
     Entity,
     EntityRef,
+    Icon,
     IngestContext,
     Kind,
     ResourceInfo,
+    RoleImage,
+    Section,
     Theme,
+    ThumbnailContext,
+    ThumbnailProvider,
     contains,
     field,
     kind_of,
@@ -78,6 +94,17 @@ SUFFIX = re.compile(
     re.IGNORECASE,
 )
 """A part, quality, or edition at the end of a name: ``- 1080p``, `` cd2``, ``- Extended``."""
+SCREENSHOT_FOLDERS = frozenset({"screenshots", "screens", "extrafanart", "stills", "backdrops"})
+"""Subfolders of a movie's folder whose pictures are its screenshots."""
+ACTORS_FOLDER = ".actors"
+"""Kodi's folder of actors' photos (read with the .nfo files, #258)."""
+POSTER_NAMES = ("poster", "folder", "cover", "movie", "default")
+"""A movie's (or collection's) poster in its folder, best first (after ``…-poster``)."""
+PICTURE_SUFFIX = re.compile(
+    r"^(?P<base>.*?)[-._ ](?P<kind>poster|fanart|landscape|thumb|banner|background|backdrop)$",
+    re.IGNORECASE,
+)
+"""``Heat (1995)-poster``: a loose movie's picture, and which."""
 
 
 @dataclass(frozen=True)
@@ -152,6 +179,40 @@ def videos_in(path: str) -> list[str]:
         return []
 
 
+def images_in(path: str) -> list[str]:
+    """The names of the pictures directly in a folder."""
+    try:
+        with os.scandir(path) as entries:
+            return sorted(
+                e.name
+                for e in entries
+                if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE
+            )
+    except OSError:
+        return []
+
+
+def poster_rank(stem: str, movie: "MovieName | None" = None) -> int | None:
+    """How good a picture in a movie's (or collection's) folder is as its poster (lower is
+    better), or ``None`` for one that isn't a poster."""
+    name = stem.casefold()
+    if name == "poster":
+        return 0
+    if name.endswith(("-poster", ".poster", "_poster", " poster")):
+        return 1
+    if name in POSTER_NAMES:
+        return 2 + POSTER_NAMES.index(name)
+    if movie is not None and movie_name(stem).key == movie.key:
+        return 10
+    return None
+
+
+def best_poster(names: Sequence[str], movie: "MovieName | None" = None) -> str | None:
+    """The folder's poster among these picture names, if any is one."""
+    ranked = [(r, n) for n in names if (r := poster_rank(stem_of(n), movie)) is not None]
+    return min(ranked)[1] if ranked else None
+
+
 def subfolders(path: str) -> list[str]:
     try:
         with os.scandir(path) as entries:
@@ -188,11 +249,16 @@ class Actor(Entity):
     born: date | None = field("Date of birth", search="range")
     country: str | None = field("Country", search="choice")
 
+    roles = [role("photo", kinds={"image"}, thumbnail=True)]
+
 
 class Collection(Entity):
     """A folder of movies' folders (a series, a box set)."""
 
-    roles = [role("folder", kinds={"dir"}, primary=True)]
+    roles = [
+        role("folder", kinds={"dir"}, primary=True),
+        role("poster", kinds={"image"}, thumbnail=True),
+    ]
 
 
 class Movie(Entity):
@@ -200,9 +266,46 @@ class Movie(Entity):
 
     year: int | None = field("Year", card=True, search="range")
     folder: str = field("Folder", search="text", editable=False)
-    roles = [role("video", kinds={"video"}, many=True, primary=True)]
+    roles = [
+        role("video", kinds={"video"}, many=True, primary=True),
+        role("poster", kinds={"image"}, thumbnail=True),
+        role("screenshot", kinds={"image"}, many=True),
+    ]
     double_click = "open_file"
     card_lines = ("year",)
+
+
+@dataclass(frozen=True)
+class Identity:
+    """Which movie a file belongs to: its key, name, and the folder of its videos."""
+
+    key: str
+    name: MovieName
+    folder: str
+
+
+def movie_identity(folder: str, movie_folder: bool, video_stem: str) -> Identity:
+    """The movie of a video named ``video_stem`` in ``folder``: a movie's folder's own (named
+    by the folder when it has a year), else the one its name gives."""
+    if movie_folder:
+        folder_name = folder.rpartition("/")[2]
+        name = movie_name(folder_name if has_year(folder_name) else video_stem)
+        return Identity(f"movie:dir:{folder}", name, folder)
+    name = movie_name(video_stem)
+    return Identity(f"movie:{folder}|{name.key}", name, folder)
+
+
+class ContentsThumbnail(ThumbnailProvider):
+    """A collection without a poster shows one of its first movies'."""
+
+    id = "movies.contents"
+    tried = 5
+
+    def candidates(self, entity: EntityRef, ctx: ThumbnailContext) -> Iterable[ResourceInfo]:
+        for child in ctx.children(entity)[: self.tried]:
+            found = ctx.thumbnail_of(child)
+            if found is not None:
+                yield found
 
 
 class MoviesTheme(Theme):
@@ -214,6 +317,26 @@ class MoviesTheme(Theme):
     entities = [Actor, Collection, Movie]
     containment = [contains(Collection, Movie)]
     relationships = [related("cast", Actor, Movie, label="Cast", reverse_label="Filmography")]
+    views = [
+        DetailView(
+            Movie,
+            [
+                Section.fields(),
+                Section.role("video"),
+                Section.related("cast"),
+                Section.gallery("screenshot"),
+            ],
+        ),
+    ]
+
+    def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
+        """A movie shows its poster, else its first screenshot; a collection its poster, else
+        one of its movies'; an actor their photo."""
+        if entity_type is Movie:
+            return [RoleImage("poster"), RoleImage("screenshot"), Icon("video")]
+        if entity_type is Collection:
+            return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
+        return super().thumbnail_chain(entity_type)
 
     # --- prepare (a worker): what the folders around each file say ---
 
@@ -248,9 +371,64 @@ class MoviesTheme(Theme):
                         and bool(grandparent)
                         and is_collection(os.path.dirname(folder_path), collections),
                     }
+                elif kind_of(resource) is Kind.IMAGE:
+                    found[resource.id] = self._picture(resource, videos, collections)
             except Exception as e:  # a folder we can't list: the file is still a movie
                 logger.warning("Couldn't look around %s: %s", resource.relpath, e)
         return found
+
+    def _picture(
+        self,
+        resource: ResourceInfo,
+        videos: Callable[[str], list[str]],
+        collections: dict[str, bool],
+    ) -> dict[str, Any]:
+        """What a picture is: a movie's poster or screenshot, a collection's poster, or
+        nothing (``{}``)."""
+        assert resource.path is not None
+        folder_path = os.path.dirname(resource.path)
+        folder, _, filename = resource.relpath.rpartition("/")
+        name = folder.rpartition("/")[2]
+        if name.casefold() == ACTORS_FOLDER or is_extra(resource.relpath):
+            return {}
+        if name.casefold() in SCREENSHOT_FOLDERS and folder.count("/") >= 1:
+            # A screenshots folder: its pictures are its parent movie folder's.
+            movie_dir, movie_path = folder.rpartition("/")[0], os.path.dirname(folder_path)
+            found = videos(movie_path)
+            if movie_dir and is_movie_folder(movie_dir.rpartition("/")[2], found):
+                return _movie_picture(movie_identity(movie_dir, True, stem_of(found[0])), False)
+            return {}
+        found = videos(folder_path)
+        if folder and is_movie_folder(name, found):
+            identity = movie_identity(folder, True, stem_of(found[0]))
+            poster = best_poster(images_in(folder_path), identity.name) == filename
+            return _movie_picture(identity, poster)
+        if found:  # beside loose videos: named after one of them
+            match = PICTURE_SUFFIX.match(stem_of(filename))
+            base = match["base"] if match else stem_of(filename)
+            kind = match["kind"].casefold() if match else "poster"
+            key = movie_name(base).key
+            video = next((v for v in found if movie_name(stem_of(v)).key == key), None)
+            if video is None:
+                return {}
+            identity = movie_identity(folder, False, stem_of(video))
+            if kind != "poster":
+                return _movie_picture(identity, False)
+            siblings = [
+                n
+                for n in images_in(folder_path)
+                if movie_name(_picture_base(stem_of(n))).key == key
+                and _picture_kind(stem_of(n)) == "poster"
+            ]
+            best = min(siblings, key=lambda n: (PICTURE_SUFFIX.match(stem_of(n)) is None, n))
+            return _movie_picture(identity, best == filename)
+        if (
+            folder
+            and is_collection(folder_path, collections)
+            and best_poster(images_in(folder_path)) == filename
+        ):
+            return {"collection": folder}
+        return {}
 
     # --- ingest (the DB writer) ---
 
@@ -260,6 +438,21 @@ class MoviesTheme(Theme):
                 self._ingest_folder(resource, ctx)
             elif kind_of(resource) is Kind.VIDEO and not is_extra(resource.relpath):
                 self._ingest_video(resource, ctx)
+            elif kind_of(resource) is Kind.IMAGE:
+                self._ingest_picture(resource, ctx)
+
+    def _ingest_picture(self, resource: ResourceInfo, ctx: IngestContext) -> None:
+        details = ctx.prepared(resource) or {}
+        if details.get("collection"):
+            ctx.link(collection_ref(details["collection"], ctx), resource, "poster")
+            return
+        if not details.get("movie"):
+            return
+        identity = Identity(
+            details["movie"], MovieName(details["title"], details["year"]), details["folder"]
+        )
+        movie = find_movie(identity, ctx)
+        ctx.link(movie, resource, "poster" if details["poster"] else "screenshot")
 
     def _ingest_folder(self, resource: ResourceInfo, ctx: IngestContext) -> None:
         details = ctx.prepared(resource) or {}
@@ -276,13 +469,10 @@ class MoviesTheme(Theme):
     def _ingest_video(self, resource: ResourceInfo, ctx: IngestContext) -> None:
         details = ctx.prepared(resource) or {}
         folder = resource.relpath.rpartition("/")[0]
-        if details.get("movie_folder"):
-            folder_name = folder.rpartition("/")[2]
-            name = movie_name(folder_name if has_year(folder_name) else stem_of(resource.relpath))
-            key = f"movie:dir:{folder}"
-        else:
-            name = movie_name(stem_of(resource.relpath))
-            key = f"movie:{folder}|{name.key}"
+        identity = movie_identity(
+            folder, bool(details.get("movie_folder")), stem_of(resource.relpath)
+        )
+        name, key = identity.name, identity.key
         values = {"year": name.year, "folder": folder}
 
         existing = ctx.entities_of(resource, "video")
@@ -304,3 +494,42 @@ def collection_key(folder: str) -> str:
 
 def collection_ref(folder: str, ctx: IngestContext) -> EntityRef:
     return ctx.upsert(Collection, collection_key(folder), title=folder.rpartition("/")[2])
+
+
+def find_movie(identity: Identity, ctx: IngestContext) -> EntityRef:
+    """The movie a picture belongs to: by its key, else the movie of the same name in its
+    folder (made under another key), else a new one (its video comes later)."""
+    found = ctx.find(Movie, ingest_key=identity.key)
+    if found:
+        return found[0]
+    for movie in ctx.find(Movie, folder=identity.folder):
+        record = ctx.get(movie)
+        if MovieName(record.title, record.fields.get("year")).key == identity.name.key:
+            return movie
+    return ctx.upsert(
+        Movie,
+        identity.key,
+        title=identity.name.title,
+        year=identity.name.year,
+        folder=identity.folder,
+    )
+
+
+def _movie_picture(identity: Identity, poster: bool) -> dict[str, Any]:
+    return {
+        "movie": identity.key,
+        "title": identity.name.title,
+        "year": identity.name.year,
+        "folder": identity.folder,
+        "poster": poster,
+    }
+
+
+def _picture_base(stem: str) -> str:
+    match = PICTURE_SUFFIX.match(stem)
+    return match["base"] if match else stem
+
+
+def _picture_kind(stem: str) -> str:
+    match = PICTURE_SUFFIX.match(stem)
+    return match["kind"].casefold() if match else "poster"

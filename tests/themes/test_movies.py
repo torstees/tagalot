@@ -11,6 +11,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.movies import (
+    Actor,
     Collection,
     Movie,
     MovieName,
@@ -26,6 +27,7 @@ from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
 from tagalot.themes.loader import validate_theme
+from tests.core.media_files import write_image
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 
@@ -42,6 +44,21 @@ LIBRARY = [
     "Misc/home video.mp4",  # two movies side by side: not a movie's folder
     "Misc/birthday.mp4",
     "The.Matrix.1999.1080p/The.Matrix.1999.1080p.BluRay.mkv",  # one movie: its folder
+]
+
+PICTURES = [
+    "Inception (2010)/poster.jpg",  # the poster
+    "Inception (2010)/folder.jpg",  # a lesser poster name: a screenshot
+    "Inception (2010)/screenshots/still 1.jpg",
+    "Inception (2010)/.actors/Leonardo_DiCaprio.jpg",  # an actor's (#258)
+    "Heat (1995)-poster.jpg",  # beside loose videos
+    "Heat (1995).jpg",  # named like the movie, but -poster wins: a screenshot
+    "Heat (1995)-fanart.jpg",
+    "Alien.jpg",  # no year: not Alien (1979)'s
+    "random.jpg",
+    "Misc/birthday-poster.jpg",
+    "The Lord of the Rings/folder.jpg",  # the collection's
+    "The Lord of the Rings/map.jpg",
 ]
 
 
@@ -117,6 +134,20 @@ class Env:
                 )
             )
 
+    def roles(self, title: str) -> dict[str, list[str]]:
+        """The item's files by role."""
+        with self.reader.connect() as conn:
+            rows = conn.execute(
+                select(EntityResource.role, Resource.relpath)
+                .join(Resource, Resource.id == EntityResource.resource_id)
+                .join(Entity, Entity.id == EntityResource.entity_id)
+                .where(Entity.title == title)
+            ).all()
+        found: dict[str, list[str]] = {}
+        for role_name, relpath in rows:
+            found.setdefault(role_name, []).append(relpath)
+        return {r: sorted(v) for r, v in sorted(found.items())}
+
     def year(self, title: str) -> int | None:
         table = self.schema.entities[Movie].table
         with self.reader.connect() as conn:
@@ -147,6 +178,8 @@ def env(tmp_path: Path) -> Iterator[Env]:
         path = files / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"not really a video " + relpath.encode())
+    for relpath in PICTURES:
+        write_image(files / relpath, (8, 12))
     keep, engine = open_keep_database(create_keep(tmp_path / "k", "M", ThemeRef("movies", 1)))
     schema = open_theme(engine, keep, MoviesTheme).schema
     reader = create_keep_engine(keep.db_path, read_only=True)
@@ -171,18 +204,60 @@ def test_a_scan_makes_movies_and_collections(env: Env) -> None:
     assert env.year("Inception") == 2010  # from its folder's name
     assert env.year("The Matrix") == 1999
     assert env.year("home video") is None
-    assert env.files_of("Heat") == ["Heat (1995) - 720p.mkv", "Heat (1995).mkv"]  # versions
-    assert env.files_of("The Two Towers") == [
+    assert env.roles("Heat")["video"] == ["Heat (1995) - 720p.mkv", "Heat (1995).mkv"]
+    assert env.roles("The Two Towers")["video"] == [
         "The Lord of the Rings/The Two Towers (2002)/ttt part1.mkv",
         "The Lord of the Rings/The Two Towers (2002)/ttt part2.mkv",
     ]
-    assert env.files_of("Inception") == ["Inception (2010)/Inception.mkv"]  # no trailer
+    assert env.roles("Inception")["video"] == ["Inception (2010)/Inception.mkv"]  # no trailer
     # A folder of movies' folders is a collection; the root and Misc aren't.
     assert env.titles(Collection) == ["The Lord of the Rings"]
     assert env.contents() == {
         "The Lord of the Rings": ["The Fellowship of the Ring", "The Two Towers"]
     }
-    assert env.files_of("The Lord of the Rings") == ["The Lord of the Rings"]
+    assert env.roles("The Lord of the Rings") == {
+        "folder": ["The Lord of the Rings"],
+        "poster": ["The Lord of the Rings/folder.jpg"],
+    }
+
+
+def test_posters_and_screenshots(env: Env) -> None:
+    env.scan()
+    assert env.roles("Inception") == {
+        "poster": ["Inception (2010)/poster.jpg"],
+        "screenshot": ["Inception (2010)/folder.jpg", "Inception (2010)/screenshots/still 1.jpg"],
+        "video": ["Inception (2010)/Inception.mkv"],
+    }
+    heat = env.roles("Heat")
+    assert heat["poster"] == ["Heat (1995)-poster.jpg"]
+    assert heat["screenshot"] == ["Heat (1995)-fanart.jpg", "Heat (1995).jpg"]
+    assert env.roles("birthday")["poster"] == ["Misc/birthday-poster.jpg"]
+    assert "poster" not in env.roles("Alien")
+    with env.reader.connect() as conn:
+        linked = set(conn.scalars(select(EntityResource.resource_id)))
+        unlinked = sorted(
+            conn.scalars(
+                select(Resource.relpath).where(Resource.kind == "file", Resource.id.not_in(linked))
+            )
+        )
+    assert unlinked == [
+        "Alien.jpg",
+        "Inception (2010)/.actors/Leonardo_DiCaprio.jpg",
+        "Inception (2010)/Inception (2010)-trailer.mkv",
+        "The Lord of the Rings/Extras/Making of.mkv",
+        "The Lord of the Rings/map.jpg",
+        "random.jpg",
+    ]
+
+
+def test_thumbnail_chains() -> None:
+    theme = MoviesTheme()
+    assert [repr(p) for p in theme.thumbnail_chain(Movie)] == [
+        "RoleImage('poster')",
+        "RoleImage('screenshot')",
+        "Icon('video')",
+    ]
+    assert repr(theme.thumbnail_chain(Actor)[0]) == "RoleImage('photo')"
 
 
 def test_a_renamed_file_moves_its_movie(env: Env) -> None:

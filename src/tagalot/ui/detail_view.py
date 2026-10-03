@@ -26,7 +26,7 @@ import html
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThreadPool, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
@@ -467,10 +467,15 @@ class DetailPage(QWidget):
         if event.type() == QEvent.Type.MouseButtonDblClick and self.file_opener is not None:
             resource_id = watched.property("resource_id")
             if isinstance(resource_id, int):
-                opener = self.file_opener
-                opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
+                self._open_file(resource_id)
                 return True
         return super().eventFilter(watched, event)
+
+    def _open_file(self, resource_id: object) -> None:
+        """Open one of the item's files with its program."""
+        if self.file_opener is not None and isinstance(resource_id, int):
+            opener = self.file_opener
+            opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
 
     def _file_menu(self, file: FileRow) -> QMenu:
         """The right-click menu of one file row."""
@@ -502,15 +507,33 @@ class DetailPage(QWidget):
         gallery.setWrapping(True)
         gallery.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         gallery.setMinimumHeight(GALLERY_THUMBNAIL + 48)
+        gallery.setObjectName(f"gallery_{section.title}")
         items: dict[int, QListWidgetItem] = {}
+        files: dict[int, FileRow] = {}
         for file in section.files:
             item = QListWidgetItem(icon_for("image"), file.relpath.rpartition("/")[2])
             item.setToolTip(file.relpath)
+            item.setData(Qt.ItemDataRole.UserRole, file.resource_id)
             gallery.addItem(item)
             items[file.resource_id] = item
+            files[file.resource_id] = file
+        # Like a file row: double-click (or Enter) opens the picture, right-click its menu.
+        gallery.itemActivated.connect(
+            lambda item: self._open_file(item.data(Qt.ItemDataRole.UserRole))
+        )
+        gallery.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        gallery.customContextMenuRequested.connect(
+            lambda point: self._gallery_menu(gallery, files, point)
+        )
         if section.files:
             self._load_gallery(gallery, items)
         return gallery
+
+    def _gallery_menu(self, gallery: QListWidget, files: dict[int, FileRow], point: QPoint) -> None:
+        item = gallery.itemAt(point)
+        file = files.get(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
+        if file is not None:
+            self._file_menu(file).exec(gallery.viewport().mapToGlobal(point))
 
     def _load_gallery(self, gallery: QListWidget, items: dict[int, QListWidgetItem]) -> None:
         resolver = self.session.thumbnails
