@@ -55,6 +55,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # Themes (built-in, and ones declared in tests) use class-level lists by design (DESIGN.md §9).
 "src/tagalot/builtin_themes/*" = ["RUF012"]
+"src/tagalot/themes/template.py" = ["RUF012"]
 "tests/**" = ["RUF012"]
 
 # Keep the hand-aligned examples in docs/*.md as written.
@@ -83,6 +84,8 @@ markers = [
 ]
 # Fail on SQLAlchemy deprecations so API changes are fixed when they appear.
 filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
+# A test still running after 5 minutes is hung: print every thread's stack to show where.
+faulthandler_timeout = 300
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13"]

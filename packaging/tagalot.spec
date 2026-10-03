@@ -23,6 +23,8 @@ a = Analysis(  # noqa: F821
     pathex=[str(SRC)],
     # Built-in themes are found with pkgutil at run time, so nothing imports them by name.
     hiddenimports=collect_submodules("tagalot.builtin_themes"),
+    # The theme template is copied as source by `tagalot --new-theme`.
+    datas=[(str(SRC / "tagalot" / "themes" / "template.py"), "tagalot/themes")],
     excludes=["tkinter"],
     noarchive=False,
 )

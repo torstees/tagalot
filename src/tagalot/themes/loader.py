@@ -103,6 +103,19 @@ def load_themes(
     return catalog
 
 
+def load_theme_file(path: Path) -> ThemeCatalog:
+    """Import and validate one theme file (or package folder) on its own, as the app would
+    load it from a themes folder: for checking a theme while writing it. Never raises."""
+    catalog = ThemeCatalog()
+    if path.is_dir() and (path / "__init__.py").is_file():
+        _add(catalog, str(path), _import_file(path / "__init__.py", path), builtin=False)
+    elif path.is_file() and path.suffix == ".py":
+        _add(catalog, str(path), _import_file(path, path), builtin=False)
+    else:
+        catalog.problems.append(ThemeProblem(str(path), "it isn't a .py file or a package"))
+    return catalog
+
+
 def validate_theme(theme: type[Theme]) -> list[str]:
     """Everything wrong with a theme's declarations, checked without a database."""
     problems: list[str] = []

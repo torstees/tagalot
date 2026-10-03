@@ -55,6 +55,13 @@ def run_check(out: Callable[[str], None] = print) -> int:
         ok=not missing,
     )
 
+    try:
+        from tagalot.theme_tools import template_source
+
+        line("Template", f"theme template, {len(template_source().splitlines())} lines")
+    except Exception as e:
+        line("Template", f"{type(e).__name__}: {e}", ok=False)
+
     for name, probe, needed in READERS:
         try:
             line(name, probe(), needed=needed)

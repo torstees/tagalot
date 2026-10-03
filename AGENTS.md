@@ -69,6 +69,8 @@ Do not add a dependency without a clear need. When you add one, note it and the 
 ```
 src/tagalot/
   __main__.py            # entry point
+  selfcheck.py           # `tagalot --check`: what a build can do
+  theme_tools.py         # `--new-theme` and `--check-theme` for theme authors
   core/                  # no Qt imports allowed here
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)
@@ -99,6 +101,7 @@ src/tagalot/
   themes/
     api.py               # PUBLIC theme API — the only module themes import
     loader.py            # discovery and validation
+    template.py          # the template theme (`tagalot --new-theme`), kept valid by tests
   builtin_themes/        # generic.py, assets2d.py, music.py, movies.py
   ui/                    # all Qt code
     app.py, main_window.py, launcher.py, keep_config.py,
@@ -114,6 +117,7 @@ tests/
   fixtures/              # tiny sample files (images, zips, audio)
   core/, themes/, ui/
 docs/DESIGN.md
+docs/THEMES.md           # the guide for theme authors
 ```
 
 ## Architecture rules (do not break these)
