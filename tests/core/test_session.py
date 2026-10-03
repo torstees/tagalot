@@ -76,8 +76,8 @@ def test_an_unreachable_root_is_reported_not_raised(tmp_path: Path) -> None:
 def test_opening_errors_are_keep_errors(tmp_path: Path, files: Path) -> None:
     with pytest.raises(KeepError, match="is not a keep"):
         KeepSession.open(tmp_path, Settings())
-    with pytest.raises(KeepThemeError, match="'movies' theme, which isn't available"):
-        KeepSession.open(_keep(tmp_path, files, theme="movies"), Settings())
+    with pytest.raises(KeepThemeError, match="'podcasts' theme, which isn't available"):
+        KeepSession.open(_keep(tmp_path, files, theme="podcasts"), Settings())
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="only Windows locks open files")
