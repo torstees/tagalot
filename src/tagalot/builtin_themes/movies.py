@@ -304,7 +304,7 @@ class Movie(Entity):
         role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
-    card_lines = ("year",)
+    card_lines = ("year", "quality")
 
 
 @dataclass(frozen=True)
