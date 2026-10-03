@@ -216,6 +216,8 @@ class ScopeChip(QFrame):
         super().__init__(parent)
         self.type_id = type_id
         self.entity_id = entity_id
+        self.title = label
+        """What the chip names (a type's plural, or the Within item's title)."""
         self.setObjectName("scope_chip")
         self.label = QLabel(f"{prefix}: {label}")
         self.close_button = QToolButton()
@@ -632,6 +634,17 @@ class FilterBar(QWidget):
         self._text_timer.stop()
         self._applied_text = ""
         self._changed()
+
+    @property
+    def within_title(self) -> str:
+        """The title the "Within" chip shows, if there is one."""
+        return self._within.title if self._within is not None else ""
+
+    def set_text(self, text: str) -> None:
+        """Put text in the search box and apply it at once."""
+        self.text_edit.setText(text)
+        self._text_timer.stop()
+        self._apply_text()
 
     def focus_text(self) -> None:
         self.text_edit.setFocus(Qt.FocusReason.ShortcutFocusReason)
