@@ -13,7 +13,7 @@ item cheap blocking keys from its fields, only items of a type that share a key 
 with its ``similarity``, and pairs at or above its threshold are listed, most alike first.
 
 Comparing items side by side is ``core.compare`` (#119), merging them ``core.merge``
-(#120); "keep both as versions" comes next (§13, #121).
+(#120), and marking them not duplicates ``core.not_duplicates`` (#121).
 """
 
 import hashlib

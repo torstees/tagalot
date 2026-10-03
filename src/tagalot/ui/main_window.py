@@ -449,6 +449,10 @@ class MainWindow(QMainWindow):
             dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
             dedupe.open_entity.connect(self.open_entity)
             dedupe.merge_requested.connect(self.merge_items)
+            dedupe.versions_requested.connect(
+                lambda ids: self.tag_actions.merge_items(ids[0], ids[1:], {})
+            )
+            dedupe.not_duplicate_requested.connect(self.tag_actions.set_not_duplicate)
             return dedupe
         if target.kind == "triage":
             triage = TriagePage(

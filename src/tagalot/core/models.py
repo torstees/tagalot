@@ -336,6 +336,23 @@ class EntityMergeResource(Base):
     role: Mapped[str] = mapped_column(primary_key=True)
 
 
+class DedupeDismissal(Base):
+    """A group of identical files or a pair of similar items the user marked as not a
+    duplicate (§12 Dedupe, #121): hidden from the Dedupe page.
+
+    ``kind`` is ``exact`` (``key`` the fingerprint in hex, ``marker`` the group's resource
+    ids: it shows again once those change) or ``similar`` (``key`` the two entity ids,
+    lower first). Rows naming things since gone are harmless and ignored.
+    """
+
+    __tablename__ = "dedupe_dismissal"
+
+    kind: Mapped[str] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(primary_key=True)
+    marker: Mapped[str] = mapped_column(default="")
+    dismissed_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is the JSON form of a ``SearchSpec`` (§8)."""
 

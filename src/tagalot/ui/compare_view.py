@@ -41,6 +41,8 @@ class ComparePane(QWidget):
 
     open_entity = Signal(int)
     merge_requested = Signal(list)
+    versions_requested = Signal(list)
+    """Keep both as versions was pressed: the item ids, the one to keep first (#121)."""
     """Merge… was pressed: the items, as (id, title, where), in column order."""
 
     def __init__(
@@ -63,9 +65,17 @@ class ComparePane(QWidget):
         self.merge_button.setObjectName("merge")
         self.merge_button.clicked.connect(self._merge)
         self.merge_button.setVisible(False)
+        self.versions_button = QPushButton("Keep both as versions")
+        self.versions_button.setObjectName("versions")
+        self.versions_button.clicked.connect(self._versions)
+        self.versions_button.setVisible(False)
         header = QHBoxLayout()
         header.addWidget(self.summary, 1)
-        header.addWidget(self.merge_button)
+        self.action_row = QHBoxLayout()
+        """The pane's buttons; the page showing it may add its own (:meth:`add_action`)."""
+        self.action_row.addWidget(self.versions_button)
+        self.action_row.addWidget(self.merge_button)
+        header.addLayout(self.action_row)
         self.table = QTableWidget()
         self.table.setObjectName("compare")
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -96,6 +106,7 @@ class ComparePane(QWidget):
         self.table.setColumnCount(0)
         self.table.setVisible(False)
         self.merge_button.setVisible(False)
+        self.versions_button.setVisible(False)
         self.summary.setText(message)
 
     def compare(self, entity_ids: Sequence[int], note: str = "") -> None:
@@ -164,7 +175,8 @@ class ComparePane(QWidget):
             self._show_thumbnail(item.id)
 
     def _enable_merge(self, found: Comparison) -> None:
-        """Merge… shows for two items or more; it works on items of one type."""
+        """Merge… shows for two items or more; it works on items of one type. Keep both as
+        versions shows when merging keeps every file (songs, not pictures)."""
         self.merge_button.setVisible(len(found.items) > 1)
         same = len({i.type_label for i in found.items}) == 1
         self.merge_button.setEnabled(same)
@@ -173,6 +185,23 @@ class ComparePane(QWidget):
             if same
             else "Only items of the same type can be merged"
         )
+        self.versions_button.setVisible(found.versions)
+        self.versions_button.setText(
+            "Keep both as versions" if len(found.items) == 2 else "Keep all as versions"
+        )
+        first = found.items[0].title if found.items else ""
+        self.versions_button.setToolTip(
+            f"Merge into {first} (the left column) now: every file becomes one of its "
+            "versions, and its own values win. Merge\u2026 lets you choose instead."
+        )
+
+    def add_action(self, button: QPushButton) -> None:
+        """Put a button of the page's own before the pane's."""
+        self.action_row.insertWidget(0, button)
+
+    def _versions(self) -> None:
+        if self.comparison is not None:
+            self.versions_requested.emit([i.id for i in self.comparison.items])
 
     def _merge(self) -> None:
         found = self.comparison

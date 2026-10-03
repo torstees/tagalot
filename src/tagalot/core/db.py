@@ -155,6 +155,11 @@ def _v6_entity_merges(conn: Connection) -> None:
     Base.metadata.tables["entity_merge_resource"].create(conn)
 
 
+def _v7_dedupe_dismissals(conn: Connection) -> None:
+    """Format 8: groups and pairs marked as not duplicates (#121)."""
+    Base.metadata.tables["dedupe_dismissal"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -162,6 +167,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     4: _v4_skipped_resources,
     5: _v5_user_links,
     6: _v6_entity_merges,
+    7: _v7_dedupe_dismissals,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

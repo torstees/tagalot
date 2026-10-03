@@ -255,6 +255,14 @@ class TagActions(QObject):
             lambda label: f"{label}. Edit \u2192 Undo separates them again.",
         )
 
+    def set_not_duplicate(self, entries: list[tuple[str, str, str]], dismissed: bool) -> None:
+        """Hide groups or pairs from Dedupe as not duplicates, or show them again; one
+        undo step."""
+        self._run(
+            lambda: self.session.set_not_duplicate(entries, dismissed),
+            lambda label: f"{label}.",
+        )
+
     def unlink_file(self, entity_id: int, resource_id: int, role: str) -> None:
         """Remove a link made by hand; one undo step."""
         self._run(
