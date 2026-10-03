@@ -50,6 +50,26 @@ Tagalot never stores or moves user data. A keep holds only metadata and caches; 
 - **hashlib.blake2b** (stdlib) for fingerprints.
 - Tooling: **pytest**, **pytest-qt**, **ruff** (lint and format), **mypy**.
 
+### Packaging
+
+**PyInstaller** (#129), chosen after building Tagalot with all three candidates on Windows (Python 3.12, PySide6 6.11; the same code and checks for each):
+
+| | PyInstaller | Nuitka | Briefcase |
+|---|---|---|---|
+| Build | 57 s | 6 min 23 s (compiles C; needs a C compiler on every runner) | 33 s, plus 140 s for an MSI |
+| Size | 147 MB folder (65 MB zipped) | 159 MB | 710 MB (keeps all of Qt); 227 MB MSI |
+| `tagalot --check` | 0.47 s | 0.40 s | 1.0 s |
+| Main window shown | 0.60 s (0.65 s from source) | 0.49 s | not measured (its windowed stub hides output) |
+| Installer | none (a folder) | none | native MSI, DMG, AppImage/Flatpak/deb |
+
+All three found the built-in themes, MediaInfo, and the other readers once set up (PyInstaller needs `collect_submodules("tagalot.builtin_themes")`, since themes are found with `pkgutil`). PyInstaller builds fastest, smallest, with mature PySide6 and pymediainfo hooks; Briefcase's native installers and signing support were the main draw the other way. None cross-compiles, so each OS builds its own.
+
+- **The build** (`packaging/tagalot.spec`): a one-folder, windowed app (`dist/tagalot/`; `dist/Tagalot.app` on macOS, bundle id `io.github.torstees.tagalot`). PyInstaller is pinned in the `package` dependency group (`uv sync --group package`). `just package` builds and checks it (`scripts/check_package.py`).
+- **Checking a build:** `tagalot --check` prints the version, Python, Qt, SQLite's FTS5, the built-in themes, and each file reader (Pillow, mutagen, MediaInfo, py7zr, and RAR, which is optional) without opening a window, and exits 1 if something needed is missing (`selfcheck.py`). `--version` prints the version. A windowed Windows build has no console, so `--output FILE` writes either to a file.
+- **A folder, kept together:** `tagalot.exe` is a small launcher; Python, Qt, and the rest are in `_internal` beside it, so the `.exe` alone doesn't start ("Failed to load Python DLL"). Each folder build carries a `README.txt` saying so, and so do the release notes. A one-file `.exe` was considered and left out: it unpacks itself on every launch (seconds rather than 0.6 s) and draws more antivirus suspicion.
+- **CI** (`.github/workflows/package.yml`): on pushes to main, `v*` tags, releases published on GitHub, pull requests touching packaging, and by hand, each of Windows, macOS, and Linux builds, runs `--check`, and uploads `Tagalot-<version>-<OS>-<arch>` (a zip; a `.tar.gz` on Linux). For a `v*` tag the tag must be the code's version (`tagalot.__version__`, kept equal to `pyproject.toml`'s by a test), or the build stops; the builds are then attached to the tag's release, which is created (with a line on keeping the folder together, and generated notes) if there is none. GitHub runs the workflow as it is at the tagged commit, so a tag made before this workflow existed (the first `v0.5.0`) can't get builds: it has to be made again on a commit that has it.
+- **Not yet:** native installers (a Windows setup, a DMG, an AppImage), code signing and notarization, and an app icon: later issues.
+
 ### Why Python, not Rust
 
 The expected bottlenecks are directory scanning over network shares and thumbnail generation. Both are I/O-bound, so a faster language would not help much; running them in background workers does. Python also makes the plugin requirement straightforward: themes are importable modules. Rust has no stable ABI for dynamically loaded plugins, which would make drop-in themes much harder. If profiling identifies a CPU-bound hot spot (hashing, walking, image decoding), that function can be moved to Rust via PyO3 behind the same Python interface.
@@ -864,7 +884,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 1. Should `aggregate_up` be exposed in the main filter bar or only in an advanced menu?
 2. ~~How should entity merges interact with tag inheritance when the two entities have different parents?~~ Answered (#120): the kept item is in every container either was in, so it inherits tags from all of them (§13).
 3. Is there a need for tags scoped to one entity type, or are all tags global to the keep?
-4. Packaging: PyInstaller vs. Briefcase vs. Nuitka for distributable builds.
+4. ~~Packaging: PyInstaller vs. Briefcase vs. Nuitka for distributable builds.~~ Answered (#129): PyInstaller (§3 Packaging).
 
 ## 16. Decisions log
 
@@ -957,6 +977,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Double-click and Enter follow the type's `double_click`; Ctrl+Enter does the other; the menu's "Open" is now "Open page", with the double-click choice shown bold; the preview strip's double-click keeps opening the page (§12). |
 | 2026-09 | Play album writes `.m3u8` (UTF-8) rather than `.m3u`, since paths and titles may not be ASCII; a new file per run, so a player holding the last playlist doesn't block the next (§9). |
 | 2026-09 | Removing a root is the user's choice each time: stop watching it and keep its items (the default; `watched = false` in keep.toml, reconnected by watching or adding the folder again), or delete its items after counts and a second confirmation. Configuration edits are saved immediately. Scans never delete (§4, §12). |
+| 2026-10 | Packaging with PyInstaller (#129), after building with PyInstaller, Nuitka, and Briefcase on Windows: fastest build (57 s), smallest (147 MB), startup as from source; per-OS one-folder builds in CI, each smoke-tested with the new `tagalot --check`, attached to the `v*` release whose tag matches the code's version (0.5.0); installers and signing later (§3). |
 | 2026-10 | Keyboard shortcuts reference (#128): Help → Keyboard shortcuts (F1, Ctrl+/), a window that reads the menus' keys from the menus themselves and lists the keys that work in place from one table (`ui/shortcuts.py`); a test keeps every key to one command (§12). |
 | 2026-10 | Saved searches (#127) keep the page's own search and its filter bar separately, so opening one rebuilds removable chips, plus the layout; Ctrl+S updates a saved search's page in place, Save as makes another; names are unique ignoring case; save, rename, and delete are undoable (§8, §12). |
 | 2026-10 | Related sections are embedded searches (#125, asked in review): a `related` filter on searches (from either side, kept in saved searches), so a filmography or cast gets list/grid, thumbnails, sorting, and tagging like a container's contents; remove moved from an × per link to the items' menu (§8, §12). |

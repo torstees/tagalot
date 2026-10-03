@@ -37,9 +37,10 @@ uv run pytest -m "not gui"       # non-GUI tests only
 uv run ruff check . --fix        # lint
 uv run ruff format .             # format
 uv run mypy src                  # type-check
+uv run tagalot --check           # what this install can do (themes, readers)
 ```
 
-The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, and `just demo` resets and opens the demo keep. just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
+The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, `just demo` resets and opens the demo keep, and `just package` builds the app with PyInstaller (`packaging/tagalot.spec`) and checks it. just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
 
 GUI tests use pytest-qt and must run headless: `QT_QPA_PLATFORM=offscreen` is set in the pytest config. All four checks (pytest, ruff check, ruff format --check, mypy) must pass before a task is done.
 

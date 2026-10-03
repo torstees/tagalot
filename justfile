@@ -64,3 +64,9 @@ check:
     uv run mypy src
     uv run mypy tests
     uv run pytest
+
+# Build the app with PyInstaller into dist/ (dist/Tagalot.app on macOS) and check it
+package:
+    uv sync --group package
+    uv run pyinstaller packaging/tagalot.spec --noconfirm
+    uv run python scripts/check_package.py
