@@ -74,6 +74,31 @@ All three found the built-in themes, MediaInfo, and the other readers once set u
 
 The expected bottlenecks are directory scanning over network shares and thumbnail generation. Both are I/O-bound, so a faster language would not help much; running them in background workers does. Python also makes the plugin requirement straightforward: themes are importable modules. Rust has no stable ABI for dynamically loaded plugins, which would make drop-in themes much harder. If profiling identifies a CPU-bound hot spot (hashing, walking, image decoding), that function can be moved to Rust via PyO3 behind the same Python interface.
 
+### Performance (measured, #131)
+
+`scripts/profile_scan.py PATH --theme T [--cprofile]` makes a throwaway keep in `scratch/profile/`, scans PATH, times each phase from the scan's progress messages, rescans, and times thumbnails from a cold cache on 1 and N threads. Measured in October 2026 on Windows 11, on a folder of 9,341 files (9,226 JPEGs, about 10 GB) on an SMB share, and on a local copy of it:
+
+| | Share | Local |
+|---|---|---|
+| First scan, generic theme | 98 s (fingerprinting 80 s) | |
+| First scan, assets2d | 296 s | 135 s |
+| Walking | 0.5 s | 0.1 s |
+| Fingerprinting | 79 s | 30 s |
+| Reading (the theme's `prepare`: image size and picture hash) | 164 s | 53 s |
+| Ingesting (the DB writer) | 52 s | 52 s |
+| Rescan, nothing changed | 0.8 s | 0.2 s |
+| Thumbnails, 1 thread / 8 threads | 6.3 / 42 per s | 6.8 / 47 per s |
+
+Where the time goes (cProfile):
+
+- **Opening and reading files** dominate on the share: `open()` alone is 115 s of the assets2d scan (6 ms each; 28 s locally, where antivirus on open is most of it), and `read()` 56 s. Hashing itself (blake2b) is 1 s. This is latency, not CPU, and it is spent one file at a time: fingerprinting and `prepare` each read files sequentially.
+- **Image decoding** (Pillow, in C, already decoding JPEGs at 1/8 size) is 43 s, the same on both. Pillow releases the GIL while decoding, so threads help.
+- **Ingest** is CPU in SQLAlchemy: about 18 statements per item (169k for 9.4k items), with statement compilation and caching around 27 s of the 52 s. It is the same on the share and locally.
+- **Thumbnails** scale almost linearly with threads (7× on 8 threads), since each is I/O plus GIL-free decoding.
+- Walking and rescans are already fast.
+
+**Conclusion: no Rust.** None of the costs is Python code a faster language would remove: they are I/O latency (fixed by doing several files at once), C code that is already native (decoding, hashing), and the number of database statements per item (fixed by batching them). Follow-ups: fingerprint files on several threads (#273), run the theme's `prepare` on several threads (#274), resolve background thumbnails on several threads (#275), and fewer, batched statements in ingest (#276).
+
 ## 4. The keep on disk
 
 ```
@@ -876,7 +901,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 - **Archive members as resources**, using `resource.parent_resource_id` and paths inside the archive, so a font inside a zip can be its own entity.
 - **Metadata fetchers** (TMDb, MusicBrainz) as an optional theme hook writing fields with provenance `fetched`.
-- **Rust hot spots** via PyO3 if profiling justifies them.
+- **Rust hot spots** via PyO3 if profiling justifies them (profiled in #131: not yet, §3 Performance).
 - **Entry-point theme packaging** and a theme template/cookiecutter.
 - Scheduled background rescans.
 
@@ -1006,3 +1031,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | The Keep configuration window has Folders, Thumbnails, and Keep tabs; the thumbnail size applies at once, theme options (keep-wide and per folder) at the next scan; Clear thumbnail cache moved from the Keep menu to the Thumbnails tab (§10, §12). |
 | 2026-09 | Keep launcher is a separate start dialog; one main window per keep; new keeps store the watched folder exactly as typed and derive the root's name and id from its last segment (§12). |
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
+| 2026-10 | Profiling (#131, §3 Performance): on a 9,341-file share, scanning is dominated by per-file open and read latency, done one file at a time, then by image decoding (native already) and SQLAlchemy statement overhead in ingest. No Rust; instead parallel fingerprinting, `prepare`, and background thumbnails, and batched ingest statements (#273 to #276). `scripts/profile_scan.py` reproduces the measurements. |
