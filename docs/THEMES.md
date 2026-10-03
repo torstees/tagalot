@@ -25,10 +25,10 @@ A theme is **one Python file** with **one `Theme` subclass**, importing only `ta
 2. **Check it** as you edit, without opening a window:
 
    ```
-   tagalot --check-theme %LOCALAPPDATA%\tagalot\themes\recipes.py
+   tagalot --check-theme recipes
    ```
 
-   It imports the file and validates it the way the launcher does: `ok: 'recipes' (Recipes, version 1)`, or each problem with what to fix. (Packaged Windows builds have no console: add `--output check.txt` and read the file.)
+   It finds the theme by its id (`recipes.py` in your themes folder, or any theme declaring `id = "recipes"`; give a path to check a file elsewhere), imports it, and validates it the way the launcher does: `ok: 'recipes' (Recipes, version 1)`, or each problem with what to fix. If no theme has that id, it says where it looked and lists the theme files that failed to load, since a broken file can't say its id. (Packaged Windows builds have no console: add `--output check.txt` and read the file.)
 
 3. **Use it:** in the launcher, **New keep…** lists your theme next to the built-in ones. Point the keep at a folder of your files and scan.
 
@@ -239,6 +239,6 @@ Only items sharing a key are compared, never all pairs; pairs at or above `near_
 
 ## Testing a theme
 
-- `tagalot --check-theme FILE` catches import errors and declaration mistakes.
+- `tagalot --check-theme ID_OR_FILE` catches import errors and declaration mistakes.
 - The launcher lists every theme with its problems, and the Activity panel shows `ctx.warn` messages and files that couldn't be read.
 - For automated tests, see how the built-in themes are tested in [`tests/themes/`](../tests/themes/): each builds a small folder of files in a temporary directory, scans it with `scan_root`, and checks the items made. [`tests/themes/test_template.py`](../tests/themes/test_template.py) does it for the template in about forty lines.

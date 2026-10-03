@@ -1,13 +1,16 @@
 """Helpers for theme authors (docs/THEMES.md; #130): ``tagalot --new-theme ID`` starts a
-theme from the template in the user themes folder, and ``tagalot --check-theme FILE`` loads
-one theme file and lists what's wrong with it, as the launcher would."""
+theme from the template in the user themes folder, and ``tagalot --check-theme ID_OR_FILE``
+loads one theme and lists what's wrong with it, as the launcher would. A theme is found by
+its file, or by its id: ``<id>.py`` (or a ``<id>/`` package) in the themes folders, else
+whichever theme declares that id (built-in ones too)."""
 
 import keyword
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from importlib import resources
 from pathlib import Path
 
+from tagalot.core.settings import load_settings
 from tagalot.themes.loader import default_user_themes_dir, load_theme_file, load_themes
 
 Out = Callable[[str], None]
@@ -85,18 +88,50 @@ def run_new_theme(args: list[str], out: Out = print) -> int:
         out(f"Can't make the theme: {e}")
         return 1
     out(f"Wrote {path}")
-    out("Next: edit its TODO parts, check it with `tagalot --check-theme <file>`,")
+    out(f"Next: edit its TODO parts, check it with `tagalot --check-theme {theme_id}`,")
     out("then create a keep with it (it's listed in the new-keep dialog).")
     return 0
 
 
+def check_theme_named(name: str, folders: Sequence[Path] | None = None, out: Out = print) -> int:
+    """Check a theme given as a file or folder path, or as an id (see the module
+    docstring). ``folders`` are the themes folders searched (the user's, then extra ones
+    from settings, by default)."""
+    path = Path(name)
+    if path.exists():
+        return check_theme(path, out)
+    if folders is None:
+        folders = [default_user_themes_dir(), *load_settings().theme_dirs]
+    for folder in folders:
+        for candidate in (folder / f"{name}.py", folder / name):
+            if candidate.is_file() or (candidate / "__init__.py").is_file():
+                return check_theme(candidate, out)
+    catalog = load_themes(user_dir=folders[0], extra_dirs=folders[1:]) if folders else None
+    loaded = catalog.get(name) if catalog is not None else None
+    if loaded is not None and loaded.builtin:
+        theme = loaded.theme
+        out(f"ok: {theme.id!r} ({theme.name}, version {theme.version}), built in")
+        out(f"   types: {', '.join(e.__name__ for e in theme.entities)}")
+        return 0
+    if loaded is not None:
+        return check_theme(Path(loaded.source), out)
+    out(f"problem: no theme {name!r}: not a file, and no theme has that id")
+    out(f"   looked in: {', '.join(str(f) for f in folders) or '(no themes folders)'}")
+    broken = sorted({p.source for p in catalog.problems}) if catalog is not None else []
+    if broken:  # a broken file can't say its id: one of these may be it
+        out("   these theme files didn't load (check one by its path):")
+        for source in broken:
+            out(f"     {source}")
+    return 1
+
+
 def run_check_theme(args: list[str], out: Out = print) -> int:
-    """``--check-theme FILE``."""
-    path = _value(args, "--check-theme")
-    if path is None:
-        out("Usage: tagalot --check-theme FILE")
+    """``--check-theme ID_OR_FILE``."""
+    name = _value(args, "--check-theme")
+    if name is None:
+        out("Usage: tagalot --check-theme ID_OR_FILE")
         return 2
-    return check_theme(Path(path), out)
+    return check_theme_named(name, out=out)
 
 
 def _value(args: list[str], flag: str) -> str | None:

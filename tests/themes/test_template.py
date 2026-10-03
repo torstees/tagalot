@@ -16,10 +16,17 @@ from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity, EntityContains
 from tagalot.core.scanjob import scan_root
+from tagalot.core.settings import Settings
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
-from tagalot.theme_tools import ThemeToolError, check_theme, new_theme, template_source
+from tagalot.theme_tools import (
+    ThemeToolError,
+    check_theme,
+    check_theme_named,
+    new_theme,
+    template_source,
+)
 from tagalot.themes import template
 from tagalot.themes.loader import validate_theme
 from tagalot.themes.template import Group, Item, TemplateTheme
@@ -164,13 +171,56 @@ def test_the_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("tagalot.theme_tools.default_user_themes_dir", lambda: tmp_path)
+    monkeypatch.setattr("tagalot.theme_tools.load_settings", Settings)  # no extra folders
     monkeypatch.setattr(sys, "argv", ["tagalot", "--new-theme", "comics", "--name", "Comics"])
     assert main() == 0
     out = capsys.readouterr().out
     assert f"Wrote {tmp_path / 'comics.py'}" in out
-    monkeypatch.setattr(sys, "argv", ["tagalot", "--check-theme", str(tmp_path / "comics.py")])
-    assert main() == 0
-    assert capsys.readouterr().out.startswith("ok: 'comics' (Comics, version 1)")
+    assert "tagalot --check-theme comics" in out  # the next step, by id
+    for name in ("comics", str(tmp_path / "comics.py")):  # by id, or by path
+        monkeypatch.setattr(sys, "argv", ["tagalot", "--check-theme", name])
+        assert main() == 0
+        assert capsys.readouterr().out.startswith("ok: 'comics' (Comics, version 1)")
     monkeypatch.setattr(sys, "argv", ["tagalot", "--new-theme"])
     assert main() == 2
     assert "Usage" in capsys.readouterr().out
+
+
+def _check(name: str, folders: list[Path]) -> tuple[int, list[str]]:
+    lines: list[str] = []
+    return check_theme_named(name, folders, lines.append), lines
+
+
+def test_check_a_theme_by_its_id(tmp_path: Path) -> None:
+    extra = tmp_path / "extra"
+    new_theme("recipes", folder=tmp_path)
+    new_theme("comics", folder=extra)
+    assert _check("recipes", [tmp_path, extra])[0] == 0
+    code, lines = _check("comics", [tmp_path, extra])  # found in the second folder
+    assert code == 0
+    assert str(extra / "comics.py") in lines[0]
+
+
+def test_by_the_id_a_file_declares(tmp_path: Path) -> None:
+    """A file named otherwise is found by the id inside it."""
+    source = template_source().replace('id = "template"', 'id = "odd"')
+    (tmp_path / "my_file.py").write_text(source, encoding="utf-8")
+    code, lines = _check("odd", [tmp_path])
+    assert code == 0
+    assert lines[0].startswith("ok: 'odd'")
+    assert "my_file.py" in lines[0]
+
+
+def test_a_built_in_theme_by_its_id(tmp_path: Path) -> None:
+    code, lines = _check("music", [tmp_path])
+    assert code == 0
+    assert lines[0] == "ok: 'music' (Music, version 2), built in"
+
+
+def test_an_id_no_theme_has(tmp_path: Path) -> None:
+    (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+    code, lines = _check("nope", [tmp_path])
+    assert code == 1
+    assert lines[0] == "problem: no theme 'nope': not a file, and no theme has that id"
+    assert lines[1] == f"   looked in: {tmp_path}"
+    assert any(line.strip() == str(tmp_path / "broken.py") for line in lines)  # maybe it
