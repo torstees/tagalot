@@ -43,6 +43,7 @@ CORE_TABLES = {
     "triage_dismissal",
     "entity_merge",
     "entity_merge_resource",
+    "dedupe_dismissal",
     "schema_version",
 }
 FTS_TABLES = {

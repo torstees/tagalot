@@ -14,16 +14,20 @@ opens the first item, and the menu either one.
 Under both lists, the **compare pane** (#119, ``ui.compare_view``) shows the current
 group's items, or the current pair, side by side, highlighting what differs.
 
-Its **Merge…** opens ``ui.merge_dialog`` (#120); keeping both as versions comes next (#121).
+Its **Merge…** opens ``ui.merge_dialog`` (#120); **Keep both as versions** merges into
+the left item at once (#121). **Not a duplicate** hides the current group or pair
+(``core.not_duplicates``; a group shows again once its files change), and **Show
+dismissed** lists those greyed, to show them as duplicates again.
 """
 
 from functools import partial
 
 import shiboken6
 from PySide6.QtCore import QModelIndex, QPoint, Qt, Signal
-from PySide6.QtGui import QShowEvent, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QPalette, QShowEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -48,6 +52,14 @@ from tagalot.core.dedupe import (
 )
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.not_duplicates import (
+    EXACT,
+    Dismissals,
+    Entry,
+    group_entry,
+    load_dismissals,
+    pair_entry,
+)
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.ui.compare_view import ComparePane, known_root
@@ -68,6 +80,10 @@ class DedupePage(QWidget):
     open_entity = Signal(int)
     merge_requested = Signal(list)
     """The compare pane's Merge…: (id, title, where) of each item."""
+    versions_requested = Signal(list)
+    """The compare pane's Keep both as versions: the item ids, the one to keep first."""
+    not_duplicate_requested = Signal(list, bool)
+    """Not a duplicate (``True``) or Show as a duplicate again (``False``): the entries."""
 
     def __init__(
         self,
@@ -81,6 +97,11 @@ class DedupePage(QWidget):
         self.session = session
         self.file_opener = file_opener
         self.groups: list[DuplicateGroup] | None = None
+        """The groups listed (dismissed ones only with Show dismissed)."""
+        self.all_groups: list[DuplicateGroup] = []
+        self.all_pairs = NearDuplicates([])
+        self.dismissals = Dismissals()
+        self._hidden_groups = self._hidden_pairs = 0
         self.checks: dict[bytes, Verification] = {}
         self.checking = 0
         self._generation = 0
@@ -152,9 +173,20 @@ class DedupePage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(identical, "Identical files")
         self.tabs.addTab(similar, "Similar items")
+        self.show_dismissed = QCheckBox("Show dismissed")
+        self.show_dismissed.setObjectName("show_dismissed")
+        self.show_dismissed.setToolTip("List the groups and pairs marked as not duplicates, greyed")
+        self.show_dismissed.toggled.connect(lambda _: self._relist())
+        self.tabs.setCornerWidget(self.show_dismissed)
         self.compare_pane = ComparePane(session, thumbnails)
         self.compare_pane.open_entity.connect(self.open_entity)
         self.compare_pane.merge_requested.connect(self.merge_requested)
+        self.compare_pane.versions_requested.connect(self.versions_requested)
+        self.not_duplicate_button = QPushButton("Not a duplicate")
+        self.not_duplicate_button.setObjectName("not_duplicate")
+        self.not_duplicate_button.clicked.connect(self._not_duplicate)
+        self.not_duplicate_button.setVisible(False)
+        self.compare_pane.add_action(self.not_duplicate_button)
         self.tree.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.similar_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.tabs.currentChanged.connect(lambda _: self._compare())
@@ -183,31 +215,40 @@ class DedupePage(QWidget):
         generation, session = self._generation, self.session
         self.summary.setText("Looking for duplicates\u2026")
 
-        def job() -> list[DuplicateGroup]:
+        def job() -> tuple[list[DuplicateGroup], Dismissals]:
             with session.reader.connect() as conn:
-                return exact_groups(conn, known_root(session))
+                return exact_groups(conn, known_root(session)), load_dismissals(conn)
 
-        def done(groups: list[DuplicateGroup]) -> None:
+        def done(found: tuple[list[DuplicateGroup], Dismissals]) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
-                self._show(groups)
+                self.all_groups, self.dismissals = found
+                self._show(self.all_groups)
 
         run_in_pool(job, on_done=done)
         self.similar_summary.setText("Looking for similar items\u2026")
 
-        def similar_job() -> NearDuplicates:
+        def similar_job() -> tuple[NearDuplicates, Dismissals]:
             with session.reader.connect() as conn:
-                return near_duplicates(conn, session.schema)
+                return near_duplicates(conn, session.schema), load_dismissals(conn)
 
-        def similar_done(found: NearDuplicates) -> None:
+        def similar_done(found: tuple[NearDuplicates, Dismissals]) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
-                self._show_pairs(found)
+                self.all_pairs, self.dismissals = found
+                self._show_pairs(self.all_pairs)
 
         run_in_pool(similar_job, on_done=similar_done)
 
     # --- similar items ---
 
-    def _show_pairs(self, found: NearDuplicates) -> None:
+    def _show_pairs(self, everything: NearDuplicates) -> None:
         current = self._current_pair()
+        hidden = [p for p in everything.pairs if self.dismissals.hides(pair_entry(p))]
+        shown = (
+            everything.pairs
+            if self.show_dismissed.isChecked()
+            else [p for p in everything.pairs if p not in hidden]
+        )
+        found = NearDuplicates(shown, everything.skipped_keys)
         self.pairs = found
         self.similar.removeRows(0, self.similar.rowCount())
         labels = type_labels(self.session.schema)
@@ -218,13 +259,19 @@ class DedupePage(QWidget):
                 QStandardItem(pair.a[1]),
                 QStandardItem(pair.b[1]),
             ]
+            if pair in hidden:
+                _grey(cells)
             self.similar.appendRow(cells)
-        n = len(found.pairs)
+        n = len(everything.pairs) - len(hidden)
         text = (
             f"{n:,} {'pair' if n == 1 else 'pairs'} of items that look alike, most alike first."
             if n
             else "No similar items found."
         )
+        if hidden:
+            text += f" {len(hidden):,} marked as not duplicates."
+        self._hidden_pairs = len(hidden)
+        self._count_dismissed()
         if found.skipped_keys:
             text += (
                 f" {found.skipped_keys:,} groups too large to compare were skipped "
@@ -233,7 +280,7 @@ class DedupePage(QWidget):
         self.similar_summary.setText(text)
         self.tabs.setTabText(1, f"Similar items ({n:,})" if n else "Similar items")
         if current is not None:  # the same pair stays current (after tagging one, say)
-            ids = (current.a[0], current.b[0])
+            ids = (current.a[0], current.b[0])  # (gone when it was just dismissed)
             row = next((i for i, p in enumerate(found.pairs) if (p.a[0], p.b[0]) == ids), None)
             if row is not None:
                 self.similar_table.setCurrentIndex(self.similar.index(row, 0))
@@ -247,6 +294,19 @@ class DedupePage(QWidget):
     def _compare(self) -> None:
         """Show the current tab's current group or pair in the compare pane."""
         pane = self.compare_pane
+        entry = self._current_entry()
+        self.not_duplicate_button.setVisible(entry is not None)
+        if entry is not None:
+            dismissed = self.dismissals.hides(entry)
+            self.not_duplicate_button.setText(
+                "Show as a duplicate again" if dismissed else "Not a duplicate"
+            )
+            self.not_duplicate_button.setToolTip(
+                "List it with the others again"
+                if dismissed
+                else "Hide it from this page (Show dismissed lists it again)"
+                + ("; it comes back if its copies change" if entry[0] == EXACT else "")
+            )
         if self.tabs.currentIndex() == 1:
             pair = self._current_pair()
             if pair is None:
@@ -266,6 +326,28 @@ class DedupePage(QWidget):
             pane.compare([entity_id], f"Every copy belongs to one item, {title}.")
         else:
             pane.compare([i for i, _ in items], f"{len(items):,} items use these copies.")
+
+    def _current_entry(self) -> Entry | None:
+        """How the current group or pair would be dismissed, if there is one."""
+        if self.tabs.currentIndex() == 1:
+            pair = self._current_pair()
+            return pair_entry(pair) if pair is not None else None
+        group = self._current_group()
+        return group_entry(group) if group is not None else None
+
+    def _not_duplicate(self) -> None:
+        entry = self._current_entry()
+        if entry is not None:
+            self.not_duplicate_requested.emit([entry], not self.dismissals.hides(entry))
+
+    def _relist(self) -> None:
+        self._show(self.all_groups)
+        self._show_pairs(self.all_pairs)
+
+    def _count_dismissed(self) -> None:
+        n = self._hidden_groups + self._hidden_pairs
+        self.show_dismissed.setText(f"Show dismissed ({n:,})" if n else "Show dismissed")
+        self.show_dismissed.setEnabled(bool(n) or self.show_dismissed.isChecked())
 
     def _current_pair(self) -> NearPair | None:
         row = self.similar_table.currentIndex().row()
@@ -296,24 +378,34 @@ class DedupePage(QWidget):
         menu.addAction(f"Open {pair.b[1]}").triggered.connect(lambda: self._open_pair(row, False))
         menu.exec(self.similar_table.viewport().mapToGlobal(point))
 
-    def _show(self, groups: list[DuplicateGroup]) -> None:
+    def _show(self, everything: list[DuplicateGroup]) -> None:
         current = self._current_group()
+        hidden = [g for g in everything if self.dismissals.hides(group_entry(g))]
+        listed = [g for g in everything if g not in hidden]
+        groups = everything if self.show_dismissed.isChecked() else listed
         self.groups = groups
         self.model.removeRows(0, self.model.rowCount())
         for group in groups:
             row = self._group_row(group)
             for file in group.files:
                 row[0].appendRow(self._file_row(file))
+            if group in hidden:
+                _grey(row)
             self.model.appendRow(row)
             self._show_check(group)
-        wasted = sum(g.wasted for g in groups)
-        self.summary.setText(
-            f"{len(groups):,} {'group' if len(groups) == 1 else 'groups'} of identical "
+        wasted = sum(g.wasted for g in listed)
+        text = (
+            f"{len(listed):,} {'group' if len(listed) == 1 else 'groups'} of identical "
             "files; the extra copies take "
             f"{format_bytes(wasted)}."
-            if groups
+            if listed
             else "No duplicate files found."
         )
+        if hidden:
+            text += f" {len(hidden):,} marked as not duplicates."
+        self.summary.setText(text)
+        self._hidden_groups = len(hidden)
+        self._count_dismissed()
         self.check_all_button.setEnabled(bool(groups))
         if current is not None:  # the same group stays current
             item = self._row_of(current)
@@ -464,3 +556,10 @@ class DedupePage(QWidget):
         file = self._file_at(index)
         if file is not None and file.items:
             self.open_entity.emit(file.items[0][0])
+
+
+def _grey(cells: list[QStandardItem]) -> None:
+    """A dismissed group's or pair's row: greyed, saying why."""
+    for cell in cells:
+        cell.setForeground(QPalette().color(QPalette.ColorRole.PlaceholderText))
+        cell.setToolTip("Marked as not a duplicate")

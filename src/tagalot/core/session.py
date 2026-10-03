@@ -31,6 +31,7 @@ from tagalot.core.keep_settings import (
 from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
+from tagalot.core.not_duplicates import Entry, set_not_duplicate
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.root_admin import (
     RemovalCounts,
@@ -279,6 +280,13 @@ class KeepSession:
         change = self.writer.run(
             lambda conn: merge_items(conn, schema, keep_id, other_ids, choices)
         )
+        self.tags.record(change)
+        return change.label
+
+    def set_not_duplicate(self, entries: Sequence[Entry], dismissed: bool = True) -> str:
+        """Hide groups or pairs from Dedupe as not duplicates (or show them again); one
+        undo step. Returns its label. Runs in a worker."""
+        change = self.writer.run(lambda conn: set_not_duplicate(conn, entries, dismissed=dismissed))
         self.tags.record(change)
         return change.label
 

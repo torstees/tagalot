@@ -123,3 +123,83 @@ def test_the_merge_dialog(qtbot: QtBot, window: MainWindow, session: KeepSession
     qtbot.waitUntil(lambda: dialog.plan is not None and dialog.plan.keep[0] == second, timeout=5000)
     assert dialog.other_ids == [first]
     assert dialog.choices == {"field:year": second}  # its own value, by default
+
+
+def test_not_a_duplicate(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    page = _two_blues(qtbot, window, session)
+    button = page.not_duplicate_button
+    assert button.isVisible()
+    assert button.text() == "Not a duplicate"
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as blocker:
+        button.click()
+    assert blocker.args == ["Mark 1 group as not a duplicate."]
+    qtbot.waitUntil(lambda: page.groups == [], timeout=5000)
+    assert page.summary.text() == "No duplicate files found. 1 marked as not duplicates."
+    assert page.show_dismissed.text() == "Show dismissed (1)"
+    assert not button.isVisible()  # nothing is current
+
+    page.show_dismissed.setChecked(True)  # listed again, greyed
+    assert page.groups is not None
+    assert len(page.groups) == 1
+    assert page.model.item(0, 0).toolTip() == "Marked as not a duplicate"
+    page.tree.setCurrentIndex(page.model.index(0, 0))
+    assert button.text() == "Show as a duplicate again"
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        button.click()
+    qtbot.waitUntil(
+        lambda: page.summary.text().startswith("1 group of identical files"), timeout=5000
+    )
+    assert page.show_dismissed.text() == "Show dismissed"
+
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        window.tag_actions.undo()  # dismissed again
+    qtbot.waitUntil(lambda: page.show_dismissed.text() == "Show dismissed (1)", timeout=5000)
+
+    # A third copy: the group isn't the one dismissed, so it shows again.
+    page.show_dismissed.setChecked(False)
+    root = Path(session.root_path("music"))
+    shutil.copy(root / "Jazz Hits" / "02 Blue.mp3", root / "Copies" / "Blue (again).mp3")
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+    qtbot.waitUntil(
+        lambda: page.summary.text().startswith("1 group of identical files"), timeout=5000
+    )
+
+
+def test_keep_both_as_versions(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    page = _two_blues(qtbot, window, session)
+    pane = page.compare_pane
+    assert pane.versions_button.isVisible()  # songs hold several files
+    assert pane.versions_button.text() == "Keep both as versions"
+    assert pane.comparison is not None
+    first = pane.comparison.items[0]
+    assert first.title in pane.versions_button.toolTip()
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as blocker:
+        pane.versions_button.click()
+    assert blocker.args == ["Merge 'Blue' into 'Blue'. Edit \u2192 Undo separates them again."]
+    qtbot.waitUntil(
+        lambda: _shown(pane.summary.text(), "Every copy belongs to one item, Blue."),
+        timeout=5000,
+    )
+    assert pane.comparison is not None
+    assert pane.comparison.items[0].id == first.id  # the left one was kept
+    assert not pane.versions_button.isVisible()
+
+
+def test_a_similar_pair_is_not_a_duplicate(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _two_blues(qtbot, window, session)
+    qtbot.waitUntil(lambda: page.pairs is not None and bool(page.pairs.pairs), timeout=5000)
+    page.tabs.setCurrentIndex(1)
+    page.similar_table.setCurrentIndex(page.similar.index(0, 0))
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as blocker:
+        page.not_duplicate_button.click()
+    assert blocker.args == ["Mark 1 pair as not a duplicate."]
+    qtbot.waitUntil(
+        lambda: page.similar_summary.text().endswith("1 marked as not duplicates."),
+        timeout=5000,
+    )
+    assert page.tabs.tabText(1) == "Similar items"
+    # The identical group is a separate judgement: still listed.
+    assert page.summary.text().startswith("1 group of identical files")

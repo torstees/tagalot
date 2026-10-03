@@ -59,6 +59,9 @@ class Comparison:
     rows: tuple[CompareRow, ...]
     more: int = 0
     """Items asked for but not shown (past :data:`MAX_ITEMS`)."""
+    versions: bool = False
+    """The items are of one type whose main role holds several files, so merging keeps
+    every file as a version (#121)."""
 
     def row(self, key: str) -> CompareRow | None:
         return next((r for r in self.rows if r.key == key), None)
@@ -132,7 +135,18 @@ def compare_items(
         CompareRow(key, labels[key], tuple(column.get(key, "") for column in columns))
         for key in keys
     )
-    return Comparison(tuple(items), rows, more)
+    return Comparison(tuple(items), rows, more, _versions(schema, [found[i].type for i in shown]))
+
+
+def _versions(schema: ThemeSchema, types: list[str]) -> bool:
+    if len(types) < 2 or len(set(types)) > 1:
+        return False
+    try:
+        entity = schema.by_type_id(types[0]).entity
+    except KeyError:
+        return False
+    primary = next((r for r in entity.roles if r.primary), None)
+    return primary is not None and primary.many
 
 
 FILE_ROWS = ("format", "size")
