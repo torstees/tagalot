@@ -23,14 +23,21 @@ A movie is one or more video files (#123), the way Plex and Kodi lay them out:
 - Beside loose videos, ``Heat (1995)-poster.jpg`` (or ``Heat (1995).jpg``) is that movie's
   poster, and ``Heat (1995)-fanart.jpg`` (``-landscape``, ``-thumb``…) a screenshot.
 - A collection's folder picture (``poster``, ``folder``, ``cover``) is its poster.
-- Actors' photos come with their .nfo files (#258); ``.actors`` folders are left for them.
+- An actor's photo is Kodi's ``.actors/First_Last.jpg`` in a movie's folder (#258).
 
-Actors and the cast come from .nfo files (#258) and by hand (#260).
+**Details from .nfo files** (#258): ``movie.nfo`` in a movie's folder, or an .nfo named like
+a movie's video, is Kodi's XML. It gives the title, year, plot, genre, director, runtime,
+and rating, which win over what the file name says (values the user edited still win over
+both); its ``<actor>`` names are the cast (actors keyed by name, so one actor's movies meet
+on their page); and its ``<set>`` puts the movie in a collection of that name. Reading it
+again replaces the cast and set it gave before; an actor left in no movie, with no photo,
+is deleted. Cast added by hand comes with #260.
 """
 
 import logging
 import os
 import re
+import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -97,7 +104,10 @@ SUFFIX = re.compile(
 SCREENSHOT_FOLDERS = frozenset({"screenshots", "screens", "extrafanart", "stills", "backdrops"})
 """Subfolders of a movie's folder whose pictures are its screenshots."""
 ACTORS_FOLDER = ".actors"
-"""Kodi's folder of actors' photos (read with the .nfo files, #258)."""
+"""Kodi's folder of actors' photos (``First_Last.jpg``)."""
+NFO = ".nfo"
+NFO_LIMIT = 1_000_000
+"""Bytes of an .nfo read at most (they're a few KB; anything bigger isn't one)."""
 POSTER_NAMES = ("poster", "folder", "cover", "movie", "default")
 """A movie's (or collection's) poster in its folder, best first (after ``…-poster``)."""
 PICTURE_SUFFIX = re.compile(
@@ -265,11 +275,19 @@ class Movie(Entity):
     """A movie; its video files are its versions (or parts)."""
 
     year: int | None = field("Year", card=True, search="range")
+    genre: str | None = field("Genre", search="text")
+    """From the .nfo; several are joined with commas."""
+    director: str | None = field("Director", search="text")
+    runtime: float | None = field("Runtime", search="range", display="duration")
+    """Seconds (an .nfo gives minutes)."""
+    rating: float | None = field("Rating", search="range")
+    plot: str | None = field("Plot", search="text")
     folder: str = field("Folder", search="text", editable=False)
     roles = [
         role("video", kinds={"video"}, many=True, primary=True),
         role("poster", kinds={"image"}, thumbnail=True),
         role("screenshot", kinds={"image"}, many=True),
+        role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
     card_lines = ("year",)
@@ -312,7 +330,7 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 1
-    extensions = frozenset(VIDEO | IMAGE)
+    extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True
     entities = [Actor, Collection, Movie]
     containment = [contains(Collection, Movie)]
@@ -325,6 +343,7 @@ class MoviesTheme(Theme):
                 Section.role("video"),
                 Section.related("cast"),
                 Section.gallery("screenshot"),
+                Section.role("nfo"),
             ],
         ),
     ]
@@ -373,6 +392,8 @@ class MoviesTheme(Theme):
                     }
                 elif kind_of(resource) is Kind.IMAGE:
                     found[resource.id] = self._picture(resource, videos, collections)
+                elif resource.relpath.lower().endswith(NFO):
+                    found[resource.id] = self._nfo(resource, videos)
             except Exception as e:  # a folder we can't list: the file is still a movie
                 logger.warning("Couldn't look around %s: %s", resource.relpath, e)
         return found
@@ -389,7 +410,9 @@ class MoviesTheme(Theme):
         folder_path = os.path.dirname(resource.path)
         folder, _, filename = resource.relpath.rpartition("/")
         name = folder.rpartition("/")[2]
-        if name.casefold() == ACTORS_FOLDER or is_extra(resource.relpath):
+        if name.casefold() == ACTORS_FOLDER:
+            return {"actor": stem_of(filename).replace("_", " ").strip()}
+        if is_extra(resource.relpath):
             return {}
         if name.casefold() in SCREENSHOT_FOLDERS and folder.count("/") >= 1:
             # A screenshots folder: its pictures are its parent movie folder's.
@@ -430,6 +453,31 @@ class MoviesTheme(Theme):
             return {"collection": folder}
         return {}
 
+    def _nfo(self, resource: ResourceInfo, videos: Callable[[str], list[str]]) -> dict[str, Any]:
+        """Which movie an .nfo is for, and what it says (or why it couldn't be read)."""
+        assert resource.path is not None
+        folder_path = os.path.dirname(resource.path)
+        folder, _, filename = resource.relpath.rpartition("/")
+        found = videos(folder_path)
+        stem = stem_of(filename)
+        identity: Identity | None = None
+        if folder and is_movie_folder(folder.rpartition("/")[2], found):
+            if stem.casefold() == "movie" or any(stem_of(v) == stem for v in found):
+                identity = movie_identity(folder, True, stem_of(found[0]))
+        else:
+            key = movie_name(stem).key
+            video = next((v for v in found if movie_name(stem_of(v)).key == key), None)
+            if video is not None:
+                identity = movie_identity(folder, False, stem_of(video))
+        if identity is None:
+            return {}
+        details = _movie_picture(identity, False)
+        try:
+            details["nfo"] = read_nfo(resource.path)
+        except Exception as e:
+            details["error"] = f"{type(e).__name__}: {e}"
+        return details
+
     # --- ingest (the DB writer) ---
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
@@ -440,9 +488,67 @@ class MoviesTheme(Theme):
                 self._ingest_video(resource, ctx)
             elif kind_of(resource) is Kind.IMAGE:
                 self._ingest_picture(resource, ctx)
+            elif resource.relpath.lower().endswith(NFO):
+                self._ingest_nfo(resource, ctx)
+
+    def _ingest_nfo(self, resource: ResourceInfo, ctx: IngestContext) -> None:
+        details = ctx.prepared(resource) or {}
+        if not details.get("movie"):
+            return  # not named for a movie: left unlinked
+        identity = Identity(
+            details["movie"], MovieName(details["title"], details["year"]), details["folder"]
+        )
+        movie = find_movie(identity, ctx)
+        ctx.link(movie, resource, "nfo")
+        if details.get("error"):
+            ctx.warn(resource, f"Couldn't read it: {details['error']}")
+            return
+        nfo: dict[str, Any] = details["nfo"]
+        values = {
+            name: nfo.get(name) for name in ("genre", "director", "runtime", "rating", "plot")
+        }
+        if nfo.get("year"):
+            values["year"] = nfo["year"]
+        ctx.update(movie, title=nfo.get("title") or None, **values)
+        self._set_cast(movie, nfo.get("actors") or [], ctx)
+        self._set_collection(movie, nfo.get("set"), ctx)
+
+    def _set_cast(self, movie: EntityRef, names: Sequence[str], ctx: IngestContext) -> None:
+        """The .nfo's actors are the movie's cast: those it no longer names leave it."""
+        wanted = {normalize(n): n for n in names if normalize(n)}
+        actors = {key: actor_ref(name, ctx) for key, name in wanted.items()}
+        keep = {a.id for a in actors.values()}
+        for actor in ctx.related("cast", movie):
+            if actor.id not in keep:
+                ctx.unrelate("cast", actor, movie)
+                if not ctx.related("cast", actor) and not ctx.linked(actor):
+                    ctx.delete(actor)  # in no movie, with no photo
+        for actor in actors.values():
+            ctx.relate("cast", actor, movie)
+
+    def _set_collection(self, movie: EntityRef, name: str | None, ctx: IngestContext) -> None:
+        """The .nfo's ``<set>`` is a collection (titled by it) holding the movie; a set it no
+        longer names lets go of it. Folder collections are the folders' business."""
+        target = (
+            ctx.upsert(Collection, f"set:{normalize(name)}", title=name)
+            if name and normalize(name)
+            else None
+        )
+        for collection in ctx.find(Collection):
+            if collection == target or ctx.linked(collection, "folder"):
+                continue
+            if movie in ctx.contents(collection):
+                ctx.uncontain(collection, movie)
+                if not ctx.contents(collection) and not ctx.linked(collection):
+                    ctx.delete(collection)
+        if target is not None:
+            ctx.contain(target, movie)
 
     def _ingest_picture(self, resource: ResourceInfo, ctx: IngestContext) -> None:
         details = ctx.prepared(resource) or {}
+        if details.get("actor"):
+            ctx.link(actor_ref(details["actor"], ctx), resource, "photo")
+            return
         if details.get("collection"):
             ctx.link(collection_ref(details["collection"], ctx), resource, "poster")
             return
@@ -476,11 +582,14 @@ class MoviesTheme(Theme):
         values = {"year": name.year, "folder": folder}
 
         existing = ctx.entities_of(resource, "video")
-        if existing:  # it moved, or its folder changed: the movie follows the file
-            movie = existing[0]
-            ctx.update(movie, title=name.title, **values)
+        # It moved, or its folder changed: the movie follows the file. A new file of a
+        # movie already made (another version, or its .nfo read first) joins it.
+        movie = existing[0] if existing else ctx.upsert(Movie, key)
+        if ctx.linked(movie, "nfo"):
+            ctx.update(movie, folder=folder)  # its .nfo names it
         else:
-            movie = ctx.upsert(Movie, key, title=name.title, **values)
+            ctx.update(movie, title=name.title, **values)
+        if not existing:
             ctx.link(movie, resource, "video")
 
         parent = folder.rpartition("/")[0]
@@ -533,3 +642,76 @@ def _picture_base(stem: str) -> str:
 def _picture_kind(stem: str) -> str:
     match = PICTURE_SUFFIX.match(stem)
     return match["kind"].casefold() if match else "poster"
+
+
+def actor_ref(name: str, ctx: IngestContext) -> EntityRef:
+    """The actor of this name (ignoring case and punctuation), made if new."""
+    return ctx.upsert(Actor, f"actor:{normalize(name)}", title=name.strip())
+
+
+def read_nfo(path: str) -> dict[str, Any]:
+    """What a Kodi movie .nfo says: ``title``, ``year``, ``plot``, ``genre``, ``director``,
+    ``runtime`` (seconds), ``rating``, ``set``, and ``actors`` (names, in order). Missing
+    values are ``None``. Text after the XML (Kodi allows a scraper URL there) is ignored."""
+    with open(path, "rb") as f:
+        data = f.read(NFO_LIMIT)
+    end = data.rfind(b"</movie>")
+    root = ElementTree.fromstring(data[: end + len(b"</movie>")] if end >= 0 else data)
+    if root.tag != "movie":
+        raise ValueError(f"not a movie .nfo (its root is <{root.tag}>)")
+
+    def text(tag: str) -> str | None:
+        value = root.findtext(tag)
+        return value.strip() or None if value else None
+
+    def joined(tag: str) -> str | None:
+        values = [e.text.strip() for e in root.findall(tag) if e.text and e.text.strip()]
+        return ", ".join(dict.fromkeys(values)) or None
+
+    year = _int(text("year")) or _int((text("premiered") or "")[:4])
+    runtime = _float(text("runtime"))
+    rating = _float(text("rating"))
+    if rating is None:  # Kodi 17+: <ratings><rating default="true"><value>
+        ratings = root.findall("ratings/rating")
+        best = next((r for r in ratings if r.get("default") == "true"), None)
+        best = best if best is not None else (ratings[0] if ratings else None)
+        rating = _float(best.findtext("value")) if best is not None else None
+    set_element = root.find("set")
+    collection = None
+    if set_element is not None:
+        collection = (set_element.findtext("name") or set_element.text or "").strip() or None
+    actors = []
+
+    def order(actor: ElementTree.Element) -> int:
+        found = _int(actor.findtext("order"))
+        return 10_000 if found is None else found  # unordered ones last, as listed
+
+    for actor in sorted(root.findall("actor"), key=order):
+        name = (actor.findtext("name") or "").strip()
+        if name:
+            actors.append(name)
+    return {
+        "title": text("title"),
+        "year": year,
+        "plot": text("plot") or text("outline"),
+        "genre": joined("genre"),
+        "director": joined("director"),
+        "runtime": runtime * 60 if runtime else None,
+        "rating": rating,
+        "set": collection,
+        "actors": actors,
+    }
+
+
+def _int(text: str | None) -> int | None:
+    try:
+        return int(text) if text else None
+    except ValueError:
+        return None
+
+
+def _float(text: str | None) -> float | None:
+    try:
+        return float(text) if text else None
+    except ValueError:
+        return None

@@ -173,7 +173,7 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
         with session.reader.connect() as conn:
             everything = count_by_type(conn, SearchSpec(), tree)
             scifi = count_by_type(conn, SearchSpec(include=_ids(tree, "Sci-Fi")), tree)
-    assert everything == {"movies.collection": 1, "movies.movie": 9}
+    assert everything == {"movies.actor": 6, "movies.collection": 3, "movies.movie": 9}
     assert scifi == {"movies.movie": 3}
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_movies_demo(tmp_path)

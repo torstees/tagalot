@@ -18,6 +18,7 @@ from tagalot.builtin_themes.movies import (
     MoviesTheme,
     is_extra,
     movie_name,
+    read_nfo,
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
@@ -233,6 +234,10 @@ def test_posters_and_screenshots(env: Env) -> None:
     assert heat["screenshot"] == ["Heat (1995)-fanart.jpg", "Heat (1995).jpg"]
     assert env.roles("birthday")["poster"] == ["Misc/birthday-poster.jpg"]
     assert "poster" not in env.roles("Alien")
+    # An actor's photo makes the actor (their .nfo may be read later).
+    assert env.roles("Leonardo DiCaprio") == {
+        "photo": ["Inception (2010)/.actors/Leonardo_DiCaprio.jpg"]
+    }
     with env.reader.connect() as conn:
         linked = set(conn.scalars(select(EntityResource.resource_id)))
         unlinked = sorted(
@@ -242,7 +247,6 @@ def test_posters_and_screenshots(env: Env) -> None:
         )
     assert unlinked == [
         "Alien.jpg",
-        "Inception (2010)/.actors/Leonardo_DiCaprio.jpg",
         "Inception (2010)/Inception (2010)-trailer.mkv",
         "The Lord of the Rings/Extras/Making of.mkv",
         "The Lord of the Rings/map.jpg",
@@ -282,3 +286,130 @@ def test_a_folder_that_stops_being_a_collection(env: Env) -> None:
     env.scan(T0 + timedelta(hours=1))
     # Missing movies stay (offline isn't deleted), so the collection keeps them.
     assert env.titles(Collection) == ["The Lord of the Rings"]
+
+
+INCEPTION_NFO = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+  <title>Inception</title>
+  <year>2010</year>
+  <plot>A thief who steals secrets through dreams.</plot>
+  <genre>Science Fiction</genre>
+  <genre>Thriller</genre>
+  <director>Christopher Nolan</director>
+  <runtime>148</runtime>
+  <ratings>
+    <rating name="imdb" max="10"><value>8.4</value></rating>
+    <rating name="themoviedb" max="10" default="true"><value>8.8</value></rating>
+  </ratings>
+  <set><name>Dream Heists</name></set>
+  <actor><name>Elliot Page</name><role>Ariadne</role><order>2</order></actor>
+  <actor><name>Leonardo DiCaprio</name><role>Cobb</role><order>0</order></actor>
+  <actor><name>Tom Hardy</name><role>Eames</role><order>3</order></actor>
+</movie>
+https://www.themoviedb.org/movie/27205
+"""
+
+
+def test_reading_an_nfo(tmp_path: Path) -> None:
+    path = tmp_path / "movie.nfo"
+    path.write_text(INCEPTION_NFO, encoding="utf-8")
+    assert read_nfo(str(path)) == {
+        "title": "Inception",
+        "year": 2010,
+        "plot": "A thief who steals secrets through dreams.",
+        "genre": "Science Fiction, Thriller",
+        "director": "Christopher Nolan",
+        "runtime": 148 * 60,
+        "rating": 8.8,  # the default rating
+        "set": "Dream Heists",
+        "actors": ["Leonardo DiCaprio", "Elliot Page", "Tom Hardy"],  # by order
+    }
+    path.write_text("<movie><premiered>1995-12-15</premiered><set>Mann</set></movie>")
+    found = read_nfo(str(path))
+    assert (found["year"], found["set"], found["actors"], found["title"]) == (
+        1995,
+        "Mann",
+        [],
+        None,
+    )
+    path.write_text("<tvshow><title>Lost</title></tvshow>")
+    with pytest.raises(ValueError, match="not a movie"):
+        read_nfo(str(path))
+
+
+def _cast(env: Env, title: str) -> list[str]:
+    cast = env.schema.relationships["cast"].table
+    actor = aliased(Entity)
+    with env.reader.connect() as conn:
+        return sorted(
+            conn.scalars(
+                select(actor.title)
+                .join(cast, cast.c.a_id == actor.id)
+                .join(Entity, Entity.id == cast.c.b_id)
+                .where(Entity.title == title)
+            )
+        )
+
+
+def test_nfo_files_give_details_cast_and_sets(env: Env) -> None:
+    (env.files / "Inception (2010)" / "movie.nfo").write_text(INCEPTION_NFO, encoding="utf-8")
+    heat = env.files / "Heat (1995).nfo"
+    heat.write_text(
+        "<movie><title>Heat (Definitive)</title><set>Michael Mann</set>"
+        "<actor><name>Al Pacino</name></actor><actor><name>Robert De Niro</name></actor>"
+        "</movie>",
+        encoding="utf-8",
+    )
+    (env.files / "Misc" / "notes.nfo").write_text("<movie/>", encoding="utf-8")  # no such movie
+    env.scan()
+    table = env.schema.entities[Movie].table
+    with env.reader.connect() as conn:
+        row = conn.execute(
+            select(table).join(Entity, Entity.id == table.c.id).where(Entity.title == "Inception")
+        ).one()
+    assert (row.genre, row.director, row.runtime, row.rating) == (
+        "Science Fiction, Thriller",
+        "Christopher Nolan",
+        8880.0,
+        8.8,
+    )
+    assert env.roles("Inception")["nfo"] == ["Inception (2010)/movie.nfo"]
+    assert _cast(env, "Inception") == ["Elliot Page", "Leonardo DiCaprio", "Tom Hardy"]
+    # The .nfo's title wins over the file name's, and its set is a collection.
+    assert "Heat (Definitive)" in env.titles(Movie)
+    assert env.year("Heat (Definitive)") == 1995  # from the file name: the .nfo has none
+    contents = env.contents()
+    assert contents["Michael Mann"] == ["Heat (Definitive)"]
+    assert contents["Dream Heists"] == ["Inception"]
+
+    # Reading a video again keeps the .nfo's title.
+    video = env.files / "Heat (1995).mkv"
+    video.write_bytes(video.read_bytes() + b"more")
+    env.scan(T0 + timedelta(hours=1))
+    assert "Heat (Definitive)" in env.titles(Movie)
+
+    # An edited .nfo: the cast and set follow; an actor in nothing else, without a
+    # photo, goes (Leonardo DiCaprio keeps his photo, so he stays).
+    heat.write_text("<movie><title>Heat</title><actor><name>Al Pacino</name></actor></movie>")
+    (env.files / "Inception (2010)" / "movie.nfo").write_text(
+        INCEPTION_NFO.replace("<actor><name>Leonardo DiCaprio</name>", "<x><name>-</name>")
+        .replace("</role><order>0</order></actor>", "</role></x>")
+        .replace("<set><name>Dream Heists</name></set>", ""),
+        encoding="utf-8",
+    )
+    env.scan(T0 + timedelta(hours=2))
+    assert _cast(env, "Heat") == ["Al Pacino"]
+    assert _cast(env, "Inception") == ["Elliot Page", "Tom Hardy"]
+    actors = env.titles(Actor)
+    assert "Robert De Niro" not in actors
+    assert "Leonardo DiCaprio" in actors
+    assert "Michael Mann" not in env.titles(Collection)  # empty: gone
+    assert "Dream Heists" not in env.titles(Collection)
+
+
+def test_a_broken_nfo_is_still_linked(env: Env) -> None:
+    (env.files / "Alien (1979).nfo").write_text("<movie><title>Alien", encoding="utf-8")
+    [report] = [env.scan()]
+    assert env.roles("Alien")["nfo"] == ["Alien (1979).nfo"]
+    assert env.titles(Movie).count("Alien") == 1
+    assert any("Couldn't read it" in w.message for w in report.ingest_warnings)

@@ -335,6 +335,22 @@ def test_many_false_relationship_replaces_the_partner(env: Env) -> None:
         assert conn.execute(select(table.c.a_id, table.c.b_id)).all() == [(a2.id, label.id)]
 
 
+def test_related_reads_either_side(env: Env) -> None:
+    with env.engine.begin() as conn:
+        ctx = env.session(conn)
+        album = ctx.upsert(Album, "homogenic")
+        label = ctx.upsert(Label, "one little indian")
+        artist = ctx.upsert(Artist, "bjork")
+        assert ctx.related("released_by", album) == []
+        ctx.relate("released_by", album, label)
+        assert ctx.related("released_by", album) == [label]
+        assert ctx.related("released_by", label) == [album]
+        with pytest.raises(IngestError, match="isn't part of the 'released_by'"):
+            ctx.related("released_by", artist)
+        with pytest.raises(IngestError, match="no relationship 'cast'"):
+            ctx.related("cast", album)
+
+
 # --- reporting and search ---
 
 
