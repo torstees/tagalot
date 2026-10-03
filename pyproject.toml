@@ -16,6 +16,7 @@ dependencies = [
     "rarfile>=4.2",
     "platformdirs>=4.0",
     "tomli-w>=1.0",
+    "pymediainfo>=7.0.1",
 ]
 
 [project.scripts]

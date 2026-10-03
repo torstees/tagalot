@@ -39,6 +39,7 @@ import inspect
 import io
 import re
 import shutil
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -496,7 +497,26 @@ MOVIE_FILES = [
     "Home Movies/Beach day.mp4",
     "Home Movies/Birthday.mp4",
 ]
-"""Movie files for the movies demo (stand-ins: a few bytes, not real video)."""
+"""Movie files for the movies demo: stand-ins, not real video. Those in
+:data:`MOVIE_VIDEOS` are a video's headers (MediaInfo reads them); the rest a few bytes."""
+
+MOVIE_VIDEOS = {
+    "Inception (2010)/Inception.mkv": ((1920, 800), 8880, ["eng", "fre"]),
+    "Heat (1995).mkv": ((1920, 1040), 10200, ["eng"]),
+    "Heat (1995) - 720p.mkv": ((1280, 692), 10200, ["eng"]),
+    "The.Matrix.1999.1080p/The.Matrix.1999.1080p.BluRay.mkv": ((3840, 1600), 8160, ["eng"]),
+    "The Lord of the Rings/The Fellowship of the Ring (2001)/The Fellowship of the Ring.mkv": (
+        (1920, 800),
+        10680,
+        ["eng", "ger"],
+    ),
+    "The Lord of the Rings/The Two Towers (2002)/The Two Towers.mkv": (
+        (1280, 536),
+        10740,
+        ["eng"],
+    ),
+}
+"""(width, height), seconds, and audio languages of the demo's readable videos."""
 
 MOVIE_PICTURES = {
     "Inception (2010)/poster.jpg": ((40, 60, 90), "Inception"),
@@ -561,6 +581,55 @@ MOVIE_TAGS = {
 }
 
 
+def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
+    """A Matroska file's headers with no frames: its length, a VP9 video track of ``size``,
+    and an Opus audio track per language (as ``tests/core/media_files.write_mkv``)."""
+
+    def element(eid: int, data: bytes) -> bytes:
+        ident = eid.to_bytes((eid.bit_length() + 7) // 8, "big")
+        return ident + b"\x01" + len(data).to_bytes(7, "big") + data
+
+    def uint(eid: int, value: int) -> bytes:
+        return element(eid, value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big"))
+
+    def text(eid: int, value: str) -> bytes:
+        return element(eid, value.encode())
+
+    header = element(
+        0x1A45DFA3,
+        uint(0x4286, 1)
+        + uint(0x42F7, 1)
+        + uint(0x42F2, 4)
+        + uint(0x42F3, 8)
+        + text(0x4282, "matroska")
+        + uint(0x4287, 4)
+        + uint(0x4285, 2),
+    )
+    info = element(
+        0x1549A966,
+        uint(0x2AD7B1, 1_000_000) + element(0x4489, struct.pack(">d", seconds * 1000)),
+    )
+    tracks = element(
+        0xAE,
+        uint(0xD7, 1)
+        + uint(0x73C5, 1)
+        + uint(0x83, 1)
+        + text(0x86, "V_VP9")
+        + element(0xE0, uint(0xB0, size[0]) + uint(0xBA, size[1])),
+    )
+    for n, language in enumerate(languages, start=2):
+        tracks += element(
+            0xAE,
+            uint(0xD7, n)
+            + uint(0x73C5, n)
+            + uint(0x83, 2)
+            + text(0x86, "A_OPUS")
+            + text(0x22B59C, language)
+            + element(0xE1, element(0xB5, struct.pack(">d", 48000.0)) + uint(0x9F, 2)),
+        )
+    return header + element(0x18538067, info + element(0x1654AE6B, tracks))
+
+
 def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/movie-files`` and ``scratch/Movies.keep`` (the movies theme),
     scanned and tagged; returns the keep folder."""
@@ -572,7 +641,11 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     for relpath in MOVIE_FILES:
         path = files / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f"Not a real video: {relpath}\n".encode())
+        if relpath in MOVIE_VIDEOS:
+            size, seconds, languages = MOVIE_VIDEOS[relpath]
+            path.write_bytes(_mkv(size, seconds, languages))
+        else:
+            path.write_bytes(f"Not a real video: {relpath}\n".encode())
     for relpath, (color, text) in MOVIE_PICTURES.items():
         (files / relpath).parent.mkdir(parents=True, exist_ok=True)
         (files / relpath).write_bytes(_cover(color, text))
