@@ -96,6 +96,9 @@ class SearchSpec:
     fields: tuple[FieldFilter, ...] = ()
     within: int | None = None
     """Restrict to descendants of this entity (drill-down, container pages)."""
+    related: tuple[str, int] | None = None
+    """Restrict to the items related to this entity through the named relationship (an
+    actor's movies: ``("cast", actor id)``), from either side (#125)."""
     text: str | None = None
     """Matches titles, text-search fields, and ``extra`` values."""
     inherit_tags: bool = False
@@ -125,6 +128,19 @@ class SearchSpec:
             not isinstance(within, int) or isinstance(within, bool) or within <= 0
         ):
             raise SearchSpecError(f"within must be a positive entity id, not {self.within!r}")
+        related = self.related
+        if related is not None and not (
+            isinstance(related, tuple)
+            and len(related) == 2
+            and isinstance(related[0], str)
+            and related[0]
+            and isinstance(related[1], int)
+            and not isinstance(related[1], bool)
+            and related[1] > 0
+        ):
+            raise SearchSpecError(
+                f"related must be a relationship name and an entity id, not {related!r}"
+            )
 
     # --- JSON ---
 
@@ -137,6 +153,9 @@ class SearchSpec:
             "exclude": list(self.exclude),
             "fields": [_filter_to_json(f) for f in self.fields],
             "within": self.within,
+            "related": (
+                {"name": self.related[0], "entity": self.related[1]} if self.related else None
+            ),
             "text": self.text,
             "inherit_tags": self.inherit_tags,
             "show_contained": self.show_contained,
@@ -165,6 +184,7 @@ class SearchSpec:
                 exclude=tuple(_list(data.get("exclude", []), "exclude")),
                 fields=tuple(_filter_from_json(f) for f in _list(data.get("fields", []), "fields")),
                 within=data.get("within"),
+                related=_related_from_json(data.get("related")),
                 text=_optional_str(data.get("text"), "text"),
                 inherit_tags=_bool(data, "inherit_tags", defaults.inherit_tags),
                 show_contained=_bool(data, "show_contained", defaults.show_contained),
@@ -295,3 +315,11 @@ def _bool(data: Mapping[str, Any], key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise SearchSpecError(f"{key} must be true or false")
     return value
+
+
+def _related_from_json(value: Any) -> tuple[str, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise SearchSpecError("related must be an object with a name and an entity.")
+    return (value.get("name"), value.get("entity"))  # type: ignore[return-value]

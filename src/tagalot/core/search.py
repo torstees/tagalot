@@ -20,6 +20,7 @@ from sqlalchemy import (
     or_,
     select,
     true,
+    union,
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
@@ -214,6 +215,15 @@ class _Filter:
                         EntityAncestor.ancestor_id == within, EntityAncestor.depth > 0
                     )
                 )
+            )
+        if spec.related is not None:
+            name, other = spec.related
+            a, b = self.fields.get(f"@{name}.a"), self.fields.get(f"@{name}.b")
+            if a is None or b is None:
+                raise SearchError(f"No relationship {name!r} for this search.")
+            # From either side: the b items of an a, and the a items of a b.
+            where.append(
+                Entity.id.in_(union(select(b).where(a == other), select(a).where(b == other)))
             )
         where.append(self._not_excluded(Entity.id))
         if spec.triage is not None:

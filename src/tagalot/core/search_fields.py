@@ -97,6 +97,9 @@ def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, Column
     A theme field is a scalar subquery on its type's table (``NULL`` for entities of other
     types); with several scoped types they are combined with ``coalesce``. The subqueries
     look rows up by primary key, so filtering and sorting on them needs no join.
+
+    Each relationship's link table columns come too, as ``@<name>.a`` and ``@<name>.b``
+    (not field names), for :attr:`SearchSpec.related`.
     """
     tables = scoped_tables(schema, types)
     fields: dict[str, ColumnElement[Any]] = dict(CORE_FIELDS)
@@ -106,6 +109,9 @@ def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, Column
             for t in tables
         ]
         fields[f.name] = values[0] if len(values) == 1 else func.coalesce(*values)
+    for name, link in schema.relationships.items():
+        fields[f"@{name}.a"] = link.table.c.a_id
+        fields[f"@{name}.b"] = link.table.c.b_id
     return fields
 
 

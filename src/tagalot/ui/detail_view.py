@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -86,8 +87,8 @@ class DetailPage(QWidget):
     """Remove a link made by hand: (entity id, resource id, role)."""
     relate_requested = Signal(int, str)
     """Add to a related section by hand (#260): (entity id, relationship name)."""
-    unrelate_requested = Signal(int, str, int)
-    """Remove a related item by hand: (entity id, relationship name, other id)."""
+    unrelate_requested = Signal(int, str, list)
+    """Remove related items by hand: (entity id, relationship name, their ids)."""
     action_requested = Signal(str, list)
     """Run a theme action on the page's item: (method name, [entity id])."""
     """Read the entity's files again; true: replacing what the user edited."""
@@ -104,7 +105,7 @@ class DetailPage(QWidget):
         entity_id: int,
         *,
         thumbnails: ThumbnailLoader | None = None,
-        make_contents: Callable[[str, SearchSpec], SearchPage] | None = None,
+        make_contents: Callable[[str, SearchSpec, str], SearchPage] | None = None,
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -119,6 +120,12 @@ class DetailPage(QWidget):
         self._make_contents = make_contents
         self.contents: SearchPage | None = None
         """The search of a container's contents, once the page knows it is one."""
+        self.related: dict[str, SearchPage] = {}
+        """Each related section's search, by relationship name (#125)."""
+        self._bottom: QWidget | None = None
+        """What sits below the sections: one embedded search, or tabs of several."""
+        self._tabs: QTabWidget | None = None
+        self._bottom_label = ""
         self._pool = pool
         self._generation = 0
         self.detail: EntityDetail | None = None
@@ -244,6 +251,8 @@ class DetailPage(QWidget):
             for section in detail.sections:
                 if section.kind == "contents" and self._show_contents(detail):
                     continue
+                if section.kind == "related" and self._show_related(section):
+                    continue
                 widget = self._section_widget(section)
                 if widget is not None:
                     self._sections.addWidget(widget)
@@ -263,7 +272,7 @@ class DetailPage(QWidget):
             types = tuple(contained_types(self.session.schema, detail.type))
             sort, _ = contents_order(self.session.schema, detail.type)
             spec = SearchSpec(types=types, within=self.requested_id, sort=sort)
-            self.contents = self._make_contents(detail.type, spec)
+            self.contents = self._make_contents(f"contents:{detail.type}", spec, "Contents")
             self.contents.selection_changed.connect(self.selection_changed)
             in_search = QPushButton("Show in search")
             in_search.setFlat(True)
@@ -271,10 +280,54 @@ class DetailPage(QWidget):
             in_search.setToolTip("Open Search all with a Within chip for these contents")
             in_search.clicked.connect(lambda: self.show_in_search.emit(self.entity_id))
             self.contents.header_row.insertWidget(1, in_search)
-            self.splitter.addWidget(self.contents)
+            self._embed(self.contents, "Contents")
+        return True
+
+    def _show_related(self, section: DetailSection) -> bool:
+        """A related section (a movie's cast, an actor's filmography) as a search of its own
+        below the sections, with list and grid, Add…, and "Remove from …" on its items'
+        menus (once). False when the window gave no way to make one: then it's links."""
+        name = section.relationship
+        if self._make_contents is None or name is None or section.other_type is None:
+            return False
+        if name not in self.related:
+            spec = SearchSpec(types=(section.other_type,), related=(name, self.requested_id))
+            page = self._make_contents(f"related:{section.other_type}", spec, section.title)
+            page.selection_changed.connect(self.selection_changed)
+            add = QPushButton("Add\u2026")
+            add.setObjectName(f"add_{name}")
+            add.setFlat(True)
+            add.setCursor(Qt.CursorShape.PointingHandCursor)
+            add.setToolTip(f"Add to {section.title.lower()} by hand; scans won't remove it")
+            add.clicked.connect(lambda: self.relate_requested.emit(self.entity_id, name))
+            page.header_row.insertWidget(1, add)
+            page.add_menu_action(
+                f"Remove from {section.title.lower()}",
+                lambda ids: self.unrelate_requested.emit(self.entity_id, name, ids),
+            )
+            self.related[name] = page
+            self._embed(page, section.title)
+        return True
+
+    def _embed(self, page: SearchPage, label: str) -> None:
+        """Put an embedded search below the sections; with more than one, as tabs."""
+        if self._bottom is None:
+            self._bottom, self._bottom_label = page, label
+            self.splitter.addWidget(page)
             self.splitter.setStretchFactor(0, 2)
             self.splitter.setStretchFactor(1, 3)
-        return True
+            return
+        if self._tabs is None:
+            first = self._bottom
+            self._tabs = QTabWidget()
+            self.splitter.replaceWidget(self.splitter.indexOf(first), self._tabs)
+            self._tabs.addTab(first, self._bottom_label)
+            self._bottom = self._tabs
+        self._tabs.addTab(page, label)
+
+    def embedded(self) -> list[SearchPage]:
+        """The searches below the sections: contents, then related sections."""
+        return ([self.contents] if self.contents is not None else []) + list(self.related.values())
 
     def _show_breadcrumbs(self, detail: EntityDetail) -> None:
         """The containers above the entity, each a link to its page."""
@@ -614,10 +667,11 @@ class DetailPage(QWidget):
         """What tagging applies to: the items selected in the contents, else the page's
         own entity."""
         own = [self.entity_id] if self.detail is not None else []
-        if self.contents is None:
+        shown = self._tabs.currentWidget() if self._tabs is not None else self._bottom
+        if not isinstance(shown, SearchPage):
             on_done(own)
             return
-        self.contents.selected_entity_ids(lambda ids: on_done(ids or own))
+        shown.selected_entity_ids(lambda ids: on_done(ids or own))
 
 
 def _file_label(file: FileRow) -> QLabel:

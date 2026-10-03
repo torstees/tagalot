@@ -303,12 +303,12 @@ class KeepSession:
         self.tags.record(change)
         return change.label
 
-    def remove_related(self, entity_id: int, name: str, other_id: int) -> str:
-        """Unrelate two items by hand (remembered, so scans don't relate them again); one
-        undo step. Returns its label. Runs in a worker."""
+    def remove_related(self, entity_id: int, name: str, other_ids: Sequence[int]) -> str:
+        """Unrelate items by hand (remembered, so scans don't relate them again); one undo
+        step. Returns its label. Runs in a worker."""
         schema = self.schema
         change = self.writer.run(
-            lambda conn: remove_related(conn, schema, name, entity_id, other_id)
+            lambda conn: remove_related(conn, schema, name, entity_id, other_ids)
         )
         self.tags.record(change)
         return change.label

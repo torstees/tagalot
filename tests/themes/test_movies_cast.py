@@ -11,6 +11,10 @@ from tagalot.builtin_themes.movies import Actor
 from tagalot.core.actions import ActionChange, restore_action
 from tagalot.core.models import Entity, UserRelation
 from tagalot.core.relations import RelationError, add_related, remove_related
+from tagalot.core.search import SearchError, run_search
+from tagalot.core.search_fields import search_fields
+from tagalot.core.search_spec import SearchSpec, SearchSpecError
+from tagalot.core.tags import TagTree
 from tests.themes.test_movies import T0, Env, _cast, env
 
 __all__ = ["env"]  # fixtures
@@ -58,7 +62,7 @@ def test_an_actor_added_by_hand_stays_in_the_cast(env: Env) -> None:
 def test_an_actor_removed_by_hand_stays_out(env: Env) -> None:
     _nfo_scan(env, 0)
     heat, de_niro = _id(env, "Heat"), _id(env, "Robert De Niro")
-    change = _run(env, lambda c: remove_related(c, env.schema, "cast", heat, de_niro))
+    change = _run(env, lambda c: remove_related(c, env.schema, "cast", heat, [de_niro]))
     assert change.label == "Remove 'Robert De Niro' from Heat's cast"
     assert _cast(env, "Heat") == ["Al Pacino"]
     _nfo_scan(env, 1)  # read again: he isn't brought back
@@ -84,7 +88,7 @@ def test_a_new_actor_made_by_hand(env: Env) -> None:
     with env.reader.connect() as conn:
         assert conn.scalar(select(Entity.ingest_key).where(Entity.id == judd)) is None
     # Out of every cast, she still isn't deleted by a scan: the user made her.
-    _run(env, lambda c: remove_related(c, env.schema, "cast", heat, judd))
+    _run(env, lambda c: remove_related(c, env.schema, "cast", heat, [judd]))
     _nfo_scan(env, 1)
     assert "Ashley Judd" in env.titles(Actor)
 
@@ -113,4 +117,47 @@ def test_what_cant_be_related(env: Env) -> None:
     fails(lambda c: add_related(c, env.schema, "crew", heat, pacino), "no 'crew'")
     fails(lambda c: add_related(c, env.schema, "cast", heat, new_title="  "), "Type a name")
     fails(lambda c: add_related(c, env.schema, "cast", heat, 999_999), "no longer exists")
-    fails(lambda c: remove_related(c, env.schema, "cast", alien, pacino), "isn't related")
+    fails(lambda c: remove_related(c, env.schema, "cast", alien, [pacino]), "isn't related")
+
+
+def test_searching_what_is_related(env: Env) -> None:
+    _nfo_scan(env, 0)
+    heat, pacino = _id(env, "Heat"), _id(env, "Al Pacino")
+    with env.reader.connect() as conn:
+        tree = TagTree.load(conn)
+
+        def titles(spec: SearchSpec) -> list[str]:
+            fields = search_fields(env.schema, spec.types)
+            return [h.title for h in run_search(conn, spec, tree, fields=fields)]
+
+        # From the movie: its cast; from an actor: their movies.
+        assert titles(SearchSpec(types=("movies.actor",), related=("cast", heat))) == [
+            "Al Pacino",
+            "Robert De Niro",
+        ]
+        assert titles(SearchSpec(types=("movies.movie",), related=("cast", pacino))) == ["Heat"]
+        assert titles(SearchSpec(related=("cast", pacino))) == ["Heat"]  # no type needed
+        with pytest.raises(SearchError, match="No relationship 'crew'"):
+            titles(SearchSpec(related=("crew", heat)))
+
+
+def test_a_related_search_saves_and_loads() -> None:
+    spec = SearchSpec(types=("movies.movie",), related=("cast", 7))
+    data = spec.to_json()
+    assert data["related"] == {"name": "cast", "entity": 7}
+    assert SearchSpec.from_json(data) == spec
+    assert SearchSpec.from_json({"version": 1}).related is None  # saved before it existed
+    for bad in ({"name": "cast"}, {"name": "", "entity": 7}, "cast"):
+        with pytest.raises(SearchSpecError):
+            SearchSpec.from_json({"related": bad})
+
+
+def test_removing_several_is_one_step(env: Env) -> None:
+    _nfo_scan(env, 0)
+    heat = _id(env, "Heat")
+    both = [_id(env, "Al Pacino"), _id(env, "Robert De Niro")]
+    change = _run(env, lambda c: remove_related(c, env.schema, "cast", heat, both))
+    assert change.label == "Remove 2 items from Heat's cast"
+    assert _cast(env, "Heat") == []
+    env.writer.run(lambda c: restore_action(c, env.schema, change, forward=False))
+    assert _cast(env, "Heat") == ["Al Pacino", "Robert De Niro"]

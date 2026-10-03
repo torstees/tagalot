@@ -552,10 +552,11 @@ class MainWindow(QMainWindow):
         self._ui_state["preview"] = visible
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
-    def _contents_search(self, entity_type: str, spec: SearchSpec) -> SearchPage:
-        """The search embedded in a container's detail page. Pages of the same type share
+    def _contents_search(self, key: str, spec: SearchSpec, title: str) -> SearchPage:
+        """A search embedded in a detail page: a container's contents, or a related section
+        (#125). Those with the same ``key`` (``contents:<type>``, ``related:<type>``) share
         their remembered layout and columns."""
-        return self._search_page("Contents", spec, f"contents:{entity_type}", layout="grid")
+        return self._search_page(title, spec, key, layout="grid")
 
     def _contents_in_search(self, detail: DetailPage) -> None:
         """Search all, listing only a detail page's contents (a Within chip)."""
@@ -808,8 +809,8 @@ class MainWindow(QMainWindow):
         for page in self._pages.values():
             if isinstance(page, SearchPage):
                 pages.append(page)
-            elif isinstance(page, DetailPage) and page.contents is not None:
-                pages.append(page.contents)
+            elif isinstance(page, DetailPage):
+                pages += page.embedded()
             elif isinstance(page, TriagePage):
                 pages += [page.untagged, page.missing]
         return pages
