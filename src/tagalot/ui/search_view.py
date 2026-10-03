@@ -146,6 +146,7 @@ class SearchPage(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self._menu_actions: list[tuple[str, Callable[[list[int]], None]]] = []
         self.session = session
         self.grouped = grouped
         self._base = spec
@@ -392,7 +393,21 @@ class SearchPage(QWidget):
                 item.triggered.connect(
                     lambda _=False, m=theme_action.method: self._run_action(hit, m)
                 )
+        if self._menu_actions:
+            menu.addSeparator()
+            for label, callback in self._menu_actions:
+                item = menu.addAction(label)
+                item.triggered.connect(lambda _=False, c=callback: self._on_selection_or(hit, c))
         return menu
+
+    def add_menu_action(self, label: str, callback: Callable[[list[int]], None]) -> None:
+        """Add an entry to each result's right-click menu: ``callback`` gets the selected
+        items if the clicked one is among them, else just that one (an embedded related
+        search's "Remove from cast", #125)."""
+        self._menu_actions.append((label, callback))
+
+    def _on_selection_or(self, hit: SearchHit, callback: Callable[[list[int]], None]) -> None:
+        self.selected_entity_ids(lambda ids: callback(ids if hit.id in ids else [hit.id]))
 
     def _run_action(self, hit: SearchHit, method: str) -> None:
         """Run an action on the selection if the item is in it (the action takes those it

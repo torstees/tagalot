@@ -272,10 +272,10 @@ class TagActions(QObject):
             lambda label: f"{label}.",
         )
 
-    def remove_related(self, entity_id: int, name: str, other_id: int) -> None:
-        """Remove an item from a related section by hand; one undo step."""
+    def remove_related(self, entity_id: int, name: str, other_ids: list[int]) -> None:
+        """Remove items from a related section by hand; one undo step."""
         self._run(
-            lambda: self.session.remove_related(entity_id, name, other_id),
+            lambda: self.session.remove_related(entity_id, name, other_ids),
             lambda label: f"{label}. Edit \u2192 Undo brings it back.",
         )
 

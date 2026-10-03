@@ -7,6 +7,8 @@ snapshots (which carry the relationship and the user's record of it). The record
 user added, and its ``relate`` doesn't bring back one the user removed.
 """
 
+from collections.abc import Sequence
+
 from sqlalchemy import Connection, delete, insert, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -76,35 +78,43 @@ def add_related(
 
 
 def remove_related(
-    conn: Connection, schema: ThemeSchema, name: str, entity_id: int, other_id: int
+    conn: Connection, schema: ThemeSchema, name: str, entity_id: int, other_ids: Sequence[int]
 ) -> ActionChange:
-    """Unrelate the two items (in either order), remembering it, so a theme reading its
-    files again doesn't relate them anew."""
+    """Unrelate these items from ``entity_id`` (on either side), remembering it, so a
+    theme reading its files again doesn't relate them anew. One undo step for all."""
     link = _link(schema, name)
     _, title = _item(conn, entity_id)
-    _, other_title = _item(conn, other_id)
+    others = list(dict.fromkeys(other_ids))
+    if not others:
+        raise RelationError("Choose an item to remove.")
     t = link.table
-    pairs = [(entity_id, other_id), (other_id, entity_id)]
-    found = next(
-        (
-            (a, b)
-            for a, b in pairs
-            if conn.scalar(select(t.c.a_id).where(t.c.a_id == a, t.c.b_id == b)) is not None
-        ),
-        None,
-    )
-    if found is None:
-        raise RelationError(f"{other_title} isn't related to {title} there.")
+    found: list[tuple[int, int]] = []
+    titles: list[str] = []
+    for other_id in others:
+        _, other_title = _item(conn, other_id)
+        pair = next(
+            (
+                (a, b)
+                for a, b in ((entity_id, other_id), (other_id, entity_id))
+                if conn.scalar(select(t.c.a_id).where(t.c.a_id == a, t.c.b_id == b)) is not None
+            ),
+            None,
+        )
+        if pair is None:
+            raise RelationError(f"{other_title} isn't related to {title} there.")
+        found.append(pair)
+        titles.append(other_title)
     recorder = ChangeRecorder(conn, schema)
-    recorder.touch([entity_id, other_id])
-    a_id, b_id = found
-    conn.execute(delete(t).where(t.c.a_id == a_id, t.c.b_id == b_id))
-    _record(conn, name, a_id, b_id, added=False)
+    recorder.touch([entity_id, *others])
+    for a_id, b_id in found:
+        conn.execute(delete(t).where(t.c.a_id == a_id, t.c.b_id == b_id))
+        _record(conn, name, a_id, b_id, added=False)
     rel = link.relationship
-    this_is_a = a_id == entity_id
+    this_is_a = found[0][0] == entity_id
     label = (rel.label if this_is_a else rel.reverse_label) or name
+    what = repr(titles[0]) if len(titles) == 1 else f"{len(titles)} items"
     return ActionChange(
-        f"Remove {other_title!r} from {title}'s {label.lower()}",
+        f"Remove {what} from {title}'s {label.lower()}",
         recorder.before,
         recorder.after(),
     )
