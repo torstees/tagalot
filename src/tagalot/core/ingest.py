@@ -24,6 +24,7 @@ from tagalot.core.models import (
     EntityResource,
     FieldProvenance,
     FieldSource,
+    UserRelation,
     utcnow,
 )
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -204,10 +205,15 @@ class IngestSession:
         return list(self.conn.execute(query.order_by(EntityResource.sort_order)).scalars())
 
     def delete(self, entity: EntityRef) -> None:
-        """Delete an entity and everything linked to it (not its resources)."""
+        """Delete an entity and everything linked to it (not its resources). In a scan (no
+        recorder), an item the user made by hand (no ingest key) is left alone (#260)."""
         self._table_of(entity)
         if self._gone(entity):
             return
+        if self.recorder is None:
+            key = self.conn.execute(select(Entity.ingest_key).where(Entity.id == entity.id)).first()
+            if key is not None and key.ingest_key is None:
+                return
         if self.recorder is not None:  # its neighbours lose their edges and relations to it
             self._touch(entity.id, *self._neighbours(entity.id))
         # Pending edges first, so detaching sees the containment as it now stands.
@@ -387,8 +393,12 @@ class IngestSession:
         """Link ``a`` and ``b``; for a ``many=False`` relationship this replaces ``b``'s
         previous partner."""
         table, rel = self._relationship(name, a, b)
-        if self._gone(a, b):
-            return
+        if self._gone(a, b) or self._by_user(name, a.id, b.id) is False:
+            return  # merged away, or the user removed it (#260)
+        if not rel.many:
+            partner = self.conn.scalar(select(table.c.a_id).where(table.c.b_id == b.id))
+            if partner not in (None, a.id) and self._by_user(name, partner, b.id):
+                return  # b's one partner is the user's
         self._touch(a.id, b.id)
         if not rel.many:
             if self.recorder is not None:  # b's previous partner loses it
@@ -398,8 +408,8 @@ class IngestSession:
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None:
         table, _ = self._relationship(name, a, b)
-        if self._gone(a, b):
-            return
+        if self._gone(a, b) or self._by_user(name, a.id, b.id):
+            return  # merged away, or the user added it (#260)
         self._touch(a.id, b.id)
         self.conn.execute(delete(table).where(table.c.a_id == a.id, table.c.b_id == b.id))
 
@@ -463,6 +473,16 @@ class IngestSession:
             for (parent, child), reason in result.rejected:
                 self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
             self._added_edges, self._removed_edges = [], []
+
+    def _by_user(self, name: str, a_id: int, b_id: int) -> bool | None:
+        """Whether the user added (``True``) or removed (``False``) this relationship by
+        hand, or ``None`` if they did neither."""
+        added = self.conn.scalar(
+            select(UserRelation.added).where(
+                UserRelation.name == name, UserRelation.a_id == a_id, UserRelation.b_id == b_id
+            )
+        )
+        return None if added is None else bool(added)
 
     def _gone(self, *entities: EntityRef) -> bool:
         """Any of these stands for an item merged away (see :meth:`upsert`)."""

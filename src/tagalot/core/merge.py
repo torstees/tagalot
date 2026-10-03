@@ -40,6 +40,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     Root,
+    UserRelation,
     utcnow,
 )
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -177,6 +178,13 @@ def merge_items(
             )
         ).all()
     )
+    their_records = list(
+        conn.execute(
+            select(
+                UserRelation.name, UserRelation.a_id, UserRelation.b_id, UserRelation.added
+            ).where(or_(UserRelation.a_id.in_(ids), UserRelation.b_id.in_(ids)))
+        )
+    )
     recorder = ChangeRecorder(conn, schema)
     recorder.touch([keep_id, *ids, *parents, *children, *_partners(conn, schema, ids)])
 
@@ -222,6 +230,17 @@ def merge_items(
         conn.execute(
             insert(schema.relationships[name].table).prefix_with("OR IGNORE"),
             [{"a_id": a, "b_id": b} for a, b in rows],
+        )
+    gone = set(ids)
+    records = {
+        (n, keep_id if a in gone else a, keep_id if b in gone else b, added)
+        for n, a, b, added in their_records
+    }
+    records = {r for r in records if r[1] != r[2]}
+    if records:  # the user's hand-made and hand-removed relationships come along
+        conn.execute(
+            insert(UserRelation).prefix_with("OR IGNORE"),
+            [{"name": n, "a_id": a, "b_id": b, "added": added} for n, a, b, added in records],
         )
     _write_values(conn, table, keep_id, values)
     conn.execute(
