@@ -84,6 +84,10 @@ class DetailPage(QWidget):
     reread_requested = Signal(list, bool)
     unlink_requested = Signal(int, int, str)
     """Remove a link made by hand: (entity id, resource id, role)."""
+    relate_requested = Signal(int, str)
+    """Add to a related section by hand (#260): (entity id, relationship name)."""
+    unrelate_requested = Signal(int, str, int)
+    """Remove a related item by hand: (entity id, relationship name, other id)."""
     action_requested = Signal(str, list)
     """Run a theme action on the page's item: (method name, [entity id])."""
     """Read the entity's files again; true: replacing what the user edited."""
@@ -558,13 +562,51 @@ class DetailPage(QWidget):
         run_in_pool(job, on_done=done, pool=self._pool)
 
     def _links(self, section: DetailSection) -> QWidget:
-        links = " · ".join(f'<a href="{e.id}">{html.escape(e.title)}</a>' for e in section.entities)
+        """The related items as links, each with an x to remove it, and Add… (#260)."""
+        name = section.relationship
+        remove = (
+            f' <a href="x:{{id}}" style="text-decoration: none; color: gray">{CLOSE_MARK}</a>'
+            if name
+            else ""
+        )
+        links = " \u00b7 ".join(
+            f'<a href="{e.id}">{html.escape(e.title)}</a>' + remove.format(id=e.id)
+            for e in section.entities
+        )
         label = QLabel(links or "None")
+        label.setObjectName(f"related_{name}")
         label.setWordWrap(True)
-        label.setContentsMargins(12, 0, 0, 0)
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.linkActivated.connect(lambda href: self.open_entity.emit(int(href)))
-        return label
+        label.linkActivated.connect(lambda href: self._related_link(name, href))
+        label.linkHovered.connect(
+            lambda href: label.setToolTip(
+                f"Remove from {section.title.lower()} (Edit \u2192 Undo brings it back)"
+                if href.startswith("x:")
+                else ""
+            )
+        )
+        if not name:
+            label.setContentsMargins(12, 0, 0, 0)
+            return label
+        add = QPushButton("Add\u2026")
+        add.setObjectName(f"add_{name}")
+        add.setFlat(True)
+        add.setCursor(Qt.CursorShape.PointingHandCursor)
+        add.setToolTip(f"Add to {section.title.lower()} by hand; scans won't remove it")
+        add.clicked.connect(lambda: self.relate_requested.emit(self.entity_id, name))
+        body = QWidget()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(12, 0, 0, 0)
+        row.addWidget(label, 1)
+        row.addWidget(add, 0, Qt.AlignmentFlag.AlignTop)
+        return body
+
+    def _related_link(self, name: str | None, href: str) -> None:
+        if href.startswith("x:"):
+            if name:
+                self.unrelate_requested.emit(self.entity_id, name, int(href[2:]))
+        else:
+            self.open_entity.emit(int(href))
 
     # --- like a search page ---
 

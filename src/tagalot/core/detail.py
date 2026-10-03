@@ -92,6 +92,10 @@ class DetailSection:
     entities: tuple[EntityRow, ...] = ()
     count: int = 0
     """Contents: how many items the entity directly contains."""
+    relationship: str | None = None
+    """Related: the relationship's name, for adding and removing by hand (#260)."""
+    other_type: str | None = None
+    """Related: the type of the items on the other side."""
 
 
 @dataclass(frozen=True)
@@ -343,10 +347,10 @@ def _related(
     rel = link.relationship
     if rel.a is entity:
         mine, other, title = link.table.c.a_id, link.table.c.b_id, rel.label
-        default = entity_plural(rel.b)
+        default, other_type = entity_plural(rel.b), schema.theme.type_id_of(rel.b)
     elif rel.b is entity:
         mine, other, title = link.table.c.b_id, link.table.c.a_id, rel.reverse_label
-        default = entity_plural(rel.a)
+        default, other_type = entity_plural(rel.a), schema.theme.type_id_of(rel.a)
     else:
         return None
     rows = conn.execute(
@@ -356,7 +360,13 @@ def _related(
         .order_by(Entity.title, Entity.id)
         .limit(MAX_ROWS)
     ).all()
-    return DetailSection("related", title or default, entities=tuple(EntityRow(*r) for r in rows))
+    return DetailSection(
+        "related",
+        title or default,
+        entities=tuple(EntityRow(*r) for r in rows),
+        relationship=name,
+        other_type=other_type,
+    )
 
 
 # --- the preview strip (#90) ---

@@ -349,7 +349,7 @@ class MoviesTheme(Theme):
     dirs = True
     entities = [Actor, Collection, Movie]
     containment = [contains(Collection, Movie)]
-    relationships = [related("cast", Actor, Movie, label="Cast", reverse_label="Filmography")]
+    relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]
     views = [
         DetailView(
             Movie,

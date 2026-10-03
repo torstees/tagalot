@@ -62,6 +62,7 @@ from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.navigation import NavigationPane, NavTarget
+from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
@@ -429,6 +430,8 @@ class MainWindow(QMainWindow):
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
             detail.unlink_requested.connect(self.tag_actions.unlink_file)
+            detail.relate_requested.connect(self.add_related)
+            detail.unrelate_requested.connect(self.tag_actions.remove_related)
             detail.action_requested.connect(self.run_action)
             detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
@@ -883,6 +886,41 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
         return dialog.keep_id, dialog.other_ids, dict(dialog.choices)
+
+    def add_related(self, entity_id: int, name: str) -> None:
+        """Ask which item to add to a related section (or a new one's name), then add it."""
+        page = self.stack.currentWidget()
+        detail = page.detail if isinstance(page, DetailPage) else None
+        section = next(
+            (
+                s
+                for s in (detail.sections if detail is not None else ())
+                if s.kind == "related" and s.relationship == name
+            ),
+            None,
+        )
+        if detail is None or section is None or section.other_type is None:
+            return
+        chosen = self.choose_related(
+            detail.title,
+            section.other_type,
+            section.title,
+            {e.id for e in section.entities},
+        )
+        if chosen is not None:
+            other_id, new_title = chosen
+            self.tag_actions.add_related(entity_id, name, other_id, new_title)
+
+    def choose_related(
+        self, title: str, other_type: str, section: str, already: set[int]
+    ) -> tuple[int | None, str | None] | None:
+        """The Add to… dialog: (item id, None), (None, a new item's name), or ``None``
+        (tests replace this)."""
+        assert self.session is not None
+        dialog = RelateDialog(self.session, title, other_type, section, already, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.chosen()
 
     def choose_link_target(self, what: str, kinds: list[Kind | None]) -> tuple[int, str] | None:
         """The Link to item dialog: (entity id, role), or ``None`` (tests replace this)."""

@@ -263,6 +263,22 @@ class TagActions(QObject):
             lambda label: f"{label}.",
         )
 
+    def add_related(
+        self, entity_id: int, name: str, other_id: int | None, new_title: str | None
+    ) -> None:
+        """Add an item (or a new one) to a related section by hand; one undo step."""
+        self._run(
+            lambda: self.session.add_related(entity_id, name, other_id, new_title),
+            lambda label: f"{label}.",
+        )
+
+    def remove_related(self, entity_id: int, name: str, other_id: int) -> None:
+        """Remove an item from a related section by hand; one undo step."""
+        self._run(
+            lambda: self.session.remove_related(entity_id, name, other_id),
+            lambda label: f"{label}. Edit \u2192 Undo brings it back.",
+        )
+
     def unlink_file(self, entity_id: int, resource_id: int, role: str) -> None:
         """Remove a link made by hand; one undo step."""
         self._run(

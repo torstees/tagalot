@@ -28,6 +28,7 @@ from tagalot.core.models import (
     EntityTag,
     FieldProvenance,
     FieldSource,
+    UserRelation,
 )
 from tagalot.core.theme_schema import ThemeSchema
 
@@ -53,6 +54,8 @@ class EntitySnapshot:
     children: frozenset[int]
     relations: frozenset[tuple[str, int, int]]
     """(relationship name, a id, b id) for relationships this entity is either end of."""
+    user_relations: frozenset[tuple[str, int, int, bool]] = frozenset()
+    """(name, a id, b id, added) the user's records about those (#260)."""
 
 
 States = Mapping[int, EntitySnapshot | None]
@@ -120,6 +123,13 @@ def snapshot_entities(
                 )
             ),
             relations=frozenset(_relations(conn, schema, entity_id)),
+            user_relations=_rows(
+                conn.execute(
+                    select(
+                        UserRelation.name, UserRelation.a_id, UserRelation.b_id, UserRelation.added
+                    ).where(or_(UserRelation.a_id == entity_id, UserRelation.b_id == entity_id))
+                )
+            ),
         )
     return found
 
@@ -166,6 +176,7 @@ def restore_states(conn: Connection, schema: ThemeSchema, states: States) -> Non
     if present:
         _replace_rows(conn, present)
         _restore_relations(conn, schema, present)
+        _restore_user_relations(conn, present)
         _restore_edges(conn, present)
     fts.sync_entities(conn, ids, theme_text_source(schema))
 
@@ -258,6 +269,19 @@ def _restore_relations(
         rows = [{"a_id": a, "b_id": b} for n, a, b in wanted if n == name]
         if rows:
             conn.execute(insert(t).prefix_with("OR IGNORE"), rows)
+
+
+def _restore_user_relations(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:
+    ids = list(present)
+    conn.execute(
+        delete(UserRelation).where(or_(UserRelation.a_id.in_(ids), UserRelation.b_id.in_(ids)))
+    )
+    rows = {r for s in present.values() for r in s.user_relations}
+    if rows:
+        conn.execute(
+            insert(UserRelation).prefix_with("OR IGNORE"),  # an item gone since: skipped
+            [{"name": n, "a_id": a, "b_id": b, "added": added} for n, a, b, added in rows],
+        )
 
 
 def _restore_edges(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:

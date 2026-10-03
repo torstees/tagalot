@@ -336,6 +336,22 @@ class EntityMergeResource(Base):
     role: Mapped[str] = mapped_column(primary_key=True)
 
 
+class UserRelation(Base):
+    """A relationship the user added or removed by hand (§9, #260): ``added`` true for one
+    they made (a theme's ``unrelate`` leaves it), false for one they removed (a theme's
+    ``relate`` doesn't bring it back). ``a_id``/``b_id`` are the relationship's two sides."""
+
+    __tablename__ = "user_relation"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    a_id: Mapped[int] = mapped_column(ForeignKey("entity.id", ondelete=CASCADE), primary_key=True)
+    b_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True, index=True
+    )
+    added: Mapped[bool]
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

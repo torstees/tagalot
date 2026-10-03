@@ -160,6 +160,11 @@ def _v7_dedupe_dismissals(conn: Connection) -> None:
     Base.metadata.tables["dedupe_dismissal"].create(conn)
 
 
+def _v8_user_relations(conn: Connection) -> None:
+    """Format 9: relationships added or removed by hand (#260)."""
+    Base.metadata.tables["user_relation"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -168,6 +173,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     5: _v5_user_links,
     6: _v6_entity_merges,
     7: _v7_dedupe_dismissals,
+    8: _v8_user_relations,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

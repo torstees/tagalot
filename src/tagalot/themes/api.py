@@ -334,9 +334,12 @@ def related(
     reverse_label: str | None = None,
     many: bool = True,
 ) -> Relationship:
-    """Declare a relationship: ``related("cast", Actor, Movie, label="Cast")``.
+    """Declare a relationship between ``a`` and ``b`` items, such as
+    ``related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")``.
 
-    The core builds a link table ``<theme id>_<name>``.
+    ``label`` titles the section on an ``a`` item's page (an actor's movies: Filmography),
+    and ``reverse_label`` the one on a ``b`` item's page (a movie's actors: Cast). The core
+    builds a link table ``<theme id>_<name>``.
     """
     if not name.isidentifier():
         raise ThemeDeclarationError(f"relationship name {name!r} must be an identifier")
