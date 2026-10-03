@@ -99,6 +99,8 @@ class Song(Entity):
     duration: float | None = field(
         "Length", card=True, search="range", editable=False, display="duration"
     )
+    bitrate: int | None = field("Bitrate (kbps)", search="range", editable=False)
+    """The best of its versions' bitrates, in kilobits a second (theme version 2)."""
     folder: str = field("Folder", search="text", editable=False)
     roles = [role("audio", kinds={"audio"}, many=True, primary=True)]
     double_click = "open_file"
@@ -133,7 +135,8 @@ class ContentsThumbnail(ThumbnailProvider):
 
 
 class MusicTheme(Theme):
-    id, name, version = "music", "Music", 1
+    id, name, version = "music", "Music", 2
+    # 2: songs record their bitrate; keeps read every file again once to fill it in.
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS)
     dirs = True
     entities = [Artist, Album, Song]
@@ -297,6 +300,7 @@ class MusicTheme(Theme):
         disc = tags.get("disc") or folder_disc or guessed_disc
         artist = tags.get("artist")
         album_artist = tags.get("albumartist") or artist
+        bitrate: int | None = tags.get("bitrate")
         values = {
             "track": track,
             "disc": disc,
@@ -313,6 +317,7 @@ class MusicTheme(Theme):
         if existing:
             song = existing[0]
             before = ctx.get(song).fields
+            values["bitrate"] = best_bitrate(ctx, song, resource, before, bitrate)
             ctx.update(song, title=title, **values)
             if before.get("artist") and before["artist"] != artist:
                 old_artist = artist_ref(before["artist"], ctx)
@@ -326,7 +331,9 @@ class MusicTheme(Theme):
                     settle_album(old_album, ctx)
         else:
             key = song_key(album_dir, disc, track, title)
-            song = ctx.upsert(Song, key, title=title, **values)
+            song = ctx.upsert(Song, key, title=title)  # found, or made with no values yet
+            values["bitrate"] = best_bitrate(ctx, song, resource, ctx.get(song).fields, bitrate)
+            ctx.update(song, title=title, **values)
             ctx.link(song, resource, "audio", sort_order=0)
 
         if album_dir:
@@ -454,6 +461,21 @@ def playlist_path(ctx: ActionContext, title: str) -> str:
 # --- tags ---
 
 
+def best_bitrate(
+    ctx: IngestContext,
+    song: EntityRef,
+    resource: ResourceInfo,
+    before: Mapping[str, Any],
+    read: int | None,
+) -> int | None:
+    """A song's bitrate after reading one of its files: the best of its versions. The
+    value it had counts only while it has other files (a song's only file sets it)."""
+    others = [r for r in ctx.linked(song, "audio") if r != resource.id]
+    kept = before.get("bitrate") if others else None
+    rates = [r for r in (kept, read) if r]
+    return max(rates) if rates else None
+
+
 def read_tags(path: str) -> dict[str, Any]:
     """An audio file's tags, with mutagen's common names."""
     audio = mutagen.File(path, easy=True)
@@ -477,6 +499,8 @@ def read_tags(path: str) -> dict[str, Any]:
     tags["year"] = int(date[:4]) if date and date[:4].isdigit() else None
     length = getattr(audio.info, "length", None)
     tags["duration"] = round(float(length), 1) if length else None
+    bitrate = getattr(audio.info, "bitrate", None)
+    tags["bitrate"] = round(bitrate / 1000) if bitrate else None  # bits a second -> kbps
     return tags
 
 
