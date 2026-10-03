@@ -5,7 +5,8 @@ The theme version is kept in ``keep.toml`` (``[theme] version``) and in ``schema
 (``component`` = theme id), mirroring the core version (§5). On every open the core also
 applies *additive* changes itself: missing tables, columns, and indexes are created, so a
 theme that only adds entity types or fields needs no migration code. Removed fields are left
-in place; changing a field's type is not supported.
+in place unless the theme drops them; renaming, retyping, and dropping fields are explicit,
+in ``Theme.migrate_schema`` (``core.theme_migrate``).
 """
 
 import logging
@@ -16,9 +17,12 @@ from pathlib import Path
 from sqlalchemy import Connection, Engine, Table, insert, inspect, select, update
 from sqlalchemy.schema import CreateColumn
 
+from tagalot.core import fts
 from tagalot.core.db import KeepNeedsMigration, KeepVersionError, backup_database
+from tagalot.core.ingest import theme_text_source
 from tagalot.core.keep import Keep, KeepError, save_keep_config
-from tagalot.core.models import SchemaVersion
+from tagalot.core.models import Entity, SchemaVersion
+from tagalot.core.theme_migrate import CoreSchemaOps, SchemaMigrationError
 from tagalot.core.theme_schema import SchemaBuildError, ThemeSchema, build_theme_schema
 from tagalot.themes.api import IngestContext, Theme
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -41,9 +45,12 @@ class SchemaChanges:
     columns: list[str] = field(default_factory=list)
     """``table.column``."""
     indexes: list[str] = field(default_factory=list)
+    operations: list[str] = field(default_factory=list)
+    """The theme's own schema changes (``migrate_schema``), e.g. ``music_song: tempo
+    renamed to bpm``."""
 
     def __bool__(self) -> bool:
-        return bool(self.tables or self.columns or self.indexes)
+        return bool(self.tables or self.columns or self.indexes or self.operations)
 
 
 @dataclass(frozen=True)
@@ -70,8 +77,9 @@ def open_theme(
     - Same version: open (applying any additive changes).
     - Newer in ``keep.toml`` or the database: :class:`KeepVersionError`; nothing changes.
     - Older: :class:`KeepNeedsMigration` unless ``allow_migration``; then back up
-      ``keep.db`` and, in one transaction, apply additive changes, run
-      ``theme().migrate(stored, ctx)``, and record the new version.
+      ``keep.db`` and, in one transaction, run ``theme().migrate_schema(stored, ops)``,
+      apply additive changes, run ``theme().migrate(stored, ctx)``, and record the new
+      version.
     """
     wanted = keep.config.theme
     if theme.id != wanted.id:
@@ -92,6 +100,7 @@ def open_theme(
             select(SchemaVersion.version).where(SchemaVersion.component == theme.id)
         )
     migrated_from: int | None = None
+    backup = keep.db_path
     if stored is not None and stored > theme.version:
         raise KeepVersionError(
             f"{newer} (database has {stored}; installed: {theme.version}). "
@@ -111,11 +120,24 @@ def open_theme(
         migrated_from = stored
 
     with engine.begin() as conn:
-        changes = sync_theme_schema(conn, schema)
+        ops: CoreSchemaOps | None = None
         if migrated_from is not None:
             if make_context is None:
                 raise KeepThemeError("Can't migrate the theme: no ingest context available.")
-            theme().migrate(migrated_from, make_context(conn))
+            ops = CoreSchemaOps(conn, schema)
+            try:
+                theme().migrate_schema(migrated_from, ops)
+            except SchemaMigrationError as e:
+                raise SchemaMigrationError(
+                    f"Couldn't upgrade this keep's {theme.name!r} data to theme version "
+                    f"{theme.version}: {e} Nothing was changed; the backup made first is "
+                    f"{backup.name}."
+                ) from e
+        changes = sync_theme_schema(conn, schema)
+        if ops is not None and make_context is not None:
+            changes.operations = ops.changed
+            _refresh_text_search(conn, schema, ops.touched)
+            theme().migrate(migrated_from or 0, make_context(conn))
             conn.execute(
                 update(SchemaVersion)
                 .where(SchemaVersion.component == theme.id)
@@ -154,6 +176,13 @@ def sync_theme_schema(conn: Connection, schema: ThemeSchema) -> SchemaChanges:
                 index.create(conn)
                 changes.indexes.append(str(index.name))
     return changes
+
+
+def _refresh_text_search(conn: Connection, schema: ThemeSchema, type_ids: set[str]) -> None:
+    """Re-index the items of types whose text-search fields were retyped or dropped."""
+    for type_id in sorted(type_ids):
+        ids = conn.scalars(select(Entity.id).where(Entity.type == type_id)).all()
+        fts.sync_entities(conn, ids, theme_text_source(schema))
 
 
 def _add_column(conn: Connection, table: Table, name: str) -> None:
