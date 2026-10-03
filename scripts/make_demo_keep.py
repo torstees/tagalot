@@ -498,6 +498,21 @@ MOVIE_FILES = [
 ]
 """Movie files for the movies demo (stand-ins: a few bytes, not real video)."""
 
+MOVIE_PICTURES = {
+    "Inception (2010)/poster.jpg": ((40, 60, 90), "Inception"),
+    "Inception (2010)/screenshots/still 1.jpg": ((90, 80, 60), "Inception: still 1"),
+    "Inception (2010)/screenshots/still 2.jpg": ((60, 90, 80), "Inception: still 2"),
+    "Heat (1995)-poster.jpg": ((150, 60, 30), "Heat"),
+    "Heat (1995)-fanart.jpg": ((30, 40, 70), "Heat: fanart"),
+    "The Lord of the Rings/folder.jpg": ((120, 100, 40), "The Lord of the Rings"),
+    "The Lord of the Rings/The Fellowship of the Ring (2001)/poster.jpg": (
+        (70, 90, 40),
+        "The Fellowship",
+    ),
+    "The Lord of the Rings/The Two Towers (2002)/poster.jpg": ((60, 60, 60), "Two Towers"),
+}
+"""Posters and screenshots for the movies demo (The Matrix, Alien, and the rest have none)."""
+
 MOVIE_TAGS = {
     ("Genre",): [],
     ("Genre", "Sci-Fi"): ["Inception", "The Matrix", "Alien"],
@@ -519,6 +534,9 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         path = files / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"Not a real video: {relpath}\n".encode())
+    for relpath, (color, text) in MOVIE_PICTURES.items():
+        (files / relpath).parent.mkdir(parents=True, exist_ok=True)
+        (files / relpath).write_bytes(_cover(color, text))
     create_keep(
         keep_dir,
         "Movies",
