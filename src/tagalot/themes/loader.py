@@ -129,6 +129,13 @@ def validate_theme(theme: type[Theme]) -> list[str]:
         problems.append(
             f"it needs theme API version {api_version}; this Tagalot provides {API_VERSION}"
         )
+    elif getattr(theme, "migrate_schema", None) is not Theme.migrate_schema:
+        stated = any("api_version" in vars(k) for k in theme.__mro__ if k is not Theme)
+        if api_version < 2 or not stated:
+            problems.append(
+                "a theme with migrate_schema must set api_version = 2 (or later), so an "
+                "older Tagalot refuses it rather than skip its schema changes"
+            )
     for ext in getattr(theme, "extensions", ()):
         if not isinstance(ext, str) or not ext.startswith(".") or ext != ext.lower():
             problems.append(f"extension {ext!r} must be lowercase and start with '.'")

@@ -118,7 +118,8 @@ class MusicTheme(Theme):
 ```
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
-- **`version`**: raise it when `ingest` starts reading something new. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan.
+- **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
 
@@ -223,10 +224,69 @@ Only items sharing a key are compared, never all pairs; pairs at or above `near_
 
 ## Changing a theme people already use
 
-- **Adding** a type or a field needs nothing special: Tagalot adds the table or column when a keep opens.
-- **Reading more** from files: raise `version`, and keeps read every file again once, after asking.
-- **Changing data** for the new version (filling a new field from an old one, say): write `migrate(from_version, ctx)`. It runs once, after the user agrees and with the keep backed up.
-- **Renaming, retyping, or removing** fields isn't supported yet (#173).
+Keeps remember which `version` of your theme made their data. When a keep made with an older version opens, Tagalot asks before upgrading it, backs up `keep.db`, then:
+
+1. runs your **`migrate_schema(from_version, ops)`**: renames, type changes, and drops you ask for;
+2. **adds** any new types and fields itself;
+3. runs your **`migrate(from_version, ctx)`**: changes to the data;
+4. records the new version. Every file is read again once, at the next scan.
+
+All of it is one transaction: if anything fails, nothing changes, the user is told why, and the backup stays. `from_version` is the version the keep had, so write each change under `if from_version < N:` for the version that made it; a keep several versions behind then gets every step in order.
+
+| You want to | Write |
+|---|---|
+| add a type or field | nothing (raise `version` if files should be read again to fill it) |
+| fill in or reshape data | `migrate()` |
+| rename a field, change its type, or remove it | `migrate_schema()` (needs `api_version = 2`) |
+
+**Adding a field.** Declare it. Tagalot adds the column when a keep opens, empty (or the type's default, if it can't be `None`). To fill it from the files, raise `version` too, and `ingest` sets it at the next scan.
+
+**Renaming a field** (`tempo` becomes `bpm`, version 3):
+
+```python
+class Song(Entity):
+    bpm: int | None = field("BPM", search="range")    # was tempo
+
+class MusicTheme(Theme):
+    id, name, version, api_version = "music", "Music", 3, 2
+
+    def migrate_schema(self, from_version, ops):
+        if from_version < 3:
+            ops.rename_field(Song, "tempo", "bpm")
+```
+
+Values move across, values people edited stay protected from scans, and saved searches that filter or sort on `tempo` use `bpm`.
+
+**Changing a field's type**: declare the new type, then `ops.change_type(Song, "year")`. Values that clearly convert are converted: `"1999"` to 1999, numbers to text, `"yes"`/`"no"` and 1/0 to `bool`, and ISO text to dates. Blank text becomes `None`. If a value doesn't convert, the upgrade fails and names the item, so nothing is half-done. To decide yourself, pass a function: `ops.change_type(Song, "year", lambda v: int(v[:4]) if v else None)`. It gets each stored value (`str`, `int`, `float`, or `None`) and raises `ValueError` to fail.
+
+To rename and retype in one go, rename first, then change the type of the new name.
+
+**Removing a field**: stop declaring it. Its column then stays in the keep, unused and harmless. To delete it and its values, call `ops.drop_field(Song, "legacy_code")` too.
+
+**Splitting a field** (`credit`, "Composer / Arranger", becomes `composer` and `arranger`): keep `credit` declared for this version, hidden, so `migrate()` can read it, and fill the new fields:
+
+```python
+class Song(Entity):
+    composer: str | None = field("Composer", search="text")
+    arranger: str | None = field("Arranger", search="text")
+    credit: str | None = field("Credit", detail=False, editable=False)   # going in version 5
+
+class MusicTheme(Theme):
+    id, name, version = "music", "Music", 4
+
+    def migrate(self, from_version, ctx):
+        if from_version < 4:
+            for song in ctx.find(Song):
+                credit = ctx.get(song).fields["credit"] or ""
+                composer, _, arranger = credit.partition(" / ")
+                ctx.update(song, composer=composer or None, arranger=arranger or None)
+```
+
+In version 5, remove `credit` and call `ops.drop_field(Song, "credit")` under `if from_version < 5:`.
+
+**`version` and `api_version`.** `version` is your theme's own: raise it whenever its data changes shape or its files should be read again. `api_version` is the version of `tagalot.themes.api` the theme needs. A Tagalot providing an older API refuses the theme, rather than open it and get things wrong. `migrate_schema` arrived in API version 2, so a theme defining it sets `api_version = 2`, and `--check-theme` reminds you if you forget.
+
+**Supporting Tagalot with API version 1**: don't define `migrate_schema`. To rename a field, declare the new one and keep the old one declared, hidden (`detail=False, editable=False`), for one version. Copy it across in `migrate()`, then stop declaring it in the next version. Its column stays in older keeps, unused.
 
 ## Rules
 

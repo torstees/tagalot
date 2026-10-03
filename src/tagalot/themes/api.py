@@ -17,8 +17,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 1
-"""The version of this contract. It changes only with a DESIGN.md §9 update."""
+API_VERSION = 2
+"""The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
+added :meth:`Theme.migrate_schema`."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -615,6 +616,49 @@ def kind_of(resource: ResourceInfo) -> Kind | None:
     return next((k for k, exts in KIND_EXTENSIONS.items() if resource.ext in exts), None)
 
 
+# --- Schema migrations ---
+
+
+class SchemaOps(Protocol):
+    """Schema changes a theme asks the core to make in :meth:`Theme.migrate_schema`
+    (DESIGN.md §9 "Theme schema versions"). They run in order, in the upgrade's
+    transaction: if one fails, nothing changes.
+
+    Each skips what the keep doesn't have (a field it never had, a type whose table isn't
+    there yet), so a keep upgraded from an older version still works. Fields are named as
+    in the entity class; the entity is one of the theme's current :attr:`Theme.entities`.
+    """
+
+    def rename_field(self, entity: type[Entity], old: str, new: str) -> None:
+        """Rename a field, keeping its values, where they came from (so a user's edits stay
+        protected), and saved searches using it. ``new`` is declared on ``entity``; ``old``
+        no longer is. To change its type as well, call :meth:`change_type` after."""
+        ...
+
+    def change_type(
+        self, entity: type[Entity], name: str, convert: Callable[[Any], Any] | None = None
+    ) -> None:
+        """Convert a field's stored values to the type it is declared with now.
+
+        Without ``convert``, the core converts what clearly converts: numbers to and from
+        text (``"120"`` to 120, 3.0 to 3), ``"true"``/``"no"``/1/0 to booleans, ISO text
+        to dates and times, and anything to text; blank text becomes ``None`` (or the
+        field's default, if it can't be ``None``). A value that doesn't convert fails the
+        whole upgrade, naming the item and the value.
+
+        ``convert``, if given, gets each stored value as SQLite holds it (``str``, ``int``,
+        ``float``, or ``None``; dates and times as ISO text, booleans as 0 or 1) and returns
+        the new value; raising ``ValueError`` fails the upgrade.
+        """
+        ...
+
+    def drop_field(self, entity: type[Entity], name: str) -> None:
+        """Remove a field the theme no longer declares, and its values, for good (the
+        keep is backed up before an upgrade). Without this, a removed field's column is
+        simply left in place, unused."""
+        ...
+
+
 # --- Thumbnails ---
 
 
@@ -997,6 +1041,16 @@ class Theme:
         nothing.
         """
 
+    def migrate_schema(self, from_version: int, ops: SchemaOps) -> None:
+        """Rename, retype, or drop fields when upgrading from ``from_version`` (e.g.
+        ``if from_version < 3: ops.rename_field(Song, "tempo", "bpm")``).
+
+        Runs first in the upgrade's transaction, before the core adds new tables and
+        fields and before :meth:`migrate`; see :class:`SchemaOps`. A theme that defines it
+        sets ``api_version = 2``, so an older Tagalot refuses the theme rather than skip
+        its schema changes. The default does nothing.
+        """
+
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
         """Cheap keys for finding near-duplicates (DESIGN.md §13): only items of a type
         that share a key are compared with :meth:`similarity`, never all pairs. Build them
@@ -1087,6 +1141,7 @@ __all__ = [
     "ResourceInfo",
     "Role",
     "RoleImage",
+    "SchemaOps",
     "SearchView",
     "Section",
     "SortBy",

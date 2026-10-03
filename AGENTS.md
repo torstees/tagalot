@@ -81,6 +81,7 @@ src/tagalot/
     models.py            # core tables (resource, entity, tag, links, closure…)
     theme_schema.py      # theme declarations -> Core tables, per keep
     theme_db.py          # theme tables in a keep: versions, migrate, additive sync
+    theme_migrate.py     # a theme's explicit schema changes (rename/retype/drop fields)
     roots.py             # root reachability, root table status
     scanner.py           # walking, diffing, move detection
     scanjob.py           # scan_root(): one root's full scan, in §6 order
