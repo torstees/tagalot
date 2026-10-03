@@ -17,9 +17,11 @@ from tagalot.builtin_themes.music import (
     MusicTheme,
     Song,
     album_folder,
+    best_bitrate,
     from_file_name,
     normalize,
     playlist_path,
+    read_tags,
 )
 from tagalot.core.actions import ActionResult, run_action
 from tagalot.core.db import create_keep_engine, open_keep_database
@@ -35,7 +37,7 @@ from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.cache import ThumbCache
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.writer import DbWriter
-from tagalot.themes.api import SearchView
+from tagalot.themes.api import EntityRef, ResourceInfo, SearchView
 from tagalot.themes.loader import validate_theme
 from tests.core.media_files import png_bytes, write_flac, write_image, write_mp3
 
@@ -469,3 +471,38 @@ def test_playlist_names_are_safe_file_names(tmp_path: Path) -> None:
 
     assert Path(playlist_path(Ctx(), 'AC/DC: "Live"?')).name == "AC DC Live.m3u8"  # type: ignore[arg-type]
     assert Path(playlist_path(Ctx(), "...")).name == "Playlist.m3u8"  # type: ignore[arg-type]
+
+
+def test_songs_record_the_best_bitrate_of_their_versions(env: Env) -> None:
+    blue = env.files / "Miles Davis/Kind of Blue"
+    mp3 = read_tags(str(blue / "01 So What.mp3"))["bitrate"]
+    assert mp3
+    assert read_tags(str(blue / "01 So What.flac"))["bitrate"] is None  # no audio frames
+    env.scan()
+    assert env.fields(Song, "So What")["bitrate"] == mp3  # the version that has one
+    freddie = read_tags(str(blue / "02 Freddie Freeloader.mp3"))["bitrate"]
+    assert env.fields(Song, "Freddie Freeloader")["bitrate"] == freddie
+
+
+@pytest.mark.parametrize(
+    ("others", "before", "read", "expected"),
+    [
+        ([], 320, 128, 128),  # its only file: that file's rate
+        ([7], 320, 128, 320),  # another version is better
+        ([7], 128, 320, 320),
+        ([7], None, 192, 192),
+        ([7], 192, None, 192),
+        ([], None, None, None),
+    ],
+)
+def test_best_bitrate(
+    others: list[int], before: int | None, read: int | None, expected: int | None
+) -> None:
+    class Ctx:
+        def linked(self, entity: object, role: str | None = None) -> list[int]:
+            return [1, *others]  # 1: the file being read
+
+    resource = ResourceInfo(1, "r", "a.mp3", "file", "mp3", 10, 0, "/a.mp3")
+    song = EntityRef(5, "music.song")
+    got = best_bitrate(Ctx(), song, resource, {"bitrate": before}, read)  # type: ignore[arg-type]
+    assert got == expected
