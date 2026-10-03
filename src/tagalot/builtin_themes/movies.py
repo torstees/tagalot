@@ -32,6 +32,11 @@ both); its ``<actor>`` names are the cast (actors keyed by name, so one actor's 
 on their page); and its ``<set>`` puts the movie in a collection of that name. Reading it
 again replaces the cast and set it gave before; an actor left in no movie, with no photo,
 is deleted. Cast added by hand comes with #260.
+
+**Video details** (#259, theme version 2): each video is read with MediaInfo (pymediainfo)
+in ``prepare()``: its length, picture size, video codec, and audio languages. A movie with
+several versions shows its best one's (the most pixels), and the longest runtime; an .nfo's
+runtime wins over the files'.
 """
 
 import logging
@@ -279,9 +284,18 @@ class Movie(Entity):
     """From the .nfo; several are joined with commas."""
     director: str | None = field("Director", search="text")
     runtime: float | None = field("Runtime", search="range", display="duration")
-    """Seconds (an .nfo gives minutes)."""
+    """Seconds (an .nfo gives minutes; else the longest video's)."""
     rating: float | None = field("Rating", search="range")
     plot: str | None = field("Plot", search="text")
+    quality: str | None = field("Quality", card=True, search="choice", editable=False)
+    """``4K``, ``1440p``, ``1080p``, ``720p``, or ``SD``, from the best version's picture."""
+    resolution: str | None = field("Resolution", editable=False)
+    """The best version's picture size, ``1920 x 1080``."""
+    video_codec: str | None = field("Video codec", search="choice", editable=False)
+    audio: str | None = field("Audio", search="text", editable=False)
+    """The best version's audio languages, ``English, French``."""
+    pixels: int | None = field("Pixels", editable=False, detail=False)
+    """The best version's picture size in pixels (to compare versions)."""
     folder: str = field("Folder", search="text", editable=False)
     roles = [
         role("video", kinds={"video"}, many=True, primary=True),
@@ -290,7 +304,7 @@ class Movie(Entity):
         role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
-    card_lines = ("year",)
+    card_lines = ("year", "quality")
 
 
 @dataclass(frozen=True)
@@ -329,7 +343,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 1
+    id, name, version = "movies", "Movies", 2
+    # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True
     entities = [Actor, Collection, Movie]
@@ -390,6 +405,10 @@ class MoviesTheme(Theme):
                         and bool(grandparent)
                         and is_collection(os.path.dirname(folder_path), collections),
                     }
+                    try:
+                        found[resource.id]["video"] = read_video(resource.path)
+                    except Exception as e:  # unreadable: still a movie, with a warning
+                        found[resource.id]["error"] = f"{type(e).__name__}: {e}"
                 elif kind_of(resource) is Kind.IMAGE:
                     found[resource.id] = self._picture(resource, videos, collections)
                 elif resource.relpath.lower().endswith(NFO):
@@ -504,11 +523,10 @@ class MoviesTheme(Theme):
             ctx.warn(resource, f"Couldn't read it: {details['error']}")
             return
         nfo: dict[str, Any] = details["nfo"]
-        values = {
-            name: nfo.get(name) for name in ("genre", "director", "runtime", "rating", "plot")
-        }
-        if nfo.get("year"):
-            values["year"] = nfo["year"]
+        values = {name: nfo.get(name) for name in ("genre", "director", "rating", "plot")}
+        for name in ("year", "runtime"):  # else what the file name or the videos say
+            if nfo.get(name):
+                values[name] = nfo[name]
         ctx.update(movie, title=nfo.get("title") or None, **values)
         self._set_cast(movie, nfo.get("actors") or [], ctx)
         self._set_collection(movie, nfo.get("set"), ctx)
@@ -589,6 +607,10 @@ class MoviesTheme(Theme):
             ctx.update(movie, folder=folder)  # its .nfo names it
         else:
             ctx.update(movie, title=name.title, **values)
+        if details.get("error"):
+            ctx.warn(resource, f"Couldn't read its details: {details['error']}")
+        elif details.get("video"):
+            ctx.update(movie, **best_version(ctx, movie, resource, details["video"]))
         if not existing:
             ctx.link(movie, resource, "video")
 
@@ -715,3 +737,76 @@ def _float(text: str | None) -> float | None:
         return float(text) if text else None
     except ValueError:
         return None
+
+
+VIDEO_FIELDS = ("quality", "resolution", "video_codec", "audio", "pixels")
+
+
+def best_version(
+    ctx: IngestContext, movie: EntityRef, resource: ResourceInfo, read: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The movie's video fields after reading one of its videos: its best version's (the
+    most pixels), and the longest runtime unless an .nfo gave one. What the movie had
+    counts only while it has other videos (a movie's only video sets them)."""
+    before = ctx.get(movie).fields
+    others = [r for r in ctx.linked(movie, "video") if r != resource.id]
+    values: dict[str, Any] = {}
+    kept = (before.get("pixels") or 0) if others else 0
+    if (read.get("pixels") or 0) >= kept:
+        values.update({name: read.get(name) for name in VIDEO_FIELDS})
+    runtime = read.get("runtime")
+    if ctx.linked(movie, "nfo") and before.get("runtime"):
+        pass  # the .nfo's (or a video's read before it), kept
+    elif runtime and (not others or runtime > (before.get("runtime") or 0)):
+        values["runtime"] = runtime
+    return values
+
+
+def read_video(path: str) -> dict[str, Any]:
+    """A video's details by MediaInfo: ``runtime`` (seconds), ``quality``, ``resolution``,
+    ``pixels``, ``video_codec``, and ``audio`` (languages). Unknown ones are ``None``."""
+    from pymediainfo import MediaInfo  # the bundled library loads on first use
+
+    info = MediaInfo.parse(path)
+    general = info.general_tracks[0] if info.general_tracks else None
+    video = info.video_tracks[0] if info.video_tracks else None
+    duration = getattr(general, "duration", None) or getattr(video, "duration", None)
+    width = _int(str(getattr(video, "width", "") or "")) if video else None
+    height = _int(str(getattr(video, "height", "") or "")) if video else None
+    languages = []
+    for track in info.audio_tracks:
+        names = getattr(track, "other_language", None) or []
+        name = names[0] if names else getattr(track, "language", None)
+        if name and name not in languages:
+            languages.append(name)
+    codec = None
+    if video is not None:
+        codec = getattr(video, "commercial_name", None) or getattr(video, "format", None)
+    return {
+        "runtime": round(float(duration) / 1000, 1) if duration else None,
+        "quality": quality(width, height),
+        "resolution": f"{width} \u00d7 {height}" if width and height else None,
+        "pixels": width * height if width and height else None,
+        "video_codec": codec,
+        "audio": ", ".join(languages) or None,
+    }
+
+
+def quality(width: int | None, height: int | None) -> str | None:
+    """A picture size's quality name. Wide films are letterboxed (1920 x 800 is 1080p),
+    so the width counts as much as the height."""
+    if not width or not height:
+        return None
+    for name, (min_width, min_height) in QUALITIES:
+        if width >= min_width or height >= min_height:
+            return name
+    return "SD"
+
+
+QUALITIES = (
+    ("4K", (3800, 2000)),
+    ("1440p", (2500, 1400)),
+    ("1080p", (1900, 1000)),
+    ("720p", (1260, 700)),
+)
+"""Quality names by the least width or height that has them, best first."""

@@ -1,6 +1,6 @@
 # mypy: disable-error-code="no-untyped-call"
 # (mutagen is untyped)
-"""Tiny media files made in tests: images, and audio with embedded art."""
+"""Tiny media files made in tests: images, audio with embedded art, and video headers."""
 
 import base64
 import inspect
@@ -143,3 +143,66 @@ def woff_bytes(ttf: bytes) -> bytes:
         0,
     )
     return header + directory + blobs
+
+
+def _ebml(eid: int, data: bytes) -> bytes:
+    """One EBML element (Matroska's encoding): its id, an 8-byte size, and its data."""
+    ident = eid.to_bytes((eid.bit_length() + 7) // 8, "big")
+    return ident + b"\x01" + len(data).to_bytes(7, "big") + data
+
+
+def _ebml_uint(eid: int, value: int) -> bytes:
+    return _ebml(eid, value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big"))
+
+
+def _ebml_text(eid: int, value: str) -> bytes:
+    return _ebml(eid, value.encode())
+
+
+def write_mkv(
+    path: Path,
+    size: tuple[int, int] = (1920, 1080),
+    seconds: float = 60.0,
+    codec: str = "V_VP9",
+    languages: Sequence[str] = ("eng",),
+) -> None:
+    """A Matroska file's headers with no frames (a few hundred bytes): its length, one video
+    track of ``size`` and ``codec``, and an audio track per language. MediaInfo reads them."""
+    header = _ebml(
+        0x1A45DFA3,
+        _ebml_uint(0x4286, 1)
+        + _ebml_uint(0x42F7, 1)
+        + _ebml_uint(0x42F2, 4)
+        + _ebml_uint(0x42F3, 8)
+        + _ebml_text(0x4282, "matroska")
+        + _ebml_uint(0x4287, 4)
+        + _ebml_uint(0x4285, 2),
+    )
+    info = _ebml(
+        0x1549A966,
+        _ebml_uint(0x2AD7B1, 1_000_000)  # timestamps in milliseconds
+        + _ebml(0x4489, struct.pack(">d", seconds * 1000))
+        + _ebml_text(0x4D80, "tagalot tests")
+        + _ebml_text(0x5741, "tagalot tests"),
+    )
+    width, height = size
+    tracks = _ebml(
+        0xAE,
+        _ebml_uint(0xD7, 1)
+        + _ebml_uint(0x73C5, 1)
+        + _ebml_uint(0x83, 1)  # video
+        + _ebml_text(0x86, codec)
+        + _ebml(0xE0, _ebml_uint(0xB0, width) + _ebml_uint(0xBA, height)),
+    )
+    for n, language in enumerate(languages, start=2):
+        tracks += _ebml(
+            0xAE,
+            _ebml_uint(0xD7, n)
+            + _ebml_uint(0x73C5, n)
+            + _ebml_uint(0x83, 2)  # audio
+            + _ebml_text(0x86, "A_OPUS")
+            + _ebml_text(0x22B59C, language)
+            + _ebml(0xE1, _ebml(0xB5, struct.pack(">d", 48000.0)) + _ebml_uint(0x9F, 2)),
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header + _ebml(0x18538067, info + _ebml(0x1654AE6B, tracks)))

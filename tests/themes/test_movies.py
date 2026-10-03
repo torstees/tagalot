@@ -18,7 +18,9 @@ from tagalot.builtin_themes.movies import (
     MoviesTheme,
     is_extra,
     movie_name,
+    quality,
     read_nfo,
+    read_video,
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
@@ -28,7 +30,7 @@ from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
 from tagalot.themes.loader import validate_theme
-from tests.core.media_files import write_image
+from tests.core.media_files import write_image, write_mkv
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 
@@ -413,3 +415,74 @@ def test_a_broken_nfo_is_still_linked(env: Env) -> None:
     assert env.roles("Alien")["nfo"] == ["Alien (1979).nfo"]
     assert env.titles(Movie).count("Alien") == 1
     assert any("Couldn't read it" in w.message for w in report.ingest_warnings)
+
+
+def test_reading_a_video(tmp_path: Path) -> None:
+    path = tmp_path / "movie.mkv"
+    write_mkv(path, (1920, 800), 7200, languages=["eng", "fre", "eng"])
+    assert read_video(str(path)) == {
+        "runtime": 7200.0,
+        "quality": "1080p",  # letterboxed: the width says 1080p
+        "resolution": "1920 " + chr(0xD7) + " 800",
+        "pixels": 1920 * 800,
+        "video_codec": "VP9",
+        "audio": "English, French",
+    }
+    junk = tmp_path / "junk.mkv"
+    junk.write_bytes(b"not a video")
+    found = read_video(str(junk))
+    assert (found["runtime"], found["quality"], found["audio"]) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        ((3840, 2160), "4K"),
+        ((3840, 1600), "4K"),
+        ((2560, 1440), "1440p"),
+        ((1920, 1080), "1080p"),
+        ((1440, 1080), "1080p"),
+        ((1280, 536), "720p"),
+        ((720, 480), "SD"),
+        ((0, 0), None),
+    ],
+)
+def test_quality(size: tuple[int, int], expected: str | None) -> None:
+    assert quality(*size) == expected
+
+
+def _video_fields(env: Env, title: str) -> tuple[object, ...]:
+    table = env.schema.entities[Movie].table
+    with env.reader.connect() as conn:
+        row = conn.execute(
+            select(table).join(Entity, Entity.id == table.c.id).where(Entity.title == title)
+        ).one()
+    return (row.runtime, row.quality, row.resolution, row.video_codec, row.audio)
+
+
+def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
+    write_mkv(env.files / "Heat (1995).mkv", (1920, 1080), 10200, languages=["eng"])
+    write_mkv(env.files / "Heat (1995) - 720p.mkv", (1280, 720), 10260, languages=["fre"])
+    env.scan()
+    # 1080p's picture, codec, and audio; the longer runtime
+    assert _video_fields(env, "Heat") == (
+        10260.0,
+        "1080p",
+        "1920 " + chr(0xD7) + " 1080",
+        "VP9",
+        "English",
+    )
+    assert _video_fields(env, "Alien")[:2] == (None, None)  # not a real video: nothing
+
+    # An .nfo's runtime wins over the videos'.
+    (env.files / "Heat (1995).nfo").write_text("<movie><runtime>170</runtime></movie>")
+    env.scan(T0 + timedelta(hours=1))
+    assert _video_fields(env, "Heat")[0] == 170 * 60
+    video = env.files / "Heat (1995) - 720p.mkv"
+    write_mkv(video, (1280, 720), 11000, languages=["fre"])  # changed: read again
+    env.scan(T0 + timedelta(hours=2))
+    assert _video_fields(env, "Heat")[0] == 170 * 60
+
+
+def test_the_theme_reads_files_again_after_version_1() -> None:
+    assert MoviesTheme.version == 2
