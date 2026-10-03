@@ -24,6 +24,9 @@ jobs:
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # A hung test ends the job (and shows its log, with the stack from faulthandler_timeout)
+    # instead of running for GitHub's six-hour default.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

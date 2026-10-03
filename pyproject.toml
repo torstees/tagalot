@@ -84,6 +84,8 @@ markers = [
 ]
 # Fail on SQLAlchemy deprecations so API changes are fixed when they appear.
 filterwarnings = ["error::sqlalchemy.exc.SADeprecationWarning"]
+# A test still running after 5 minutes is hung: print every thread's stack to show where.
+faulthandler_timeout = 300
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13"]
