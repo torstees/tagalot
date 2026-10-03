@@ -10,13 +10,22 @@ logger = logging.getLogger(__name__)
 
 def main() -> int:
     """Start Tagalot and return the process exit code. ``--check`` reports what this
-    build can do and exits; ``--version`` prints the version. With ``--output FILE`` they
+    build can do and exits; ``--version`` prints the version; ``--new-theme ID`` and
+    ``--check-theme FILE`` help theme authors (``theme_tools``). With ``--output FILE`` they
     write to the file instead (a windowed Windows build has no console)."""
     if "--version" in sys.argv[1:]:
         import tagalot
 
         _output(sys.argv[1:])(f"Tagalot {tagalot.__version__}")
         return 0
+    if "--new-theme" in sys.argv[1:]:
+        from tagalot.theme_tools import run_new_theme
+
+        return run_new_theme(sys.argv[1:], _output(sys.argv[1:]))
+    if "--check-theme" in sys.argv[1:]:
+        from tagalot.theme_tools import run_check_theme
+
+        return run_check_theme(sys.argv[1:], _output(sys.argv[1:]))
     if "--check" in sys.argv[1:]:
         from tagalot.selfcheck import run_check
 
