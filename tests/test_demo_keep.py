@@ -164,6 +164,21 @@ def test_creates_an_assets_keep(tmp_path: Path) -> None:
     assert script.make_assets_demo(tmp_path, reset=True) == keep_dir
 
 
+def test_creates_a_movies_keep(tmp_path: Path) -> None:
+    script = _script()
+    keep_dir = script.make_movies_demo(tmp_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        assert session.theme.id == "movies"
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            scifi = count_by_type(conn, SearchSpec(include=_ids(tree, "Sci-Fi")), tree)
+    assert everything == {"movies.collection": 1, "movies.movie": 9}
+    assert scifi == {"movies.movie": 3}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_movies_demo(tmp_path)
+
+
 def test_creates_a_music_keep(tmp_path: Path) -> None:
     script = _script()
     keep_dir = script.make_music_demo(tmp_path)

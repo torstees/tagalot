@@ -50,6 +50,7 @@ from mutagen.id3 import APIC, ID3
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import Connection, insert, select
 
+from tagalot.builtin_themes.movies import MoviesTheme
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity, EntityTag
@@ -480,6 +481,56 @@ def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     return keep_dir
 
 
+MOVIE_FILES = [
+    "Inception (2010)/Inception.mkv",
+    "Inception (2010)/Inception (2010)-trailer.mkv",
+    "Heat (1995).mkv",
+    "Heat (1995) - 720p.mkv",
+    "Alien (1979).avi",
+    "The.Matrix.1999.1080p/The.Matrix.1999.1080p.BluRay.mkv",
+    "The Lord of the Rings/The Fellowship of the Ring (2001)/The Fellowship of the Ring.mkv",
+    "The Lord of the Rings/The Two Towers (2002)/The Two Towers.mkv",
+    "The Lord of the Rings/The Return of the King (2003)/The Return of the King - part1.mkv",
+    "The Lord of the Rings/The Return of the King (2003)/The Return of the King - part2.mkv",
+    "The Lord of the Rings/Extras/Making of.mkv",
+    "Home Movies/Beach day.mp4",
+    "Home Movies/Birthday.mp4",
+]
+"""Movie files for the movies demo (stand-ins: a few bytes, not real video)."""
+
+MOVIE_TAGS = {
+    ("Genre",): [],
+    ("Genre", "Sci-Fi"): ["Inception", "The Matrix", "Alien"],
+    ("Genre", "Crime"): ["Heat"],
+    ("Genre", "Fantasy"): ["The Lord of the Rings"],
+    ("Watched",): ["Heat", "Alien"],
+}
+
+
+def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+    """Create ``scratch/movie-files`` and ``scratch/Movies.keep`` (the movies theme),
+    scanned and tagged; returns the keep folder."""
+    files, keep_dir = scratch / "movie-files", scratch / "Movies.keep"
+    if reset:
+        _remove([keep_dir, files])
+    elif keep_dir.exists():
+        raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
+    for relpath in MOVIE_FILES:
+        path = files / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"Not a real video: {relpath}\n".encode())
+    create_keep(
+        keep_dir,
+        "Movies",
+        ThemeRef("movies", MoviesTheme.version),
+        [RootConfig("movies", "Movie files", str(files), list(DEFAULT_EXCLUDES))],
+    )
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        _tag(session, MOVIE_TAGS, {}, {})
+    return keep_dir
+
+
 def _tag(
     session: KeepSession,
     tags: dict[tuple[str, ...], list[str]],
@@ -517,6 +568,11 @@ def main(argv: list[str] | None = None) -> int:
         help="create scratch/Assets.keep (the 2D assets theme) instead",
     )
     parser.add_argument(
+        "--movies",
+        action="store_true",
+        help="create scratch/Movies.keep (the movies theme) instead",
+    )
+    parser.add_argument(
         "--music",
         action="store_true",
         help="create scratch/Music.keep (the music theme) instead",
@@ -524,7 +580,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        if args.music:
+        if args.movies:
+            keep_dir = make_movies_demo(scratch, reset=args.reset)
+        elif args.music:
             keep_dir = make_music_demo(scratch, reset=args.reset)
         elif args.assets:
             keep_dir = make_assets_demo(scratch, reset=args.reset)
@@ -535,7 +593,10 @@ def main(argv: list[str] | None = None) -> int:
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    if args.music:
+    if args.movies:
+        print(f"Created {keep_dir} watching movie-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Movies.keep")
+    elif args.music:
         print(f"Created {keep_dir} watching music-files (scanned and tagged).")
         print("Open it with:  uv run tagalot scratch/Music.keep")
     elif args.assets:

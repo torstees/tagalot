@@ -52,7 +52,7 @@ uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.kee
 uv run tagalot scratch/Demo.keep
 ```
 
-For views with several entity types, `--media` creates `scratch/Media.keep` instead (artists, albums, songs; `Demo.keep` is left alone) and installs its tiny theme as `tagalot_demo_media.py` in the user themes folder (`just demo-media` does both and opens it). `--assets` and `--music` create `scratch/Assets.keep` and `scratch/Music.keep` with the built-in 2D assets and music themes (`just demo-assets`, `just demo-music`). `--assets` creates `scratch/Assets.keep` with the built-in assets2d theme (artists, images, a font, archives; `just demo-assets`).
+For views with several entity types, `--media` creates `scratch/Media.keep` instead (artists, albums, songs; `Demo.keep` is left alone) and installs its tiny theme as `tagalot_demo_media.py` in the user themes folder (`just demo-media` does both and opens it). `--assets`, `--music`, and `--movies` create `scratch/Assets.keep`, `scratch/Music.keep`, and `scratch/Movies.keep` with the built-in 2D assets, music, and movies themes (`just demo-assets`, `just demo-music`, `just demo-movies`).
 
 ## Stack
 

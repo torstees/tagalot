@@ -78,8 +78,8 @@ def test_resolve_a_builtin_theme(tmp_path: Path) -> None:
 
 
 def test_resolve_a_missing_theme(tmp_path: Path) -> None:
-    keep = create_keep(tmp_path / "m", "M", ThemeRef("movies", 1))
-    with pytest.raises(KeepThemeError, match="uses the 'movies' theme, which isn't available"):
+    keep = create_keep(tmp_path / "m", "M", ThemeRef("podcasts", 1))
+    with pytest.raises(KeepThemeError, match="uses the 'podcasts' theme, which isn't available"):
         resolve_theme(load_themes(user_dir=tmp_path / "none"), keep)
 
 
