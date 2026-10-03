@@ -113,6 +113,7 @@ src/tagalot/
     opening.py           # opening a keep in the background, with prompts
 scripts/
   make_demo_keep.py      # scratch/Demo.keep for manual testing
+  profile_scan.py        # time scanning and thumbnails on a real folder or share (just profile)
 tests/
   fixtures/              # tiny sample files (images, zips, audio)
   core/, themes/, ui/

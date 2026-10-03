@@ -70,3 +70,7 @@ package:
     uv sync --group package
     uv run pyinstaller packaging/tagalot.spec --noconfirm
     uv run python scripts/check_package.py
+
+# Time scanning and thumbnailing a folder or share: just profile PATH [--theme generic] [--cprofile]
+profile path *args:
+    uv run python scripts/profile_scan.py "{{path}}" {{args}}
