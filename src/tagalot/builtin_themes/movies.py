@@ -58,7 +58,9 @@ from tagalot.themes.api import (
     Kind,
     ResourceInfo,
     RoleImage,
+    SearchView,
     Section,
+    SortBy,
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
@@ -270,6 +272,8 @@ class Actor(Entity):
 class Collection(Entity):
     """A folder of movies' folders (a series, a box set)."""
 
+    contents_sort = (SortBy("year"), SortBy("title"))
+
     roles = [
         role("folder", kinds={"dir"}, primary=True),
         role("poster", kinds={"image"}, thumbnail=True),
@@ -351,6 +355,12 @@ class MoviesTheme(Theme):
     containment = [contains(Collection, Movie)]
     relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]
     views = [
+        # Tags on a collection count for its movies: tag a box set "Watched" and Movies
+        # with Watched lists its films.
+        SearchView("Movies", [Movie], inherit_tags=True),
+        SearchView("Actors", [Actor]),
+        SearchView("Collections", [Collection]),
+        DetailView(Actor, [Section.fields(), Section.related("cast")]),
         DetailView(
             Movie,
             [

@@ -16,8 +16,10 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.navigation import NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.workers import ScanController
+from tests.ui.test_within import _search
 
 pytestmark = pytest.mark.gui
 
@@ -151,3 +153,57 @@ def test_the_add_to_cast_dialog(qtbot: QtBot, session: KeepSession) -> None:
     dialog.look_up()
     qtbot.waitUntil(lambda: dialog.results.count() == 1, timeout=5000)  # no "New": he exists
     assert not dialog.add_button.isEnabled()
+
+
+@pytest.mark.parametrize(
+    ("view", "count", "first"),
+    [
+        ("Movies", "9 items", "Alien"),
+        ("Actors", "6 items", "Al Pacino"),
+        ("Collections", "3 items", "Alien Collection"),
+    ],
+)
+def test_the_views(qtbot: QtBot, window: MainWindow, view: str, count: str, first: str) -> None:
+    page = _search(qtbot, window, NavTarget("view", key=view, label=view), count)
+    assert page.layout_mode == "grid"
+    qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
+    hit = page.model.hit(0)
+    assert hit is not None
+    assert hit.title == first  # by title
+
+
+def test_tags_on_a_collection_count_for_its_movies(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _search(qtbot, window, NavTarget("view", key="Movies", label="Movies"), "9 items")
+    tree = session.tag_cache.get()
+    fantasy = next(t for t in tree if tree.node(t).name == "Fantasy")  # on the collection
+    page.filter_bar.add_tag(fantasy)
+    qtbot.waitUntil(lambda: page.status.text() == "3 items", timeout=5000)
+
+
+def test_an_actor_page_lists_their_filmography(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _page_of(qtbot, window, session, "Leonardo DiCaprio")
+    assert page.detail is not None
+    [section] = [s for s in page.detail.sections if s.kind == "related"]
+    assert section.title == "Filmography"
+    assert [e.title for e in section.entities] == ["Inception"]
+    assert page.findChild(QPushButton, "add_cast") is not None
+
+
+def test_a_collection_lists_its_movies_by_year(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _page_of(qtbot, window, session, "The Lord of the Rings")
+    contents = page.contents
+    assert contents is not None
+    qtbot.waitUntil(lambda: contents.status.text() == "3 items", timeout=5000)
+    qtbot.waitUntil(lambda: contents.model.hit(2) is not None, timeout=5000)
+    hits = [contents.model.hit(r) for r in range(3)]
+    assert [h.title for h in hits if h] == [
+        "The Fellowship of the Ring",
+        "The Two Towers",
+        "The Return of the King",
+    ]
