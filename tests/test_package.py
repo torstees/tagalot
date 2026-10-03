@@ -2,7 +2,9 @@
 
 import importlib
 import sys
+import tomllib
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +14,9 @@ from tagalot.ui import app
 
 
 def test_version() -> None:
-    assert tagalot.__version__ == "0.1.0"
+    """The code and pyproject.toml agree (packaged builds and release tags use it)."""
+    pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text("utf-8"))
+    assert tagalot.__version__ == pyproject["project"]["version"]
 
 
 def test_main_runs_the_ui_with_argv(monkeypatch: pytest.MonkeyPatch) -> None:
