@@ -9,7 +9,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, Qt, Signal
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, Signal
 from PySide6.QtGui import QFont, QMouseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
 
@@ -35,6 +35,8 @@ class NavigationPane(QTreeView):
     folded section keys whenever a heading folds or unfolds."""
 
     navigate = Signal(object)
+    saved_menu_requested = Signal(object, object)
+    """Right-click on a saved search: (its target, the global point) (#127)."""
     folded_changed = Signal(list)
 
     def __init__(self, views: Sequence[str] = (), parent: QWidget | None = None) -> None:
@@ -89,6 +91,8 @@ class NavigationPane(QTreeView):
         self._current_before_press = QPersistentModelIndex()
         """What was selected when the mouse went down: clicking it again navigates again."""
         self.clicked.connect(self._clicked)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._context_menu)
         self.expanded.connect(self._fold_state_changed)
         self.collapsed.connect(self._fold_state_changed)
         self.selectionModel().currentChanged.connect(self._current_changed)
@@ -156,6 +160,11 @@ class NavigationPane(QTreeView):
         self._refresh_headings()
 
     # --- internals ---
+
+    def _context_menu(self, point: QPoint) -> None:
+        target = self.indexAt(point).data(_TARGET)
+        if isinstance(target, NavTarget) and target.kind == "saved":
+            self.saved_menu_requested.emit(target, self.viewport().mapToGlobal(point))
 
     def _fill(self, section: str, targets: Sequence[NavTarget]) -> None:
         heading = self._headings[section]

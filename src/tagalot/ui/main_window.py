@@ -8,14 +8,16 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 import logging
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -28,15 +30,15 @@ from PySide6.QtWidgets import (
     QToolButton,
     QWidget,
 )
-from sqlalchemy import select
 
 from tagalot.core.actions import ActionResult
 from tagalot.core.activity import SCAN, Problem
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.links import kind_of_file
-from tagalot.core.models import ResourceKind, SavedSearch
+from tagalot.core.models import ResourceKind
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
+from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import view_spec
 from tagalot.core.search_spec import FieldFilter, SearchSpec
@@ -84,9 +86,8 @@ NAVIGATION_MIN_WIDTH = 170
 OPENING_PAGE = NavTarget("dashboard", label="Dashboard")
 """What a keep opens on."""
 
-_COMING = {
-    "saved": "Saved searches arrive in M18.",
-}
+_COMING: dict[str, str] = {}
+"""Pages not built yet, by kind: a placeholder says when they come."""
 
 
 MAX_HISTORY = 100
@@ -132,6 +133,8 @@ class MainWindow(QMainWindow):
         self._ui_state = load_ui_state(session.keep.ui_state_path)
         self.scans = scans or ScanController()
         self._pages: dict[NavTarget, QWidget] = {}
+        self._saved: dict[int, tuple[str, dict[str, Any]]] = {}
+        """Saved searches by id: (name, definition), as last loaded."""
         self._history: list[NavTarget] = []
         self._history_index = -1
         self.thumbnails = ThumbnailLoader(session.thumbnails, self)
@@ -194,6 +197,19 @@ class MainWindow(QMainWindow):
         )
         self.tag_selection_action.triggered.connect(self.focus_tag_filter)
         edit_menu.addAction(self.tag_selection_action)
+        edit_menu.addSeparator()
+        self.save_search_action = QAction("Save search\u2026", self)
+        self.save_search_action.setShortcut(QKeySequence.StandardKey.Save)
+        self.save_search_action.setToolTip(
+            "Keep this search, with its chips and layout, under SAVED (a saved search's "
+            "page is updated in place)"
+        )
+        self.save_search_action.triggered.connect(lambda: self.save_search(as_new=False))
+        edit_menu.addAction(self.save_search_action)
+        self.save_search_as_action = QAction("Save search as\u2026", self)
+        self.save_search_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.save_search_as_action.triggered.connect(lambda: self.save_search(as_new=True))
+        edit_menu.addAction(self.save_search_as_action)
         self._update_undo_actions()
 
         # Back and forward through the pages shown (DESIGN.md §12).
@@ -242,6 +258,7 @@ class MainWindow(QMainWindow):
         self.navigation.set_folded(self._ui_state.get("nav_folded", []))
         self.navigation.navigate.connect(self.show_target)
         self.navigation.folded_changed.connect(self._save_folded)
+        self.navigation.saved_menu_requested.connect(self._saved_menu)
         self.stack = QStackedWidget()
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.navigation)
@@ -402,6 +419,21 @@ class MainWindow(QMainWindow):
     def _make_page(self, target: NavTarget) -> QWidget:
         session = self.session
         assert session is not None
+        if target.kind == "saved" and int(target.key) in self._saved:
+            name, data = self._saved[int(target.key)]
+            try:
+                saved = SavedDefinition.from_json(data)
+            except SavedSearchError as e:
+                return QLabel(f"{name}\n\n{e}")
+            page = self._search_page(
+                name,
+                saved.base,
+                f"saved:{target.key}",
+                grouped=saved.grouped,
+                layout=saved.layout,
+            )
+            page.restore(saved)
+            return page
         if target.kind in ("search", "view"):
             layout = "list"
             if target.kind == "search":
@@ -524,6 +556,7 @@ class MainWindow(QMainWindow):
         )
         search.size_menu = self.size_menu
         search.open_requested.connect(self.open_entity)
+        search.save_requested.connect(lambda: self.save_search(as_new=False, page=search))
         search.reread_requested.connect(self.reread)
         search.action_requested.connect(self.run_action)
         search.file_opener = self.files
@@ -781,6 +814,7 @@ class MainWindow(QMainWindow):
                 manager.reload()  # usage counts, and the tree after an undo
         self._update_undo_actions()
         self._refresh_triage()
+        self._load_saved_searches()  # saving, renaming, and their undo
 
     def _tag_message(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -1099,21 +1133,100 @@ class MainWindow(QMainWindow):
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _load_saved_searches(self) -> None:
+        """Read the saved searches (names and definitions) in a worker, list them under
+        SAVED, and close the page of one that's gone."""
         session = self.session
         assert session is not None
 
-        def query() -> list[tuple[int, str]]:
+        def query() -> list[tuple[int, str, dict[str, Any]]]:
             with session.reader.connect() as conn:
-                rows = conn.execute(
-                    select(SavedSearch.id, SavedSearch.name).order_by(SavedSearch.name)
-                )
-                return [(i, n) for i, n in rows]
+                return list_saved(conn)
 
-        def loaded(saved: list[tuple[int, str]]) -> None:
-            if shiboken6.isValid(self.navigation):  # the window may have closed meanwhile
-                self.navigation.set_saved(saved)
+        def loaded(saved: list[tuple[int, str, dict[str, Any]]]) -> None:
+            if not shiboken6.isValid(self.navigation):  # the window may have closed meanwhile
+                return
+            self._saved = {i: (n, d) for i, n, d in saved}
+            self.navigation.set_saved([(i, n) for i, n, _ in saved])
+            for target in [t for t in self._pages if t.kind == "saved"]:
+                if int(target.key) not in self._saved:
+                    self._close_page(target)
 
         run_in_pool(query, on_done=loaded)
+
+    def _close_page(self, target: NavTarget) -> None:
+        """Forget a page (its saved search was deleted); if it's showing, show Search all."""
+        page = self._pages.pop(target, None)
+        if page is None:
+            return
+        if self.stack.currentWidget() is page:
+            self.navigation.select(NavTarget("search", label="Search all"))
+        self.stack.removeWidget(page)
+        page.deleteLater()
+
+    # --- saved searches (#127) ---
+
+    def save_search(self, *, as_new: bool, page: SearchPage | None = None) -> None:
+        """Save a search page (the current one by default): a saved search's page in place
+        (unless ``as_new``), else under a name asked for."""
+        if page is None:
+            shown = self.stack.currentWidget()
+            page = shown if isinstance(shown, SearchPage) else None
+        if page is None:
+            self.statusBar().showMessage("Open a search to save it.")
+            return
+        definition = page.saved_definition()
+        saved_id = self._saved_id_of(page)
+        if saved_id is not None and not as_new and saved_id in self._saved:
+            name = self._saved[saved_id][0]
+            self.tag_actions.save_search(name, definition, saved_id)
+            return
+        default = self._saved[saved_id][0] if saved_id in self._saved else page.title
+        chosen = self.choose_saved_name("Save search", default)
+        if chosen is None:
+            return
+        name = chosen
+        taken = next(
+            (i for i, (n, _) in self._saved.items() if n.casefold() == name.strip().casefold()),
+            None,
+        )
+        if taken is not None and not self.confirm_replace_saved(self._saved[taken][0]):
+            return
+        self.tag_actions.save_search(name, definition, taken)
+
+    def _saved_id_of(self, page: SearchPage) -> int | None:
+        target = next((t for t, p in self._pages.items() if p is page), None)
+        return int(target.key) if target is not None and target.kind == "saved" else None
+
+    def _saved_menu(self, target: NavTarget, point: QPoint) -> None:
+        saved_id = int(target.key)
+        menu = QMenu(self)
+        menu.addAction("Open").triggered.connect(lambda: self.show_target(target))
+        menu.addAction("Rename\u2026").triggered.connect(lambda: self.rename_saved(saved_id))
+        delete = menu.addAction("Delete")
+        delete.setToolTip("Edit \u2192 Undo brings it back")
+        delete.triggered.connect(lambda: self.tag_actions.delete_saved(saved_id))
+        menu.exec(point)
+
+    def rename_saved(self, saved_id: int) -> None:
+        if saved_id not in self._saved:
+            return
+        name = self.choose_saved_name("Rename saved search", self._saved[saved_id][0])
+        if name is not None:
+            self.tag_actions.rename_saved(saved_id, name)
+
+    def choose_saved_name(self, title: str, default: str) -> str | None:
+        """Ask for a saved search's name (tests replace this)."""
+        name, ok = QInputDialog.getText(self, title, "Name:", text=default)
+        return name if ok and name.strip() else None
+
+    def confirm_replace_saved(self, name: str) -> bool:
+        """Ask before saving over another search of that name (tests replace this)."""
+        answer = QMessageBox.question(
+            self,
+            "Replace saved search",
+            f"There's already a saved search named {name!r}. Replace it with this one?",
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     # --- scanning ---
 

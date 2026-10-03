@@ -32,6 +32,7 @@ from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.reextract import ReextractChange, restore_entities
+from tagalot.core.saved_searches import SavedChange, restore_saved
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
@@ -90,6 +91,7 @@ Step = (
     | DismissChange
     | MergeChange
     | NotDuplicateChange
+    | SavedChange
 )
 """One entry in the undo history."""
 
@@ -284,6 +286,8 @@ class TagService:
         elif isinstance(step, ActionChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))
+        elif isinstance(step, SavedChange):
+            self.writer.run(lambda conn: restore_saved(conn, step, forward=forward))
         elif isinstance(step, NotDuplicateChange):
             self.writer.run(lambda conn: restore_not_duplicates(conn, step, forward=forward))
         elif isinstance(step, MergeChange):

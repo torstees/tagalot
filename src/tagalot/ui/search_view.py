@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QStackedWidget,
     QToolButton,
     QVBoxLayout,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.actions import actions_for
+from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
 from tagalot.core.search_fields import (
     contained_types,
@@ -107,6 +109,8 @@ class SearchPage(QWidget):
     the window does the tagging.
     """
 
+    save_requested = Signal()
+    """Save… was clicked (#127): the window saves the page."""
     tags_dropped = Signal(list, list)
     hidden_columns_changed = Signal(list)
     """The column keys now hidden, after the user showed or hid one (to remember it)."""
@@ -149,6 +153,7 @@ class SearchPage(QWidget):
         self._menu_actions: list[tuple[str, Callable[[list[int]], None]]] = []
         self.session = session
         self.grouped = grouped
+        self.title = title
         self._base = spec
         self.hidden_columns = set(DEFAULT_HIDDEN if hidden_columns is None else hidden_columns)
         self._sort = spec.sort
@@ -176,6 +181,13 @@ class SearchPage(QWidget):
         """The heading's row: a page holding this search can add buttons to it."""
         header_row.addWidget(heading)
         header_row.addStretch(1)
+        self.save_button = QPushButton("Save\u2026")
+        self.save_button.setObjectName("save_search")
+        self.save_button.setFlat(True)
+        self.save_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_button.setToolTip("Keep this search, with its chips and layout, under SAVED")
+        self.save_button.clicked.connect(self.save_requested)
+        header_row.addWidget(self.save_button)
         header_row.addWidget(self.status)
         self.list_button = self._layout_button("list", "Show the results as a list")
         self.grid_button = self._layout_button("grid", "Show the results as thumbnails")
@@ -283,6 +295,49 @@ class SearchPage(QWidget):
         self._load_tags()
 
     # --- running the search ---
+
+    # --- saved searches (#127) ---
+
+    def saved_definition(self) -> SavedDefinition:
+        """The page as it stands, to save: its own search with the sort chosen, the filter
+        bar's chips and toggles, and how it's shown."""
+        f = self.filter_bar.filters()
+        filters = SearchSpec(
+            types=(f.only,) if f.only is not None else (),
+            include=f.include,
+            exclude=f.exclude,
+            text=f.text or None,
+            within=f.within,
+            fields=f.fields,
+            inherit_tags=f.inherit_tags,
+            show_contained=f.show_contained,
+        )
+        return SavedDefinition(
+            base=replace(self._base, sort=self._sort),
+            filters=filters,
+            within_title=self.filter_bar.within_title,
+            within_type=f.within_type or "",
+            layout=self.layout_mode,
+            grouped=self.grouped,
+        )
+
+    def restore(self, saved: SavedDefinition) -> None:
+        """Put a saved search's chips and toggles back on the filter bar."""
+        f, bar = saved.filters, self.filter_bar
+        bar.set_toggles(show_contained=f.show_contained, inherit_tags=f.inherit_tags)
+        if f.within is not None:
+            bar.set_within(f.within, saved.within_title, saved.within_type)
+        if f.types:
+            bar.set_only(f.types[0], self._plurals.get(f.types[0], f.types[0]))
+        self.filter_bar.set_filter_fields(self._filter_fields(self.current_spec().types))
+        for chosen in f.fields:
+            bar.set_field_filter(chosen.field, chosen)
+        for tag_id in f.include:
+            bar.add_tag(tag_id)
+        for tag_id in f.exclude:
+            bar.add_tag(tag_id, exclude=True)
+        if f.text:
+            bar.set_text(f.text)
 
     def current_spec(self, types: tuple[str, ...] | None = None) -> SearchSpec:
         """The page's spec with the filter bar applied, for ``types`` (default: the page's

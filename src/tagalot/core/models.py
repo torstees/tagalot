@@ -370,7 +370,8 @@ class DedupeDismissal(Base):
 
 
 class SavedSearch(Base):
-    """A named search; ``definition`` is the JSON form of a ``SearchSpec`` (§8)."""
+    """A named search; ``definition`` is ``core.saved_searches.SavedDefinition``'s JSON form:
+    the page's search and its filter bar's, and how it was shown (§8, #127)."""
 
     __tablename__ = "saved_search"
 

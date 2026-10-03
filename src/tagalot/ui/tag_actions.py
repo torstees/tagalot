@@ -15,6 +15,7 @@ from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.links import LinkError
 from tagalot.core.reextract import ReextractReport
+from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
@@ -276,6 +277,22 @@ class TagActions(QObject):
         """Remove items from a related section by hand; one undo step."""
         self._run(
             lambda: self.session.remove_related(entity_id, name, other_ids),
+            lambda label: f"{label}. Edit \u2192 Undo brings it back.",
+        )
+
+    def save_search(self, name: str, definition: SavedDefinition, replace: int | None) -> None:
+        """Save a search (over ``replace``, if given); one undo step."""
+        self._run(
+            lambda: self.session.save_search(name, definition, replace),
+            lambda label: f"{label}.",
+        )
+
+    def rename_saved(self, saved_id: int, name: str) -> None:
+        self._run(lambda: self.session.rename_saved(saved_id, name), lambda label: f"{label}.")
+
+    def delete_saved(self, saved_id: int) -> None:
+        self._run(
+            lambda: self.session.delete_saved(saved_id),
             lambda label: f"{label}. Edit \u2192 Undo brings it back.",
         )
 

@@ -42,6 +42,12 @@ from tagalot.core.root_admin import (
     without_root,
 )
 from tagalot.core.roots import sync_roots
+from tagalot.core.saved_searches import (
+    SavedDefinition,
+    delete_search,
+    rename_search,
+    save_search,
+)
 from tagalot.core.scanjob import Progress, ScanReport, scan_root
 from tagalot.core.settings import Settings
 from tagalot.core.tag_service import TagService
@@ -310,6 +316,25 @@ class KeepSession:
         change = self.writer.run(
             lambda conn: remove_related(conn, schema, name, entity_id, other_ids)
         )
+        self.tags.record(change)
+        return change.label
+
+    def save_search(
+        self, name: str, definition: SavedDefinition, replace: int | None = None
+    ) -> str:
+        """Save a search (over ``replace``, if given); one undo step. Returns its label.
+        Raises ``SavedSearchError``. Runs in a worker."""
+        change = self.writer.run(lambda conn: save_search(conn, name, definition, replace=replace))
+        self.tags.record(change)
+        return change.label
+
+    def rename_saved(self, saved_id: int, name: str) -> str:
+        change = self.writer.run(lambda conn: rename_search(conn, saved_id, name))
+        self.tags.record(change)
+        return change.label
+
+    def delete_saved(self, saved_id: int) -> str:
+        change = self.writer.run(lambda conn: delete_search(conn, saved_id))
         self.tags.record(change)
         return change.label
 
