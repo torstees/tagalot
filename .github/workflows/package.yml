@@ -1,0 +1,92 @@
+name: Package
+
+# Builds Tagalot with PyInstaller on Windows, macOS, and Linux (DESIGN.md §3 "Packaging"),
+# checks each build with `tagalot --check`, and uploads it. A `v*` tag also attaches the
+# builds to a GitHub release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "packaging/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/package.yml"
+      - "src/tagalot/__main__.py"
+      - "src/tagalot/selfcheck.py"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Install Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: uv sync --locked --group package
+      - run: uv run pyinstaller packaging/tagalot.spec --noconfirm
+      - name: Check the build
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) app=dist/tagalot/tagalot.exe ;;
+            macOS) app=dist/Tagalot.app/Contents/MacOS/tagalot ;;
+            *) app=dist/tagalot/tagalot ;;
+          esac
+          status=0
+          "$app" --check --output check.txt || status=$?
+          cat check.txt
+          exit $status
+      - name: Archive
+        shell: bash
+        run: |
+          version=$(uv run python -c "import tagalot; print(tagalot.__version__)")
+          name="Tagalot-$version-$RUNNER_OS-$RUNNER_ARCH"
+          case "$RUNNER_OS" in
+            Windows) (cd dist && 7z a -bd "../$name.zip" tagalot > /dev/null) ;;
+            macOS) ditto -c -k --keepParent dist/Tagalot.app "$name.zip" ;;
+            *) tar -C dist -czf "$name.tar.gz" tagalot ;;
+          esac
+          ls -l Tagalot-*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tagalot-${{ runner.os }}
+          path: Tagalot-*
+          if-no-files-found: error
+
+  release:
+    name: Attach to the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: builds
+          merge-multiple: true
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Tagalot $TAG" --generate-notes
+          gh release upload "$TAG" builds/* --repo "$GITHUB_REPOSITORY" --clobber

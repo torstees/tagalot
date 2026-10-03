@@ -29,6 +29,9 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
 ]
+package = [
+    "pyinstaller>=6.20",
+]
 
 [tool.ruff]
 target-version = "py312"
