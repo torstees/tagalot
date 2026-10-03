@@ -105,6 +105,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
+    api_version = 2              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
