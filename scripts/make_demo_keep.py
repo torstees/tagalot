@@ -513,6 +513,45 @@ MOVIE_PICTURES = {
 }
 """Posters and screenshots for the movies demo (The Matrix, Alien, and the rest have none)."""
 
+MOVIE_NFOS = {
+    "Inception (2010)/movie.nfo": """<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Inception</title>
+  <year>2010</year>
+  <plot>A thief who steals secrets through dreams is offered a way home.</plot>
+  <genre>Science Fiction</genre>
+  <genre>Thriller</genre>
+  <director>Christopher Nolan</director>
+  <runtime>148</runtime>
+  <rating>8.8</rating>
+  <actor><name>Leonardo DiCaprio</name><role>Cobb</role><order>0</order></actor>
+  <actor><name>Elliot Page</name><role>Ariadne</role><order>1</order></actor>
+  <actor><name>Tom Hardy</name><role>Eames</role><order>2</order></actor>
+</movie>
+""",
+    "Heat (1995).nfo": """<movie>
+  <title>Heat</title>
+  <genre>Crime</genre>
+  <director>Michael Mann</director>
+  <runtime>170</runtime>
+  <set><name>Michael Mann Crime</name></set>
+  <actor><name>Al Pacino</name></actor>
+  <actor><name>Robert De Niro</name></actor>
+</movie>
+""",
+    "Alien (1979).nfo": """<movie>
+  <title>Alien</title>
+  <genre>Science Fiction</genre>
+  <genre>Horror</genre>
+  <director>Ridley Scott</director>
+  <runtime>117</runtime>
+  <set><name>Alien Collection</name></set>
+  <actor><name>Sigourney Weaver</name></actor>
+</movie>
+""",
+}
+"""Kodi .nfo files for the movies demo: details, a cast, and sets."""
+
 MOVIE_TAGS = {
     ("Genre",): [],
     ("Genre", "Sci-Fi"): ["Inception", "The Matrix", "Alien"],
@@ -537,6 +576,11 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     for relpath, (color, text) in MOVIE_PICTURES.items():
         (files / relpath).parent.mkdir(parents=True, exist_ok=True)
         (files / relpath).write_bytes(_cover(color, text))
+    for relpath, text in MOVIE_NFOS.items():
+        (files / relpath).write_text(text, encoding="utf-8")
+    photo = files / "Inception (2010)/.actors/Leonardo_DiCaprio.jpg"
+    photo.parent.mkdir()
+    photo.write_bytes(_cover((110, 90, 70), "Leonardo DiCaprio"))
     create_keep(
         keep_dir,
         "Movies",

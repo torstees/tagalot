@@ -521,6 +521,11 @@ class IngestContext(Protocol):
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None: ...
 
+    def related(self, name: str, entity: EntityRef) -> list[EntityRef]:
+        """The entities related to ``entity`` through relationship ``name``, from either
+        side (a movie's cast, an actor's movies), in id order."""
+        ...
+
     def update(self, entity: EntityRef, *, title: str | None = None, **fields: Any) -> None:
         """Set extracted values on a known entity; user-edited values are left alone."""
         ...

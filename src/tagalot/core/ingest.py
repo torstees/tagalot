@@ -403,6 +403,30 @@ class IngestSession:
         self._touch(a.id, b.id)
         self.conn.execute(delete(table).where(table.c.a_id == a.id, table.c.b_id == b.id))
 
+    def related(self, name: str, entity: EntityRef) -> list[EntityRef]:
+        """The entities related to ``entity`` through ``name``, from either side."""
+        link = self.schema.relationships.get(name)
+        if link is None:
+            raise IngestError(f"no relationship {name!r} in the {self.schema.theme.id!r} theme")
+        if self._gone(entity):
+            return []
+        t = link.table
+        type_id = entity.type
+        rel = link.relationship
+        if type_id == self.schema.theme.type_id_of(rel.a):
+            mine, other = t.c.a_id, t.c.b_id
+        elif type_id == self.schema.theme.type_id_of(rel.b):
+            mine, other = t.c.b_id, t.c.a_id
+        else:
+            raise IngestError(f"{type_id!r} isn't part of the {name!r} relationship")
+        rows = self.conn.execute(
+            select(Entity.id, Entity.type)
+            .join(t, other == Entity.id)
+            .where(mine == entity.id)
+            .order_by(Entity.id)
+        )
+        return [EntityRef(i, t_) for i, t_ in rows]
+
     # --- reporting ---
 
     def warn(self, resource: ResourceInfo | None, message: str) -> None:
