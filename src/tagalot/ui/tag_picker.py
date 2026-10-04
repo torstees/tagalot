@@ -61,7 +61,7 @@ class TagPickerDialog(QDialog):
     def __init__(
         self,
         tree: TagTree,
-        tag_id: int,
+        tag_id: int | None,
         *,
         title: str,
         prompt: str,
@@ -81,7 +81,8 @@ class TagPickerDialog(QDialog):
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
         self.filter_edit.setClearButtonEnabled(True)
-        self.model = _PickerModel(tree.descendants(tag_id), blocked_reason)
+        blocked = frozenset() if tag_id is None else tree.descendants(tag_id)
+        self.model = _PickerModel(blocked, blocked_reason)
         self.model.set_tree(tree)
         self.view = QTreeView()
         self.view.setModel(self.model)
@@ -168,6 +169,21 @@ class TagPickerDialog(QDialog):
         self.ok_button.setEnabled(chosen and target != self.unchanged)
 
 
+def map_dialog(tree: TagTree, keyword: str, parent: QWidget | None = None) -> TagPickerDialog:
+    """ "Map to tag…" on the File keywords page (#295): the tag items with ``keyword``
+    get; the keyword becomes its alias."""
+    return TagPickerDialog(
+        tree,
+        None,
+        title=f"Map “{keyword}”",
+        prompt=f"Items whose files say “{keyword}” get this tag:",
+        ok_text="Map",
+        blocked_reason="",
+        top_level=False,
+        parent=parent,
+    )
+
+
 def move_dialog(tree: TagTree, tag_id: int, parent: QWidget | None = None) -> TagPickerDialog:
     """ "Move to…": a new parent for ``tag_id``, or the top level."""
     name = tree.node(tag_id).name
@@ -211,6 +227,7 @@ class MergeDialog(TagPickerDialog):
     def describe(self, target: int | None) -> str:
         if target is None or target not in self.tree:
             return ""
+        assert self.tag_id is not None  # a merge always has its source tag
         source = self.tree.node(self.tag_id)
         into = PATH_SEPARATOR.join(self.tree.path(target))
         parts = []

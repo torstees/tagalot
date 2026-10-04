@@ -216,7 +216,7 @@ def test_by_the_id_a_file_declares(tmp_path: Path) -> None:
 def test_a_built_in_theme_by_its_id(tmp_path: Path) -> None:
     code, lines = _check("music", [tmp_path])
     assert code == 0
-    assert lines[0] == "ok: 'music' (Music, version 2), built in"
+    assert lines[0] == "ok: 'music' (Music, version 3), built in"
 
 
 def test_an_id_no_theme_has(tmp_path: Path) -> None:

@@ -579,12 +579,14 @@ def description_excerpt(description: str, text: str, width: int = 40) -> str:
     return ("…" if start > 0 else "") + flat[start:end] + ("…" if end < len(flat) else "")
 
 
-def add_alias(conn: Connection, tag_id: int, alias: str) -> None:
-    """Add an alternate name that matches the tag in the filter box."""
+def add_alias(conn: Connection, tag_id: int, alias: str, *, allow_name: bool = False) -> None:
+    """Add an alternate name that matches the tag in the filter box (and file keywords,
+    §7). ``allow_name`` lets the alias be the tag's own name: mapping the keyword "Dark" to
+    one of two tags named Dark (#295)."""
     tree = TagTree.load(conn)
     node = _existing(tree, tag_id)
     alias = clean_name(alias)
-    if name_key(alias) == name_key(node.name):
+    if name_key(alias) == name_key(node.name) and not allow_name:
         raise TagError("An alias must differ from the tag's name.")
     if any(name_key(a) == name_key(alias) for a in tree.aliases(tag_id)):
         return

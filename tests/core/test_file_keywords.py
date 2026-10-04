@@ -12,7 +12,14 @@ from sqlalchemy import Connection, Engine, insert, select
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import ThemeRef, create_keep
-from tagalot.core.keywords import keyword_index, keyword_key, keywords_of
+from tagalot.core.keywords import (
+    KeywordInfo,
+    keyword_index,
+    keyword_key,
+    keyword_report,
+    keywords_of,
+    unmatched_keys,
+)
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Resource, ResourceKind, Root, Tag
 from tagalot.core.tag_service import TagService
 from tagalot.core.tags import TagNode, TagTree, TagTreeCache
@@ -273,3 +280,46 @@ def test_unlinking_a_file_drops_what_it_said(env: Env) -> None:
     assert env.file_tags() == set()
     with env.engine.connect() as conn:
         assert keywords_of(conn, [1]) == {}
+
+
+def test_the_report_counts_matches_and_ignores(env: Env) -> None:
+    env.report(1, 10, ["Fantasy", "Space opera"])
+    env.report(2, 12, ["space opera", "Cozy"])
+    assert env.tags.ignore_keywords(["cozy"]) == 1
+    with env.engine.connect() as conn:
+        tree = TagTree.load(conn)
+        report = {k.keyword: k for k in keyword_report(conn, tree)}
+        assert unmatched_keys(conn, tree) == {"space opera"}
+    assert [k.keyword for k in keyword_report_list(env)] == ["Space opera", "Cozy", "Fantasy"]
+    assert report["Space opera"].items == 2
+    assert report["Space opera"].examples == ("E1", "E2")
+    assert report["Fantasy"].tag_id == FANTASY
+    assert report["Cozy"].ignored
+
+    env.tags.undo()  # the ignore
+    with env.engine.connect() as conn:
+        assert unmatched_keys(conn, TagTree.load(conn)) == {"space opera", "cozy"}
+
+
+def keyword_report_list(env: Env) -> list[KeywordInfo]:
+    with env.engine.connect() as conn:
+        return keyword_report(conn, TagTree.load(conn))
+
+
+def test_mapping_several_keywords_is_one_step(env: Env) -> None:
+    env.report(1, 10, ["Space opera", "Fantasy"])
+    env.report(2, 12, ["Cyberpunk"])
+    env.tags.map_keywords(SCIFI, ["Space opera", "Cyberpunk"])
+    assert env.file_tags() == {(1, FANTASY), (1, SCIFI), (2, SCIFI)}
+    assert env.tags.undo_label == "Map 2 keywords to 'Science fiction'"
+    env.tags.undo()
+    assert env.file_tags() == {(1, FANTASY)}
+
+
+def test_a_name_two_tags_share_can_be_mapped_to_one(env: Env) -> None:
+    env.tags.add(GENRE, "Dark")
+    dark = env.tags.add(FAVORITES, "Dark")  # now two sub-tags are called Dark
+    env.report(1, 10, ["Dark"])
+    assert env.file_tags() == set()
+    env.tags.map_keywords(dark, ["Dark"])  # its own name, as an alias, picks it
+    assert env.file_tags() == {(1, dark)}

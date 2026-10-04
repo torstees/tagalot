@@ -49,7 +49,8 @@ from mutagen.easyid3 import EasyID3
 from mutagen.flac import FLAC
 from mutagen.id3 import APIC, ID3
 from PIL import Image, ImageDraw, ImageFont
-from sqlalchemy import Connection, insert, select
+from sqlalchemy import Connection, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.builtin_themes.movies import MoviesTheme
 from tagalot.core.ingest import IngestSession
@@ -679,14 +680,22 @@ def _tag(
     tag_ids: dict[tuple[str, ...], int] = {}
     rows = []
     for path, titles in tags.items():
-        tag_ids[path] = session.tags.add(tag_ids.get(path[:-1]), path[-1])
+        parent = tag_ids.get(path[:-1])
+        if parent is None and len(path) > 1:  # a parent not listed itself: make it first
+            parent = tag_ids[path[:-1]] = session.tags.add_path(list(path[:-1]))
+        tag_ids[path] = session.tags.add(parent, path[-1])
         rows.extend({"entity_id": ids[t], "tag_id": tag_ids[path]} for t in titles)
     for path, names in aliases.items():
         for alias in names:
             session.tags.add_alias(tag_ids[path], alias)
     for path, description in descriptions.items():
         session.tags.set_description(tag_ids[path], description)
-    session.writer.run(lambda conn: conn.execute(insert(EntityTag), rows))
+    # The demo's own tagging: where a file's keyword already gave the tag (a song's genre,
+    # #295), the row becomes the user's.
+    tagged = sqlite_insert(EntityTag).on_conflict_do_update(
+        index_elements=["entity_id", "tag_id"], set_={"by_file": False}
+    )
+    session.writer.run(lambda conn: conn.execute(tagged, rows))
 
 
 def main(argv: list[str] | None = None) -> int:

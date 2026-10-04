@@ -62,6 +62,7 @@ def test_layout(qtbot: QtBot, session: KeepSession) -> None:
     assert [t.label for t in window.navigation.targets("tools")] == [
         "Triage",
         "Dedupe",
+        "File keywords",
         "Tag manager",
     ]
     page = window.stack.currentWidget()
@@ -95,7 +96,7 @@ def test_folded_sections_are_remembered_per_keep(qtbot: QtBot, session: KeepSess
     heading = window.navigation.model().index(3, 0)  # TOOLS
     window.navigation.clicked.emit(heading)
     assert window.navigation.folded() == {"tools"}
-    assert heading.data().startswith("▸ TOOLS (3)")
+    assert heading.data().startswith("▸ TOOLS (4)")
     assert load_ui_state(session.keep.ui_state_path) == {"nav_folded": ["tools"]}
 
     again = _window(qtbot, session)

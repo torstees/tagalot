@@ -243,6 +243,15 @@ class TagActions(QObject):
 
         self._run(lambda: self.session.dismiss(name, ids), describe)
 
+    def ignore_keywords(self, keys: list[str], ignored: bool) -> None:
+        """Ignore file keywords (or stop ignoring them); one undo step (#295)."""
+
+        def describe(count: int) -> str:
+            what = "1 keyword" if count == 1 else f"{count:,} keywords"
+            return f"{'Ignoring' if ignored else 'No longer ignoring'} {what}."
+
+        self._run(lambda: self.session.tags.ignore_keywords(keys, ignored), describe)
+
     def delete_items(self, ids: list[int]) -> None:
         """Delete items (never their files); one undo step."""
         self._run(

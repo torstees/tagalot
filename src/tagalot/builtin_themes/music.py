@@ -135,7 +135,7 @@ class ContentsThumbnail(ThumbnailProvider):
 
 
 class MusicTheme(Theme):
-    id, name, version = "music", "Music", 2
+    id, name, version = "music", "Music", 3  # 3: genres as file keywords (#295)
     # 2: songs record their bitrate; keeps read every file again once to fill it in.
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS)
     dirs = True
@@ -335,6 +335,8 @@ class MusicTheme(Theme):
             values["bitrate"] = best_bitrate(ctx, song, resource, ctx.get(song).fields, bitrate)
             ctx.update(song, title=title, **values)
             ctx.link(song, resource, "audio", sort_order=0)
+        # Its genres can become the user's tags (DESIGN.md §7 "File keywords").
+        ctx.keywords(song, resource, tags.get("genres") or [])
 
         if album_dir:
             key = album_key(album_dir)
@@ -353,6 +355,22 @@ class MusicTheme(Theme):
             settle_album(album, ctx)
         elif artist or album_artist:
             ctx.contain(artist_ref(artist or album_artist or "", ctx), song)
+
+
+GENRE_SEPARATORS = re.compile(r"\s*[;,/]\s*")
+"""What separates several genres in one tag value: ``Pop/Rock``, ``Jazz; Blues``."""
+
+
+def genre_list(values: object) -> list[str]:
+    """Every genre a file's tags give, in order and once each (case ignored): several
+    values, or one value naming several (``"Pop/Rock"``)."""
+    found: dict[str, str] = {}
+    for value in values if isinstance(values, list) else []:
+        for genre in GENRE_SEPARATORS.split(str(value)):
+            genre = genre.strip()
+            if genre and genre.casefold() not in found:
+                found[genre.casefold()] = genre
+    return list(found.values())
 
 
 def settle_album(album: EntityRef, ctx: IngestContext) -> None:
@@ -493,6 +511,7 @@ def read_tags(path: str) -> dict[str, Any]:
 
     for name in ("title", "artist", "albumartist", "album", "genre"):
         tags[name] = first(name)
+    tags["genres"] = genre_list(easy.get("genre") if hasattr(easy, "get") else None)
     tags["track"] = _number(first("tracknumber"))
     tags["disc"] = _number(first("discnumber"))
     date = first("date")

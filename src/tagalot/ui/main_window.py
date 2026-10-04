@@ -35,6 +35,7 @@ from tagalot.core.actions import ActionResult
 from tagalot.core.activity import SCAN, Problem
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.keywords import KeywordInfo, keyword_index, keyword_key, unmatched_keys
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
@@ -64,6 +65,7 @@ from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
+from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -73,6 +75,7 @@ from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
+from tagalot.ui.tag_picker import TagPickerDialog, map_dialog
 from tagalot.ui.tag_types_dialog import TagTypesDialog
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
 from tagalot.ui.triage import UNTAGGED_TAB, TriagePage
@@ -305,6 +308,9 @@ class MainWindow(QMainWindow):
             self,
         )
         self.activity.clear_button.clicked.connect(self._clear_problems)
+        self.activity.review_keywords.connect(self.review_keywords)
+        self._unmatched_keywords: frozenset[str] = frozenset()
+        """File keywords matching no tag, as last counted (to tell a scan's new ones)."""
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity)
         self.activity.hide()
         activity_action = self.activity.toggleViewAction()
@@ -354,6 +360,7 @@ class MainWindow(QMainWindow):
         self.scans.failed.connect(self._scan_failed)
 
         self._load_saved_searches()
+        self.refresh_keywords()
         self.navigation.select(OPENING_PAGE)  # the keep at a glance (DESIGN.md §12)
 
     # --- navigation ---
@@ -514,6 +521,12 @@ class MainWindow(QMainWindow):
                 listed.selection_changed.connect(self._schedule_summary)
             triage.tabs.currentChanged.connect(lambda _: self._schedule_summary())
             return triage
+        if target.kind == "keywords":
+            keywords = KeywordsPage(session)
+            keywords.map_requested.connect(self.map_keywords)
+            keywords.create_requested.connect(self.create_keyword_tag)
+            keywords.ignore_requested.connect(self.tag_actions.ignore_keywords)
+            return keywords
         if target.kind == "tags":
             manager = TagManagerPage(session)
             manager.add_requested.connect(self.tag_actions.add_tag)
@@ -812,6 +825,104 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    # --- file keywords (#295) ---
+
+    def map_keywords(self, keywords: list[KeywordInfo]) -> None:
+        """Ask for a tag and tie these keywords to it (as its aliases)."""
+        session = self.session
+        if session is None or not keywords:
+            return
+        words = [k.keyword for k in keywords]
+        label = words[0] if len(words) == 1 else f"{len(words)} keywords"
+        tag_id = self.choose_keyword_tag(map_dialog(session.tag_cache.get(), label, self))
+        if tag_id is None:
+            return
+        tags = session.tags
+        path = PATH_SEPARATOR.join(session.tag_cache.get().path(tag_id))
+        self.tag_actions.change(
+            lambda: tags.map_keywords(tag_id, words), f"Mapped {label!r} to {path}."
+        )
+
+    def choose_keyword_tag(self, dialog: TagPickerDialog) -> int | None:
+        """The tag picked, or ``None`` if cancelled (tests replace this)."""
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.target()
+
+    def create_keyword_tag(self, keyword: KeywordInfo) -> None:
+        """Make a tag for a keyword (at a path the user confirms), then tie the keyword to it."""
+        session = self.session
+        if session is None:
+            return
+        default = " > ".join(p.strip() for p in keyword.keyword.split("/") if p.strip())
+        text = self.ask_keyword_tag_path(keyword.keyword, default)
+        if not text:
+            return
+        try:
+            names = split_tag_path(text)
+        except TagError as e:
+            self.statusBar().showMessage(str(e))
+            return
+        tags = session.tags
+
+        def work() -> None:
+            tag_id = tags.add_path(names)
+            # Tie the keyword to the tag only if it doesn't already match it by path or name.
+            matched = keyword_index(session.tag_cache.get()).get(keyword_key(keyword.keyword))
+            if matched != tag_id:
+                tags.map_keywords(tag_id, [keyword.keyword])
+
+        path = PATH_SEPARATOR.join(names)
+        self.tag_actions.change(work, f"Created tag {path} for {keyword.keyword!r}.")
+
+    def ask_keyword_tag_path(self, keyword: str, default: str) -> str | None:
+        """The path for a keyword's new tag, or ``None`` if cancelled (tests replace this)."""
+        text, ok = QInputDialog.getText(
+            self,
+            "Create tag",
+            f"A tag for \u201c{keyword}\u201d (a path such as Genre > Fantasy):",
+            text=default,
+        )
+        return text.strip() if ok and text.strip() else None
+
+    def refresh_keywords(self, *, after_scan: bool = False) -> None:
+        """Count the unmatched keywords for TOOLS (and, after a scan, say how many are
+        new), and reload the File keywords page if it's open."""
+        session = self.session
+        if session is None:
+            return
+        for page in self._pages.values():
+            if isinstance(page, KeywordsPage):
+                page.refresh()
+
+        def count() -> frozenset[str]:
+            tree = session.tag_cache.get()
+            with session.reader.connect() as conn:
+                return unmatched_keys(conn, tree)
+
+        def counted(keys: frozenset[str]) -> None:
+            if not shiboken6.isValid(self):
+                return
+            new = keys - self._unmatched_keywords if after_scan else frozenset()
+            self._unmatched_keywords = keys
+            self.navigation.set_count("keywords", len(keys))
+            if after_scan:
+                self.activity.set_new_keywords(len(new))
+                if new:
+                    words = "keyword doesn't" if len(new) == 1 else "keywords don't"
+                    self.statusBar().showMessage(
+                        f"{self.statusBar().currentMessage()} {len(new):,} new file "
+                        f"{words} match a tag."
+                    )
+
+        run_in_pool(count, on_done=counted)
+
+    def review_keywords(self) -> None:
+        self.navigation.select(NavTarget("keywords", label="File keywords"))
+        page = self.stack.currentWidget()
+        if isinstance(page, KeywordsPage):
+            page.show_box.setCurrentText("Unmatched")
+
     def _add_tag_alias(self, tag_id: int, alias: str) -> None:
         name = self._tag_name(tag_id)
         tags = self.tag_actions.session.tags
@@ -887,6 +998,7 @@ class MainWindow(QMainWindow):
                 manager.reload()  # usage counts, and the tree after an undo
         self._update_undo_actions()
         self._refresh_triage()
+        self.refresh_keywords()  # a mapping, an alias, or a rename changes what matches
         self._load_saved_searches()  # saving, renaming, and their undo
 
     def _tag_message(self, message: str) -> None:
@@ -1403,6 +1515,7 @@ class MainWindow(QMainWindow):
         if self.keep_config is not None:
             self.keep_config.reload()
         self._refresh_triage()
+        self.refresh_keywords(after_scan=True)
         self._queue_thumbnails()
         for detail in self._pages.values():
             if isinstance(detail, DetailPage):
