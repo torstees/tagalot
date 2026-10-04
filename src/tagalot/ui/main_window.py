@@ -35,7 +35,14 @@ from tagalot.core.actions import ActionResult
 from tagalot.core.activity import SCAN, Problem
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
-from tagalot.core.keywords import KeywordInfo, keyword_index, keyword_key, unmatched_keys
+from tagalot.core.keywords import (
+    KeywordInfo,
+    any_keywords,
+    file_tag_counts,
+    keyword_index,
+    keyword_key,
+    unmatched_keys,
+)
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
@@ -68,8 +75,10 @@ from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.merge_dialog import MergeDialog
+from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
+from tagalot.ui.result_table import DEFAULT_HIDDEN
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
@@ -479,6 +488,9 @@ class MainWindow(QMainWindow):
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
             detail.unlink_requested.connect(self.tag_actions.unlink_file)
+            detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
+            detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
+            detail.file_tag_restore_requested.connect(self.restore_file_tag)
             detail.relate_requested.connect(self.add_related)
             detail.unrelate_requested.connect(self.tag_actions.remove_related)
             detail.action_requested.connect(self.run_action)
@@ -517,7 +529,8 @@ class MainWindow(QMainWindow):
             triage.skip_requested.connect(self._skip_files)
             triage.link_requested.connect(self.link_files)
             triage.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
-            for listed in (triage.untagged, triage.missing):
+            triage.keywords_requested.connect(self.review_keywords)
+            for listed in (triage.untagged, triage.missing, triage.keywords):
                 listed.selection_changed.connect(self._schedule_summary)
             triage.tabs.currentChanged.connect(lambda _: self._schedule_summary())
             return triage
@@ -562,6 +575,9 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
         hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
+        if hidden is None and state_key == "triage:keywords":
+            hidden = sorted(DEFAULT_HIDDEN - {KEYWORDS})  # the keywords are the point
+
         layout = self._ui_state.get("layouts", {}).get(state_key, layout)
         card_lines = self._ui_state.get("card_lines", {}).get(state_key)
         toggles = self._ui_state.get("toggles", {}).get(state_key)
@@ -885,6 +901,18 @@ class MainWindow(QMainWindow):
         )
         return text.strip() if ok and text.strip() else None
 
+    def restore_file_tag(self, entity_id: int, tag_id: int) -> None:
+        """Put back a tag an item's file gives, which the user had removed (#295)."""
+        session = self.session
+        if session is None:
+            return
+        name = self._tag_name(tag_id)
+        tags = session.tags
+        self.tag_actions.change(
+            lambda: tags.restore_file_tag(entity_id, tag_id),
+            f"Restored {name!r}: the item's file gives it again.",
+        )
+
     def refresh_keywords(self, *, after_scan: bool = False) -> None:
         """Count the unmatched keywords for TOOLS (and, after a scan, say how many are
         new), and reload the File keywords page if it's open."""
@@ -895,14 +923,19 @@ class MainWindow(QMainWindow):
             if isinstance(page, KeywordsPage):
                 page.refresh()
 
-        def count() -> frozenset[str]:
+        def count() -> tuple[frozenset[str], bool]:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                return unmatched_keys(conn, tree)
+                return unmatched_keys(conn, tree), any_keywords(conn)
 
-        def counted(keys: frozenset[str]) -> None:
+        def counted(found: tuple[frozenset[str], bool]) -> None:
             if not shiboken6.isValid(self):
                 return
+            keys, present = found
+            if present != session.has_keywords:  # lists gain or lose the column
+                session.has_keywords = present
+                for page in self.search_pages():
+                    page.refresh()
             new = keys - self._unmatched_keywords if after_scan else frozenset()
             self._unmatched_keywords = keys
             self.navigation.set_count("keywords", len(keys))
@@ -969,18 +1002,24 @@ class MainWindow(QMainWindow):
             self.tag_panel.set_selection(0, {})
             return
 
-        def show(count: int, counts: dict[int, int], types: frozenset[str]) -> None:
+        def show(
+            count: int,
+            counts: dict[int, int],
+            types: frozenset[str],
+            from_files: dict[int, int] | None = None,
+        ) -> None:
             if generation == self._summary_generation and shiboken6.isValid(self.tag_panel):
-                self.tag_panel.set_selection(count, counts, types)
+                self.tag_panel.set_selection(count, counts, types, from_files)
 
         def selected(ids: list[int]) -> None:
             if not ids:
                 show(0, {}, frozenset())
                 return
 
-            def count() -> tuple[dict[int, int], frozenset[str]]:
+            def count() -> tuple[dict[int, int], frozenset[str], dict[int, int]]:
                 with session.reader.connect() as conn:
-                    return tag_counts(conn, ids), entity_types(conn, ids)
+                    counts, types = tag_counts(conn, ids), entity_types(conn, ids)
+                    return counts, types, file_tag_counts(conn, ids)
 
             run_in_pool(count, on_done=lambda found: show(len(ids), *found))
 
@@ -1031,7 +1070,7 @@ class MainWindow(QMainWindow):
             elif isinstance(page, DetailPage):
                 pages += page.embedded()
             elif isinstance(page, TriagePage):
-                pages += [page.untagged, page.missing]
+                pages += [page.untagged, page.missing, page.keywords]
         return pages
 
     def _refresh_triage(self) -> None:

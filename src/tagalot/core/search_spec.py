@@ -121,8 +121,10 @@ class SearchSpec:
             ids = getattr(self, name)
             if not all(isinstance(i, int) and not isinstance(i, bool) and i > 0 for i in ids):
                 raise SearchSpecError(f"{name} must list positive tag ids, not {ids!r}")
-        if self.triage not in (None, "untagged", "missing"):
-            raise SearchSpecError(f"triage must be 'untagged' or 'missing', not {self.triage!r}")
+        if self.triage not in (None, "untagged", "missing", "keywords"):
+            raise SearchSpecError(
+                f"triage must be 'untagged', 'missing', or 'keywords', not {self.triage!r}"
+            )
         within = self.within
         if within is not None and (
             not isinstance(within, int) or isinstance(within, bool) or within <= 0

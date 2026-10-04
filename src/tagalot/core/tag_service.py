@@ -249,6 +249,22 @@ class TagService:
             lambda tree: f"Remove {_names(tree, tags)} from {_items(len(entities))}", op
         )
 
+    def restore_file_tag(self, entity_id: int, tag_id: int) -> int:
+        """Put back a file tag the user removed from an item: forget the removal, so its
+        keyword gives the tag again (#295). One undo step; returns 1 if it changed."""
+
+        def op(conn: Connection) -> LinkDelta:
+            dropped = forget_removals(conn, {(entity_id, tag_id)})
+            if dropped:
+                apply_file_tags(conn, [entity_id])
+            return frozenset(), frozenset(), frozenset(), dropped
+
+        return self._record_links(
+            lambda tree: f"Restore {_name(tree, tag_id)!r} from the item's file",
+            op,
+            count_removals=True,
+        )
+
     def add_alias(self, tag_id: int, alias: str, *, allow_name: bool = False) -> None:
         self._record(
             lambda tree: f"Add alias {alias.strip()!r} to {_name(tree, tag_id)!r}",
@@ -420,6 +436,8 @@ class TagService:
         self,
         label: Callable[[TagTree], str],
         op: Callable[[Connection], "LinkDelta"],
+        *,
+        count_removals: bool = False,
     ) -> int:
         """Run a tagging operation, recording exactly the rows it added and removed. Unlike
         :meth:`_record`, it never reads every use of a tag, so tagging stays cheap for tags
@@ -434,9 +452,10 @@ class TagService:
             )
 
         change = self.writer.run(job)  # the tag tree is unchanged: no cache refresh
-        if change.added or change.removed:
+        removals = len(change.removals_added) + len(change.removals_dropped)
+        if change.added or change.removed or (count_removals and removals):
             self._push(change)
-        return len(change.added) + len(change.removed)
+        return len(change.added) + len(change.removed) + (removals if count_removals else 0)
 
     def _apply[T](self, job: Callable[[Connection], T]) -> T:
         try:

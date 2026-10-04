@@ -29,6 +29,7 @@ from PySide6.QtCore import (
 from sqlalchemy import ColumnElement, Connection
 
 from tagalot.core.formats import format_value
+from tagalot.core.keywords import keyword_index, keyword_key, keywords_of
 from tagalot.core.search import SearchError, SearchHit, count_matches, run_search
 from tagalot.core.search_fields import field_values, search_fields
 from tagalot.core.search_spec import SearchSpec, SortKey
@@ -64,6 +65,8 @@ class ResultColumn:
 
 TAGS = "tags"
 """The key of the Tags column: an item's own tags, not a theme field."""
+KEYWORDS = "keywords"
+"""The key of the Keywords column: what an item's files say it is about (#295)."""
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,21 @@ def tags_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
     )
 
 
+def keywords_value(words: Sequence[str], index: dict[str, int], tree: TagTree) -> TagsValue:
+    """An item's file keywords: the ones no tag matches first, then the rest; the
+    tooltip says what each gives."""
+    matched = {w: index.get(keyword_key(w)) for w in words}
+    ordered = sorted(words, key=lambda w: (matched[w] is not None, w.casefold()))
+    lines = []
+    for word in ordered:
+        tag_id = matched[word]
+        if tag_id is not None and tag_id in tree:
+            lines.append(f"{word} \u2192 {PATH_SEPARATOR.join(tree.path(tag_id))}")
+        else:
+            lines.append(f"{word}: no tag")
+    return TagsValue(", ".join(ordered), "\n".join(lines))
+
+
 def row_values(
     conn: Connection,
     schema: ThemeSchema,
@@ -93,12 +111,18 @@ def row_values(
 ) -> dict[int, dict[str, Any]]:
     """The cell values for ``hits``: their theme fields and, if shown, their tags. Runs in a
     worker."""
-    names = [c.key for c in columns if c.key not in ("title", "type", TAGS)]
+    names = [c.key for c in columns if c.key not in ("title", "type", TAGS, KEYWORDS)]
     values = field_values(conn, schema, hits, names) if names else {}
     if any(c.key == TAGS for c in columns):
         tagged = entity_tags(conn, (h.id for h in hits))
         for hit in hits:
             values.setdefault(hit.id, {})[TAGS] = tags_value(tree, tagged.get(hit.id, ()))
+    if any(c.key == KEYWORDS for c in columns):
+        words = keywords_of(conn, (h.id for h in hits))
+        index = keyword_index(tree)
+        for hit in hits:
+            cell = keywords_value(words.get(hit.id, []), index, tree)
+            values.setdefault(hit.id, {})[KEYWORDS] = cell
     return values
 
 

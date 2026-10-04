@@ -697,6 +697,8 @@ class TagUsage:
 
     direct: int
     with_subtags: int
+    from_files: int = 0
+    """Of the direct uses, how many come from files' keywords (§7 "File keywords")."""
 
 
 def tag_usage(conn: Connection, tree: TagTree) -> dict[int, TagUsage]:
@@ -708,11 +710,20 @@ def tag_usage(conn: Connection, tree: TagTree) -> dict[int, TagUsage]:
             select(EntityTag.tag_id, func.count()).group_by(EntityTag.tag_id)
         )
     }
+    from_files: dict[int, int] = {
+        tag_id: int(count)
+        for tag_id, count in conn.execute(
+            select(EntityTag.tag_id, func.count())
+            .where(EntityTag.by_file.is_(True))
+            .group_by(EntityTag.tag_id)
+        )
+    }
     usage: dict[int, TagUsage] = {}
     for tag_id in tree:
         own = direct.get(tag_id, 0)
+        files = from_files.get(tag_id, 0)
         if not tree.children(tag_id):
-            usage[tag_id] = TagUsage(own, own)
+            usage[tag_id] = TagUsage(own, own, files)
             continue
         subtree = tree.descendants(tag_id)
         total = conn.scalar(
@@ -720,7 +731,7 @@ def tag_usage(conn: Connection, tree: TagTree) -> dict[int, TagUsage]:
                 EntityTag.tag_id.in_(subtree)
             )
         )
-        usage[tag_id] = TagUsage(own, int(total or 0))
+        usage[tag_id] = TagUsage(own, int(total or 0), files)
     return usage
 
 

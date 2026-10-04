@@ -40,6 +40,7 @@ from tagalot.core.search import count_matches
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.triage import (
+    KEYWORDS,
     MISSING,
     UNLINKED,
     UNTAGGED,
@@ -54,11 +55,12 @@ from tagalot.ui.workers import run_in_pool
 MAX_FILES = 10_000
 """Unlinked files listed at once (the count shows them all)."""
 
-UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB = 0, 1, 2
+UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB = 0, 1, 2, 3
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
     MISSING_TAB: "Missing files",
+    KEYWORDS_TAB: "Unmatched keywords",
 }
 
 ModelIndex = QModelIndex | QPersistentModelIndex
@@ -69,6 +71,7 @@ class Counts:
     unlinked: int
     untagged: int
     missing: int
+    keywords: int = 0
 
 
 class UnlinkedModel(QAbstractTableModel):
@@ -124,6 +127,8 @@ class TriagePage(QWidget):
     skip_requested = Signal(list)
     """``UnlinkedFile`` values to leave out of scans."""
     message = Signal(str)
+    keywords_requested = Signal()
+    """Open TOOLS → File keywords (#295)."""
 
     def __init__(
         self,
@@ -185,10 +190,21 @@ class TriagePage(QWidget):
         where.clicked.connect(self._show_where)
         missing_tab = _tab(self.missing, [delete, where])
 
+        self.keywords = make_search(
+            "Unmatched keywords", SearchSpec(triage=KEYWORDS), "triage:keywords"
+        )
+        open_keywords = QPushButton("File keywords…")
+        open_keywords.setToolTip(
+            "Map these items' keywords to tags, create tags for them, or ignore them"
+        )
+        open_keywords.clicked.connect(self.keywords_requested.emit)
+        keywords_tab = _tab(self.keywords, [open_keywords])
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
         self.tabs.addTab(missing_tab, _TITLES[MISSING_TAB])
+        self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         self.refresh()
@@ -207,6 +223,7 @@ class TriagePage(QWidget):
                     count_unlinked(conn),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
+                    count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
                 )
                 return counts, unlinked_files(conn, MAX_FILES)
 
@@ -222,6 +239,7 @@ class TriagePage(QWidget):
             (UNLINKED_TAB, counts.unlinked),
             (UNTAGGED_TAB, counts.untagged),
             (MISSING_TAB, counts.missing),
+            (KEYWORDS_TAB, counts.keywords),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
         self.files.set_files(files)
@@ -238,7 +256,11 @@ class TriagePage(QWidget):
     def current_search(self) -> SearchPage | None:
         """The search page of the current tab (tagging applies to its selection)."""
         index = self.tabs.currentIndex()
-        return {UNTAGGED_TAB: self.untagged, MISSING_TAB: self.missing}.get(index)
+        return {
+            UNTAGGED_TAB: self.untagged,
+            MISSING_TAB: self.missing,
+            KEYWORDS_TAB: self.keywords,
+        }.get(index)
 
     def selected_files(self) -> list[UnlinkedFile]:
         rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})

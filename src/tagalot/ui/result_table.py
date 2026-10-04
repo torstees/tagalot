@@ -16,11 +16,11 @@ from PySide6.QtWidgets import (
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.dnd import dragged_tags
-from tagalot.ui.models.results import TAGS, ResultColumn
+from tagalot.ui.models.results import KEYWORDS, TAGS, ResultColumn
 
 TITLE_MIN_WIDTH = 200
 TAGS_WIDTH = 220
-DEFAULT_HIDDEN = frozenset({TAGS})
+DEFAULT_HIDDEN = frozenset({TAGS, KEYWORDS})
 """Columns hidden until the user shows them (right-click a column header)."""
 OUTLINE_COLOR = "#f0a020"
 """The drop target's dashed outline: amber, distinct from the selection color."""
@@ -28,7 +28,9 @@ COLUMN_WIDTH = 140
 NUMERIC_WIDTH = 100
 
 
-def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn]:
+def list_columns(
+    schema: ThemeSchema, types: Sequence[str], keywords: bool = False
+) -> list[ResultColumn]:
     """The list layout's columns for a scope: the title (named as the types call it), the
     type when several types are in scope, the item's tags (hidden unless the user shows
     them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
@@ -39,6 +41,8 @@ def list_columns(schema: ThemeSchema, types: Sequence[str]) -> list[ResultColumn
     if len(tables) != 1:
         columns.append(ResultColumn("type", "Type", sortable=False))
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
+    if keywords:  # only in keeps whose files give keywords (§7)
+        columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
     columns.extend(
         ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float), display=f.spec.display)
         for f in scope_fields(schema, types)
@@ -203,5 +207,5 @@ def set_column_widths(table: QTableView, columns: Sequence[ResultColumn]) -> Non
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
         else:
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-            width = TAGS_WIDTH if column.key == TAGS else COLUMN_WIDTH
+            width = TAGS_WIDTH if column.key in (TAGS, KEYWORDS) else COLUMN_WIDTH
             table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else width)

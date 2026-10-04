@@ -69,7 +69,7 @@ def load_groups(
             if not count:
                 continue
             types = (table.type_id,)
-            columns = list_columns(schema, types)
+            columns = list_columns(schema, types, session.has_keywords)
             hits = run_search(
                 conn,
                 replace(spec, types=types),

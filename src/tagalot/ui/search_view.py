@@ -547,7 +547,7 @@ class SearchPage(QWidget):
 
     def _show_list(self, spec: SearchSpec) -> None:
         self._apply_card_lines(spec.types)
-        columns = list_columns(self.session.schema, spec.types)
+        columns = list_columns(self.session.schema, spec.types, self.session.has_keywords)
         shows_contents = self._tree_layout() or spec.show_contained
         if shows_contents and not any(c.key == "type" for c in columns):
             # Contents can be of other types (an artist's images and fonts): say which.

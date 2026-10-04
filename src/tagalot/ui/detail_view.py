@@ -31,6 +31,7 @@ from PySide6.QtGui import QFont, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -52,6 +53,7 @@ from tagalot.core.actions import actions_for
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
+from tagalot.core.keywords import ItemKeyword, KeywordInfo
 from tagalot.core.models import ResourceStatus
 from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.search_spec import SearchSpec
@@ -92,6 +94,12 @@ class DetailPage(QWidget):
     action_requested = Signal(str, list)
     """Run a theme action on the page's item: (method name, [entity id])."""
     """Read the entity's files again; true: replacing what the user edited."""
+    keyword_map_requested = Signal(object)
+    """A :class:`~tagalot.core.keywords.KeywordInfo` to map to a tag (#295)."""
+    keyword_ignore_requested = Signal(list, bool)
+    """Keyword keys, and whether to ignore them."""
+    file_tag_restore_requested = Signal(int, int)
+    """Entity id and tag id: put back a file tag the user removed."""
     show_in_search = Signal(int)
     """The user asked to see this entity's contents in Search all (a Within chip)."""
     selection_changed = Signal()
@@ -260,6 +268,10 @@ class DetailPage(QWidget):
                     self._sections.addWidget(extras)  # the user's fields follow the theme's
             if extras.parent() is None:
                 self._sections.insertWidget(0, extras)
+            if detail.keywords:
+                self._sections.addWidget(
+                    self._titled("From the file", self._keywords(detail), "section_keywords")
+                )
             self._show_thumbnail()
         self.loaded.emit()
 
@@ -382,6 +394,48 @@ class DetailPage(QWidget):
             case _:
                 return None
         return self._titled(title, body, f"section_{section.kind}")
+
+    def _keywords(self, detail: EntityDetail) -> QWidget:
+        """Each keyword its files give, with the tag it gives and what can be done (#295)."""
+        tags = dict(detail.keyword_tags)
+        body = QWidget()
+        grid = QGridLayout(body)
+        grid.setContentsMargins(12, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        for row, item in enumerate(detail.keywords):
+            grid.addWidget(QLabel(item.keyword), row, 0)
+            path = tags.get(item.tag_id, "") if item.tag_id is not None else ""
+            text, buttons = {
+                "tagged": (f"\u2192 {path}", []),
+                "removed": (f"\u2192 {path} (removed from this item)", ["Restore"]),
+                "not allowed": (f"\u2192 {path} (not for this type)", []),
+                "ignored": ("Ignored", ["Stop ignoring"]),
+                "unmatched": ("No tag", ["Map\u2026", "Ignore"]),
+            }[item.state]
+            state = QLabel(text)
+            state.setObjectName(f"keyword_{item.key}")
+            grid.addWidget(state, row, 1)
+            actions = QHBoxLayout()
+            for name in buttons:
+                button = QPushButton(name)
+                button.setFlat(True)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.clicked.connect(
+                    lambda _=False, name=name, item=item: self._keyword_action(name, item)
+                )
+                actions.addWidget(button)
+            actions.addStretch(1)
+            grid.addLayout(actions, row, 2)
+        grid.setColumnStretch(2, 1)
+        return body
+
+    def _keyword_action(self, name: str, item: ItemKeyword) -> None:
+        if name == "Restore" and item.tag_id is not None:
+            self.file_tag_restore_requested.emit(self.entity_id, item.tag_id)
+        elif name.startswith("Map"):
+            self.keyword_map_requested.emit(KeywordInfo(item.key, item.keyword, 1, (), None, False))
+        elif name in ("Ignore", "Stop ignoring"):
+            self.keyword_ignore_requested.emit([item.key], name == "Ignore")
 
     def _titled(self, title: str, body: QWidget, name: str) -> QWidget:
         """A section: a bold heading with a rule, then its body."""
