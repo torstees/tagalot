@@ -252,6 +252,75 @@ def keywords_of(conn: Connection, entity_ids: Iterable[int]) -> Mapping[int, lis
     return {e: list(words.values()) for e, words in found.items()}
 
 
+# --- an item's keywords (its page, #295) ---
+
+
+@dataclass(frozen=True)
+class ItemKeyword:
+    """One keyword an item's files give it, and what became of it."""
+
+    keyword: str
+    key: str
+    tag_id: int | None
+    """The tag it matches, if any."""
+    state: str
+    """``tagged`` (the item has the tag), ``removed`` (the user took it off), ``not allowed``
+    (the tag's types exclude the item), ``ignored``, or ``unmatched``."""
+
+
+def item_keywords(conn: Connection, tree: TagTree, entity_id: int) -> list[ItemKeyword]:
+    """What an item's files say about it, in alphabetical order, for its page."""
+    index = keyword_index(tree)
+    type_id = conn.scalar(select(Entity.type).where(Entity.id == entity_id)) or ""
+    ignored = set(conn.scalars(select(KeywordIgnored.match_key)))
+    removed = {t for _, t in _removals(conn, {entity_id})}
+    words: dict[str, str] = {}
+    for key, keyword in conn.execute(
+        select(EntityKeyword.match_key, EntityKeyword.keyword)
+        .where(EntityKeyword.entity_id == entity_id)
+        .order_by(EntityKeyword.resource_id)
+    ):
+        words.setdefault(key, keyword)
+    found = []
+    for key, keyword in sorted(words.items(), key=lambda kv: kv[1].casefold()):
+        tag_id = index.get(key)
+        if tag_id is None:
+            state = "ignored" if key in ignored else "unmatched"
+        elif tag_id in removed:
+            state = "removed"
+        elif not tree.allows(tag_id, type_id):
+            state = "not allowed"
+        else:
+            state = "tagged"
+        found.append(ItemKeyword(keyword, key, tag_id, state))
+    return found
+
+
+def file_tag_counts(conn: Connection, entity_ids: Iterable[int]) -> dict[int, int]:
+    """For each tag, how many of these items have it only from their files (``by_file``)."""
+    counts: dict[int, int] = {}
+    for chunk in _chunks(entity_ids):
+        assert chunk is not None
+        rows = conn.execute(
+            select(EntityTag.tag_id, func.count())
+            .where(EntityTag.entity_id.in_(chunk), EntityTag.by_file.is_(True))
+            .group_by(EntityTag.tag_id)
+        )
+        for tag_id, count in rows:
+            counts[tag_id] = counts.get(tag_id, 0) + int(count)
+    return counts
+
+
+def file_tag_usage(conn: Connection) -> dict[int, int]:
+    """For each tag, how many items have it from their files (the tag manager)."""
+    rows = conn.execute(
+        select(EntityTag.tag_id, func.count())
+        .where(EntityTag.by_file.is_(True))
+        .group_by(EntityTag.tag_id)
+    )
+    return {tag_id: int(count) for tag_id, count in rows}
+
+
 # --- the File keywords page (#295) ---
 
 

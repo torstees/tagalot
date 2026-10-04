@@ -339,11 +339,12 @@ class TagPanel(QWidget):
         selected_count: int,
         tag_counts: dict[int, int],
         types: frozenset[str] = frozenset(),
+        file_counts: dict[int, int] | None = None,
     ) -> None:
         """Show which tags the selected items have (checked: all, partly: some), hiding
         tags limited to types none of them are (#135)."""
         current = self.current_tag()
-        if self.model.set_selection(selected_count, tag_counts, types):
+        if self.model.set_selection(selected_count, tag_counts, types, file_counts):
             self._after_reset()
             if current is not None:
                 self.select_tag(current)

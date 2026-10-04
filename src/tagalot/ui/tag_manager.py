@@ -338,8 +338,10 @@ class TagDetails(QFrame):
             self.counts.setText("…")
         else:
             items = "item" if usage.direct == 1 else "items"
+            files = f" ({usage.from_files:,} from their files)" if usage.from_files else ""
             self.counts.setText(
-                f"{usage.direct:,} {items} directly; {usage.with_subtags:,} with its sub-tags"
+                f"{usage.direct:,} {items} directly{files}; "
+                f"{usage.with_subtags:,} with its sub-tags"
             )
         self._update_buttons()
 

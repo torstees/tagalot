@@ -227,7 +227,7 @@ class _Filter:
             )
         where.append(self._not_excluded(Entity.id))
         if spec.triage is not None:
-            where.append(triage_condition(spec.triage, spec.inherit_tags))
+            where.append(triage_condition(spec.triage, spec.inherit_tags, self.tree))
         # Field filters always apply to the listed entity: they belong to its type.
         where.extend(_field_condition(f, self.fields) for f in spec.fields)
         own = self._positive(Entity.id)

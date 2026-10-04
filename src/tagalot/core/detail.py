@@ -14,6 +14,7 @@ from sqlalchemy import Connection, func, select
 
 from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
+from tagalot.core.keywords import ItemKeyword, item_keywords
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -23,6 +24,7 @@ from tagalot.core.models import (
     Root,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.tags import PATH_SEPARATOR, TagTree
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.themes.api import (
     DetailView,
@@ -116,6 +118,10 @@ class EntityDetail:
     """How many more containers hold it directly, besides the one the crumbs follow."""
     merged_from: int | None = None
     """The id asked for, when that item was merged into this one (§13)."""
+    keywords: tuple[ItemKeyword, ...] = ()
+    """What its files say it is about, and what became of each (§7 "File keywords")."""
+    keyword_tags: tuple[tuple[int, str], ...] = ()
+    """``(tag id, path)`` for the tags those keywords match, to name them."""
 
 
 PATH_MARK = "\u203a"
@@ -175,6 +181,9 @@ def load_detail(
         loaded = _load_section(conn, schema, entity, entity_id, section, root_path, edited)
         if loaded is not None:
             sections.append(loaded)
+    tree = TagTree.load(conn)
+    keywords = tuple(item_keywords(conn, tree, entity_id))
+    named = {k.tag_id for k in keywords if k.tag_id is not None and k.tag_id in tree}
     return EntityDetail(
         entity_id,
         row.type,
@@ -186,6 +195,8 @@ def load_detail(
         title_label=entity.title_label,
         title_edited=TITLE in edited,
         extra=extra,
+        keywords=keywords,
+        keyword_tags=tuple((t, PATH_SEPARATOR.join(tree.path(t))) for t in sorted(named)),
     )
 
 

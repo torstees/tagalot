@@ -14,6 +14,8 @@ from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import ThemeRef, create_keep
 from tagalot.core.keywords import (
     KeywordInfo,
+    file_tag_counts,
+    item_keywords,
     keyword_index,
     keyword_key,
     keyword_report,
@@ -21,10 +23,13 @@ from tagalot.core.keywords import (
     unmatched_keys,
 )
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Resource, ResourceKind, Root, Tag
+from tagalot.core.search import run_search
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.tag_service import TagService
-from tagalot.core.tags import TagNode, TagTree, TagTreeCache
+from tagalot.core.tags import TagNode, TagTree, TagTreeCache, TagUsage, tag_usage
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.triage import KEYWORDS
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import EntityRef, Theme, role
@@ -323,3 +328,46 @@ def test_a_name_two_tags_share_can_be_mapped_to_one(env: Env) -> None:
     assert env.file_tags() == set()
     env.tags.map_keywords(dark, ["Dark"])  # its own name, as an alias, picks it
     assert env.file_tags() == {(1, dark)}
+
+
+def test_an_items_keywords_and_what_became_of_them(env: Env) -> None:
+    env.tags.set_types(SCIFI, ["notes.person"])  # science fiction isn't for notes
+    env.report(1, 10, ["Fantasy", "Genre/Science fiction", "Cozy", "Space opera"])
+    env.tags.ignore_keywords(["cozy"])
+    env.tags.remove([1], [FANTASY])
+    with env.engine.connect() as conn:
+        found = item_keywords(conn, TagTree.load(conn), 1)
+    assert [(k.keyword, k.tag_id, k.state) for k in found] == [
+        ("Cozy", None, "ignored"),
+        ("Fantasy", FANTASY, "removed"),
+        ("Genre/Science fiction", SCIFI, "not allowed"),
+        ("Space opera", None, "unmatched"),
+    ]
+
+
+def test_restoring_a_removed_file_tag(env: Env) -> None:
+    env.report(1, 10, ["Fantasy"])
+    env.tags.remove([1], [FANTASY])
+    assert env.tags.restore_file_tag(1, FANTASY) == 1
+    assert env.file_tags() == {(1, FANTASY)}
+    assert env.removals() == set()
+    assert env.tags.undo_label == "Restore 'Fantasy' from the item's file"
+    env.tags.undo()
+    assert env.file_tags() == set()
+    assert env.removals() == {(1, FANTASY)}
+    env.tags.redo()
+    assert env.file_tags() == {(1, FANTASY)}
+    assert env.tags.restore_file_tag(1, FANTASY) == 0  # nothing left to restore
+
+
+def test_triage_lists_items_with_unmatched_keywords(env: Env) -> None:
+    env.report(1, 10, ["Fantasy"])
+    env.report(2, 12, ["Space opera"])
+    env.report(3, 13, ["Cozy"], kind="person")
+    env.tags.ignore_keywords(["cozy"])
+    with env.engine.connect() as conn:
+        tree = TagTree.load(conn)
+        listed = {h.id for h in run_search(conn, SearchSpec(triage=KEYWORDS), tree)}
+        assert listed == {2}
+        assert file_tag_counts(conn, [1, 2]) == {FANTASY: 1}
+        assert tag_usage(conn, tree)[FANTASY] == TagUsage(1, 1, from_files=1)

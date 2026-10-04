@@ -33,20 +33,26 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
+from tagalot.core.keywords import keyword_index
 from tagalot.core.models import (
     Entity,
     EntityAncestor,
+    EntityKeyword,
     EntityResource,
     EntityTag,
+    KeywordIgnored,
     Resource,
     ResourceKind,
     ResourceStatus,
     Root,
     TriageDismissal,
 )
+from tagalot.core.tags import TagTree
 
 UNLINKED, UNTAGGED, MISSING = "unlinked", "untagged", "missing"
-ENTITY_LISTS = (UNTAGGED, MISSING)
+KEYWORDS = "keywords"
+"""Items with a file keyword that matches no tag and isn't ignored (#295)."""
+ENTITY_LISTS = (UNTAGGED, MISSING, KEYWORDS)
 """The lists that are searches (``SearchSpec.triage``)."""
 DISMISSABLE = (UNLINKED, UNTAGGED)
 
@@ -85,8 +91,18 @@ def _not_dismissed(
 # --- the entity lists, as search conditions ---
 
 
-def triage_condition(name: str, inherit_tags: bool = False) -> ColumnElement[bool]:
-    """Which entities a triage list holds (``SearchSpec.triage``)."""
+def triage_condition(
+    name: str, inherit_tags: bool = False, tree: TagTree | None = None
+) -> ColumnElement[bool]:
+    """Which entities a triage list holds (``SearchSpec.triage``). The keywords list needs
+    the tag tree (what keywords match)."""
+    if name == KEYWORDS:
+        matched = list(keyword_index(tree or TagTree([], {})))
+        unmatched = select(EntityKeyword.entity_id).where(
+            EntityKeyword.match_key.not_in(matched),
+            EntityKeyword.match_key.not_in(select(KeywordIgnored.match_key)),
+        )
+        return Entity.id.in_(unmatched)
     if name == UNTAGGED:
         if inherit_tags:  # a tag on a container counts, as in searches (§8)
             tagged = select(EntityAncestor.entity_id).join(

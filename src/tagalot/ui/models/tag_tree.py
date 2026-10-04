@@ -71,6 +71,8 @@ class TagTreeModel(QAbstractItemModel):
         self.selected_count = 0
         self._tag_counts: dict[int, int] = {}
         self._selected_types: frozenset[str] = frozenset()
+        self._file_counts: dict[int, int] = {}
+        """Of the selected items, how many have each tag only from their files (#295)."""
         """The selected items' types: tags none of them may have are hidden (#135)."""
 
     # --- content ---
@@ -207,11 +209,18 @@ class TagTreeModel(QAbstractItemModel):
                 count = self._tag_counts.get(tag_id, 0)
                 items = "item" if self.selected_count == 1 else "items"
                 tooltip += f"\n\nOn {count} of the {self.selected_count} selected {items}"
+                from_files = self._file_counts.get(tag_id, 0)
+                if from_files:
+                    tooltip += f"\nFrom the files of {from_files} (their keywords)"
             return tooltip
-        if role == Qt.ItemDataRole.FontRole and tag_id in self._matches:
-            font = QFont()
-            font.setBold(True)
-            return font
+        if role == Qt.ItemDataRole.FontRole:
+            bold = tag_id in self._matches
+            italic = self.from_files_only(tag_id)
+            if bold or italic:
+                font = QFont()
+                font.setBold(bold)
+                font.setItalic(italic)
+                return font
         if role == Qt.ItemDataRole.DecorationRole and node.color:
             return self._swatch(node.color)
         return None
@@ -233,6 +242,7 @@ class TagTreeModel(QAbstractItemModel):
         selected_count: int,
         tag_counts: dict[int, int],
         types: frozenset[str] = frozenset(),
+        file_counts: dict[int, int] | None = None,
     ) -> bool:
         """How many items are selected, how many of them carry each tag directly, and their
         types. Returns whether the tags shown changed (the model was reset): tags limited to
@@ -241,6 +251,7 @@ class TagTreeModel(QAbstractItemModel):
         self.selected_count = selected_count
         self._tag_counts = dict(tag_counts) if selected_count else {}
         self._selected_types = frozenset(types) if selected_count else frozenset()
+        self._file_counts = dict(file_counts or {}) if selected_count else {}
         after = self._out_of_scope(self.tree) if self.tree is not None else frozenset()
         if after != before:
             self._rebuild()
@@ -262,6 +273,11 @@ class TagTreeModel(QAbstractItemModel):
             ):
                 hidden.add(tag_id)
         return frozenset(hidden)
+
+    def from_files_only(self, tag_id: int) -> bool:
+        """Every selected item that has the tag has it only from its files' keywords."""
+        count = self._tag_counts.get(tag_id, 0)
+        return bool(count) and self._file_counts.get(tag_id, 0) == count
 
     def check_state(self, tag_id: int) -> Qt.CheckState | None:
         """All, some, or none of the selected items have ``tag_id``; ``None`` if nothing is

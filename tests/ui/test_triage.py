@@ -53,7 +53,12 @@ def _select_title(qtbot: QtBot, search: SearchPage, title: str) -> int:
 
 def test_the_three_lists(qtbot: QtBot, window: MainWindow) -> None:
     page = _triage(qtbot, window)
-    assert _tab_texts(page) == ["Unlinked files (1)", "Untagged items (18)", "Missing files (0)"]
+    assert _tab_texts(page) == [
+        "Unlinked files (1)",
+        "Untagged items (18)",
+        "Missing files (0)",
+        "Unmatched keywords (10)",  # songs whose genres match no tag (#295)
+    ]
     assert [f.relpath for f in page.files.files] == ["Miles Davis/Kind of Blue/cover.jpg"]
     assert window.current_items_page() is None  # the files tab has no items to tag
     page.tabs.setCurrentIndex(UNTAGGED_TAB)
