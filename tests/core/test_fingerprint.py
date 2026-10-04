@@ -4,6 +4,7 @@ import hashlib
 import ntpath
 import os
 import posixpath
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -180,6 +181,51 @@ def test_unreadable_files_are_reported_and_the_rest_continue(engine: Engine, roo
     )
     assert [r.resource_id for r in results] == [kept]
     assert errors == [("gone.flac", FileNotFoundError)]
+
+
+def _jobs(root: Path, count: int) -> list[FingerprintJob]:
+    """``count`` small files, every third one missing (unreadable)."""
+    jobs = []
+    for n in range(count):
+        path = root / f"f{n}.bin"
+        path.write_bytes(os.urandom(100 + n))
+        st = path.stat()
+        jobs.append(FingerprintJob(n, "r", path.name, st.st_size, st.st_mtime_ns))
+        if n % 3 == 2:
+            path.unlink()
+    return jobs
+
+
+def test_several_threads_give_the_same_results_in_order(root: Path) -> None:
+    jobs = _jobs(root, 100)
+    errors: dict[int, list[tuple[int, int]]] = {1: [], 8: []}
+
+    def outcome(threads: int) -> list[FingerprintResult]:
+        return list(
+            compute_fingerprints(
+                jobs,
+                lambda j: str(root / j.relpath),
+                on_error=lambda j, e: errors[threads].append(
+                    (j.resource_id, threading.get_ident())
+                ),
+                threads=threads,
+            )
+        )
+
+    alone, together = outcome(1), outcome(8)
+    assert together == alone
+    assert [r.resource_id for r in together] == [n for n in range(100) if n % 3 != 2]
+    assert together[0].fingerprint == _expected((root / "f0.bin").read_bytes())
+    # Errors are reported in order, from the thread iterating (never a hashing thread).
+    assert [n for n, _ in errors[8]] == [n for n in range(100) if n % 3 == 2]
+    assert {ident for _, ident in errors[8]} == {threading.get_ident()}
+
+
+def test_stopping_early_leaves_no_threads(root: Path) -> None:
+    results = compute_fingerprints(_jobs(root, 200), lambda j: str(root / j.relpath), threads=4)
+    assert [next(results).resource_id for _ in range(3)] == [0, 1, 3]
+    results.close()
+    assert not [t for t in threading.enumerate() if t.name.startswith("fingerprint")]
 
 
 def test_store_never_attaches_to_a_newer_version(engine: Engine, root: Path) -> None:

@@ -3,12 +3,17 @@
 Hashing reads only the first and last 64 KiB, so it is cheap even over a network share.
 :func:`compute_fingerprints` does the file I/O and runs in workers; :func:`store_fingerprints`
 is called by the DB writer.
+
+On a share most of the time is latency (opening a file takes milliseconds), so files are
+hashed several at a time (#273, DESIGN.md §3 "Performance").
 """
 
 import hashlib
 import logging
 import os
-from collections.abc import Callable, Iterable, Iterator
+from collections import deque
+from collections.abc import Callable, Generator, Iterable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 from sqlalchemy import Connection, bindparam, select, update
@@ -18,6 +23,8 @@ from tagalot.core.models import Resource, ResourceKind, ResourceStatus
 logger = logging.getLogger(__name__)
 
 CHUNK = 64 * 1024
+THREADS = 8
+"""Files hashed at once. Reading releases the GIL, and a share's latency overlaps."""
 DIGEST_SIZE = 16
 """128 bits: ample for move detection and duplicate candidates, and a compact index."""
 
@@ -84,25 +91,61 @@ def compute_fingerprints(
     jobs: Iterable[FingerprintJob],
     local_path: Callable[[FingerprintJob], str],
     on_error: Callable[[FingerprintJob, OSError], None] | None = None,
-) -> Iterator[FingerprintResult]:
-    """Hash each job's file. Runs in a worker; never touches the database.
+    *,
+    threads: int | None = None,
+) -> Generator[FingerprintResult]:
+    """Hash each job's file, ``threads`` (default :data:`THREADS`) at a time. Runs in a
+    worker; never touches the database. Results come in the jobs' order, and ``on_error``
+    is called from the thread iterating, never from a hashing thread.
 
     Files whose size or mtime no longer match the job are skipped: the next scan will record
     the change. Unreadable files go to ``on_error`` and the rest continue.
     """
-    for job in jobs:
+
+    def hash_one(job: FingerprintJob) -> FingerprintResult | OSError | None:
         path = local_path(job)
         try:
             st = os.stat(path)
             if (st.st_size, st.st_mtime_ns) != (job.size, job.mtime_ns):
                 logger.debug("Skipping %s: changed since it was queued", path)
-                continue
-            yield FingerprintResult(job.resource_id, job.size, job.mtime_ns, fingerprint_file(path))
+                return None
+            return FingerprintResult(
+                job.resource_id, job.size, job.mtime_ns, fingerprint_file(path)
+            )
         except OSError as e:
+            return e
+
+    def report(
+        job: FingerprintJob, outcome: FingerprintResult | OSError | None
+    ) -> Iterator[FingerprintResult]:
+        if isinstance(outcome, FingerprintResult):
+            yield outcome
+        elif isinstance(outcome, OSError):
             if on_error is None:
-                logger.warning("Cannot fingerprint %s: %s", path, e)
+                logger.warning("Cannot fingerprint %s: %s", local_path(job), outcome)
             else:
-                on_error(job, e)
+                on_error(job, outcome)
+
+    threads = THREADS if threads is None else threads
+    if threads <= 1:
+        for job in jobs:
+            yield from report(job, hash_one(job))
+        return
+    # A window of a few jobs per thread keeps every thread busy without queueing them all,
+    # so stopping early (the consumer closing this generator) leaves little to cancel.
+    pool = ThreadPoolExecutor(threads, thread_name_prefix="fingerprint")
+    window: deque[tuple[FingerprintJob, Future[FingerprintResult | OSError | None]]] = deque()
+    try:
+        for job in jobs:
+            window.append((job, pool.submit(hash_one, job)))
+            if len(window) >= threads * 4:
+                done, future = window.popleft()
+                yield from report(done, future.result())
+        while window:
+            done, future = window.popleft()
+            yield from report(done, future.result())
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def store_fingerprints(conn: Connection, results: Iterable[FingerprintResult]) -> int:
