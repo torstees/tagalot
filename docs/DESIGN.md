@@ -157,7 +157,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 9                          # core schema version
+format_version = 10                         # core schema version
 
 [theme]
 id = "music"
@@ -248,11 +248,11 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **entity_ancestor** — closure table maintained by the core.
 `entity_id`, `ancestor_id`, `depth`. Every entity has a self row at depth 0. PK `(entity_id, ancestor_id)`; index `(ancestor_id, entity_id)`. When a DAG gives two paths, keep the minimum depth.
 
-**tag** — `id`, `parent_id` (nullable), `name`, `color` (nullable), `sort_order`, `description` (nullable; shown in tooltips and matched when finding tags, §7). Sibling names are unique case-insensitively via a unique expression index on `(coalesce(parent_id, 0), lower(name))`; the `coalesce` is needed because SQLite treats NULLs as distinct in unique indexes, which would otherwise allow duplicate root-level tags (tag ids start at 1, so `0` is a safe sentinel). Tag operations in `tags.py` also check for clashes before writing so the UI can show a clear message; the index is the backstop. SQLite's `lower()` folds ASCII only, so the app-level check compares with `str.casefold()`. Names may repeat under different parents; the UI shows the full path when ambiguous.
+**tag** — `id`, `parent_id` (nullable), `name`, `color` (nullable), `sort_order`, `description` (nullable; shown in tooltips and matched when finding tags, §7), `types` (nullable, core format 10, #135: the item types the tag may be applied to, as sorted space-separated type ids; `NULL` for every type; §7 *Tag types*). Sibling names are unique case-insensitively via a unique expression index on `(coalesce(parent_id, 0), lower(name))`; the `coalesce` is needed because SQLite treats NULLs as distinct in unique indexes, which would otherwise allow duplicate root-level tags (tag ids start at 1, so `0` is a safe sentinel). Tag operations in `tags.py` also check for clashes before writing so the UI can show a clear message; the index is the backstop. SQLite's `lower()` folds ASCII only, so the app-level check compares with `str.casefold()`. Names may repeat under different parents; the UI shows the full path when ambiguous.
 
 **tag_alias** — `tag_id`, `alias`. Used for matching in the tag filter box and, planned (M20), for matching file keywords to tags (§7 *File keywords*).
 
-**Planned (M20, #294, core format 10):** **entity_keyword** — `entity_id`, `resource_id` (the file that said it; both cascade), `keyword` (as written), `match_key` (case- and accent-folded); PK `(entity_id, resource_id, match_key)`. **keyword_ignored** — `match_key` (PK). **file_tag_removal** — `entity_id`, `tag_id` (both cascade; PK both): a file-derived tag the user removed from that item. **entity_tag** gains `by_file` (bool): the tag is there only because a file's keyword matched it.
+**Planned (M20, #294, the next core format):** **entity_keyword** — `entity_id`, `resource_id` (the file that said it; both cascade), `keyword` (as written), `match_key` (case- and accent-folded); PK `(entity_id, resource_id, match_key)`. **keyword_ignored** — `match_key` (PK). **file_tag_removal** — `entity_id`, `tag_id` (both cascade; PK both): a file-derived tag the user removed from that item. **entity_tag** gains `by_file` (bool): the tag is there only because a file's keyword matched it.
 
 **entity_tag** — `entity_id`, `tag_id`, `added_at`. PK `(entity_id, tag_id)`; index `(tag_id, entity_id)`. Only directly applied tags are stored; parent tags are never stored implicitly.
 
@@ -382,6 +382,16 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
   - the **File keywords** page lists each keyword with its item count and example titles, most-used first: **Map to tag…** (the tag picker), **Create tag…** (at a path you choose, then mapped), or **Ignore** (`keyword_ignored`); matched and ignored keywords are listed too, to change;
   - an item's page has a **From the file** section: its keywords, the tags they give, and Map…/Ignore for unmatched ones;
   - Triage gains **Unmatched keywords**: items with a keyword that matches no tag and isn't ignored.
+
+### Tag types
+
+A tag can be limited to some item types (#135; decided in review): Genre for books and comics, but not authors.
+
+- **Set on any tag, inherited down:** a tag's own `types` (§5), else every type; a sub-tag's types are what it and all its ancestors allow (`TagTree.scope`, an intersection), so a sub-tag can only narrow its parent's. Reparenting under a limited tag narrows accordingly.
+- **Setting them** (`set_tag_types`, `TagService.set_types`, one undoable step with the rest of the tag row): the tag manager's **Applies to** row says "Every type", "Books and Comics", or "Comics (from 'Genre')" when a parent decides, and **Change…** opens a dialog: every type (its parent allows), or only the ticked ones. If the tag or a sub-tag is on items of types it would no longer allow, the window counts them (`scope_conflicts`) and **asks before removing it from them**; the removal is part of the same undo step.
+- **Tagging** (`tag_entities`, `TagService.apply_counted`) applies a limited tag only to items of its types and reports the rest; the status bar says so ("Tagged 3 items with 'Fantasy'. Skipped 2 Authors: 'Fantasy' is for Books and Comics.").
+- **The tagging panel hides** the tags none of the selected items' types allow (the selection summary also reads their types), unless a selected item already has one, so it can still be removed; with nothing selected every tag shows.
+- **Unaffected:** searching and filtering (any tag can be searched for anywhere, and inherited tags still count through containment), tag counts, and uses made before a limit was set by a merge or a move (merging into, or moving under, a limited tag keeps existing uses).
 
 ### Tag operations (tag manager)
 
@@ -927,7 +937,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 **Tag manager.** Full tree with usage counts; add, rename, reparent (drag or "Move to…"), merge, delete with subtree options, aliases, colors. Undo within the session.
 
-- **Layout** (`ui/tag_manager.py`): a filter box and the tag tree on the left, the selected tag's details on the right (path, color, description, aliases, usage); editing arrives with #68–#70. The tree has two count columns: **Items** (tagged with the tag itself) and **With sub-tags** (distinct items tagged with it or any tag under it). Counts come from `core.tags.tag_usage`: one grouped query, then one distinct count per tag with children (about 24 ms for 300 tags over 50k items), in a worker, and are reloaded after any tagging or undo. Filtering, folds, and the selection behave as in the tagging panel.
+- **Layout** (`ui/tag_manager.py`): a filter box and the tag tree on the left, the selected tag's details on the right (path, color, description, what it applies to (§7 *Tag types*), aliases, usage); editing arrives with #68–#70. The tree has two count columns: **Items** (tagged with the tag itself) and **With sub-tags** (distinct items tagged with it or any tag under it). Counts come from `core.tags.tag_usage`: one grouped query, then one distinct count per tag with children (about 24 ms for 300 tags over 50k items), in a worker, and are reloaded after any tagging or undo. Filtering, folds, and the selection behave as in the tagging panel.
 - **Add, rename, move** (#68): **New tag…** (top level) and **New sub-tag…** (under the selected tag) ask for a name; tags are renamed in place (F2, double-click, or **Rename**); a tag moves by dragging it onto another tag (or onto empty space for the top level, or between rows for that level's parent) or with **Move to…**, a picker with a filter and a "Top level" choice in which the tag and its sub-tags are greyed out (`ui/tag_picker.py`). A move isn't confirmed first: it can be undone (Ctrl+Z), and the status bar shows the affected item count ("Moved 'Beach' under 'Topics' (2 items)."), which is how §7's "Show the affected item count" is met. Refused operations (a duplicate sibling name, a move under itself) explain themselves in the status bar.
 - **Merge and delete** (#69): **Merge into…** picks the target in the same picker (the tag and its sub-tags greyed out, no top level) and says what will happen before confirming ("2 items tagged “Beach” will be tagged “Places › Iceland” instead. “Beach” becomes another name for it, and is then deleted."). **Delete…** confirms; for a tag with sub-tags it offers "Delete X and its N sub-tags" (the default) or "Delete only X; move its sub-tags up to …", and shows how many items will lose a tag for the current choice (with sub-tags: every item with any tag in the subtree; moving them up: only the tag's own items). The counts come from the page's usage figures, so the dialogs open without waiting. Both are undoable, and the status bar repeats the count afterwards.
 - **Colors, descriptions, aliases** (#70) are edited in the details pane: **Choose…** (the system color picker) and **Clear** for the color; the description in a text box with **Save** and **Revert** (enabled once it differs); aliases in a short list with **Remove**, and an "Add another name…" box (Enter adds). Each change is one undoable step. Unsaved description text is kept per tag, so neither a reload (after any tag change) nor looking at another tag loses it; Revert discards it. The page's buttons (New tag…, Sub-tag…, Rename, Move…, Merge…, Delete…) are a toolbar across the page, so when it's narrow the ones that don't fit move into its overflow menu (…) instead of widening the page; the navigation pane has a minimum width so no page can squeeze it.
@@ -1004,7 +1014,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 1. ~~Should `aggregate_up` be exposed in the main filter bar or only in an advanced menu?~~ Answered (#133): the main filter bar, as **By contents**, beside Contained and Inherit tags; a view can start it on.
 2. ~~How should entity merges interact with tag inheritance when the two entities have different parents?~~ Answered (#120): the kept item is in every container either was in, so it inherits tags from all of them (§13).
-3. Is there a need for tags scoped to one entity type, or are all tags global to the keep?
+3. ~~Is there a need for tags scoped to one entity type, or are all tags global to the keep?~~ Answered (#135): optional, per tag, inherited down (§7 *Tag types*).
 4. ~~Packaging: PyInstaller vs. Briefcase vs. Nuitka for distributable builds.~~ Answered (#129): PyInstaller (§3 Packaging).
 
 ## 16. Decisions log
@@ -1140,3 +1150,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Planned in review: **file keywords** (§7): files' own tags become Tagalot tags only by matching defined tags (full path, alias, or unique name); mapping a keyword adds it as the tag's alias; unmatched ones are surfaced (a page, a TOOLS count, a scan notice, the item page, Triage); a file-derived tag removed by hand stays removed for that item. Aliases were chosen over a separate mapping table: one concept, already undoable and shown in the tag manager; the cost is one tag per keyword. |
 | 2026-10 | Planned in review: **writing back** front matter, the one exception to never modifying user files: only in folders marked writable, only by an explicit action, with a preview, a backup in the keep folder, and a changed-file check; only the metadata block changes (§4). |
 | 2026-10 | Planned in review: link files (`.url`, `.webloc`, `.desktop`) are a books format, giving a work its `link`; a `"url"` field display opens http(s) links in the browser. Works from a pasted link with no file are future work (§14). Tagalot still never fetches pages. |
+| 2026-10 | Tag types (#135, §7 *Tag types*, core format 10): any tag can be limited to some item types, inherited by its sub-tags, which can only narrow them; setting a limit asks before taking the tag off items of other types (undoable); tagging skips and reports items a tag doesn't allow; the tagging panel hides tags the selection can't have (decided in review). Stored as a column on `tag`, so tag undo covers it with no new machinery. |

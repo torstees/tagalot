@@ -235,6 +235,9 @@ class Tag(Base):
     color: Mapped[str | None]
     sort_order: Mapped[int] = mapped_column(default=0)
     description: Mapped[str | None]  # shown in tooltips, matched when finding tags (core v2)
+    types: Mapped[str | None]
+    """The item types this tag (and its sub-tags) may be applied to, as space-separated type
+    ids (``"books.book books.comic"``); ``None``: every type (core format 10, #135)."""
 
 
 # Sibling names are unique case-insensitively, including at the root level: SQLite treats

@@ -48,6 +48,7 @@ from tagalot.core.tags import (
     reparent_tag,
     set_tag_color,
     set_tag_description,
+    set_tag_types,
     tag_entities,
     untag_entities,
 )
@@ -60,8 +61,8 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY = 100
 """Undo steps kept per session."""
 
-TagRow = tuple[int, int | None, str, str | None, int, str | None]
-"""``(id, parent_id, name, color, sort_order, description)``."""
+TagRow = tuple[int, int | None, str, str | None, int, str | None, str | None]
+"""``(id, parent_id, name, color, sort_order, description, types)``."""
 EntityTagRow = tuple[int, int, datetime]
 """``(entity_id, tag_id, added_at)``."""
 
@@ -94,6 +95,15 @@ Step = (
     | SavedChange
 )
 """One entry in the undo history."""
+
+
+@dataclass(frozen=True)
+class Applied:
+    """What tagging did: rows added, and ``(entity, tag, entity type)`` pairs a tag's types
+    didn't allow (#135)."""
+
+    added: int
+    skipped: tuple[tuple[int, int, str], ...] = ()
 
 
 class TagService:
@@ -162,6 +172,17 @@ class TagService:
             lambda conn: set_tag_color(conn, tag_id, color),
         )
 
+    def set_types(self, tag_id: int, types: Iterable[str] | None) -> int:
+        """Limit a tag (and its sub-tags) to some item types, or ``None`` for every type,
+        taking it off items it no longer allows; one undoable step. Returns how many uses
+        were removed (#135)."""
+        chosen = None if types is None else frozenset(types)
+        return self._record(
+            lambda tree: f"Change the types {_name(tree, tag_id)!r} applies to",
+            lambda tree: _subtrees(tree, tag_id),
+            lambda conn: set_tag_types(conn, tag_id, chosen),
+        )
+
     def set_description(self, tag_id: int, description: str | None) -> None:
         self._record(
             lambda tree: f"Change the description of {_name(tree, tag_id)!r}",
@@ -173,11 +194,17 @@ class TagService:
 
     def apply(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> int:
         """Tag entities (undoable); returns how many ``entity_tag`` rows were added."""
+        return self.apply_counted(entity_ids, tag_ids).added
+
+    def apply_counted(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> Applied:
+        """Tag entities (undoable), reporting what a tag's types left out (#135)."""
         entities, tags = frozenset(entity_ids), frozenset(tag_ids)
-        return self._record_links(
+        skipped: list[tuple[int, int, str]] = []
+        added = self._record_links(
             lambda tree: f"Tag {_items(len(entities))} with {_names(tree, tags)}",
-            lambda conn: (tag_entities(conn, entities, tags), frozenset()),
+            lambda conn: (tag_entities(conn, entities, tags, skipped), frozenset()),
         )
+        return Applied(added, tuple(skipped))
 
     def remove(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> int:
         """Untag entities (undoable); returns how many ``entity_tag`` rows were removed."""
@@ -371,7 +398,9 @@ def _subtrees(tree: TagTree, *tag_ids: int) -> frozenset[int]:
 
 def _tag_tables(conn: Connection) -> tuple[frozenset[TagRow], frozenset[tuple[int, str]]]:
     tags = conn.execute(
-        select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description)
+        select(
+            Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description, Tag.types
+        )
     )
     aliases = conn.execute(select(TagAlias.tag_id, TagAlias.alias))
     return frozenset(tuple(r) for r in tags), frozenset(tuple(r) for r in aliases)  # type: ignore[misc]
@@ -434,7 +463,7 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
 
 
 def _tag_values(row: TagRow) -> dict[str, Any]:
-    tag_id, parent_id, name, color, sort_order, description = row
+    tag_id, parent_id, name, color, sort_order, description, types = row
     return {
         "id": tag_id,
         "parent_id": parent_id,
@@ -442,4 +471,5 @@ def _tag_values(row: TagRow) -> dict[str, Any]:
         "color": color,
         "sort_order": sort_order,
         "description": description,
+        "types": types,
     }

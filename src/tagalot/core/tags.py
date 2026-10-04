@@ -11,11 +11,11 @@ import re
 import threading
 import unicodedata
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cached_property
 
-from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, update
+from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, tuple_, update
 
 from tagalot.core.models import Entity, EntityTag, Tag, TagAlias, utcnow
 
@@ -35,6 +35,23 @@ class TagNode:
     color: str | None
     sort_order: int
     description: str | None = None
+    types: str | None = None
+    """The item types it may be applied to, as stored (see :func:`parse_types`)."""
+
+
+def parse_types(stored: str | None) -> frozenset[str] | None:
+    """A tag's stored ``types`` as a set of type ids; ``None`` (every type) if unset."""
+    if stored is None or not stored.split():
+        return None
+    return frozenset(stored.split())
+
+
+def format_types(types: Iterable[str] | None) -> str | None:
+    """Type ids as stored on a tag: sorted and space-separated; ``None`` for every type."""
+    if types is None:
+        return None
+    ids = sorted(set(types))
+    return " ".join(ids) if ids else None
 
 
 def name_key(name: str) -> str:
@@ -105,7 +122,15 @@ class TagTree:
         nodes = [
             TagNode(*row)
             for row in conn.execute(
-                select(Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description)
+                select(
+                    Tag.id,
+                    Tag.parent_id,
+                    Tag.name,
+                    Tag.color,
+                    Tag.sort_order,
+                    Tag.description,
+                    Tag.types,
+                )
             )
         ]
         aliases: dict[int, list[str]] = {}
@@ -173,6 +198,29 @@ class TagTree:
             self._descendants[tag_id] = frozenset(found)
         subtree = self._descendants[tag_id]
         return subtree if include_self else subtree - {tag_id}
+
+    def scope(self, tag_id: int) -> frozenset[str] | None:
+        """The item types ``tag_id`` may be applied to: what it and its ancestors allow
+        (a sub-tag can only narrow its parent's), or ``None`` for every type (#135)."""
+        allowed: frozenset[str] | None = None
+        for t in (*self.ancestors(tag_id), tag_id):
+            own = parse_types(self._nodes[t].types)
+            if own is not None:
+                allowed = own if allowed is None else allowed & own
+        return allowed
+
+    def allows(self, tag_id: int, type_id: str) -> bool:
+        """Whether ``tag_id`` may be applied to an item of type ``type_id``."""
+        allowed = self.scope(tag_id)
+        return allowed is None or type_id in allowed
+
+    def with_types(self, tag_id: int, types: Iterable[str] | None) -> "TagTree":
+        """This tree with ``tag_id``'s own scope replaced (to preview a change)."""
+        nodes = [
+            replace(n, types=format_types(types)) if n.id == tag_id else n
+            for n in self._nodes.values()
+        ]
+        return TagTree(nodes, self._aliases)
 
     def expand(self, tag_ids: Iterable[int]) -> frozenset[int]:
         """The union of several tags' subtrees (an include group or the exclude set, §8)."""
@@ -470,6 +518,42 @@ def set_tag_description(conn: Connection, tag_id: int, description: str | None) 
     conn.execute(update(Tag).where(Tag.id == tag_id).values(description=cleaned))
 
 
+def scope_conflicts(conn: Connection, tree: TagTree, tag_id: int) -> list[tuple[int, int]]:
+    """``(entity id, tag id)`` uses of ``tag_id`` and its sub-tags that ``tree`` doesn't
+    allow (entities of other types): what limiting the tag's types would remove."""
+    found: list[tuple[int, int]] = []
+    for t in tree.descendants(tag_id):
+        allowed = tree.scope(t)
+        if allowed is None:
+            continue
+        rows = conn.execute(
+            select(EntityTag.entity_id)
+            .join(Entity, Entity.id == EntityTag.entity_id)
+            .where(EntityTag.tag_id == t, Entity.type.not_in(allowed))
+        )
+        found.extend((e, t) for (e,) in rows)
+    return found
+
+
+def set_tag_types(conn: Connection, tag_id: int, types: Iterable[str] | None) -> int:
+    """Limit ``tag_id`` (and its sub-tags) to these item types, or ``None`` for every type
+    (#135), and take it off the items it no longer allows. Returns how many uses were
+    removed. The UI asks first (:func:`scope_conflicts`)."""
+    tree = TagTree.load(conn)
+    _existing(tree, tag_id)
+    stored = format_types(types)
+    if types is not None and stored is None:
+        raise TagError("Choose at least one type, or let the tag apply to every type.")
+    conn.execute(update(Tag).where(Tag.id == tag_id).values(types=stored))
+    conflicts = scope_conflicts(conn, tree.with_types(tag_id, types), tag_id)
+    for chunk in range(0, len(conflicts), LINK_BATCH):
+        pairs = conflicts[chunk : chunk + LINK_BATCH]
+        conn.execute(
+            delete(EntityTag).where(tuple_(EntityTag.entity_id, EntityTag.tag_id).in_(pairs))
+        )
+    return len(conflicts)
+
+
 def description_excerpt(description: str, text: str, width: int = 40) -> str:
     """A short piece of ``description`` around the first match of ``text`` (ignoring case
     and accents), with ellipses where it was cut; the start of it if ``text`` isn't found."""
@@ -541,23 +625,41 @@ LinkRow = tuple[int, int, datetime]
 
 
 def tag_entities(
-    conn: Connection, entity_ids: Iterable[int], tag_ids: Iterable[int]
+    conn: Connection,
+    entity_ids: Iterable[int],
+    tag_ids: Iterable[int],
+    skipped: list[tuple[int, int, str]] | None = None,
 ) -> frozenset[LinkRow]:
     """Apply every tag in ``tag_ids`` to every entity in ``entity_ids``; returns the rows
     added. Pairs that already exist are left alone, entities that no longer exist are
-    skipped, and a tag that no longer exists is an error. Parents are not added (§7)."""
-    tags = _existing_tags(conn, tag_ids)
+    skipped, and a tag that no longer exists is an error. Parents are not added (§7).
+
+    A tag limited to some item types (#135) isn't applied to entities of other types; those
+    pairs are added to ``skipped`` as ``(entity id, tag id, entity type)``, if given."""
+    tree = TagTree.load(conn)
+    tags = _existing_tags(conn, tag_ids, tree)
     now = utcnow()
     added: set[LinkRow] = set()
     for chunk in _batches(entity_ids):
-        present = set(conn.scalars(select(Entity.id).where(Entity.id.in_(chunk))))
+        found = conn.execute(select(Entity.id, Entity.type).where(Entity.id.in_(chunk)))
+        present: dict[int, str] = {e: t for e, t in found}
         pairs = conn.execute(
             select(EntityTag.entity_id, EntityTag.tag_id).where(
                 EntityTag.entity_id.in_(chunk), EntityTag.tag_id.in_(tags)
             )
         )
         have = {(e, t) for e, t in pairs}
-        new = [(e, t, now) for e in chunk if e in present for t in tags if (e, t) not in have]
+        new = []
+        for e in chunk:
+            if e not in present:
+                continue
+            for t in tags:
+                if (e, t) in have:
+                    continue
+                if tree.allows(t, present[e]):
+                    new.append((e, t, now))
+                elif skipped is not None:
+                    skipped.append((e, t, present[e]))
         if new:
             conn.execute(
                 insert(EntityTag),
@@ -635,6 +737,14 @@ def tag_counts(conn: Connection, entity_ids: Iterable[int]) -> dict[int, int]:
     return counts
 
 
+def entity_types(conn: Connection, entity_ids: Iterable[int]) -> frozenset[str]:
+    """The types of these entities (which tags the tagging panel offers them, #135)."""
+    found: set[str] = set()
+    for chunk in _batches(entity_ids):
+        found.update(conn.scalars(select(Entity.type).where(Entity.id.in_(chunk)).distinct()))
+    return frozenset(found)
+
+
 def entity_tags(conn: Connection, entity_ids: Iterable[int]) -> dict[int, list[int]]:
     """The tags applied directly to each entity (entities without tags are absent)."""
     found: dict[int, list[int]] = {}
@@ -647,8 +757,10 @@ def entity_tags(conn: Connection, entity_ids: Iterable[int]) -> dict[int, list[i
     return found
 
 
-def _existing_tags(conn: Connection, tag_ids: Iterable[int]) -> list[int]:
-    tree = TagTree.load(conn)
+def _existing_tags(
+    conn: Connection, tag_ids: Iterable[int], tree: TagTree | None = None
+) -> list[int]:
+    tree = tree or TagTree.load(conn)
     tags = sorted(set(tag_ids))
     for tag_id in tags:
         _existing(tree, tag_id)
