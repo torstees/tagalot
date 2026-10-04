@@ -22,6 +22,7 @@ from tagalot.builtin_themes.books import (
     Universe,
     book_name,
     comic_name,
+    cover_path,
     sort_name,
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
@@ -31,11 +32,18 @@ from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
-from tagalot.core.thumbnails.render import load_epub_cover, renderer_for
+from tagalot.core.thumbnails.render import load_epub_cover, load_pdf_cover, renderer_for
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import ResourceInfo
 from tagalot.themes.loader import validate_theme
-from tests.core.book_files import comic_info, jpeg, write_cbz, write_epub
+from tests.core.book_files import (
+    comic_info,
+    jpeg,
+    write_cbz,
+    write_epub,
+    write_markdown,
+    write_pdf,
+)
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 PRATCHETT = [("Terry Pratchett", "aut")]
@@ -366,3 +374,133 @@ def test_a_comic_shows_its_first_page(tmp_path: Path) -> None:
     renderer = renderer_for(_resource(write_cbz(tmp_path / "x.cbz")))
     assert renderer is not None
     assert renderer.id == "archive_image"
+
+
+# --- PDF and Markdown (#297) ---
+
+
+def test_pdf_and_markdown_books(env: Env) -> None:
+    write_pdf(
+        env.files / "Kobo/Good Omens.pdf",
+        title="Good Omens",
+        author="Terry Pratchett & Neil Gaiman",
+        subject="The world ends on a Saturday.",
+        keywords="Fantasy; Humor",
+    )
+    write_markdown(
+        env.files / "Royal Road/mol-1.md",
+        "---\ntitle: Mother of Learning\nauthor: nobody103\nseries: Mother of Learning\n"
+        "number: 1\nuniverse: Eldemar\ntags: [time-loop, '#Fantasy']\n"
+        "url: https://example.com/mol\ndate: 2011-10-21\n---\n# Arc 1\n",
+    )
+    write_markdown(env.files / "Loose/notes.md", "Some text\n\n# A Short Story\n")
+    env.scan()
+    omens = env.fields(Book, "Good Omens")
+    assert omens["authors"] == "Terry Pratchett, Neil Gaiman"
+    assert omens["description"] == "The world ends on a Saturday."
+    assert env.credits("writers", "Good Omens") == ["Neil Gaiman", "Terry Pratchett"]
+    assert env.keywords("Good Omens") == ["Fantasy", "Humor"]
+    mol = env.fields(Book, "Mother of Learning")
+    assert (mol["series"], mol["series_index"], mol["universe"]) == (
+        "Mother of Learning",
+        1.0,
+        "Eldemar",
+    )
+    assert (mol["link"], mol["year"], mol["sources"]) == (
+        "https://example.com/mol",
+        2011,
+        "Royal Road",
+    )
+    assert env.keywords("Mother of Learning") == ["Fantasy", "time-loop"]
+    contents = env.contents()
+    assert contents["Eldemar"] == ["Mother of Learning"]  # its series
+    assert "A Short Story" in env.titles(Book)  # no front matter: its heading
+
+
+def test_a_pdf_joins_the_same_book_in_epub(env: Env) -> None:
+    write_pdf(env.files / "Loose/colour.pdf", title="The Colour of Magic", author="Terry Pratchett")
+    env.scan()
+    assert env.files_of("The Colour of Magic") == [
+        "Humble Bundle/The Colour of Magic.epub",
+        "Kobo/colour.epub",
+        "Loose/colour.pdf",
+    ]
+
+
+def test_unreadable_pdf_and_front_matter_are_still_works(env: Env) -> None:
+    (env.files / "Loose/Broken.pdf").write_bytes(b"%PDF-1.4 nothing")
+    write_markdown(env.files / "Loose/Bad Front.md", "---\ntitle: [unclosed\n---\n")
+    env.scan()
+    assert {"Broken", "Bad Front"} <= set(env.titles(Book))
+
+
+def test_a_pdf_shows_its_first_page(tmp_path: Path) -> None:
+    path = write_pdf(tmp_path / "a.pdf", color=(10, 200, 10))
+    renderer = renderer_for(_resource(path))
+    assert renderer is not None
+    assert renderer.id == "pdf_cover"
+    image = load_pdf_cover(str(path), 64)
+    assert image is not None
+    assert image.convert("RGB").getpixel((20, 20))[1] > 150  # type: ignore[index]
+
+
+# --- Markdown covers (#297) ---
+
+
+def _covers(env: Env, title: str) -> list[str]:
+    with env.reader.connect() as conn:
+        return sorted(
+            conn.scalars(
+                select(Resource.relpath)
+                .join(EntityResource, EntityResource.resource_id == Resource.id)
+                .join(Entity, Entity.id == EntityResource.entity_id)
+                .where(Entity.title == title, EntityResource.role == "cover")
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("relpath", "cover", "expected"),
+    [
+        ("Stories/a.md", "cover.jpg", "Stories/cover.jpg"),
+        ("Stories/a.md", "images/front.png", "Stories/images/front.png"),
+        ("Stories/a.md", "../art/a.jpg", "art/a.jpg"),
+        ("Stories/a.md", "/art/a.jpg", "art/a.jpg"),
+        ("Stories/a.md", "[[a.jpg]]", "Stories/a.jpg"),
+        ("Stories/a.md", "images\\front.png", "Stories/images/front.png"),
+        ("a.md", "../outside.jpg", None),
+        ("a.md", "https://example.com/a.jpg", None),
+        ("a.md", "C:/covers/a.jpg", None),
+        ("a.md", None, None),
+    ],
+)
+def test_cover_paths(relpath: str, cover: str | None, expected: str | None) -> None:
+    assert cover_path(relpath, cover) == expected
+
+
+@pytest.mark.parametrize("picture", ["Stories/images/a-cover.jpg", "Stories/zz.jpg"])
+def test_a_markdown_cover_is_linked_whichever_is_read_first(env: Env, picture: str) -> None:
+    # Files are read in path order: "Stories/images/…" before "Stories/story.md", and
+    # "Stories/zz.jpg" after it.
+    cover = picture.removeprefix("Stories/")
+    write_markdown(env.files / "Stories/story.md", f"---\ntitle: Story\ncover: {cover}\n---\n")
+    (env.files / picture).parent.mkdir(parents=True, exist_ok=True)
+    (env.files / picture).write_bytes(jpeg())
+    env.scan()
+    assert _covers(env, "Story") == [picture]
+
+
+def test_a_cover_added_later_or_changed_or_dropped(env: Env) -> None:
+    story = write_markdown(env.files / "Stories/story.md", "---\ntitle: Story\ncover: c.jpg\n---\n")
+    env.scan()
+    assert _covers(env, "Story") == []  # not there yet
+    (env.files / "Stories/c.jpg").write_bytes(jpeg())
+    env.scan(T0 + timedelta(minutes=1))
+    assert _covers(env, "Story") == ["Stories/c.jpg"]  # read later: linked then
+    (env.files / "Stories/d.jpg").write_bytes(jpeg())
+    story.write_text("---\ntitle: Story\ncover: d.jpg\n---\nmore\n", encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=2))
+    assert _covers(env, "Story") == ["Stories/d.jpg"]
+    story.write_text("---\ntitle: Story\n---\nmore still\n", encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=3))
+    assert _covers(env, "Story") == []

@@ -105,7 +105,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 2              # the theme API it needs
+    api_version = 3              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -120,7 +120,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
 
@@ -138,7 +138,11 @@ The API has readers for formats several themes want, so they all read them the s
 - **`read_epub(path)`**: an EPUB's `title`, `creators` (`(name, role)` pairs: `"writer"`, `"artist"`, `"editor"`, `"translator"`, or `None`), `series` and `series_index`, `collections`, `subjects`, `publisher`, `language`, `year`, `isbn`, `description` (HTML removed), `source`, and `cover` (the cover's path inside the file). **`epub_cover(path)`** gives the cover's bytes.
 - **`read_comic_info(path)`**: a comic archive's (CBZ, CB7, CBR) `ComicInfo.xml` as `series`, `number` (text: `"12"`, `"Annual 1"`), `volume`, `title`, `writers`, `artists`, `publisher`, `imprint`, `genres`, `tags`, `web`, `year`, `story_arc`, `series_group`, and `summary`; `None` when it has none.
 
-More come with the books theme's other formats (PDF, Markdown front matter, office documents, link files).
+- **`read_pdf_info(path)`**: a PDF's `title`, `authors`, `subject`, `keywords`, `year`, and `pages`. **`pdf_cover(path, size)`** draws its first page as JPEG bytes. PDFium isn't thread-safe; both hold the lock `PDFIUM`, which your own PDFium calls should hold too.
+- **`read_front_matter(path)`**: a Markdown file's YAML (`---`) or TOML (`+++`) front matter as `title` (else the first `# heading`), `authors`, `series`, `series_index`, `universe`, `keywords` (`tags` and `keywords`), `source`, `link`, `year`, `publisher`, `language`, `description`, `cover` (a path relative to the file), and `fields`: every key as written, for your own.
+- **`split_people(value)`** and **`split_keywords(value)`**: names and keywords as documents write them (`"Terry Pratchett & Neil Gaiman"`, `"fantasy, #to-read"`).
+
+More come with office documents and link files.
 
 ### What `ctx` can do
 
@@ -154,6 +158,7 @@ More come with the books theme's other formats (PDF, Markdown front matter, offi
 | `ctx.contents(item)` / `ctx.linked(item, role)` | What an item holds; which files it has. |
 | `ctx.delete(item)` | Delete an item your theme made (an artist left with nothing). |
 | `ctx.prepared(resource)` | What `prepare` returned for a file. |
+| `ctx.resource_at(resource, "Stories/cover.jpg")` | Another file in the same root, by its path, to link it (a cover a Markdown file names). `None` if it isn't scanned; add its extension to `extensions`. Needs `api_version = 3`. |
 | `ctx.keywords(item, resource, ["Fantasy", "Genre/Space opera"])` | What a file says the item is about (front matter's tags, an EPUB's subjects). They become Tagalot tags only by matching tags the user defined (a path, an alias, or a name), never new ones; unmatched ones are listed for the user to map. |
 | `ctx.option(name)` | A theme option's value for the folder being scanned. |
 | `ctx.warn(resource, message)` | Report a problem with a file to the Activity panel. |

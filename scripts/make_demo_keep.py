@@ -34,11 +34,13 @@ versions (MP3 and FLAC; the FLAC holds no audio), an album with embedded cover a
 two-disc album, a compilation, an untagged folder, and a song directly in the root.
 
 ``--books`` creates ``scratch/Books.keep`` watching ``scratch/book-files`` with the built-in
-books theme: small EPUBs and comic archives in folders named for where they came from (Kobo,
-Humble Bundle, Comixology, Loose). One book is in two stores (one work, two files), two
-series are in reading order, a comic series is in a universe, some files have no metadata
-(named from their file names), and one book is a near-duplicate of another. Genres come from
-the files' subjects (file keywords); "Humor" and "Epic Fantasy" match no tag.
+books theme: small EPUBs, PDFs, Markdown files, and comic archives in folders named for where
+they came from (Kobo, Humble Bundle, Comixology, Royal Road, Loose). One book is in two stores
+(one work, two files), two series are in reading order, a comic series is in a universe, a
+PDF has a cover drawn from its first page, a Markdown story has front matter, some files have
+no metadata (named from their file names or headings), and one book is a near-duplicate of
+another. Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy"
+match no tag.
 """
 
 import argparse
@@ -721,6 +723,26 @@ BOOK_COMICS: dict[str, dict[str, str] | None] = {
 }
 """Comic archives for the books demo, by path: their ComicInfo.xml fields."""
 
+BOOK_MARKDOWN = {
+    "Royal Road/Mother of Learning 01.md": (
+        "---\n"
+        "title: Mother of Learning\n"
+        "author: nobody103\n"
+        "series: Mother of Learning\n"
+        "number: 1\n"
+        "universe: Eldemar\n"
+        "tags: [Fantasy, time-loop]\n"
+        "url: https://example.com/mother-of-learning\n"
+        "date: 2011-10-21\n"
+        "cover: images/mol-cover.jpg\n"
+        "---\n"
+        "# Arc 1: Good Morning Brother\n\nZorian's eyes abruptly shot open…\n"
+    ),
+    "Loose/A Short Story.md": "Written on a train.\n\n"
+    "# The Lighthouse Keeper\n\nIt was a dark night.\n",
+}
+"""Markdown books for the books demo: one with YAML front matter, one titled by its heading."""
+
 BOOK_TAGS = {
     ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)
     ("Genre", "Science Fiction"): [],
@@ -802,6 +824,24 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         _epub(files / relpath, details)
     for relpath, info in BOOK_COMICS.items():
         _cbz(files / relpath, info)
+    for relpath, text in BOOK_MARKDOWN.items():
+        (files / relpath).parent.mkdir(parents=True, exist_ok=True)
+        (files / relpath).write_text(text, encoding="utf-8")
+    # The picture Mother of Learning's front matter names as its cover.
+    (files / "Royal Road/images").mkdir(parents=True, exist_ok=True)
+    (files / "Royal Road/images/mol-cover.jpg").write_bytes(
+        _cover((20, 110, 110), "Mother of Learning")
+    )
+    # A PDF: its document info, and a first page that becomes its cover.
+    cover = Image.open(io.BytesIO(_cover((60, 60, 60), "Good Omens")))
+    cover.save(
+        files / "Kobo/Good Omens.pdf",
+        "PDF",
+        title="Good Omens",
+        author="Terry Pratchett & Neil Gaiman",
+        subject="The world will end on a Saturday. Next Saturday, in fact.",
+        keywords="Fantasy; Humor",
+    )
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}
     )

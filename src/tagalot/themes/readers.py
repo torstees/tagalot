@@ -4,13 +4,19 @@ These are public helpers, re-exported by :mod:`tagalot.themes.api`, so every the
 format the same way (the books theme first, research next). They only read, never write;
 they return plain values (``None`` or empty for what a file doesn't say); and they raise
 ``OSError`` or ``ValueError`` for a file that can't be read at all, which a theme's
-``prepare`` catches and reports. They use only the standard library, except where a format
-reads archives as thumbnails do.
+``prepare`` catches and reports. Loading this module loads only the standard library; a
+reader that needs more (PDFium for PDFs, PyYAML for YAML front matter, the core's archive
+reader for comics) imports it when called. PDFium isn't thread-safe, and ``prepare`` runs on
+several threads, so every PDF call holds :data:`PDFIUM`.
 """
 
+import datetime
 import html
+import io
 import posixpath
 import re
+import threading
+import tomllib
 import zipfile
 from typing import Any
 from xml.etree import ElementTree
@@ -19,6 +25,10 @@ MAX_XML = 2 * 1024 * 1024
 """Package and metadata documents larger than this aren't read (a corrupt or hostile file)."""
 MAX_COVER = 20 * 1024 * 1024
 """A cover image larger than this isn't read."""
+MAX_FRONT_MATTER = 1024 * 1024
+"""How much of a Markdown file is read for its front matter and first heading."""
+PDFIUM = threading.Lock()
+"""Held for every call into PDFium, which isn't thread-safe (DESIGN.md §6, #292)."""
 
 _DC = "{http://purl.org/dc/elements/1.1/}"
 _OPF = "{http://www.idpf.org/2007/opf}"
@@ -259,4 +269,207 @@ def read_comic_info(path: str) -> dict[str, Any] | None:
         "story_arc": field.get("storyarc"),
         "series_group": field.get("seriesgroup"),
         "summary": field.get("summary"),
+    }
+
+
+# --- names and lists, as documents write them ---
+
+
+def split_people(value: Any) -> list[str]:
+    """People named in one value: a list, or text joined by ``;``, ``&``, or ``and``
+    (``"Terry Pratchett; Neil Gaiman"``). Commas split only when every part looks like a
+    full name, so ``"Pratchett, Terry"`` stays one person."""
+    if isinstance(value, list | tuple):
+        return [n for v in value for n in split_people(v)]
+    if not isinstance(value, str):
+        return []
+    parts = [p.strip() for p in re.split(r"\s*(?:;|&|\band\b)\s*", value) if p.strip()]
+    if len(parts) == 1 and "," in parts[0]:
+        pieces = [p.strip() for p in parts[0].split(",") if p.strip()]
+        if len(pieces) > 1 and all(" " in p for p in pieces):
+            parts = pieces
+    return [" ".join(p.split()) for p in parts]
+
+
+def split_keywords(value: Any) -> list[str]:
+    """Keywords in one value: a list, or text split on commas and semicolons (else on
+    spaces, as Obsidian's ``tags: fantasy reading``); a leading ``#`` is dropped, and a
+    nested tag keeps its path (``Genre/Fantasy``)."""
+    if isinstance(value, list | tuple):
+        words = [w for v in value for w in split_keywords(v)]
+    elif isinstance(value, str):
+        pieces = re.split(r"[,;]", value) if re.search(r"[,;]", value) else value.split()
+        words = [" ".join(p.strip().lstrip("#").split()) for p in pieces]
+    elif isinstance(value, int | float) and not isinstance(value, bool):
+        words = [str(value)]
+    else:
+        words = []
+    found: dict[str, str] = {}
+    for word in words:
+        if word and word.casefold() not in found:
+            found[word.casefold()] = word
+    return list(found.values())
+
+
+# --- PDF ---
+
+
+def _pdf_date(text: str | None) -> int | None:
+    """``D:20200131…`` → 2020."""
+    return _year((text or "").removeprefix("D:"))
+
+
+def read_pdf_info(path: str) -> dict[str, Any]:
+    """A PDF's document information: ``title``, ``authors`` (from ``Author``, split as
+    :func:`split_people` does), ``subject``, ``keywords`` (from ``Keywords``, split as
+    :func:`split_keywords` does), ``year`` (of ``CreationDate``), and ``pages``. Raises
+    ``ValueError`` for a file PDFium can't open (damaged, or locked with a password)."""
+    import pypdfium2
+
+    with PDFIUM:
+        try:
+            pdf = pypdfium2.PdfDocument(path)
+        except pypdfium2.PdfiumError as e:
+            raise ValueError(f"not a PDF PDFium can open: {e}") from e
+        try:
+            meta = pdf.get_metadata_dict(skip_empty=True)
+            pages = len(pdf)
+        finally:
+            pdf.close()
+
+    def text(key: str) -> str | None:
+        value = meta.get(key)
+        return " ".join(value.split()) or None if isinstance(value, str) else None
+
+    return {
+        "title": text("Title"),
+        "authors": split_people(text("Author")),
+        "subject": text("Subject"),
+        "keywords": split_keywords(text("Keywords")),
+        "year": _pdf_date(text("CreationDate")),
+        "pages": pages,
+    }
+
+
+def pdf_cover(path: str, size: int = 512) -> bytes | None:
+    """The first page of a PDF drawn as a JPEG whose longer side is about ``size`` pixels,
+    or ``None`` for a PDF without pages. Raises ``ValueError`` as :func:`read_pdf_info`."""
+    import pypdfium2
+
+    with PDFIUM:
+        try:
+            pdf = pypdfium2.PdfDocument(path)
+        except pypdfium2.PdfiumError as e:
+            raise ValueError(f"not a PDF PDFium can open: {e}") from e
+        try:
+            if len(pdf) == 0:
+                return None
+            page = pdf[0]
+            try:
+                width, height = page.get_size()
+                scale = max(0.05, min(size / max(width, height, 1.0), 8.0))
+                image = page.render(scale=scale).to_pil()
+            finally:
+                page.close()
+        finally:
+            pdf.close()
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, "JPEG", quality=90)
+    return buffer.getvalue()
+
+
+# --- Markdown front matter ---
+
+
+def _front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
+    """The front matter block of a Markdown text (YAML between ``---`` lines, TOML between
+    ``+++`` lines) parsed, and the text after it."""
+    lines = text.split("\n")
+    marker = lines[0].strip() if lines else ""
+    if marker not in ("---", "+++"):
+        return None, text
+    ends = ("---", "...") if marker == "---" else ("+++",)
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() in ends), None)
+    if end is None:
+        return None, text  # an opening line only: a thematic break, not front matter
+    block, body = "\n".join(lines[1:end]), "\n".join(lines[end + 1 :])
+    if marker == "+++":
+        try:
+            return tomllib.loads(block), body
+        except tomllib.TOMLDecodeError as e:
+            raise ValueError(f"TOML front matter: {e}") from e
+    import yaml
+
+    try:
+        data = yaml.safe_load(block)
+    except yaml.YAMLError as e:
+        raise ValueError(f"YAML front matter: {e}") from e
+    if data is None:
+        return {}, body
+    if not isinstance(data, dict):
+        raise ValueError("YAML front matter isn't a set of keys and values")
+    return data, body
+
+
+def _scalar_year(value: Any) -> int | None:
+    if isinstance(value, datetime.date):  # a datetime is a date too
+        return value.year
+    if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 10000:
+        return value
+    return _year(value) if isinstance(value, str) else None
+
+
+def read_front_matter(path: str) -> dict[str, Any]:
+    """A Markdown file's front matter (YAML between ``---`` lines, or TOML between ``+++``
+    lines) and first heading:
+
+    ``title`` (``title``, else the first ``# heading``); ``authors`` (``authors`` or
+    ``author``); ``series`` and ``series_index`` (``series_index``, ``number``, or
+    ``series_number``); ``universe``; ``keywords`` (``tags`` and ``keywords``, split as
+    :func:`split_keywords` does); ``source``; ``link`` (``url`` or ``link``, if a web
+    address); ``year`` (``year``, else ``date``); ``publisher``; ``language`` (or
+    ``lang``); ``description`` (or ``summary``); ``cover`` (a picture's path, as written,
+    relative to the file); and ``fields``, every key and value as written, for a theme's own
+    keys. Keys are matched ignoring case. A file without front matter gives just its
+    heading. Raises ``ValueError`` for front matter that doesn't parse.
+    """
+    with open(path, "rb") as file:
+        raw = file.read(MAX_FRONT_MATTER)
+    text = raw.decode("utf-8-sig", errors="replace").replace("\r\n", "\n")
+    data, body = _front_matter(text)
+    fields = {str(k): v for k, v in (data or {}).items()}
+    key = {k.casefold(): v for k, v in fields.items()}
+
+    def first(*names: str) -> Any:
+        return next((key[n] for n in names if key.get(n) not in (None, "", [])), None)
+
+    def words(*names: str) -> str | None:
+        value = first(*names)
+        if isinstance(value, bool) or value is None or isinstance(value, dict | list):
+            return None
+        return " ".join(str(value).split()) or None
+
+    heading = next(
+        (m.group(1).strip() for m in re.finditer(r"^#\s+(.+?)\s*#*\s*$", body, re.MULTILINE)),
+        None,
+    )
+    index = first("series_index", "number", "series_number")
+    link = words("url", "link")
+    return {
+        "title": words("title") or heading,
+        "authors": split_people(first("authors", "author")),
+        "series": words("series"),
+        "series_index": _number(str(index)) if index is not None else None,
+        "universe": words("universe"),
+        "keywords": split_keywords(
+            [*split_keywords(key.get("tags")), *split_keywords(key.get("keywords"))]
+        ),
+        "source": words("source"),
+        "link": link if link and re.match(r"https?://", link, re.IGNORECASE) else None,
+        "year": _scalar_year(first("year")) or _scalar_year(first("date")),
+        "publisher": words("publisher"),
+        "language": words("language", "lang"),
+        "description": words("description", "summary"),
+        "cover": words("cover", "image"),
+        "fields": fields,
     }

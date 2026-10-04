@@ -1,12 +1,33 @@
-"""The public file readers (#296): EPUB package metadata and covers, and ComicInfo.xml."""
+"""The public file readers: EPUB package metadata and covers, and ComicInfo.xml (#296); PDF
+info and covers, and Markdown front matter (#297)."""
 
+import io
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from tagalot.themes.api import epub_cover, read_comic_info, read_epub
-from tests.core.book_files import comic_info, jpeg, write_cbz, write_epub
+from tagalot.themes.api import (
+    epub_cover,
+    pdf_cover,
+    read_comic_info,
+    read_epub,
+    read_front_matter,
+    read_pdf_info,
+    split_keywords,
+    split_people,
+)
+from tests.core.book_files import (
+    comic_info,
+    jpeg,
+    write_cbz,
+    write_epub,
+    write_markdown,
+    write_pdf,
+)
 
 
 def test_an_epub2_book(tmp_path: Path) -> None:
@@ -140,3 +161,159 @@ def test_comic_info_in_a_7z(tmp_path: Path) -> None:
     comic = read_comic_info(str(path))
     assert comic is not None
     assert (comic["series"], comic["number"]) == ("Saga", "3")
+
+
+# --- PDF (#297) ---
+
+
+def test_pdf_info(tmp_path: Path) -> None:
+    path = write_pdf(
+        tmp_path / "a.pdf",
+        pages=3,
+        title="Good Omens",
+        author="Terry Pratchett; Neil Gaiman",
+        subject="An angel and a demon",
+        keywords="Fantasy, Humor",
+        creationDate=time.strptime("1990-05-01", "%Y-%m-%d"),
+    )
+    info = read_pdf_info(str(path))
+    assert info["title"] == "Good Omens"
+    assert info["authors"] == ["Terry Pratchett", "Neil Gaiman"]
+    assert info["subject"] == "An angel and a demon"
+    assert info["keywords"] == ["Fantasy", "Humor"]
+    assert info["year"] == 1990
+    assert info["pages"] == 3
+
+
+def test_a_pdf_saying_nothing(tmp_path: Path) -> None:
+    info = read_pdf_info(str(write_pdf(tmp_path / "a.pdf")))
+    assert (info["title"], info["authors"], info["keywords"]) == (None, [], [])
+
+
+def test_a_pdf_cover_is_its_first_page(tmp_path: Path) -> None:
+    data = pdf_cover(str(write_pdf(tmp_path / "a.pdf", color=(200, 20, 20))), 120)
+    assert data is not None
+    image = Image.open(io.BytesIO(data))
+    assert max(image.size) in range(110, 131)
+    red, green, _ = image.convert("RGB").getpixel((image.width // 2, image.height // 2))  # type: ignore[misc]
+    assert red > 150 > green
+
+
+def test_a_broken_pdf_raises_value_error(tmp_path: Path) -> None:
+    path = tmp_path / "a.pdf"
+    path.write_bytes(b"%PDF-1.4 nothing else")
+    with pytest.raises(ValueError, match="PDF"):
+        read_pdf_info(str(path))
+    with pytest.raises(ValueError, match="PDF"):
+        pdf_cover(str(path))
+
+
+def test_pdfs_read_from_many_threads(tmp_path: Path) -> None:
+    paths = [str(write_pdf(tmp_path / f"{n}.pdf", title=f"Book {n}")) for n in range(12)]
+    with ThreadPoolExecutor(6) as pool:
+        titles = list(pool.map(lambda p: read_pdf_info(p)["title"], paths))
+        covers = list(pool.map(pdf_cover, paths))
+    assert titles == [f"Book {n}" for n in range(12)]
+    assert all(covers)
+
+
+# --- names and keywords ---
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Terry Pratchett", ["Terry Pratchett"]),
+        ("Pratchett, Terry", ["Pratchett, Terry"]),
+        ("Terry Pratchett, Neil Gaiman", ["Terry Pratchett", "Neil Gaiman"]),
+        ("Terry Pratchett and Neil Gaiman", ["Terry Pratchett", "Neil Gaiman"]),
+        ("A. One & B. Two; C.  Three", ["A. One", "B. Two", "C. Three"]),
+        (
+            ["Ann Leckie", "Martha Wells; N. K. Jemisin"],
+            ["Ann Leckie", "Martha Wells", "N. K. Jemisin"],
+        ),
+        (None, []),
+    ],
+)
+def test_split_people(value: object, expected: list[str]) -> None:
+    assert split_people(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("fantasy reading", ["fantasy", "reading"]),
+        ("Science Fiction, Space Opera", ["Science Fiction", "Space Opera"]),
+        (["#Genre/Fantasy", "to-read", "genre/fantasy"], ["Genre/Fantasy", "to-read"]),
+        (1984, ["1984"]),
+        (None, []),
+    ],
+)
+def test_split_keywords(value: object, expected: list[str]) -> None:
+    assert split_keywords(value) == expected
+
+
+# --- Markdown front matter ---
+
+
+def test_yaml_front_matter(tmp_path: Path) -> None:
+    path = write_markdown(
+        tmp_path / "a.md",
+        "---\r\n"
+        "Title: The Long Way\r\n"
+        "authors: [Becky Chambers]\r\n"
+        "series: Wayfarers\r\n"
+        "number: 1\r\n"
+        "universe: Galactic Commons\r\n"
+        "tags: [space, found-family]\r\n"
+        "keywords: Cozy\r\n"
+        "source: Royal Road\r\n"
+        "url: https://example.com/long-way\r\n"
+        "date: 2014-07-29\r\n"
+        "cover: images/cover.jpg\r\n"
+        "rating: 5\r\n"
+        "---\r\n"
+        "# Chapter One\r\n",
+    )
+    found = read_front_matter(str(path))
+    assert found["title"] == "The Long Way"
+    assert found["authors"] == ["Becky Chambers"]
+    assert (found["series"], found["series_index"]) == ("Wayfarers", 1.0)
+    assert found["universe"] == "Galactic Commons"
+    assert found["keywords"] == ["space", "found-family", "Cozy"]
+    assert found["source"] == "Royal Road"
+    assert found["link"] == "https://example.com/long-way"
+    assert found["year"] == 2014
+    assert found["cover"] == "images/cover.jpg"
+    assert found["fields"]["rating"] == 5
+
+
+def test_toml_front_matter(tmp_path: Path) -> None:
+    path = write_markdown(
+        tmp_path / "a.md",
+        '+++\ntitle = "Gideon the Ninth"\nauthor = "Tamsyn Muir"\nseries_index = 1.5\n'
+        'tags = ["necromancy"]\nyear = 2019\nurl = "not a web address"\n+++\nText\n',
+    )
+    found = read_front_matter(str(path))
+    assert (found["title"], found["authors"]) == ("Gideon the Ninth", ["Tamsyn Muir"])
+    assert (found["series_index"], found["keywords"], found["year"]) == (1.5, ["necromancy"], 2019)
+    assert found["link"] is None
+
+
+def test_no_front_matter_gives_the_heading(tmp_path: Path) -> None:
+    found = read_front_matter(str(write_markdown(tmp_path / "a.md", "Intro\n\n#  A Story  #\n")))
+    assert found["title"] == "A Story"
+    assert found["fields"] == {}
+
+
+def test_a_thematic_break_is_not_front_matter(tmp_path: Path) -> None:
+    found = read_front_matter(str(write_markdown(tmp_path / "a.md", "---\n# Heading\n")))
+    assert found["title"] == "Heading"
+
+
+@pytest.mark.parametrize(
+    "text", ["---\ntitle: [unclosed\n---\n", "---\n- a list\n---\n", "+++\nx = \n+++\n"]
+)
+def test_bad_front_matter_raises_value_error(tmp_path: Path, text: str) -> None:
+    with pytest.raises(ValueError, match="front matter"):
+        read_front_matter(str(write_markdown(tmp_path / "a.md", text)))
