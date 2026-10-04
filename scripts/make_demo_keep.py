@@ -680,7 +680,10 @@ def _tag(
     tag_ids: dict[tuple[str, ...], int] = {}
     rows = []
     for path, titles in tags.items():
-        tag_ids[path] = session.tags.add(tag_ids.get(path[:-1]), path[-1])
+        parent = tag_ids.get(path[:-1])
+        if parent is None and len(path) > 1:  # a parent not listed itself: make it first
+            parent = tag_ids[path[:-1]] = session.tags.add_path(list(path[:-1]))
+        tag_ids[path] = session.tags.add(parent, path[-1])
         rows.extend({"entity_id": ids[t], "tag_id": tag_ids[path]} for t in titles)
     for path, names in aliases.items():
         for alias in names:
