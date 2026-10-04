@@ -17,7 +17,7 @@ from functools import cached_property
 
 from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, tuple_, update
 
-from tagalot.core.models import Entity, EntityTag, Tag, TagAlias, utcnow
+from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -774,13 +774,21 @@ def _batches(ids: Iterable[int]) -> list[list[int]]:
 
 def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> None:
     source, target = tree.node(source_id), tree.node(target_id)
-    copied = select(EntityTag.entity_id, literal(target_id), EntityTag.added_at).where(
-        EntityTag.tag_id == source_id
-    )
+    copied = select(
+        EntityTag.entity_id, literal(target_id), EntityTag.added_at, EntityTag.by_file
+    ).where(EntityTag.tag_id == source_id)
     conn.execute(
         insert(EntityTag)
-        .from_select(["entity_id", "tag_id", "added_at"], copied)
+        .from_select(["entity_id", "tag_id", "added_at", "by_file"], copied)
         .prefix_with("OR IGNORE")  # entities that already have the target keep their row
+    )
+    removed = select(FileTagRemoval.entity_id, literal(target_id)).where(
+        FileTagRemoval.tag_id == source_id
+    )
+    conn.execute(  # a file tag removed by hand stays removed under its new name (#294)
+        insert(FileTagRemoval)
+        .from_select(["entity_id", "tag_id"], removed)
+        .prefix_with("OR IGNORE")
     )
     start = _next_sort_order(tree, target_id)
     for offset, child in enumerate(tree.children(source_id)):

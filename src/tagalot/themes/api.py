@@ -575,6 +575,16 @@ class IngestContext(Protocol):
         nothing for it, or there is no prepare step, as in ``migrate`` and actions)."""
         ...
 
+    def keywords(
+        self, entity: EntityRef, resource: ResourceInfo | int, keywords: Iterable[str]
+    ) -> None:
+        """What one file says the item is about: front matter's ``tags``, an EPUB's subjects,
+        a comic's genres (DESIGN.md §7 "File keywords"). Replaces what that file said before;
+        an empty list clears it. Keywords become tags only by matching tags the user
+        defined (a full path such as ``Genre/Fantasy``, an alias, or a name), never by making
+        new ones; unmatched ones are listed for the user to map."""
+        ...
+
 
 class ActionContext(IngestContext, Protocol):
     """What an action can do: everything :class:`IngestContext` can (its writes become one

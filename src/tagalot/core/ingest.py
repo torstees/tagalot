@@ -16,6 +16,7 @@ from sqlalchemy import Connection, Insert, Table, bindparam, delete, func, inser
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
+from tagalot.core.keywords import apply_file_tags, set_keywords
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -143,6 +144,8 @@ class IngestSession:
         """Values this session wrote for each entity, so writing the same again is skipped."""
         self._new_closure: list[int] = []
         """New entities whose depth-0 closure rows are added at the next flush."""
+        self._keyword_entities: set[int] = set()
+        """Entities whose keywords changed: their file tags are recomputed at flush (#294)."""
         self._has_merges: bool | None = None
         """Whether the keep has merged items (see :meth:`_any_merges`)."""
         self._inserts: dict[str, Insert] = {}
@@ -435,6 +438,26 @@ class IngestSession:
             )
         )
         self._forget_thumbnail(entity)
+        still = self.conn.scalar(
+            select(EntityResource.entity_id).where(
+                EntityResource.entity_id == entity.id, EntityResource.resource_id == resource_id
+            )
+        )
+        if still is None and set_keywords(self.conn, entity.id, resource_id, ()):
+            self._keyword_entities.add(entity.id)  # the file no longer speaks for the item
+
+    def keywords(
+        self, entity: EntityRef, resource: ResourceInfo | int, keywords: Iterable[str]
+    ) -> None:
+        """Record what one file says about an item (see the theme API); its file tags are
+        brought up to date at :meth:`flush`."""
+        self._table_of(entity)
+        resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        if self._gone(entity):
+            return
+        if set_keywords(self.conn, entity.id, resource_id, keywords):
+            self._touch(entity.id)
+            self._keyword_entities.add(entity.id)
 
     # --- containment (applied at flush) ---
 
@@ -529,6 +552,9 @@ class IngestSession:
         entities. Call before the transaction commits; safe to call more than once."""
         report = FlushReport()
         self._flush_edges(report)
+        if self._keyword_entities:
+            apply_file_tags(self.conn, self._keyword_entities)
+            self._keyword_entities = set()
         if self._dirty:
             fts.sync_entities(self.conn, self._dirty, theme_text_source(self.schema))
             report.entities_indexed = len(self._dirty)
