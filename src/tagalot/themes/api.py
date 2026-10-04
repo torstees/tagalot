@@ -1124,6 +1124,10 @@ class Theme:
         return found
 
 
+# --- Reading files (DESIGN.md §9 books, "Reading files") ---
+
+from tagalot.themes.readers import epub_cover, read_comic_info, read_epub  # noqa: E402
+
 __all__ = [
     "API_VERSION",
     "DISPLAY_FORMATS",
@@ -1176,10 +1180,13 @@ __all__ = [
     "entity_fields",
     "entity_label",
     "entity_plural",
+    "epub_cover",
     "field",
     "kind_of",
     "option",
     "plural_of",
+    "read_comic_info",
+    "read_epub",
     "related",
     "role",
     "stat",

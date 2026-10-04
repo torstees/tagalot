@@ -142,6 +142,8 @@ def display_value(value: object, display: str | None = None) -> str:
             return value.astimezone().strftime("%Y-%m-%d %H:%M")
         case date():
             return value.isoformat()
+        case float() if value.is_integer():
+            return str(int(value))  # a book's number in its series: 2, not 2.0
         case _:
             return str(value)
 

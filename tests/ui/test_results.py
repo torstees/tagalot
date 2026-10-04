@@ -202,6 +202,8 @@ def test_refresh_keeps_rows_until_new_ones_arrive(
         (None, ""),
         (True, "Yes"),
         (1999, "1999"),
+        (2.0, "2"),
+        (2.5, "2.5"),
         (date(2024, 2, 29), "2024-02-29"),
         ("txt", "txt"),
     ],
