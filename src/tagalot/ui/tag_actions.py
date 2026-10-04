@@ -161,21 +161,24 @@ class TagActions(QObject):
         """Create the tag at ``names`` (and missing parents), then apply it to
         ``entity_ids`` if there are any; ``path`` is how it reads in messages."""
         entities = list(entity_ids)
+        session = self.session
 
-        def work() -> int:
-            tag_id = self.session.tags.add_path(names)
-            if entities:
-                self.session.tags.apply(entities, [tag_id])
-            return tag_id
+        def work() -> tuple[int, Applied]:
+            tag_id = session.tags.add_path(names)
+            applied = session.tags.apply_counted(entities, [tag_id]) if entities else Applied(0)
+            return tag_id, applied
 
-        self._run(
-            work,
-            lambda _: (
-                f"Created tag {path} and tagged {items_text(len(entities))} with it."
-                if entities
-                else f"Created tag {path}."
-            ),
-        )
+        def describe(result: tuple[int, Applied]) -> str:
+            applied = result[1]
+            if not entities:
+                return f"Created tag {path}."
+            # A new sub-tag of a tag limited to some types is limited too (#135).
+            skipped = skipped_text(session, applied.skipped)
+            tagged = len({e for e in entities} - {e for e, _, _ in applied.skipped})
+            text = f"Created tag {path} and tagged {items_text(tagged)} with it."
+            return f"{text} {skipped}" if skipped else text
+
+        self._run(work, describe)
 
     # --- field edits (detail pages, §12) ---
 

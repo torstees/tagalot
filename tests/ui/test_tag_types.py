@@ -176,3 +176,17 @@ def test_the_dialog_offers_only_what_the_parent_allows(qtbot: QtBot) -> None:
     dialog.boxes[IMAGE].setChecked(True)
     assert ok.isEnabled()
     assert dialog.chosen() == frozenset({IMAGE})
+
+
+def test_a_new_sub_tag_is_limited_like_its_parent(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    session.tags.set_types(_tag(session, "Favorites"), [IMAGE])
+    dusk, kenji = _entity(session, "dusk sky.png"), _entity(session, "Kenji Sato")
+    window.tag_actions.create(["Favorites", "Best"], [dusk, kenji], "Favorites/Best")
+    _status(
+        qtbot,
+        window,
+        "Created tag Favorites/Best and tagged 1 item with it. "
+        "Skipped 1 Artist: 'Best' is for Images.",
+    )
