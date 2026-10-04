@@ -1,7 +1,8 @@
 name: Package
 
 # Builds Tagalot with PyInstaller on Windows, macOS, and Linux (DESIGN.md §3 "Packaging"),
-# checks each build with `tagalot --check`, and uploads it. A `v*` tag, pushed or made by
+# checks each build with `tagalot --check`, makes its installer (packaging/installer.sh: a
+# setup .exe, a .dmg, an AppImage), installs it and checks that too, and uploads both. A `v*` tag, pushed or made by
 # publishing a release on GitHub, also attaches the builds to that release; its version
 # must be the code's (`tagalot.__version__`).
 
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - "packaging/**"
+      - "src/tagalot/resources/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/package.yml"
@@ -65,6 +67,42 @@ jobs:
           "$app" --check --output check.txt || status=$?
           cat check.txt
           exit $status
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v iscc && [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
+            choco install innosetup -y --no-progress
+          fi
+      - name: Make the installer
+        shell: bash
+        run: |
+          out=$(bash packaging/installer.sh | tail -n 1)
+          mv "$out" .
+          echo "INSTALLER=$(basename "$out")" >> "$GITHUB_ENV"
+      - name: Install it and check it
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows)
+              dir="$RUNNER_TEMP/TagalotInstalled"
+              # //: Git Bash would otherwise turn /VERYSILENT into a path.
+              "./$INSTALLER" //VERYSILENT //SUPPRESSMSGBOXES //CURRENTUSER \
+                "//DIR=$(cygpath -w "$dir")"
+              app="$dir/tagalot.exe" ;;
+            macOS)
+              hdiutil attach "$INSTALLER" -nobrowse -readonly -mountpoint /tmp/tagalot-dmg
+              app=/tmp/tagalot-dmg/Tagalot.app/Contents/MacOS/tagalot ;;
+            *)
+              chmod +x "$INSTALLER"
+              export APPIMAGE_EXTRACT_AND_RUN=1  # no FUSE on the runner
+              app="./$INSTALLER" ;;
+          esac
+          status=0
+          "$app" --check --output installed-check.txt || status=$?
+          cat installed-check.txt
+          [ "$RUNNER_OS" != macOS ] || hdiutil detach /tmp/tagalot-dmg
+          exit $status
       - name: Archive
         shell: bash
         run: |
@@ -100,7 +138,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          notes="Unzip, keep the folder together, and run tagalot.exe (Windows), Tagalot.app (macOS), or tagalot (Linux) inside it. The builds aren't signed yet: Windows and macOS ask before running them."
+          notes="Install with Tagalot-…-Windows-setup.exe, the macOS .dmg (drag Tagalot to Applications), or the Linux .AppImage (make it executable and run it). The .zip and .tar.gz hold the same program, to unzip and run without installing: keep the folder together. The builds aren't signed yet: Windows and macOS ask before running them (see the README)."
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 \
             || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Tagalot $TAG" \
               --notes "$notes" --generate-notes

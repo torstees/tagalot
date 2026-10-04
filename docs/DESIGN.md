@@ -65,10 +65,28 @@ Tagalot never stores or moves user data. A keep holds only metadata and caches; 
 All three found the built-in themes, MediaInfo, and the other readers once set up (PyInstaller needs `collect_submodules("tagalot.builtin_themes")`, since themes are found with `pkgutil`). PyInstaller builds fastest, smallest, with mature PySide6 and pymediainfo hooks; Briefcase's native installers and signing support were the main draw the other way. None cross-compiles, so each OS builds its own.
 
 - **The build** (`packaging/tagalot.spec`): a one-folder, windowed app (`dist/tagalot/`; `dist/Tagalot.app` on macOS, bundle id `io.github.torstees.tagalot`). PyInstaller is pinned in the `package` dependency group (`uv sync --group package`). `just package` builds and checks it (`scripts/check_package.py`).
-- **Checking a build:** `tagalot --check` prints the version, Python, Qt, SQLite's FTS5, the built-in themes, and each file reader (Pillow, mutagen, MediaInfo, py7zr, and RAR, which is optional) without opening a window, and exits 1 if something needed is missing (`selfcheck.py`). `--version` prints the version. A windowed Windows build has no console, so `--output FILE` writes either to a file.
+- **Checking a build:** `tagalot --check` prints the version, Python, Qt, SQLite's FTS5, the built-in themes, the theme template and the icon (data files the build must carry), and each file reader (Pillow, mutagen, MediaInfo, py7zr, and RAR, which is optional) without opening a window, and exits 1 if something needed is missing (`selfcheck.py`). `--version` prints the version. A windowed Windows build has no console, so `--output FILE` writes either to a file.
 - **A folder, kept together:** `tagalot.exe` is a small launcher; Python, Qt, and the rest are in `_internal` beside it, so the `.exe` alone doesn't start ("Failed to load Python DLL"). Each folder build carries a `README.txt` saying so, and so do the release notes. A one-file `.exe` was considered and left out: it unpacks itself on every launch (seconds rather than 0.6 s) and draws more antivirus suspicion.
 - **CI** (`.github/workflows/package.yml`): on pushes to main, `v*` tags, releases published on GitHub, pull requests touching packaging, and by hand, each of Windows, macOS, and Linux builds, runs `--check`, and uploads `Tagalot-<version>-<OS>-<arch>` (a zip; a `.tar.gz` on Linux). For a `v*` tag the tag must be the code's version (`tagalot.__version__`, kept equal to `pyproject.toml`'s by a test), or the build stops; the builds are then attached to the tag's release, which is created (with a line on keeping the folder together, and generated notes) if there is none. GitHub runs the workflow as it is at the tagged commit, so a tag made before this workflow existed (the first `v0.5.0`) can't get builds: it has to be made again on a commit that has it.
-- **Not yet:** native installers (a Windows setup, a DMG, an AppImage), code signing and notarization, and an app icon: later issues.
+- **Installers** (#269; `packaging/installer.sh` makes the one for the OS it runs on, after the PyInstaller build; `just installer`). CI builds each, installs it, and runs the installed app's `--check`, then uploads it beside the zip:
+  - **Windows:** `Tagalot-<version>-Windows-setup.exe`, from Inno Setup 6 (`packaging/tagalot.iss`; a fixed `AppId`).
+    - Installs for the current user by default (`%LOCALAPPDATA%\Programs\Tagalot`, no administrator), or for everyone if chosen.
+    - A Start menu entry, an optional desktop icon, and an uninstaller.
+    - An upgrade deletes the old `_internal` first, so no stale libraries remain.
+    - Uninstalling removes only the program; keeps, settings, and themes stay.
+    - Inno Setup was chosen over an MSI (WiX) for its simple script and per-user installs without elevation.
+  - **macOS:** `Tagalot-<version>-macOS-<arch>.dmg`, made with `hdiutil`: the app and an Applications link to drag it to.
+  - **Linux:** `Tagalot-<version>-Linux-<arch>.AppImage`, made with appimagetool (downloaded at build time).
+    - It holds the folder build, `AppRun`, `packaging/tagalot.desktop`, and the icon.
+    - It needs a glibc at least as new as the build runner's (Ubuntu's latest LTS).
+- **The icon** (#269): a tag on a folder, drawn as `src/tagalot/resources/tagalot.svg`. `scripts/make_icons.py` (`just icons`) renders it with Qt's SVG renderer to:
+  - `resources/tagalot-<size>.png` (16 to 256 px): the window and taskbar icon, set in `ui/app.py`, with the taskbar grouping set when run from source on Windows (`SetCurrentProcessExplicitAppUserModelID`), and `setDesktopFileName("tagalot")` on Linux;
+  - `packaging/tagalot.ico`: the `.exe` and the setup;
+  - `packaging/tagalot.icns`: the `.app`;
+  - `packaging/tagalot.png`: the AppImage.
+
+  The rendered files are committed, so builds don't need to render them.
+- **Not yet:** code signing and notarization (#279). Until then Windows SmartScreen and macOS Gatekeeper warn on first run; the README and release notes say how to proceed.
 
 ### Why Python, not Rust
 
@@ -1039,3 +1057,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-09 | Text search uses an FTS5 table with the trigram tokenizer (substring matching, case- and diacritic-insensitive) kept in sync by the DB writer. A word-based tokenizer was rejected because it cannot match inside words ("bey" would not find "Abbey"). The roughly 5× larger index (about 20 MB per 50k entities) is acceptable (§8). |
 | 2026-10 | Profiling (#131, §3 Performance): on a 9,341-file share, scanning is dominated by per-file open and read latency, done one file at a time, then by image decoding (native already) and SQLAlchemy statement overhead in ingest. No Rust; instead parallel fingerprinting, `prepare`, and background thumbnails, and batched ingest statements (#273 to #276). `scripts/profile_scan.py` reproduces the measurements. |
 | 2026-10 | Explicit theme schema migrations (#173, §9 "Theme schema versions"): `Theme.migrate_schema(from_version, ops)` with `rename_field`, `change_type` (default or theme-supplied conversion; one bad value fails the whole upgrade), and `drop_field`, done by the core (`core/theme_migrate.py`) before the additive step and `migrate()`, in the same transaction. Renames carry field provenance and saved searches along. `API_VERSION` becomes 2, and a theme using `migrate_schema` must state `api_version = 2`. Entity types themselves still can't be renamed or dropped (their type ids are stored on every item); no theme has needed it. |
+| 2026-10 | Installers and an icon (#269, §3 Packaging): an Inno Setup per-user setup on Windows, a DMG on macOS, and an AppImage on Linux, each installed and checked in CI; the zips stay for running without installing. The icon is a tag on a folder, an SVG rendered to every format by `scripts/make_icons.py`, with the results committed. Signing waits on certificates (#279). |
