@@ -1,8 +1,9 @@
 """Making thumbnails in the background after a scan (DESIGN.md §6 step 7, §10).
 
 Grids make thumbnails as they show them. So that a scan's new pictures are ready before
-anyone browses, :class:`ThumbnailQueue` resolves the scan's affected entities on one
-thread of its own, newest first, while the grids keep their own workers:
+anyone browses, :class:`ThumbnailQueue` resolves the scan's affected entities in the
+background, :data:`THREADS` at a time (#275) and roughly newest first, while the grids keep
+their own workers:
 
 - **Which:** :func:`entities_needing_thumbnails`: entities with no remembered source
   (``thumb_resource_id``; ingest clears it when links change, and new entities have none),
@@ -11,24 +12,32 @@ thread of its own, newest first, while the grids keep their own workers:
 - Each one is resolved as a grid would (§10), so it is cached at the keep's size and
   remembered; files that can't be read are remembered as failed for the session.
 - Starting again (the next scan) replaces the current run; :meth:`ThumbnailQueue.stop`
-  (called when the keep closes) waits for the thread.
+  (called when the keep closes) waits for its threads, which finish at most the thumbnails
+  they are making.
 """
 
 import logging
 import threading
+from collections import deque
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import ColumnElement, Connection, or_, select
 
 from tagalot.core.models import Entity, Resource
-from tagalot.core.thumbnails.resolve import ThumbnailResolver
+from tagalot.core.thumbnails.resolve import ThumbnailResolver, ThumbnailResult
 
 logger = logging.getLogger(__name__)
 
 Progress = Callable[[int, int], None]
 """``progress(done, total)``, called from the queue's thread."""
+
+THREADS = 4
+"""Thumbnails made at once in the background: reading a file (a share's latency) and
+decoding it mostly release the GIL. The grids have their own threads (``ui.thumbnails``),
+so browsing isn't starved."""
 
 
 def entities_needing_thumbnails(conn: Connection, since: datetime | None = None) -> list[int]:
@@ -57,7 +66,8 @@ class QueueResult:
 
 
 class ThumbnailQueue:
-    """One background thread resolving a list of entities; see the module docstring."""
+    """Resolves a list of entities in the background: one thread runs the list, handing
+    the work to :data:`THREADS` more. See the module docstring."""
 
     def __init__(self, resolver: ThumbnailResolver) -> None:
         self.resolver = resolver
@@ -103,7 +113,7 @@ class ThumbnailQueue:
         self.stop()
 
     def stop(self) -> None:
-        """Stop the current run and wait for it (at most one thumbnail's work)."""
+        """Stop the current run and wait for it (at most the thumbnails in progress)."""
         with self._lock:
             thread, self._thread = self._thread, None
             self._stop.set()
@@ -119,14 +129,15 @@ class ThumbnailQueue:
     ) -> None:
         made = pictures = 0
         total = len(ids)
-        for entity_id in ids:
-            if stop.is_set():
-                break
+
+        def finish(entity_id: int, future: Future[ThumbnailResult]) -> bool:
+            """Count one finished thumbnail; False once the run is stopping."""
+            nonlocal made, pictures
             try:
-                result = self.resolver.resolve(entity_id)
+                result = future.result()
             except Exception:  # a closing keep, or a bug in a theme's provider
                 if stop.is_set():
-                    break
+                    return False
                 logger.exception("Background thumbnail for entity %d failed", entity_id)
             else:
                 pictures += result.thumbnail is not None
@@ -134,6 +145,26 @@ class ThumbnailQueue:
             self.remaining = total - made
             if progress is not None:
                 _tell(progress, made, total)
+            return not stop.is_set()
+
+        # A short window of work keeps the threads busy and the order close to the list's
+        # (newest first), and leaves little to cancel when the run stops.
+        pool = ThreadPoolExecutor(THREADS, thread_name_prefix="thumbnail-queue")
+        window: deque[tuple[int, Future[ThumbnailResult]]] = deque()
+        try:
+            running = True
+            for entity_id in ids:
+                if stop.is_set():
+                    running = False
+                    break
+                window.append((entity_id, pool.submit(self.resolver.resolve, entity_id)))
+                if len(window) >= THREADS * 2 and not finish(*window.popleft()):
+                    running = False
+                    break
+            while running and window:
+                running = finish(*window.popleft())
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
         self.remaining = 0
         if done is not None and not stop.is_set():
             _tell(done, QueueResult(made, pictures, stopped=made < total))

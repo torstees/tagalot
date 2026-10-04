@@ -14,6 +14,7 @@ from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.thumbnails.queue import (
+    THREADS,
     QueueResult,
     ThumbnailQueue,
     entities_needing_thumbnails,
@@ -110,12 +111,16 @@ def test_stopping_and_closing(assets: KeepSession) -> None:
 
     queue = ThumbnailQueue(Slow())  # type: ignore[arg-type]
     done: list[QueueResult] = []
-    queue.start([1, 2, 3], done=done.append)
+    queue.start(list(range(1, 50)), done=done.append)
     assert started.wait(5)
+    stopping = threading.Thread(target=queue.stop)  # waits for the threads
+    stopping.start()
     gate.set()
-    queue.stop()  # waits for the thread
+    stopping.join(10)
     assert not queue.running
-    assert calls == [1]  # it stopped after the one in hand
+    # It stopped after the ones in hand: at most one per thread, plus the short window.
+    assert len(calls) <= THREADS * 2
+    assert not [t for t in threading.enumerate() if t.name.startswith("thumbnail-queue")]
     assert done == []  # a stopped run reports nothing
     queue.close()
     queue.start([1])
@@ -144,3 +149,32 @@ def test_closing_the_keep_stops_the_queue(assets: KeepSession) -> None:
     assets.close()
     assert not assets.thumbnail_queue.running
     assert assets.queue_thumbnails() == 0
+
+
+def test_several_at_once_in_order(assets: KeepSession) -> None:
+    """Thumbnails are made on several threads (#275), progress counts up one by one, and
+    they are taken roughly in the list's order (newest first)."""
+    seen: list[int] = []
+    threads: set[int] = set()
+    lock = threading.Lock()
+    both = threading.Barrier(2, timeout=5)
+
+    class Recording:
+        def resolve(self, entity_id: int) -> object:
+            with lock:
+                seen.append(entity_id)
+                threads.add(threading.get_ident())
+            if entity_id in (1, 2):
+                both.wait()  # only returns if two are being made at the same time
+            return type("Result", (), {"thumbnail": None})()
+
+    progress: list[int] = []
+    finished = threading.Event()
+    queue = ThumbnailQueue(Recording())  # type: ignore[arg-type]
+    queue.start(list(range(1, 41)), lambda d, t: progress.append(d), lambda r: finished.set())
+    assert finished.wait(10)
+    assert sorted(seen) == list(range(1, 41))
+    assert len(threads) > 1
+    assert progress == list(range(1, 41))
+    assert seen.index(40) > seen.index(1)  # roughly in order: never far ahead
+    assert all(abs(seen.index(n) - (n - 1)) <= THREADS * 2 for n in range(1, 41))
