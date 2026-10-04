@@ -81,6 +81,8 @@ class Filters:
     """Also list what matching containers hold (DESIGN.md §8)."""
     inherit_tags: bool = False
     """Tags on containers count as their contents' own."""
+    aggregate_up: bool = False
+    """A container matches when anything inside it matches (DESIGN.md §8)."""
     fields: tuple[FieldFilter, ...] = ()
     """Field filters on fields every listed type has (chips for others aren't applied)."""
 
@@ -427,7 +429,12 @@ class FilterBar(QWidget):
             "Inherit tags: a tag on a container counts for everything inside it (tag an "
             "album, and its songs match)"
         )
-        for box in (self.contained_box, self.inherit_box):
+        self.aggregate_box = QCheckBox("By contents")
+        self.aggregate_box.setToolTip(
+            "Match by contents: an item matches when anything inside it does (an album "
+            "with a song tagged Live)"
+        )
+        for box in (self.contained_box, self.inherit_box, self.aggregate_box):
             box.toggled.connect(lambda _on: self._changed())
 
         self.field_button = QToolButton()
@@ -444,6 +451,7 @@ class FilterBar(QWidget):
         top.addWidget(self.field_button)
         top.addWidget(self.contained_box)
         top.addWidget(self.inherit_box)
+        top.addWidget(self.aggregate_box)
 
         self.chip_area = QWidget()
         self.chip_layout = FlowLayout(self.chip_area)
@@ -479,6 +487,7 @@ class FilterBar(QWidget):
             within.type_id if within is not None else None,
             self.contained_box.isChecked(),
             self.inherit_box.isChecked(),
+            self.aggregate_box.isChecked(),
             tuple(chip.filter for chip in self._field_chips.values() if chip.available),
         )
 
@@ -539,10 +548,16 @@ class FilterBar(QWidget):
     def _scope_count(self) -> int:
         return int(self._within is not None) + int(self._only is not None)
 
-    def set_toggles(self, *, show_contained: bool, inherit_tags: bool) -> None:
-        """Set the two toggles (a view's defaults, or what the user chose before) without
+    def set_toggles(
+        self, *, show_contained: bool, inherit_tags: bool, aggregate_up: bool = False
+    ) -> None:
+        """Set the toggles (a view's defaults, or what the user chose before) without
         reporting a change."""
-        for box, on in ((self.contained_box, show_contained), (self.inherit_box, inherit_tags)):
+        for box, on in (
+            (self.contained_box, show_contained),
+            (self.inherit_box, inherit_tags),
+            (self.aggregate_box, aggregate_up),
+        ):
             blocked = box.blockSignals(True)
             box.setChecked(on)
             box.blockSignals(blocked)

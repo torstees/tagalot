@@ -119,8 +119,8 @@ class SearchPage(QWidget):
     layout_changed = Signal(str)
     """The user switched to ``"list"``, ``"grid"``, or ``"tree"`` (to remember it)."""
     toggles_changed = Signal(dict)
-    """The user changed "Contained" or "Inherit tags": ``{"show_contained": …,
-    "inherit_tags": …}`` (to remember it)."""
+    """The user changed "Contained", "Inherit tags", or "By contents":
+    ``{"show_contained": …, "inherit_tags": …, "aggregate_up": …}`` (to remember it)."""
     card_lines_changed = Signal(object)
     """The user chose card lines (a list of field names), or ``None`` for the theme's."""
     zoom_requested = Signal(int)
@@ -210,6 +210,7 @@ class SearchPage(QWidget):
         self._toggles = {
             "show_contained": bool(chosen.get("show_contained", spec.show_contained)),
             "inherit_tags": bool(chosen.get("inherit_tags", spec.inherit_tags)),
+            "aggregate_up": bool(chosen.get("aggregate_up", spec.aggregate_up)),
         }
         self.filter_bar.set_toggles(**self._toggles)
         self.filter_bar.changed.connect(self._filters_changed)
@@ -311,6 +312,7 @@ class SearchPage(QWidget):
             fields=f.fields,
             inherit_tags=f.inherit_tags,
             show_contained=f.show_contained,
+            aggregate_up=f.aggregate_up,
         )
         return SavedDefinition(
             base=replace(self._base, sort=self._sort),
@@ -324,7 +326,11 @@ class SearchPage(QWidget):
     def restore(self, saved: SavedDefinition) -> None:
         """Put a saved search's chips and toggles back on the filter bar."""
         f, bar = saved.filters, self.filter_bar
-        bar.set_toggles(show_contained=f.show_contained, inherit_tags=f.inherit_tags)
+        bar.set_toggles(
+            show_contained=f.show_contained,
+            inherit_tags=f.inherit_tags,
+            aggregate_up=f.aggregate_up,
+        )
         if f.within is not None:
             bar.set_within(f.within, saved.within_title, saved.within_type)
         if f.types:
@@ -368,6 +374,7 @@ class SearchPage(QWidget):
             sort=sort,
             within=within,
             inherit_tags=filters.inherit_tags,
+            aggregate_up=filters.aggregate_up,
             fields=base.fields + fields,
             # In the tree, containers expand to show what they hold instead.
             show_contained=filters.show_contained and not self._tree_layout(),
@@ -825,7 +832,11 @@ class SearchPage(QWidget):
             self.item_menu(hit).exec(self.tree.viewport().mapToGlobal(point))
 
     def _filters_changed(self, filters: Filters) -> None:
-        toggles = {"show_contained": filters.show_contained, "inherit_tags": filters.inherit_tags}
+        toggles = {
+            "show_contained": filters.show_contained,
+            "inherit_tags": filters.inherit_tags,
+            "aggregate_up": filters.aggregate_up,
+        }
         if toggles != self._toggles:
             self._toggles = toggles
             self.toggles_changed.emit(dict(toggles))

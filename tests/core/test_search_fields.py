@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 
-from tagalot.builtin_themes.generic import GenericTheme
+from tagalot.builtin_themes.generic import File, GenericTheme
 from tagalot.core.db import open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import ThemeRef, create_keep
@@ -155,6 +155,10 @@ def test_view_spec_and_labels() -> None:
     fields = [f.name for f in scope_fields(schema, spec.types)]
     assert fields == ["extension", "folder", "size", "modified"]
     assert SortBy("modified", True).field in search_fields(schema, spec.types)
+    assert not spec.aggregate_up
+    by_contents = SearchView("Folders", [File], aggregate_up=True, inherit_tags=True)
+    assert view_spec(schema, by_contents).aggregate_up  # a theme's default for the view (#133)
+    assert view_spec(schema, by_contents).inherit_tags
 
 
 def test_datetime_values_round_trip(tmp_path: Path) -> None:

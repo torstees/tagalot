@@ -148,6 +148,7 @@ def view_spec(schema: ThemeSchema, view: SearchView) -> SearchSpec:
         types=tuple(theme.type_id_of(e) for e in view.types),
         inherit_tags=view.inherit_tags,
         show_contained=view.show_contained,
+        aggregate_up=view.aggregate_up,
         sort=tuple(SortKey(s.field, s.descending) for s in view.default_sort),
     )
 
