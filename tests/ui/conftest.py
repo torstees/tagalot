@@ -1,11 +1,22 @@
 """Shared set-up for the GUI tests."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QColorDialog,
+    QDialog,
+    QFileDialog,
+    QFontDialog,
+    QInputDialog,
+    QMenu,
+    QMessageBox,
+    QWidget,
+)
 
 from tagalot.core.handlers import Command, FileToOpen
 from tagalot.ui import main_window
@@ -33,6 +44,93 @@ def nothing_is_launched(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[
     LAUNCHED.clear()
     yield LAUNCHED
     LAUNCHED.clear()
+
+
+class UnexpectedModal(AssertionError):
+    """A test opened a dialog, message box, or menu that nothing in the test answers."""
+
+
+MODALS: list[tuple[type, str]] = [
+    (QDialog, "exec"),  # every dialog class Tagalot defines, unless a test patches its own
+    *((QMessageBox, n) for n in ("warning", "critical", "information", "question", "about")),
+    *((QInputDialog, n) for n in ("getText", "getItem", "getInt", "getDouble", "getMultiLineText")),
+    *(
+        (QFileDialog, n)
+        for n in ("getExistingDirectory", "getOpenFileName", "getOpenFileNames", "getSaveFileName")
+    ),
+    (QColorDialog, "getColor"),
+    (QFontDialog, "getFont"),
+]
+
+
+def _describe(args: tuple[Any, ...]) -> str:
+    """Whatever identifies the modal: a dialog's or menu's title, or a message box's title
+    and text."""
+    words = [a for a in args if isinstance(a, str)]
+    widget = next((a for a in args if isinstance(a, QWidget)), None)
+    if widget is not None and isinstance(widget, QDialog | QMenu):
+        title = widget.windowTitle() if isinstance(widget, QDialog) else widget.title()
+        names = [a.text() for a in widget.actions()] if isinstance(widget, QMenu) else []
+        words = [f"{type(widget).__name__} {title!r}", *names, *words]
+    return "; ".join(words) or "no title"
+
+
+class _MenuCatcher(QObject):
+    """Closes every menu as it appears, and remembers it.
+
+    ``QMenu.exec`` can't be patched like the others: PySide resolves a menu's ``exec`` to
+    the built-in method whatever the class attribute says (it has a static form too). So
+    menus are caught as they are shown instead; closing one ends its ``exec``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.caught: list[str] = []
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Show and isinstance(watched, QMenu):
+            self.caught.append(_describe((watched,)))
+            QTimer.singleShot(0, watched.close)
+        return False
+
+
+@pytest.fixture(autouse=True)
+def no_unexpected_modals(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> Iterator["_MenuCatcher"]:
+    """Fail, naming it, when a test opens a modal it doesn't answer (#272).
+
+    Offscreen, nothing ever closes a modal dialog, message box, or context menu, so it
+    would wait forever and hang the run. Dialogs and message boxes raise
+    :class:`UnexpectedModal` at once; a menu is closed as it appears and the test fails
+    when it ends. A test that means to open a dialog patches it itself
+    (``monkeypatch.setattr(QMessageBox, "question", ...)``, or the dialog class's ``exec``),
+    which takes precedence over this. A test of a menu calls its actions directly (as the
+    menu builders, such as ``SearchPage.item_menu``, allow) rather than showing it.
+    """
+
+    def refuse(cls: type, name: str) -> Callable[..., Any]:
+        def unexpected(*args: Any, **kwargs: Any) -> Any:
+            raise UnexpectedModal(
+                f"{cls.__name__}.{name} ({_describe(args)}) opened in a test that doesn't "
+                "answer it; it would wait forever. Patch it in the test."
+            )
+
+        return unexpected
+
+    for cls, name in MODALS:
+        monkeypatch.setattr(cls, name, refuse(cls, name))
+    catcher = _MenuCatcher()
+    qapp.installEventFilter(catcher)
+    try:
+        yield catcher
+    finally:
+        qapp.removeEventFilter(catcher)
+    if catcher.caught:
+        raise UnexpectedModal(
+            f"A menu opened in a test that doesn't answer it ({'; '.join(catcher.caught)}); "
+            "its exec() would wait forever. Call the menu's actions directly instead."
+        )
 
 
 @pytest.fixture(autouse=True)
