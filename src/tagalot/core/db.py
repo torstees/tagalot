@@ -165,6 +165,11 @@ def _v8_user_relations(conn: Connection) -> None:
     Base.metadata.tables["user_relation"].create(conn)
 
 
+def _v9_tag_types(conn: Connection) -> None:
+    """Format 10: a tag can be limited to some item types (#135)."""
+    conn.execute(text("ALTER TABLE tag ADD COLUMN types VARCHAR"))
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -174,6 +179,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     6: _v6_entity_merges,
     7: _v7_dedupe_dismissals,
     8: _v8_user_relations,
+    9: _v9_tag_types,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

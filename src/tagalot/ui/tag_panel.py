@@ -334,9 +334,19 @@ class TagPanel(QWidget):
         if tags:
             self.tag_requested.emit(tags, remove)
 
-    def set_selection(self, selected_count: int, tag_counts: dict[int, int]) -> None:
-        """Show which tags the selected items have (checked: all, partly: some)."""
-        self.model.set_selection(selected_count, tag_counts)
+    def set_selection(
+        self,
+        selected_count: int,
+        tag_counts: dict[int, int],
+        types: frozenset[str] = frozenset(),
+    ) -> None:
+        """Show which tags the selected items have (checked: all, partly: some), hiding
+        tags limited to types none of them are (#135)."""
+        current = self.current_tag()
+        if self.model.set_selection(selected_count, tag_counts, types):
+            self._after_reset()
+            if current is not None:
+                self.select_tag(current)
         items = "1 item" if selected_count == 1 else f"{selected_count:,} items"
         self.selection_label.setText(
             f"{items} selected. Tick a tag to put it on all of them; untick it to remove it."

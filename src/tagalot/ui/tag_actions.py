@@ -16,7 +16,9 @@ from tagalot.core.fields import FieldEditError
 from tagalot.core.links import LinkError
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.saved_searches import SavedDefinition
+from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.session import KeepSession
+from tagalot.core.tag_service import Applied
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
 
@@ -52,15 +54,18 @@ class TagActions(QObject):
         entities, tags = list(entity_ids), list(tag_ids)
         if not entities or not tags:
             return
-        self._run(
-            lambda: self.session.tags.apply(entities, tags),
+        session = self.session
+
+        def describe(applied: Applied) -> str:
             # With one tag, n is how many items newly got it; with several, count the items.
-            lambda n: (
-                f"Tagged {items_text(n if len(tags) == 1 else len(entities))} with {names}."
-                if n
-                else f"Already tagged with {names}: nothing to change."
-            ),
-        )
+            n = applied.added
+            skipped = skipped_text(session, applied.skipped)
+            if not n:
+                return skipped or f"Already tagged with {names}: nothing to change."
+            tagged = f"Tagged {items_text(n if len(tags) == 1 else len(entities))} with {names}."
+            return f"{tagged} {skipped}" if skipped else tagged
+
+        self._run(lambda: session.tags.apply_counted(entities, tags), describe)
 
     def remove(self, entity_ids: Iterable[int], tag_ids: Iterable[int], names: str) -> None:
         """Untag entities."""
@@ -156,21 +161,24 @@ class TagActions(QObject):
         """Create the tag at ``names`` (and missing parents), then apply it to
         ``entity_ids`` if there are any; ``path`` is how it reads in messages."""
         entities = list(entity_ids)
+        session = self.session
 
-        def work() -> int:
-            tag_id = self.session.tags.add_path(names)
-            if entities:
-                self.session.tags.apply(entities, [tag_id])
-            return tag_id
+        def work() -> tuple[int, Applied]:
+            tag_id = session.tags.add_path(names)
+            applied = session.tags.apply_counted(entities, [tag_id]) if entities else Applied(0)
+            return tag_id, applied
 
-        self._run(
-            work,
-            lambda _: (
-                f"Created tag {path} and tagged {items_text(len(entities))} with it."
-                if entities
-                else f"Created tag {path}."
-            ),
-        )
+        def describe(result: tuple[int, Applied]) -> str:
+            applied = result[1]
+            if not entities:
+                return f"Created tag {path}."
+            # A new sub-tag of a tag limited to some types is limited too (#135).
+            skipped = skipped_text(session, applied.skipped)
+            tagged = len({e for e in entities} - {e for e, _, _ in applied.skipped})
+            text = f"Created tag {path} and tagged {items_text(tagged)} with it."
+            return f"{text} {skipped}" if skipped else text
+
+        self._run(work, describe)
 
     # --- field edits (detail pages, §12) ---
 
@@ -343,3 +351,32 @@ class TagActions(QObject):
                 self.message.emit(f"Tagging failed: {error}")
 
         run_in_pool(work, on_done=done, on_error=failed, pool=self.pool)
+
+
+def skipped_text(session: KeepSession, skipped: tuple[tuple[int, int, str], ...]) -> str:
+    """What a tag's types left out of a tagging (#135): "Skipped 2 Authors: 'Fantasy' is
+    for Books and Comics." Empty when nothing was skipped."""
+    if not skipped:
+        return ""
+    tree = session.tag_cache.get()
+    labels, plurals = type_labels(session.schema), type_plurals(session.schema)
+    by_type: dict[str, set[int]] = {}
+    for entity_id, _, type_id in skipped:
+        by_type.setdefault(type_id, set()).add(entity_id)
+    counts = [
+        f"{len(ids):,} {labels.get(t, t) if len(ids) == 1 else plurals.get(t, t)}"
+        for t, ids in sorted(by_type.items())
+    ]
+    reasons = []
+    for tag_id in sorted({t for _, t, _ in skipped}):
+        allowed = tree.scope(tag_id) if tag_id in tree else None
+        if allowed is None:
+            continue
+        kinds = sorted(plurals.get(t, t) for t in allowed)
+        name = tree.node(tag_id).name
+        reasons.append(f"{name!r} is for {_and(kinds)}")
+    return f"Skipped {_and(counts)}: {'; '.join(reasons)}."
+
+
+def _and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]

@@ -40,13 +40,16 @@ from tagalot.core.models import ResourceKind
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
 from tagalot.core.scanjob import ScanReport
-from tagalot.core.search_fields import view_spec
+from tagalot.core.search_fields import type_plurals, view_spec
 from tagalot.core.search_spec import FieldFilter, SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
     TagError,
+    entity_types,
+    parse_types,
+    scope_conflicts,
     split_tag_path,
     tag_counts,
 )
@@ -70,6 +73,7 @@ from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
+from tagalot.ui.tag_types_dialog import TagTypesDialog
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
 from tagalot.ui.triage import UNTAGGED_TAB, TriagePage
 from tagalot.ui.workers import ScanController, run_in_pool
@@ -522,6 +526,7 @@ class MainWindow(QMainWindow):
             details.description_saved.connect(self._set_tag_description)
             details.alias_added.connect(self._add_tag_alias)
             details.alias_removed.connect(self._remove_tag_alias)
+            details.types_requested.connect(self.change_tag_types)
             manager.undo_requested.connect(self.tag_actions.undo)
             manager.redo_requested.connect(self.tag_actions.redo)
             manager.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
@@ -745,6 +750,68 @@ class MainWindow(QMainWindow):
         )
         self.tag_actions.change(lambda: tags.set_description(tag_id, description), message)
 
+    def change_tag_types(self, tag_id: int) -> None:
+        """Choose which item types a tag applies to; if that takes it off some items, ask
+        first (#135)."""
+        session = self.session
+        if session is None:
+            return
+        tree = session.tag_cache.get()
+        if tag_id not in tree:
+            return
+        node = tree.node(tag_id)
+        inherited = tree.scope(node.parent_id) if node.parent_id is not None else None
+        plurals = type_plurals(session.schema)
+        chosen = self.choose_tag_types(
+            TagTypesDialog(node.name, plurals, parse_types(node.types), inherited, self)
+        )
+        if chosen is False:
+            return
+        types = chosen if isinstance(chosen, frozenset) else None
+
+        def count() -> int:
+            with session.reader.connect() as conn:
+                return len(scope_conflicts(conn, tree.with_types(tag_id, types), tag_id))
+
+        def counted(conflicts: int) -> None:
+            if not shiboken6.isValid(self):
+                return
+            if conflicts and not self.confirm_tag_type_removal(node.name, conflicts):
+                return
+            if types is None:
+                message = f"{node.name!r} now applies to every type."
+            else:
+                names = sorted(plurals.get(t, t) for t in types)
+                message = f"{node.name!r} now applies to {', '.join(names)}."
+            if conflicts:
+                message += f" Removed it from {conflicts:,} item{'s' if conflicts != 1 else ''}."
+            tags = session.tags
+            self.tag_actions.change(lambda: tags.set_types(tag_id, types), message)
+
+        run_in_pool(count, on_done=counted)
+
+    def choose_tag_types(self, dialog: TagTypesDialog) -> frozenset[str] | bool | None:
+        """The types chosen (``None``: every type), or ``False`` if cancelled (tests replace
+        this)."""
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        return dialog.chosen()
+
+    def confirm_tag_type_removal(self, name: str, count: int) -> bool:
+        """Ask before taking a tag off items its new types don't allow (tests replace this)."""
+        items = (
+            "1 item of another type has" if count == 1 else f"{count:,} items of other types have"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Remove the tag from other types?",
+            f"{items} {name!r} or one of its sub-tags. Remove it from "
+            f"{'that item' if count == 1 else 'those items'}? (You can undo this.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _add_tag_alias(self, tag_id: int, alias: str) -> None:
         name = self._tag_name(tag_id)
         tags = self.tag_actions.session.tags
@@ -791,20 +858,20 @@ class MainWindow(QMainWindow):
             self.tag_panel.set_selection(0, {})
             return
 
-        def show(count: int, counts: dict[int, int]) -> None:
+        def show(count: int, counts: dict[int, int], types: frozenset[str]) -> None:
             if generation == self._summary_generation and shiboken6.isValid(self.tag_panel):
-                self.tag_panel.set_selection(count, counts)
+                self.tag_panel.set_selection(count, counts, types)
 
         def selected(ids: list[int]) -> None:
             if not ids:
-                show(0, {})
+                show(0, {}, frozenset())
                 return
 
-            def count() -> dict[int, int]:
+            def count() -> tuple[dict[int, int], frozenset[str]]:
                 with session.reader.connect() as conn:
-                    return tag_counts(conn, ids)
+                    return tag_counts(conn, ids), entity_types(conn, ids)
 
-            run_in_pool(count, on_done=lambda counts: show(len(ids), counts))
+            run_in_pool(count, on_done=lambda found: show(len(ids), *found))
 
         page.selected_entity_ids(selected)
 

@@ -70,6 +70,8 @@ class TagTreeModel(QAbstractItemModel):
         self._swatches: dict[str, QPixmap | None] = {}
         self.selected_count = 0
         self._tag_counts: dict[int, int] = {}
+        self._selected_types: frozenset[str] = frozenset()
+        """The selected items' types: tags none of them may have are hidden (#135)."""
 
     # --- content ---
 
@@ -139,6 +141,10 @@ class TagTreeModel(QAbstractItemModel):
             else:
                 self._visible, self._matches = None, frozenset()
                 self._alias_hits, self._description_hits = {}, set()
+            hidden = self._out_of_scope(tree)
+            if hidden:
+                shown = set(self._visible if self._visible is not None else tree) - hidden
+                self._visible = tree.with_ancestors(shown)
             self._collect(tree, None)
         self.endResetModel()
 
@@ -222,11 +228,40 @@ class TagTreeModel(QAbstractItemModel):
 
     # --- the selection summary (DESIGN.md §12) ---
 
-    def set_selection(self, selected_count: int, tag_counts: dict[int, int]) -> None:
-        """How many items are selected, and how many of them carry each tag directly."""
+    def set_selection(
+        self,
+        selected_count: int,
+        tag_counts: dict[int, int],
+        types: frozenset[str] = frozenset(),
+    ) -> bool:
+        """How many items are selected, how many of them carry each tag directly, and their
+        types. Returns whether the tags shown changed (the model was reset): tags limited to
+        other types are hidden, unless a selected item has one (#135)."""
+        before = self._out_of_scope(self.tree) if self.tree is not None else frozenset()
         self.selected_count = selected_count
         self._tag_counts = dict(tag_counts) if selected_count else {}
+        self._selected_types = frozenset(types) if selected_count else frozenset()
+        after = self._out_of_scope(self.tree) if self.tree is not None else frozenset()
+        if after != before:
+            self._rebuild()
+            return True
         self._all_rows_changed()
+        return False
+
+    def _out_of_scope(self, tree: TagTree) -> frozenset[int]:
+        """Tags that none of the selected items may have and none of them has."""
+        if not self._selected_types:
+            return frozenset()
+        hidden = set()
+        for tag_id in tree:
+            allowed = tree.scope(tag_id)
+            if (
+                allowed is not None
+                and not allowed & self._selected_types
+                and not self._tag_counts.get(tag_id)
+            ):
+                hidden.add(tag_id)
+        return frozenset(hidden)
 
     def check_state(self, tag_id: int) -> Qt.CheckState | None:
         """All, some, or none of the selected items have ``tag_id``; ``None`` if nothing is

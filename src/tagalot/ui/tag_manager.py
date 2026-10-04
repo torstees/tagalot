@@ -20,6 +20,7 @@ for the top level) or with **Move to…**. The page only asks: it emits
 Merge, delete, colors, aliases, and descriptions come with later tasks.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import shiboken6
@@ -54,6 +55,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.search_fields import type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, TagUsage, tag_usage
 from tagalot.ui.dnd import dragged_tags
@@ -190,6 +192,8 @@ class TagDetails(QFrame):
     description_saved = Signal(int, str)
     alias_added = Signal(int, str)
     alias_removed = Signal(int, str)
+    types_requested = Signal(int)
+    """Change which item types the tag applies to (#135)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -242,6 +246,20 @@ class TagDetails(QFrame):
         description_box.addWidget(self.description)
         description_box.addLayout(description_buttons)
 
+        # Applies to: every type, or some (#135); Change… asks the window.
+        self.types = QLabel()
+        self.types.setWordWrap(True)
+        self.change_types = QPushButton("Change…")
+        self.change_types.clicked.connect(
+            lambda: self.types_requested.emit(self.tag_id) if self.tag_id is not None else None
+        )
+        types_row = QHBoxLayout()
+        types_row.setContentsMargins(0, 0, 0, 0)
+        types_row.addWidget(self.types, 1)
+        types_row.addWidget(self.change_types)
+        self.plurals: dict[str, str] = {}
+        """``{type id: "Books"}`` for naming types (set by the page)."""
+
         # Aliases: a short list, Remove, and a box to add one.
         self.aliases = QListWidget()
         self.aliases.setMaximumHeight(self.fontMetrics().lineSpacing() * 4 + 12)
@@ -271,6 +289,7 @@ class TagDetails(QFrame):
         form.addRow("Path:", self.path)
         form.addRow("Color:", color_row)
         form.addRow("Description:", description_box)
+        form.addRow("Applies to:", types_row)
         form.addRow("Also called:", alias_box)
         form.addRow("Used on:", self.counts)
         self.fields = QWidget()
@@ -310,6 +329,7 @@ class TagDetails(QFrame):
         self._saved_description = saved
         keep = draft is not None and draft.strip() != saved.strip()
         self.description.setPlainText(draft if keep and draft is not None else saved)
+        self.types.setText(types_text(tree, tag_id, self.plurals))
         self.aliases.clear()
         self.aliases.addItems(list(tree.aliases(tag_id)))
         if not same_tag:
@@ -491,6 +511,7 @@ class TagManagerPage(QWidget):
         self.set_history(None, None)
 
         self.details = TagDetails()
+        self.details.plurals = dict(type_plurals(session.schema))
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -674,3 +695,20 @@ class TagManagerPage(QWidget):
             self._expanded.add(tag_id)
         else:
             self._expanded.discard(tag_id)
+
+
+def types_text(tree: TagTree, tag_id: int, plurals: Mapping[str, str]) -> str:
+    """What the details pane says a tag applies to: "Every type", "Books and Comics", or
+    "Comics (from 'Genre')" when its parent's setting decides (#135)."""
+    allowed = tree.scope(tag_id)
+    if allowed is None:
+        return "Every type"
+    names = sorted(plurals.get(t, t) for t in allowed)
+    text = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    if tree.node(tag_id).types is None:
+        source = next(
+            (a for a in reversed(tree.ancestors(tag_id)) if tree.node(a).types is not None), None
+        )
+        if source is not None:
+            text += f" (from {tree.node(source).name!r})"
+    return text or "No type"
