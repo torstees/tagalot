@@ -57,7 +57,11 @@ def _page(window: MainWindow) -> SearchPage:
 
 def _scan(qtbot: QtBot, window: MainWindow) -> str:
     """Press F5 and wait for the scan; returns the status bar's summary."""
+    # Activation is asynchronous: F5 pressed before the window is active reaches no
+    # shortcut, so no scan starts (a window opened in the background, as by
+    # open_keep_async, made this flaky on CI).
     window.activateWindow()
+    qtbot.waitUntil(window.isActiveWindow, timeout=5000)
     with qtbot.waitSignal(window.scans.finished, timeout=20_000):
         QTest.keyClick(window, Qt.Key.Key_F5)
     return window.statusBar().currentMessage()
