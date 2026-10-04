@@ -77,7 +77,9 @@ def test_contained_lists_what_the_matches_hold_and_is_remembered(
     qtbot.waitUntil(lambda: artists.status.text() == "13 items", timeout=5000)  # 2 + 7 + 4
     assert "forest.png" in _titles(artists)
     state = load_ui_state(session.keep.ui_state_path)
-    assert state["toggles"] == {"view:Artists": {"show_contained": True, "inherit_tags": False}}
+    assert state["toggles"] == {
+        "view:Artists": {"show_contained": True, "inherit_tags": False, "aggregate_up": False}
+    }
 
     again = MainWindow(session, scans=ScanController(QThreadPool()))
     qtbot.addWidget(again)
@@ -107,6 +109,31 @@ def test_inherit_tags_counts_an_artists_tags(
     images.filter_bar.inherit_box.setChecked(False)
     qtbot.waitUntil(lambda: images.status.text() == "1 item", timeout=5000)
     assert _titles(images) == ["forest.png"]
+
+
+def test_by_contents_finds_artists_by_their_images(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """ "By contents" (#133): an artist matches when one of their images does."""
+    tree = session.tag_cache.get()
+    favorites = tree.find_child(None, "Favorites")
+    assert favorites is not None
+    artists = _search(qtbot, window, ARTISTS, "2 items")
+    assert not artists.filter_bar.aggregate_box.isChecked()  # off unless the view says
+    artists.filter_bar.add_tag(favorites)
+    qtbot.waitUntil(lambda: artists.status.text() == "Nothing found", timeout=5000)
+    artists.filter_bar.aggregate_box.setChecked(True)
+    # forest.png is tagged Favorites, and it is Aurora Studio's.
+    qtbot.waitUntil(lambda: artists.status.text() == "1 item", timeout=5000)
+    assert _titles(artists) == ["Aurora Studio"]
+    state = load_ui_state(session.keep.ui_state_path)
+    assert state["toggles"]["view:Artists"]["aggregate_up"] is True  # remembered
+
+    saved = artists.saved_definition()
+    assert saved.filters.aggregate_up
+    artists.filter_bar.aggregate_box.setChecked(False)
+    artists.restore(saved)
+    assert artists.filter_bar.aggregate_box.isChecked()  # a saved search brings it back
 
 
 def test_clear_all_keeps_the_toggles(qtbot: QtBot, window: MainWindow) -> None:

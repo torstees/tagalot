@@ -167,7 +167,7 @@ Your theme runs on every scan, but it never undoes what people did by hand:
 
 ## Views and pages
 
-- **`SearchView(name, types, inherit_tags=False, show_contained=False, layout="grid", default_sort=…)`**: a search under SEARCHES. `inherit_tags=True` lets a tag on a container count for its contents; `layout` is `"grid"`, `"list"`, or `"tree"` (containers expand to their contents).
+- **`SearchView(name, types, inherit_tags=False, show_contained=False, aggregate_up=False, layout="grid", default_sort=…)`**: a search under SEARCHES. `inherit_tags=True` lets a tag on a container count for its contents; `aggregate_up=True` starts the view with **By contents** on (a container matches when anything inside it does); `layout` is `"grid"`, `"list"`, or `"tree"` (containers expand to their contents).
 - **`DetailView(Type, sections)`**: an item's page, top to bottom:
   - `Section.fields()`: its fields, editable in place.
   - `Section.role(name)`: a role's files.

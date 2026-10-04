@@ -368,6 +368,9 @@ class SearchView:
     types: Sequence[type[Entity]]
     inherit_tags: bool = False
     show_contained: bool = False
+    aggregate_up: bool = False
+    """A container matches when anything inside it matches (albums with a song tagged
+    *Live*); the filter bar's "By contents" toggle starts on."""
     layout: Layout = "grid"
     default_sort: Sequence[SortBy] = (SortBy("title"),)
 
