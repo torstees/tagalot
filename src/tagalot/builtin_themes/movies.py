@@ -42,6 +42,7 @@ runtime wins over the files'.
 import logging
 import os
 import re
+import threading
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -772,12 +773,19 @@ def best_version(
     return values
 
 
+MEDIAINFO = threading.Lock()
+"""MediaInfo reads one video at a time. Scans run ``prepare`` on several threads (DESIGN.md
+§6), and the MediaInfo library's options are process-wide, set again by every parse:
+parsing on two threads at once crashed the process on macOS (#292)."""
+
+
 def read_video(path: str) -> dict[str, Any]:
     """A video's details by MediaInfo: ``runtime`` (seconds), ``quality``, ``resolution``,
     ``pixels``, ``video_codec``, and ``audio`` (languages). Unknown ones are ``None``."""
     from pymediainfo import MediaInfo  # the bundled library loads on first use
 
-    info = MediaInfo.parse(path)
+    with MEDIAINFO:
+        info = MediaInfo.parse(path)
     general = info.general_tracks[0] if info.general_tracks else None
     video = info.video_tracks[0] if info.video_tracks else None
     duration = getattr(general, "duration", None) or getattr(video, "duration", None)

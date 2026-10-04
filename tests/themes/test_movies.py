@@ -1,10 +1,14 @@
 """The movies theme (#123): movies from files and folders, their versions, extras, and
 collections."""
 
+import threading
+import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import Engine, select
@@ -432,6 +436,30 @@ def test_reading_a_video(tmp_path: Path) -> None:
     junk.write_bytes(b"not a video")
     found = read_video(str(junk))
     assert (found["runtime"], found["quality"], found["audio"]) == (None, None, None)
+
+
+def test_videos_are_read_one_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scans read on several threads; MediaInfo must not parse two at once (#292)."""
+    from pymediainfo import MediaInfo
+
+    lock = threading.Lock()
+    inside = [0]
+    most = [0]
+
+    def parse(path: str) -> object:
+        with lock:
+            inside[0] += 1
+            most[0] = max(most[0], inside[0])
+        time.sleep(0.01)
+        with lock:
+            inside[0] -= 1
+        return SimpleNamespace(general_tracks=[], video_tracks=[], audio_tracks=[])
+
+    monkeypatch.setattr(MediaInfo, "parse", parse)
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(read_video, [f"/videos/{n}.mkv" for n in range(24)]))
+    assert len(results) == 24
+    assert most[0] == 1
 
 
 @pytest.mark.parametrize(
