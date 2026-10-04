@@ -153,6 +153,7 @@ docs/THEMES.md           # the guide for theme authors
 - Keep fixture files tiny (a few KB). Generate images and archives in tests where possible (Pillow, `zipfile`). Commit small audio fixtures with known tags under `tests/fixtures/` along with a README noting their contents.
 - Search semantics (include/exclude, descendant expansion, inheritance, show-contained, within) need thorough table-driven tests; they are the heart of the app.
 - Mark GUI tests with `@pytest.mark.gui`.
+- GUI tests never leave a modal open: offscreen, nothing closes it and the run hangs. `tests/ui/conftest.py` fails a test that opens a dialog, message box, or menu it doesn't answer (#272). Patch the dialog (`monkeypatch.setattr(QMessageBox, "question", ...)`, or the dialog class's `exec`), and test a menu by calling its actions rather than showing it.
 - For performance-sensitive code (search, scanning), add a benchmark test that builds ~50k entities and asserts a generous time bound; mark it `@pytest.mark.slow`.
 
 ## When unsure
