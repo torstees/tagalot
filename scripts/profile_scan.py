@@ -7,11 +7,12 @@
 makes a fresh keep in scratch/profile/ with one root at PATH (a local folder or a network
 share; Tagalot only reads it), scans it with the theme, times each phase from the scan's
 own progress messages, scans again (nothing changed: the cost of a routine rescan), then
-makes thumbnails for the first ``--thumbnails`` items, one thread at a time and with each
-``--threads`` count, from a cold cache each time. ``--cprofile`` also profiles the first
-scan and prints where its time went; ``--fingerprint-threads`` sets how many files the scan
-hashes at once (``core.fingerprint.THREADS``), and ``--prepare-threads`` how many run the
-theme's ``prepare`` (``core.scanjob.PREPARE_THREADS``).
+makes thumbnails for the first ``--thumbnails`` items with the background queue, on each
+``--threads`` count (``core.thumbnails.queue.THREADS``), from a cold cache each time.
+``--cprofile`` also profiles the first scan and prints where its time went;
+``--fingerprint-threads`` sets how many files the scan hashes at once
+(``core.fingerprint.THREADS``), and ``--prepare-threads`` how many run the theme's
+``prepare`` (``core.scanjob.PREPARE_THREADS``).
 """
 
 import argparse
@@ -20,8 +21,8 @@ import io
 import pstats
 import shutil
 import sys
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from sqlalchemy import select
@@ -31,6 +32,9 @@ from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_kee
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.thumbnails import queue
+from tagalot.core.thumbnails.queue import QueueResult, ThumbnailQueue
+from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.themes.loader import load_themes
 
 SCRATCH = Path(__file__).resolve().parents[1] / "scratch" / "profile"
@@ -106,22 +110,32 @@ def scan(session: KeepSession, label: str, profile: bool) -> float:
     return total
 
 
+def _run_queue(resolver: ThumbnailResolver, ids: list[int]) -> QueueResult:
+    """Run the background queue over ``ids`` and wait for it to finish."""
+    finished = threading.Event()
+    results: list[QueueResult] = []
+
+    def done(result: QueueResult) -> None:
+        results.append(result)
+        finished.set()
+
+    ThumbnailQueue(resolver).start(ids, done=done)
+    finished.wait()
+    return results[0]
+
+
 def thumbnails(session: KeepSession, count: int, threads: list[int]) -> None:
     with session.reader.connect() as conn:
         ids = list(conn.scalars(select(Entity.id).order_by(Entity.id).limit(count)))
     resolver = session.thumbnails
-    print(f"\nThumbnails for {len(ids)} items (cold cache each run):")
+    print(f"\nThumbnails for {len(ids)} items, by the background queue (cold cache each run):")
     for n in threads:
         resolver.cache.clear()
         resolver.forget_failures()
+        queue.THREADS = n
         start = time.perf_counter()
-        if n == 1:
-            results = [resolver.resolve(i) for i in ids]
-        else:
-            with ThreadPoolExecutor(n) as pool:
-                results = list(pool.map(resolver.resolve, ids))
+        pictures = _run_queue(resolver, ids).pictures
         seconds = time.perf_counter() - start
-        pictures = sum(r.thumbnail is not None for r in results)
         rate = len(ids) / seconds if seconds else 0
         label = f"{n:2d} thread{'s' if n > 1 else ' '}"
         print(f"  {label}: {seconds:7.2f} s  ({rate:6.1f} /s, {pictures} pictures)")
