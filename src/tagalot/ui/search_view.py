@@ -89,6 +89,18 @@ PREVIEW_DELAY_MS = 120
 __all__ = ["SearchPage", "count_text", "list_columns"]
 
 
+WRITE_BACK_TIP = (
+    "Write its tags, and the fields you edited, into the front matter of its Markdown files "
+    "(in folders that allow it), after showing you the change"
+)
+
+
+def writes_back(session: KeepSession, type_id: str) -> bool:
+    """Whether items of ``type_id`` offer Write to file… (the theme's ``write_back``)."""
+    theme = session.schema.theme
+    return any(theme.type_id_of(t) == type_id for t in theme.write_back)
+
+
 def add_reread_actions(menu: QMenu, reread: Callable[[bool], None]) -> None:
     """Add "Re-read from file" and its replacing variant to ``menu``; ``reread(replace)``."""
     keep = menu.addAction("Re-read from file")
@@ -131,6 +143,8 @@ class SearchPage(QWidget):
     open_requested = Signal(int)
     """An item was double-clicked (or Enter pressed on it): its entity id."""
     reread_requested = Signal(list, bool)
+    write_back_requested = Signal(list)
+    """Write to file… on these items (#299)."""
     action_requested = Signal(str, list)
     """Run a theme action: (method name, entity ids)."""
     """Read these entities' files again; true: replacing what the user edited."""
@@ -453,6 +467,12 @@ class SearchPage(QWidget):
                 menu.setDefaultAction(open_file)
         menu.addSeparator()
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
+        if writes_back(self.session, hit.type):
+            write = menu.addAction("Write to file\u2026")
+            write.setToolTip(WRITE_BACK_TIP)
+            write.triggered.connect(
+                lambda: self._on_selection_or(hit, self.write_back_requested.emit)
+            )
         theme_actions = actions_for(self.session.schema, hit.type)
         if theme_actions:
             menu.addSeparator()

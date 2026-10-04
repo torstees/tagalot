@@ -224,6 +224,23 @@ It runs in the writer, in one transaction: what it changes is one Edit → Undo 
 
 `dashboard = [stat("Total running time", Song, "duration"), top_values("Top genres", Album, "genre")]` adds cards to a keep's opening page: `stat` computes `"sum"`, `"avg"`, `"min"`, `"max"`, or `"count"` over a field, and `top_values` lists a field's most common values, each linking to a search. For anything else, mark a method `@dashboard_card(title)`: it gets a read-only `DashboardContext` (`count`, `find`, `get`, `stat`) and returns `(label, value)` rows or a text.
 
+## Writing back to files
+
+A theme can let **Write to file…** put an item's tags, and the fields the user edited, into the front matter of its Markdown files (in folders the user marked writable; DESIGN.md §4). Name the types, and map fields to front-matter keys; Tagalot does the reading, the preview, the backup, and the writing:
+
+```python
+class StoriesTheme(Theme):
+    api_version = 3
+    write_back = [Story]
+
+    def front_matter(self, entity_type, item, edited, current):
+        keys = {"title": "title", "rating": "rating"}
+        return {keys[name]: item.title if name == "title" else item.fields[name]
+                for name in edited if name in keys}
+```
+
+`edited` names the fields (and `"title"`) the user changed in Tagalot; `current` is the file's front matter now, so you can reuse a key it already has. A value of `None` removes the key. Tags are written by Tagalot under `tags`.
+
 ## Near-duplicates
 
 To have Dedupe find items that are alike (the same song in two places, a resized picture), give each item cheap **blocking keys** and score pairs that share one:

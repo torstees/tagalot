@@ -215,6 +215,11 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             elif inspect.isclass(target) and target not in declared:
                 problems.append(f"action {method!r} applies to undeclared {target.__name__}")
 
+    for target in theme.write_back:
+        if not (inspect.isclass(target) and target in declared):
+            problems.append(f"write_back names {target!r}, which isn't a declared entity type")
+    if theme.write_back and getattr(theme, "api_version", API_VERSION) < 3:
+        problems.append("a theme with write_back must set api_version = 3 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]

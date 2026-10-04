@@ -2,7 +2,8 @@
 
 It prints the version, Python, Qt, SQLite's FTS5, the built-in themes found, the theme
 template and the icon (files the build must carry along), and each file reader (Pillow,
-mutagen, MediaInfo, PDFium, PyYAML, 7z, RAR), and exits 1 if something Tagalot needs is missing.
+mutagen, MediaInfo, PDFium, PyYAML, ruamel.yaml, 7z, RAR), and exits 1 if something Tagalot
+needs is missing.
 Packaged builds run it in CI, since a frozen app is where a module or a native library
 quietly goes missing.
 """
@@ -126,6 +127,19 @@ def _yaml() -> str:
     return f"PyYAML {yaml.__version__}"
 
 
+def _ruamel() -> str:
+    """Edit a YAML block as Write to file… does, keeping its comment."""
+    from tagalot.core.writeback import edit_front_matter
+
+    block = "\n".join(["---", "tags: [a]  # mine", "---", ""])
+    edited = edit_front_matter(block, {"tags": ["a", "b"]})
+    if "[a, b]" not in edited or "# mine" not in edited:
+        raise RuntimeError(f"ruamel.yaml wrote {edited!r}")
+    import ruamel.yaml
+
+    return f"ruamel.yaml {ruamel.yaml.__version__}"
+
+
 def _py7zr() -> str:
     import py7zr
 
@@ -146,6 +160,7 @@ READERS: list[tuple[str, Callable[[], str], bool]] = [
     ("MediaInfo", _mediainfo, True),
     ("PDFium", _pdfium, True),
     ("PyYAML", _yaml, True),
+    ("ruamel.yaml", _ruamel, True),
     ("py7zr", _py7zr, True),
     ("RAR", _rarfile, False),  # optional: needs an external unrar (DESIGN.md §3)
 ]

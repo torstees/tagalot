@@ -90,6 +90,9 @@ class RootConfig:
     watched: bool = True
     """``watched = false``: not scanned; its items stay, shown offline, until it is
     watched again."""
+    writable: bool = False
+    """``writable = true``: **Write to file…** may change files here (DESIGN.md §4 *Writing
+    back to files*). Off by default; no other root is ever written to."""
 
 
 @dataclass
@@ -165,6 +168,8 @@ def dump_keep_config(config: KeepConfig) -> str:
             lines.append(f"options = {toml_inline_table(root.options)}")
         if not root.watched:
             lines.append("watched = false")
+        if root.writable:
+            lines.append("writable = true")
     return "\n".join(lines) + "\n"
 
 
@@ -207,10 +212,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     roots: list[RootConfig] = []
     for i, raw in enumerate(raw_roots, start=1):
         where = f"[[roots]] #{i}"
-        reader.warn_unknown(raw, {"id", "name", "path", "exclude", "options", "watched"}, where)
-        watched = raw.get("watched", True)
+        known = {"id", "name", "path", "exclude", "options", "watched", "writable"}
+        reader.warn_unknown(raw, known, where)
+        watched, writable = raw.get("watched", True), raw.get("writable", False)
         if not isinstance(watched, bool):
             raise KeepConfigError(path, f"{where} watched must be true or false")
+        if not isinstance(writable, bool):
+            raise KeepConfigError(path, f"{where} writable must be true or false")
         exclude = raw.get("exclude", [])
         if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
             raise KeepConfigError(path, f"{where} exclude must be a list of strings")
@@ -222,6 +230,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                 exclude=list(exclude),
                 options=reader.options(raw, f"{where} options"),
                 watched=watched,
+                writable=writable,
             )
         )
     seen: set[str] = set()

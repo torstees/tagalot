@@ -61,7 +61,7 @@ from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
-from tagalot.ui.search_view import SearchPage, add_reread_actions
+from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions, writes_back
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -85,6 +85,8 @@ class DetailPage(QWidget):
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
     reread_requested = Signal(list, bool)
+    write_back_requested = Signal(list)
+    """Write to file… on this item (#299)."""
     unlink_requested = Signal(int, int, str)
     """Remove a link made by hand: (entity id, resource id, role)."""
     relate_requested = Signal(int, str)
@@ -176,6 +178,7 @@ class DetailPage(QWidget):
         more = QMenu(self.more_button)
         self._more_menu = more
         self._file_actions_added = False
+        self._write_back_added = False
         self.file_opener: FileOpener | None = None
         """Opens the item's files (the window sets it); without one, no file actions."""
         add_reread_actions(
@@ -253,6 +256,7 @@ class DetailPage(QWidget):
             self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
             self._add_file_actions(detail)
+            self._add_write_back(detail)
             self._show_action_buttons(detail)
             self._show_breadcrumbs(detail)
             extras = self._extra_widget(detail)
@@ -542,6 +546,16 @@ class DetailPage(QWidget):
                 )
             )
             self._action_buttons.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
+
+    def _add_write_back(self, detail: EntityDetail) -> None:
+        """Write to file… at the end of More (once), for types the theme writes back."""
+        if self._write_back_added or not writes_back(self.session, detail.type):
+            return
+        self._write_back_added = True
+        write = self._more_menu.addAction("Write to file\u2026")
+        write.setObjectName("write_back")
+        write.setToolTip(WRITE_BACK_TIP)
+        write.triggered.connect(lambda: self.write_back_requested.emit([self.entity_id]))
 
     def _add_file_actions(self, detail: EntityDetail) -> None:
         """Open file, Show in file manager, Open with… at the top of More (once)."""

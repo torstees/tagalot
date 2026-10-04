@@ -303,3 +303,21 @@ def test_contents_sort_names_fields_of_what_the_type_contains() -> None:
     assert validate_theme(Records) == [
         "Record: contents_sort uses 'year', which nothing it contains has"
     ]
+
+
+def test_write_back_names_declared_types_and_needs_api_3() -> None:
+    class Note(Entity):
+        pass
+
+    class Other(Entity):
+        pass
+
+    class Notes(Theme):
+        id, name, api_version = "notes", "Notes", 2
+        entities = [Note]
+        write_back = [Note, Other]
+
+    assert validate_theme(Notes) == [
+        f"write_back names {Other!r}, which isn't a declared entity type",
+        "a theme with write_back must set api_version = 3 (or later)",
+    ]

@@ -170,6 +170,20 @@ CREDITS: Mapping[type[Entity], tuple[str, str]] = {
 two types, so books and comics each have their own."""
 
 
+FRONT_MATTER_KEYS: Mapping[str, tuple[str, ...]] = {
+    "title": ("title",),
+    "series_index": ("series_index", "number", "series_number"),
+    "year": ("year",),
+    "publisher": ("publisher",),
+    "language": ("language", "lang"),
+    "isbn": ("isbn",),
+    "description": ("description", "summary"),
+    "link": ("url", "link"),
+}
+"""A book's editable fields and the front-matter keys they are written under: the first,
+unless the file already uses another."""
+
+
 class ContentsThumbnail(ThumbnailProvider):
     """A series, universe, or collection shows one of its first works' covers."""
 
@@ -187,7 +201,8 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 1
-    api_version = 3  # ctx.resource_at, for Markdown covers
+    api_version = 3  # ctx.resource_at for Markdown covers; write_back
+    write_back = [Book]  # Markdown books' front matter (Write to file…)
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
     entities = [Author, Universe, Series, Collection, Book, Comic]
     containment = [
@@ -287,6 +302,31 @@ class BooksTheme(Theme):
         if entity_type in (Series, Universe, Collection):
             return [ContentsThumbnail(), Icon("entity")]
         return super().thumbnail_chain(entity_type)
+
+    # --- writing back (Write to file…) ---
+
+    def front_matter(
+        self,
+        entity_type: type[Entity],
+        item: Record,
+        edited: frozenset[str],
+        current: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """A Markdown book's edited fields under the keys :func:`read_front_matter` reads,
+        using the one the file already has (``number``, ``lang``, ``summary``, ``link``)."""
+        if entity_type is not Book:
+            return {}
+        values = {"title": item.title, **item.fields}
+        found: dict[str, Any] = {}
+        for name, keys in FRONT_MATTER_KEYS.items():
+            if name not in edited:
+                continue
+            key = next((k for k in keys if any(c.casefold() == k for c in current)), keys[0])
+            value = values.get(name)
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)  # number: 2, not 2.0
+            found[key] = value
+        return found
 
     # --- near-duplicates ---
 

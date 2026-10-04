@@ -59,7 +59,7 @@ For views with several entity types, `--media` creates `scratch/Media.keep` inst
 
 - Python 3.12+, managed with **uv**. `src/` layout.
 - **PySide6** for the UI. **SQLAlchemy 2.0** (typed `Mapped[...]`, `select()` style; no legacy `Query` API) on **SQLite**.
-- Pillow, mutagen, pymediainfo, py7zr, rarfile (optional at runtime), pypdfium2, PyYAML, platformdirs, tomli-w.
+- Pillow, mutagen, pymediainfo, py7zr, rarfile (optional at runtime), pypdfium2, PyYAML, ruamel.yaml, platformdirs, tomli-w.
 - pytest, pytest-qt, ruff, mypy.
 
 Do not add a dependency without a clear need. When you add one, note it and the reason in `docs/DESIGN.md` §3.
@@ -100,6 +100,7 @@ src/tagalot/
     thumbnails/          # providers, cache, archive reader
     handlers.py          # open file / reveal / overrides
     dedupe.py
+    writeback.py         # Write to file…: the one code path that changes files under a root
   themes/
     api.py               # PUBLIC theme API — the only module themes import
     readers.py           # format readers themes share (EPUB, comics, PDF, Markdown, office, links), in the API
@@ -127,7 +128,7 @@ docs/THEMES.md           # the guide for theme authors
 
 ## Architecture rules (do not break these)
 
-1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug. The single planned exception (M20) is writing metadata back by an explicit action in a root the user marked writable, through the one core code path described in DESIGN.md §4 *Writing back to files*; nothing else may write under a root.
+1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug. The single exception is **Write to file…** (#299): writing metadata back, by that explicit command only, into files in a root the user marked writable, through the one core code path `core/writeback.py` (DESIGN.md §4 *Writing back to files*); nothing else may write under a root.
 2. **`core` never imports Qt or `ui`.** Core logic must be testable without a display. The UI depends on core, never the reverse.
 3. **Themes import only `tagalot.themes.api`.** Treat `api.py` as a public, versioned contract. Changes to it need a design-doc update. Built-in themes follow the same rule as third-party ones.
 4. **The GUI thread never blocks on I/O.** File-system walks, network access, hashing, metadata extraction, archive reading, image decoding, and slow queries run in workers and report back through signals.

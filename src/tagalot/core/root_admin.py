@@ -81,6 +81,7 @@ def edit_root(
     path: str | None = None,
     exclude: list[str] | None = None,
     watched: bool | None = None,
+    writable: bool | None = None,
 ) -> KeepConfig:
     """``config`` with one root changed. Raises :class:`KeepError` for a bad value."""
     roots = copy.deepcopy(config.roots)
@@ -99,6 +100,8 @@ def edit_root(
         root.exclude = [p.strip() for p in exclude if p.strip()]
     if watched is not None:
         root.watched = watched
+    if writable is not None:
+        root.writable = writable
     new = replace(config, roots=roots)
     _check(new, keep_dir, root)
     return new
