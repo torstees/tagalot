@@ -799,12 +799,14 @@ class MainWindow(QMainWindow):
 
     def confirm_tag_type_removal(self, name: str, count: int) -> bool:
         """Ask before taking a tag off items its new types don't allow (tests replace this)."""
-        items = "1 item" if count == 1 else f"{count:,} items"
+        items = (
+            "1 item of another type has" if count == 1 else f"{count:,} items of other types have"
+        )
         answer = QMessageBox.question(
             self,
             "Remove the tag from other types?",
-            f"{items} of other types have {name!r} or one of its sub-tags. Remove it from "
-            "them? (You can undo this.)",
+            f"{items} {name!r} or one of its sub-tags. Remove it from "
+            f"{'it' if count == 1 else 'them'}? (You can undo this.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
