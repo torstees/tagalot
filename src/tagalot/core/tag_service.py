@@ -28,7 +28,14 @@ from tagalot.core.fields import (
     restore_extra,
     restore_field,
 )
-from tagalot.core.keywords import apply_file_tags, forget_removals, remember_removals
+from tagalot.core.keywords import (
+    IgnoreChange,
+    apply_file_tags,
+    forget_removals,
+    remember_removals,
+    restore_ignored,
+    set_ignored,
+)
 from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
@@ -105,6 +112,7 @@ Step = (
     | ReextractChange
     | ActionChange
     | DismissChange
+    | IgnoreChange
     | MergeChange
     | NotDuplicateChange
     | SavedChange
@@ -241,12 +249,24 @@ class TagService:
             lambda tree: f"Remove {_names(tree, tags)} from {_items(len(entities))}", op
         )
 
-    def add_alias(self, tag_id: int, alias: str) -> None:
+    def add_alias(self, tag_id: int, alias: str, *, allow_name: bool = False) -> None:
         self._record(
             lambda tree: f"Add alias {alias.strip()!r} to {_name(tree, tag_id)!r}",
             lambda tree: (),
-            lambda conn: add_alias(conn, tag_id, alias),
+            lambda conn: add_alias(conn, tag_id, alias, allow_name=allow_name),
         )
+
+    def map_keywords(self, tag_id: int, keywords: Iterable[str]) -> None:
+        """Tie file keywords to a tag: each becomes its alias, so every item whose files give
+        one gets the tag (#295). One undo step."""
+        words = list(keywords)
+        what = repr(words[0]) if len(words) == 1 else f"{len(words)} keywords"
+
+        def op(conn: Connection) -> None:
+            for keyword in words:
+                add_alias(conn, tag_id, keyword, allow_name=True)
+
+        self._record(lambda tree: f"Map {what} to {_name(tree, tag_id)!r}", lambda tree: (), op)
 
     def remove_alias(self, tag_id: int, alias: str) -> None:
         self._record(
@@ -279,6 +299,15 @@ class TagService:
         if change.before != change.after:
             self._push(change)
         return change
+
+    def ignore_keywords(self, keys: Iterable[str], ignored: bool = True) -> int:
+        """Ignore file keywords, or stop ignoring them (#295); one undo step. Returns how
+        many changed."""
+        chosen = frozenset(keys)
+        change = self.writer.run(lambda conn: set_ignored(conn, chosen, ignored))
+        if change.keys:
+            self._push(change)
+        return len(change.keys)
 
     def record(self, step: Step) -> None:
         """Add a step done elsewhere (a re-read of files) to the history."""
@@ -337,6 +366,8 @@ class TagService:
             self.writer.run(lambda conn: restore_entities(conn, schema, step, forward=forward))
         elif isinstance(step, DismissChange):
             self.writer.run(lambda conn: restore_dismissals(conn, step, forward=forward))
+        elif isinstance(step, IgnoreChange):
+            self.writer.run(lambda conn: restore_ignored(conn, step, forward=forward))
         elif isinstance(step, ActionChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))

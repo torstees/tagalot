@@ -19,9 +19,16 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from sqlalchemy import Connection, delete, insert, select, tuple_
+from sqlalchemy import Connection, delete, distinct, func, insert, select, tuple_
 
-from tagalot.core.models import Entity, EntityKeyword, EntityTag, FileTagRemoval, utcnow
+from tagalot.core.models import (
+    Entity,
+    EntityKeyword,
+    EntityTag,
+    FileTagRemoval,
+    KeywordIgnored,
+    utcnow,
+)
 from tagalot.core.tags import TagTree, search_key
 
 logger = logging.getLogger(__name__)
@@ -243,3 +250,108 @@ def keywords_of(conn: Connection, entity_ids: Iterable[int]) -> Mapping[int, lis
         for entity_id, key, keyword in rows:
             found.setdefault(entity_id, {}).setdefault(key, keyword)
     return {e: list(words.values()) for e, words in found.items()}
+
+
+# --- the File keywords page (#295) ---
+
+
+@dataclass(frozen=True)
+class KeywordInfo:
+    """One keyword across the keep, for the File keywords page."""
+
+    key: str
+    keyword: str
+    """How a file wrote it (one of its spellings)."""
+    items: int
+    """Items whose files give it."""
+    examples: tuple[str, ...]
+    """A few of those items' titles."""
+    tag_id: int | None
+    """The tag it matches, or ``None``."""
+    ignored: bool
+
+
+def keyword_report(conn: Connection, tree: TagTree, examples: int = 3) -> list[KeywordInfo]:
+    """Every keyword files give, most-used first, with what it matches."""
+    index = keyword_index(tree)
+    ignored = set(conn.scalars(select(KeywordIgnored.match_key)))
+    counts = conn.execute(
+        select(
+            EntityKeyword.match_key,
+            func.count(distinct(EntityKeyword.entity_id)),
+            func.min(EntityKeyword.keyword),
+        ).group_by(EntityKeyword.match_key)
+    ).all()
+    ranked = (
+        select(
+            EntityKeyword.match_key,
+            Entity.title,
+            func.row_number()
+            .over(partition_by=EntityKeyword.match_key, order_by=Entity.title)
+            .label("n"),
+        )
+        .join(Entity, Entity.id == EntityKeyword.entity_id)
+        .distinct()
+        .subquery()
+    )
+    titles: dict[str, list[str]] = {}
+    for key, title in conn.execute(
+        select(ranked.c.match_key, ranked.c.title).where(ranked.c.n <= examples)
+    ):
+        if title not in titles.setdefault(key, []):
+            titles[key].append(title)
+    report = [
+        KeywordInfo(
+            key, keyword, int(n), tuple(titles.get(key, ())), index.get(key), key in ignored
+        )
+        for key, n, keyword in counts
+    ]
+    report.sort(key=lambda k: (-k.items, k.keyword.casefold()))
+    return report
+
+
+def unmatched_keys(conn: Connection, tree: TagTree) -> frozenset[str]:
+    """Keywords that match no tag and aren't ignored (the TOOLS count)."""
+    return frozenset(
+        k.key for k in keyword_report(conn, tree, examples=0) if k.tag_id is None and not k.ignored
+    )
+
+
+@dataclass(frozen=True)
+class IgnoreChange:
+    """Ignoring or no longer ignoring keywords (an undo step)."""
+
+    label: str
+    keys: frozenset[str]
+    """The keys whose state changed."""
+    ignored: bool
+    """What they were set to."""
+
+
+def set_ignored(conn: Connection, keys: Iterable[str], ignored: bool) -> IgnoreChange:
+    """Ignore keywords (they aren't listed as unmatched), or stop ignoring them."""
+    wanted = {k for k in keys if k}
+    current = set(
+        conn.scalars(select(KeywordIgnored.match_key).where(KeywordIgnored.match_key.in_(wanted)))
+    )
+    changed = frozenset(wanted - current if ignored else current & wanted)
+    _write_ignored(conn, changed, ignored)
+    count = len(changed)
+    what = "1 keyword" if count == 1 else f"{count:,} keywords"
+    return IgnoreChange(f"{'Ignore' if ignored else 'Stop ignoring'} {what}", changed, ignored)
+
+
+def restore_ignored(conn: Connection, change: IgnoreChange, *, forward: bool) -> None:
+    """Undo (``forward=False``) or redo an :class:`IgnoreChange`."""
+    _write_ignored(conn, change.keys, change.ignored if forward else not change.ignored)
+
+
+def _write_ignored(conn: Connection, keys: frozenset[str], ignored: bool) -> None:
+    if not keys:
+        return
+    if ignored:
+        conn.execute(
+            insert(KeywordIgnored).prefix_with("OR IGNORE"), [{"match_key": k} for k in keys]
+        )
+    else:
+        conn.execute(delete(KeywordIgnored).where(KeywordIgnored.match_key.in_(keys)))

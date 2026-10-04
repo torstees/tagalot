@@ -49,7 +49,8 @@ from mutagen.easyid3 import EasyID3
 from mutagen.flac import FLAC
 from mutagen.id3 import APIC, ID3
 from PIL import Image, ImageDraw, ImageFont
-from sqlalchemy import Connection, insert, select
+from sqlalchemy import Connection, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.builtin_themes.movies import MoviesTheme
 from tagalot.core.ingest import IngestSession
@@ -686,7 +687,12 @@ def _tag(
             session.tags.add_alias(tag_ids[path], alias)
     for path, description in descriptions.items():
         session.tags.set_description(tag_ids[path], description)
-    session.writer.run(lambda conn: conn.execute(insert(EntityTag), rows))
+    # The demo's own tagging: where a file's keyword already gave the tag (a song's genre,
+    # #295), the row becomes the user's.
+    tagged = sqlite_insert(EntityTag).on_conflict_do_update(
+        index_elements=["entity_id", "tag_id"], set_={"by_file": False}
+    )
+    session.writer.run(lambda conn: conn.execute(tagged, rows))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -348,7 +348,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 2
+    id, name, version = "movies", "Movies", 3  # 3: genres as file keywords (#295)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True
@@ -539,6 +539,8 @@ class MoviesTheme(Theme):
             if nfo.get(name):
                 values[name] = nfo[name]
         ctx.update(movie, title=nfo.get("title") or None, **values)
+        # Its genres can become the user's tags (DESIGN.md §7 "File keywords").
+        ctx.keywords(movie, resource, nfo.get("genres") or [])
         self._set_cast(movie, nfo.get("actors") or [], ctx)
         self._set_collection(movie, nfo.get("set"), ctx)
 
@@ -697,9 +699,12 @@ def read_nfo(path: str) -> dict[str, Any]:
         value = root.findtext(tag)
         return value.strip() or None if value else None
 
-    def joined(tag: str) -> str | None:
+    def listed(tag: str) -> list[str]:
         values = [e.text.strip() for e in root.findall(tag) if e.text and e.text.strip()]
-        return ", ".join(dict.fromkeys(values)) or None
+        return list(dict.fromkeys(values))
+
+    def joined(tag: str) -> str | None:
+        return ", ".join(listed(tag)) or None
 
     year = _int(text("year")) or _int((text("premiered") or "")[:4])
     runtime = _float(text("runtime"))
@@ -728,6 +733,7 @@ def read_nfo(path: str) -> dict[str, Any]:
         "year": year,
         "plot": text("plot") or text("outline"),
         "genre": joined("genre"),
+        "genres": listed("genre"),
         "director": joined("director"),
         "runtime": runtime * 60 if runtime else None,
         "rating": rating,

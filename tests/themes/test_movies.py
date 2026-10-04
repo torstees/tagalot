@@ -28,6 +28,7 @@ from tagalot.builtin_themes.movies import (
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
+from tagalot.core.keywords import keywords_of
 from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
@@ -324,6 +325,7 @@ def test_reading_an_nfo(tmp_path: Path) -> None:
         "year": 2010,
         "plot": "A thief who steals secrets through dreams.",
         "genre": "Science Fiction, Thriller",
+        "genres": ["Science Fiction", "Thriller"],
         "director": "Christopher Nolan",
         "runtime": 148 * 60,
         "rating": 8.8,  # the default rating
@@ -381,6 +383,8 @@ def test_nfo_files_give_details_cast_and_sets(env: Env) -> None:
     )
     assert env.roles("Inception")["nfo"] == ["Inception (2010)/movie.nfo"]
     assert _cast(env, "Inception") == ["Elliot Page", "Leonardo DiCaprio", "Tom Hardy"]
+    with env.reader.connect() as conn:  # its genres are file keywords too (#295)
+        assert keywords_of(conn, [row.id]) == {row.id: ["Science Fiction", "Thriller"]}
     # The .nfo's title wins over the file name's, and its set is a collection.
     assert "Heat (Definitive)" in env.titles(Movie)
     assert env.year("Heat (Definitive)") == 1995  # from the file name: the .nfo has none
@@ -512,5 +516,5 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
     assert _video_fields(env, "Heat")[0] == 170 * 60
 
 
-def test_the_theme_reads_files_again_after_version_1() -> None:
-    assert MoviesTheme.version == 2
+def test_the_theme_reads_files_again_after_its_changes() -> None:
+    assert MoviesTheme.version == 3  # 2: video details; 3: genres as keywords (#295)

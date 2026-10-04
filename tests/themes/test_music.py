@@ -19,6 +19,7 @@ from tagalot.builtin_themes.music import (
     album_folder,
     best_bitrate,
     from_file_name,
+    genre_list,
     normalize,
     playlist_path,
     read_tags,
@@ -506,3 +507,19 @@ def test_best_bitrate(
     song = EntityRef(5, "music.song")
     got = best_bitrate(Ctx(), song, resource, {"bitrate": before}, read)  # type: ignore[arg-type]
     assert got == expected
+
+
+@pytest.mark.parametrize(
+    ("values", "genres"),
+    [
+        (["Jazz"], ["Jazz"]),
+        (["Pop/Rock"], ["Pop", "Rock"]),
+        (["Jazz; Blues", "jazz"], ["Jazz", "Blues"]),
+        (["Rock, Pop", " "], ["Rock", "Pop"]),
+        (None, []),
+        ([], []),
+    ],
+)
+def test_genres_from_tags(values: list[str] | None, genres: list[str]) -> None:
+    """Every genre a file names, once each: they're its file keywords (#295)."""
+    assert genre_list(values) == genres

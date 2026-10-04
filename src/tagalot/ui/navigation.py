@@ -13,7 +13,9 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, Signa
 from PySide6.QtGui import QFont, QMouseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
 
-TargetKind = Literal["dashboard", "search", "view", "saved", "triage", "dedupe", "tags", "entity"]
+TargetKind = Literal[
+    "dashboard", "search", "view", "saved", "triage", "dedupe", "keywords", "tags", "entity"
+]
 SECTIONS = ("library", "searches", "saved", "tools")
 _TITLES = {"library": "LIBRARY", "searches": "SEARCHES", "saved": "SAVED", "tools": "TOOLS"}
 _SECTION = Qt.ItemDataRole.UserRole + 1
@@ -59,6 +61,7 @@ class NavigationPane(QTreeView):
             "triage": QStyle.StandardPixmap.SP_MessageBoxWarning,
             "dedupe": QStyle.StandardPixmap.SP_FileDialogDetailedView,
             "tags": QStyle.StandardPixmap.SP_FileDialogInfoView,
+            "keywords": QStyle.StandardPixmap.SP_FileDialogContentsView,
         }
         self._icons = {kind: style.standardIcon(pixmap) for kind, pixmap in icons.items()}
 
@@ -82,6 +85,7 @@ class NavigationPane(QTreeView):
             [
                 NavTarget("triage", label="Triage"),
                 NavTarget("dedupe", label="Dedupe"),
+                NavTarget("keywords", label="File keywords"),
                 NavTarget("tags", label="Tag manager"),
             ],
         )
@@ -106,6 +110,15 @@ class NavigationPane(QTreeView):
         if "saved" not in folded:
             self.setExpanded(self._headings["saved"].index(), True)
         self._refresh_headings()
+
+    def set_count(self, kind: str, count: int) -> None:
+        """Show ``count`` after an item's name, as "File keywords (7)"; none when 0."""
+        for heading in self._headings.values():
+            for row in range(heading.rowCount()):
+                child = heading.child(row)
+                target = child.data(_TARGET)
+                if isinstance(target, NavTarget) and target.kind == kind:
+                    child.setText(f"{target.label} ({count:,})" if count else target.label)
 
     def targets(self, section: str) -> list[NavTarget]:
         heading = self._headings[section]

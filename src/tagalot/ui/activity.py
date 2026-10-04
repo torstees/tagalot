@@ -16,7 +16,7 @@ The window feeds it; the problem list is read from the log when it changes.
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -99,6 +99,9 @@ class ActivityPanel(QDockWidget):
     """See the module docstring. ``roots`` and ``root_path`` give the keep's folders;
     ``reveal`` shows a path in the file manager."""
 
+    review_keywords = Signal()
+    """The "Review" link after a scan found new file keywords (#295)."""
+
     def __init__(
         self,
         roots: Callable[[], list[RootConfig]],
@@ -117,6 +120,11 @@ class ActivityPanel(QDockWidget):
         self.thumbnails = QLabel()
         self.thumbnails.setObjectName("thumbnails")
         self.thumbnails.setVisible(False)
+        self.keywords = QLabel()
+        self.keywords.setObjectName("keywords")
+        self.keywords.setWordWrap(True)
+        self.keywords.setVisible(False)
+        self.keywords.linkActivated.connect(lambda _: self.review_keywords.emit())
         self.folders = QLabel()
         self.folders.setObjectName("folders")
         self.folders.setTextFormat(Qt.TextFormat.RichText)
@@ -148,6 +156,7 @@ class ActivityPanel(QDockWidget):
         column = QVBoxLayout(body)
         column.addWidget(self.now)
         column.addWidget(self.thumbnails)
+        column.addWidget(self.keywords)
         column.addWidget(self.folders)
         column.addLayout(heading)
         column.addWidget(self.table, 1)
@@ -158,6 +167,12 @@ class ActivityPanel(QDockWidget):
 
     def set_now(self, text: str) -> None:
         self.now.setText(text)
+
+    def set_new_keywords(self, count: int) -> None:
+        """Say that the last scan found ``count`` keywords matching no tag (#295)."""
+        words = "1 new file keyword doesn't" if count == 1 else f"{count:,} new file keywords don't"
+        self.keywords.setText(f"{words} match a tag. <a href='#'>Review</a>")
+        self.keywords.setVisible(count > 0)
 
     def set_queue(self, left: int) -> None:
         self.thumbnails.setText(f"Making thumbnails: {left:,} left")
