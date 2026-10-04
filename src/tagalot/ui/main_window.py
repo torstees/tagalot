@@ -806,7 +806,7 @@ class MainWindow(QMainWindow):
             self,
             "Remove the tag from other types?",
             f"{items} {name!r} or one of its sub-tags. Remove it from "
-            f"{'it' if count == 1 else 'them'}? (You can undo this.)",
+            f"{'that item' if count == 1 else 'those items'}? (You can undo this.)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
