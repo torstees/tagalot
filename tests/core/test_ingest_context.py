@@ -384,13 +384,15 @@ def test_flushed_entities_are_searchable(env: Env) -> None:
 
 def test_update_a_known_entity_respects_user_edits(env: Env) -> None:
     with env.engine.begin() as conn:
-        ctx = env.session(conn)
-        ref = ctx.upsert(Album, "k", title="Old", year=1990)
+        ref = env.session(conn).upsert(Album, "k", title="Old", year=1990)
+    with env.engine.begin() as conn:  # the user edits the year (its own write)
         conn.execute(
             update(FieldProvenance)
             .where(FieldProvenance.entity_id == ref.id, FieldProvenance.field == "year")
             .values(source=FieldSource.USER)
         )
+    with env.engine.begin() as conn:  # a later scan
+        ctx = env.session(conn)
         ctx.update(ref, title="New", year=2000)
         record = ctx.get(ref)
         assert (record.title, record.fields["year"]) == ("New", 1990)

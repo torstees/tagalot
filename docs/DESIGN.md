@@ -115,7 +115,7 @@ Where the time goes (cProfile):
 - **Thumbnails** scale almost linearly with threads (7× on 8 threads), since each is I/O plus GIL-free decoding.
 - Walking and rescans are already fast.
 
-**Conclusion: no Rust.** None of the costs is Python code a faster language would remove: they are I/O latency (fixed by doing several files at once), C code that is already native (decoding, hashing), and the number of database statements per item (fixed by batching them). Follow-ups: fingerprint files on several threads (#273, done: below), run the theme's `prepare` on several threads (#274, done: below), resolve background thumbnails on several threads (#275, done: below), and fewer, batched statements in ingest (#276).
+**Conclusion: no Rust.** None of the costs is Python code a faster language would remove: they are I/O latency (fixed by doing several files at once), C code that is already native (decoding, hashing), and the number of database statements per item (fixed by batching them). Follow-ups: fingerprint files on several threads (#273, done: below), run the theme's `prepare` on several threads (#274, done: below), resolve background thumbnails on several threads (#275, done: below), and fewer, batched statements in ingest (#276, done: below).
 
 **Parallel fingerprints** (#273), on the same share with the generic theme: fingerprinting took 77 s hashing one file at a time and 15.5 s hashing 8 at once (the first scan went from 95 s to 34 s; runs alternated 8, 1, 8 to rule out caching). 16 threads gave 13 s and 32 gave 12 s, so 8 is kept, which is also gentler on a single spinning disk. On the local copy, with warm caches, it was 1.7 s against 0.85 s. `scripts/profile_scan.py --fingerprint-threads N` repeats the comparison.
 
@@ -131,6 +131,14 @@ Where the time goes (cProfile):
 8 readers are kept. Beyond them, the rest is CPU in one process: Pillow's decoding and ingest's Python share the GIL. A process pool could go further, but would need themes to be picklable and their `prepare` results to cross processes, which is not worth it until #276 makes ingest cheaper. `--prepare-threads N` repeats the comparison.
 
 **Background thumbnails** (#275), 300 pictures from the same share by the queue, from a cold cache: 53.8 s on one thread (5.6 a second), 13.4 s on 4 (22.4), 7.3 s on 8 (41.3). 4 threads are kept, since the grids have 4 of their own for what is on screen and both read the same share; `--threads 1 4 8` repeats the comparison.
+
+**Cheaper ingest** (#276). A new file cost 14.1 statements with the generic theme and 18.8 with assets2d, most of them lookups that can't find anything for an item made in the same transaction, each statement built afresh by SQLAlchemy. Now 6.2 and 6.6:
+
+- The ingest session remembers what it learned, which stays true because only it writes while its transaction is open: the next entity id (looked up once), keys looked up or made, the items it made (no user edits, hand-made links, or thumbnail yet, so those lookups are skipped), each item's user-edited fields, the values it already wrote (the same artist title for every image isn't written again), and whether the keep has any merged items at all (most never do; merging never happens during an ingest).
+- New items' depth-0 closure rows are added together at flush.
+- The statements every item runs (the key lookup, the entity and theme-row inserts, the link, the provenance upsert, whose-file-is-it) are built once with bound parameters, on Core tables rather than through the ORM.
+
+Ingesting 50,000 generic files went from 122 s to 13 s (`tests/core/test_ingest_cost.py`, with a test of statements per file that runs every time). On the share, the generic theme's ingest went from 17.4 s to 2.7 s and its first scan is now 18.8 s (98 s when profiling began); assets2d's ingest wait fell from 37 s to 4.7 s, leaving its first scan (102 s) almost all image decoding in `prepare`. That is where a process pool would now pay off.
 
 ## 4. The keep on disk
 
@@ -1078,3 +1086,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | The theme's `prepare` runs on 8 threads, 10 resources per call, reading the next batch while the writer ingests the current one (#274, §3 Performance, §6). The assets2d first scan on the share went from 192 s to 107 s. Theme API: `prepare` calls may run at once, so they keep state local (documented in `api.py` and THEMES.md; built-in themes already did). |
 | 2026-10 | The background thumbnail queue makes 4 thumbnails at once (#275, §3 Performance, §6 step 7): 4 times as fast on the share. 8 would be 7 times, but would compete with the grids' own 4 threads for the share while someone browses. |
 | 2026-10 | Folder pickers start where a folder was last chosen in any of them, remembered across sessions in `settings.toml` (`last_folder`, §4); a new keep's location starts there too, rather than the home folder (asked for in review). |
+| 2026-10 | Cheaper ingest (#276, §3 Performance): the ingest session caches what only it can change during its transaction (next id, keys, items it made, user-edited fields, values written, whether any merges exist) and runs prebuilt Core statements. 14.1 statements per new file became 6.2; 50,000 files ingest in 13 s instead of 122 s. Tests that change the database behind an open session's back don't reflect the app (all writes go through the one writer), so one such test was restructured. |
