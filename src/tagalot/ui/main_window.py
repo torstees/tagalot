@@ -65,6 +65,7 @@ from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.core.thumbnails.queue import QueueResult
 from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
+from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write_back, write_files
 from tagalot.themes.api import Kind, SearchView
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
@@ -89,6 +90,7 @@ from tagalot.ui.tag_types_dialog import TagTypesDialog
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
 from tagalot.ui.triage import UNTAGGED_TAB, TriagePage
 from tagalot.ui.workers import ScanController, run_in_pool
+from tagalot.ui.write_back_dialog import WriteBackDialog
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +489,7 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
+            detail.write_back_requested.connect(self.write_back)
             detail.unlink_requested.connect(self.tag_actions.unlink_file)
             detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
             detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
@@ -600,6 +603,7 @@ class MainWindow(QMainWindow):
         search.open_requested.connect(self.open_entity)
         search.save_requested.connect(lambda: self.save_search(as_new=False, page=search))
         search.reread_requested.connect(self.reread)
+        search.write_back_requested.connect(self.write_back)
         search.action_requested.connect(self.run_action)
         search.file_opener = self.files
         search.zoom_requested.connect(self.zoom)
@@ -651,6 +655,80 @@ class MainWindow(QMainWindow):
             return
         self.statusBar().showMessage("Reading files again\u2026")
         self.tag_actions.reread(entity_ids, replace_edits)
+
+    # --- Write to file… (#299) ---
+
+    def write_back(self, entity_ids: list[int]) -> None:
+        """Work out what Write to file… would change (in a worker), show it, and write the
+        files the user keeps ticked; then scan them, so Tagalot reads what it wrote."""
+        session = self.session
+        assert session is not None
+        roots = [r for r in session.keep.config.roots if r.watched]
+        paths = {r.id: session.root_path(r.id) for r in roots}
+        writable = {r.id for r in roots if r.writable}
+
+        def plan() -> WritePlan:
+            tree = session.tag_cache.get()
+            with session.reader.connect() as conn:
+                return plan_write_back(conn, session.schema, tree, entity_ids, paths, writable)
+
+        def planned(found: WritePlan) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.statusBar().clearMessage()
+            if not any(f.changes for f in found.files):
+                self._nothing_to_write(found)
+                return
+            chosen = self.confirm_write_back(found)
+            if chosen:
+                self.statusBar().showMessage("Writing files\u2026")
+                run_in_pool(
+                    lambda: write_files(chosen, session.keep.dir, writable),
+                    on_done=self._written,
+                    on_error=lambda e: self.statusBar().showMessage(f"Couldn't write: {e}"),
+                )
+
+        self.statusBar().showMessage("Reading files to write\u2026")
+        run_in_pool(
+            plan,
+            on_done=planned,
+            on_error=lambda e: self.statusBar().showMessage(f"Couldn't read the files: {e}"),
+        )
+
+    def confirm_write_back(self, plan: WritePlan) -> list[FileWrite]:
+        """Show the preview; the files to write (none if the user cancels)."""
+        dialog = WriteBackDialog(plan, self)
+        return dialog.chosen() if dialog.exec() == QDialog.DialogCode.Accepted else []
+
+    def _nothing_to_write(self, plan: WritePlan) -> None:
+        reasons = [f"{f.title} ({f.relpath}): {f.problem}" for f in plan.files if f.problem]
+        reasons += [f"{title}: {why}" for title, why in plan.skipped]
+        if not reasons:
+            self.statusBar().showMessage("Nothing to write: the files already say this.")
+            return
+        QMessageBox.information(
+            self, "Nothing to write", "Nothing was written.\n\n" + "\n".join(reasons)
+        )
+
+    def _written(self, results: list[WriteResult]) -> None:
+        if not shiboken6.isValid(self) or self.session is None:
+            return
+        done = [r for r in results if r.error is None]
+        failed = [r for r in results if r.error is not None]
+        count = f"{len(done)} file" + ("" if len(done) == 1 else "s")
+        text = f"Wrote {count}."
+        if done and done[0].backup is not None:
+            folder = done[0].backup.relative_to(self.session.keep.dir).parts[:2]
+            text += f" Copies of the originals are in {'/'.join(folder)} in the keep folder."
+        self.statusBar().showMessage(text)
+        if failed:
+            QMessageBox.warning(
+                self,
+                "Some files weren't written",
+                "\n".join(f"{r.write.relpath}: {r.error}" for r in failed),
+            )
+        if done:
+            self._scan_roots(sorted({r.write.root_id for r in done}))
 
     def run_action(self, method: str, entity_ids: list[int]) -> None:
         """Run a theme action (a menu entry or a page's button), then open what it asks."""

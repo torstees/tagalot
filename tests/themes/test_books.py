@@ -563,3 +563,32 @@ def test_office_covers_render(tmp_path: Path) -> None:
         assert image is not None
         assert image.convert("RGB").getpixel((5, 5))[1] > 150  # type: ignore[index]
     assert load_office_cover(str(write_docx(tmp_path / "b.docx")), 32) is None
+
+
+# --- writing back (#299) ---
+
+
+def test_front_matter_uses_the_files_own_keys() -> None:
+    theme = BooksTheme()
+    item = _record(
+        "Mother of Learning",
+        series_index=2.0,
+        year=2012,
+        language="en",
+        description="A loop.",
+        link="https://example.com/mol",
+        publisher=None,
+    )
+    edited = frozenset({"title", "series_index", "language", "description", "link", "publisher"})
+    current = {"Number": 1, "lang": "fr", "url": "https://old.example.com"}
+    assert theme.front_matter(Book, item, edited, current) == {
+        "title": "Mother of Learning",
+        "number": 2,  # a whole number, under the key the file uses
+        "lang": "en",
+        "description": "A loop.",
+        "url": "https://example.com/mol",
+        "publisher": None,  # cleared in Tagalot: removed from the file
+    }
+    assert theme.front_matter(Book, item, frozenset(), current) == {}  # nothing edited
+    assert theme.front_matter(Comic, item, edited, current) == {}
+    assert BooksTheme.write_back == [Book]

@@ -159,6 +159,15 @@ class KeepConfigWindow(QWidget):
         form.addRow("Folder:", path_row)
         form.addRow("On this computer:", local_row)
         form.addRow("Skip:", self.exclude)
+        self.writable = QCheckBox("Let Write to file… change files in this folder")
+        self.writable.setObjectName("writable")
+        self.writable.setToolTip(
+            "Off: Tagalot never changes a file here. On: Write to file… (and only that) may "
+            "update the metadata of files here, after showing you the change, keeping a copy "
+            "in the keep's backups folder."
+        )
+        self.writable.clicked.connect(self._toggle_writable)
+        form.addRow("Write back:", self.writable)
         form.addRow("Status:", self.status)
 
         self.scan_button = QPushButton("Scan now")
@@ -357,6 +366,7 @@ class KeepConfigWindow(QWidget):
             else "Scan it again; its items reconnect"
         )
         self.scan_button.setEnabled(root.watched)
+        self.writable.setChecked(root.writable)
         self._show_root_options(root)
         self._show_status()
 
@@ -525,6 +535,27 @@ class KeepConfigWindow(QWidget):
         offers_scan = "path" in changes or "exclude" in changes
         message = f"Saved {root.name}." + (" Scan it to update its files." if offers_scan else "")
         self._run(lambda: session.save_config(config), message)
+
+    def _toggle_writable(self, on: bool) -> None:
+        """Mark the folder writable (after asking) or not."""
+        root = self.current_root()
+        if root is None:
+            return
+        if on:
+            answer = QMessageBox.question(
+                self,
+                "Let Tagalot write to this folder?",
+                f"Let Write to file… change files in {root.name} ({root.path})?\n\n"
+                "Tagalot still changes nothing on its own: only when you choose Write to "
+                "file… on items, after showing you each change. It changes only the "
+                "metadata block (a Markdown file's front matter), refuses a file that "
+                "changed since it was read, and keeps a copy of each file it changes in the "
+                "keep's backups folder.",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.writable.setChecked(False)
+                return
+        self._edit(writable=on)
 
     def _edit_path(self, path: str) -> None:
         self._edit(path=path)

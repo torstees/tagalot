@@ -20,8 +20,9 @@ from typing import Any, ClassVar, Literal, Protocol, TypeVar
 API_VERSION = 3
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
-the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), and the
-``"url"`` field display."""
+the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
+``"url"`` field display, and writing back to files (:attr:`Theme.write_back`,
+:meth:`Theme.front_matter`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1039,6 +1040,12 @@ class Theme:
     near-duplicates."""
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
+    write_back: ClassVar[Sequence[type[Entity]]] = ()
+    """Entity types whose Markdown files **Write to file…** may update (DESIGN.md §4
+    *Writing back to files*; API version 3): their tags, and the keys
+    :meth:`front_matter` gives. Only files in folders the user marked writable are ever
+    changed, only by that command, and only their front matter; the core does the
+    writing."""
 
     def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
         """Read what :meth:`ingest` needs from the files, before it runs: image sizes, tags,
@@ -1080,6 +1087,26 @@ class Theme:
         sets ``api_version = 2``, so an older Tagalot refuses the theme rather than skip
         its schema changes. The default does nothing.
         """
+
+    def front_matter(
+        self,
+        entity_type: type[Entity],
+        item: Record,
+        edited: frozenset[str],
+        current: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """The front-matter keys **Write to file…** sets for one item of a
+        :attr:`write_back` type: ``{key: value}``, a value of ``None`` removing the key.
+
+        ``edited`` names the item's fields (and ``"title"``) the user edited in Tagalot;
+        only those are written, so return keys for them alone (values that came from the
+        file are already there). ``current`` is the file's front matter now, keys as
+        written, so a key it already uses can be kept (``number`` rather than
+        ``series_index``). Values may be text, numbers, booleans, dates, or lists of them.
+        Tags are the core's: it writes them under ``tags`` (keeping the file's own words for
+        tags its keywords gave). The default sets nothing else.
+        """
+        return {}
 
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
         """Cheap keys for finding near-duplicates (DESIGN.md §13): only items of a type
