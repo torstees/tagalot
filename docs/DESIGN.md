@@ -14,12 +14,12 @@ Tagalot never stores or moves user data. A keep holds only metadata and caches; 
 - Make tagging fast: a filterable tag panel with drag-and-drop and keyboard application to one or many items.
 - Plug-and-play themes: a programmer can add a new content type (entity classes, metadata fields, views, thumbnail logic, actions) by dropping a single Python file into a themes folder, without changing the application.
 - Work well with network shares, including shares that are slow or temporarily offline.
-- Never modify, move, rename, or delete the user's files.
+- Never modify, move, rename, or delete the user's files. The one exception is writing metadata back into a file, only in a folder the user marked writable and only by an explicit action (§4 *Writing back to files*).
 
 ### Non-goals (v1)
 
 - Multi-user concurrent editing of one keep.
-- Writing metadata back into files (for example, editing ID3 tags).
+- Writing metadata back into files in general (for example, editing ID3 tags). The narrow exception is planned for Markdown front matter (§4 *Writing back to files*, M20).
 - Playing media or rendering fonts inside the app; files are handed to the OS or a configured program.
 - Online metadata scraping (the theme API should leave room for it; see §14).
 
@@ -46,6 +46,7 @@ Tagalot never stores or moves user data. A keep holds only metadata and caches; 
 - **mutagen** for audio metadata and embedded cover art.
 - **pymediainfo** (MIT; #259) for video details in the movies theme: runtime, picture size, codecs, and audio languages for MKV, MP4, AVI, and the rest. Its wheels bundle the MediaInfo library for Windows, macOS (Intel and Apple silicon), and Linux (glibc 2.27+), so nothing else is installed; it reads headers, not frames. Chosen over pure-Python readers (more formats, one code path) and ffmpeg (a 20–30 MB binary whose output would be parsed as text).
 - **Archives:** `zipfile` (stdlib), `py7zr` for 7z, `rarfile` for RAR (requires an external `unrar`/`bsdtar`; RAR support degrades gracefully when missing). All behind one internal `ArchiveReader` interface.
+- **Planned for the books theme** (M20): **pypdfium2** (Apache-2.0/BSD; PDF metadata and first-page covers; PyMuPDF was passed over for its AGPL license) and **PyYAML** (YAML front matter in Markdown; TOML front matter uses `tomllib`).
 - **platformdirs** for per-user config/cache paths; **tomllib** / **tomli-w** for TOML.
 - **hashlib.blake2b** (stdlib) for fingerprints.
 - Tooling: **pytest**, **pytest-qt**, **ruff** (lint and format), **mypy**.
@@ -193,6 +194,13 @@ after_scan = false                         # don't make a scan's thumbnails in t
 - **Default excludes.** New roots start with `core.keep.DEFAULT_EXCLUDES`, operating-system and NAS leftovers that are never user content: macOS `.DS_Store`, AppleDouble `._*` companions (which carry the real file's extension, so they would otherwise look like photos), `.AppleDouble`, `.Spotlight-V100`, `.Trashes`, `.fseventsd`, `.TemporaryItems`; Windows `Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, `System Volume Information`; Synology `@eaDir` and `#recycle`. They are written into `keep.toml` rather than applied implicitly, so they are visible and can be edited or removed. Other dot files are left alone. Existing keeps are not changed. Lists too long for one line are written one item per line.
 - **Theme options** (#82). `[theme.options]` sets the theme's declared options (§9) for the keep (`artist_level = 2`), and a root's `options = { artist_level = 1 }` overrides them for that root. Values are numbers, true/false, or strings; names and types are checked against the theme when a root is scanned, and a value that doesn't fit is reported and replaced by the option's default. They are set in the Keep configuration window (§12), or by hand.
 - **Thumbnail size.** The optional `[thumbnails] max_size` overrides the theme's `thumbnail_max` (§10) for this keep: the resolution thumbnails are made and cached at. It is set in the Keep configuration window's Thumbnails tab (§12), which applies it at once, or by hand.
+- **Writing back to files** (M20, #299; **planned**). The one exception to "never modify the user's files", and narrow on purpose:
+  - **Off unless a folder allows it:** a watched folder is marked writable in Keep configuration (`writable = true` on the root in `keep.toml`), off by default. No other root is ever written to.
+  - **Only an explicit action writes**, never a scan, a tag change, or anything automatic: **Write to file…** on the selected items, offered by a theme for the formats it can write (the books theme: Markdown front matter).
+  - **Before writing:** a preview of the change for each file; the file must be as Tagalot last read it (size and modification time), else it is skipped and reported; a backup copy goes to the keep folder (`backups/`), not beside the file.
+  - **Only the metadata block changes** (the front matter between its markers); the rest of the file is kept byte for byte. A file without front matter gains a block at the top.
+  - **Tags are written** with the file's own wording when they came from one of its keywords (§7), else as their full path (`Genre/Fantasy`, as Obsidian writes nested tags).
+  - The theme API gains a writer hook for this, designed in #299; themes still never open a file for writing themselves.
 - **Unknown keys in keep.toml are ignored with a logged warning**, so an older build can still open a keep written by a newer one. They are not preserved when Tagalot rewrites the file.
 
 ### Per-user settings (not in the keep)
@@ -242,7 +250,9 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 
 **tag** — `id`, `parent_id` (nullable), `name`, `color` (nullable), `sort_order`, `description` (nullable; shown in tooltips and matched when finding tags, §7). Sibling names are unique case-insensitively via a unique expression index on `(coalesce(parent_id, 0), lower(name))`; the `coalesce` is needed because SQLite treats NULLs as distinct in unique indexes, which would otherwise allow duplicate root-level tags (tag ids start at 1, so `0` is a safe sentinel). Tag operations in `tags.py` also check for clashes before writing so the UI can show a clear message; the index is the backstop. SQLite's `lower()` folds ASCII only, so the app-level check compares with `str.casefold()`. Names may repeat under different parents; the UI shows the full path when ambiguous.
 
-**tag_alias** — `tag_id`, `alias`. Used only for matching in the tag filter box.
+**tag_alias** — `tag_id`, `alias`. Used for matching in the tag filter box and, planned (M20), for matching file keywords to tags (§7 *File keywords*).
+
+**Planned (M20, #294, core format 10):** **entity_keyword** — `entity_id`, `resource_id` (the file that said it; both cascade), `keyword` (as written), `match_key` (case- and accent-folded); PK `(entity_id, resource_id, match_key)`. **keyword_ignored** — `match_key` (PK). **file_tag_removal** — `entity_id`, `tag_id` (both cascade; PK both): a file-derived tag the user removed from that item. **entity_tag** gains `by_file` (bool): the tag is there only because a file's keyword matched it.
 
 **entity_tag** — `entity_id`, `tag_id`, `added_at`. PK `(entity_id, tag_id)`; index `(tag_id, entity_id)`. Only directly applied tags are stored; parent tags are never stored implicitly.
 
@@ -356,6 +366,22 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 - Tags form a tree. Depth is expected to be shallow (a handful of levels), and tag counts in the hundreds to low thousands. The full tree is cached in memory and invalidated on change. The cache holds an immutable snapshot (`TagTree`: children in display order, memoized subtrees, paths, aliases, case-insensitive sibling lookup, filter-box matching); tag operations invalidate it after they commit, and readers holding an older snapshot are unaffected.
 - **Search semantics:** selecting a tag means "this tag or any of its descendants."
 - **Applying a child tag never stores its parent.** Expansion at query time makes the parent match.
+
+### File keywords
+
+**Planned** (M20: #294 core, #295 page; designed in review). Files often carry their own tags: front matter's `tags`, EPUB subjects, ComicInfo genres, PDF keywords. They become Tagalot tags only by matching tags you defined, so the tag tree never fills with every spelling a file used:
+
+- **Themes report keywords** (`ctx.keywords(entity, resource, keywords)`, §9): what one file says about one item, replacing what that file said before. An item's keywords are those of all its files.
+- **Matching:** a keyword matches a tag when it equals the tag's **full path** (`Genre/Fantasy`), one of its **aliases**, or its **name** when no other tag has that name, ignoring case and accents. An item gets the tags its keywords match; nothing creates a tag.
+- **Mapping is aliasing:** tying an unmatched keyword to a tag adds it as that tag's alias, so it matches from then on, for every item, and also finds the tag in the filter box. Renaming, merging (the old name becomes an alias, §7 operations), and deleting tags, and editing aliases, re-apply file tags; each is undoable as usual. Deleting a tag sends its keywords back to unmatched.
+- **Tags from files are marked** (`entity_tag.by_file`) and shown so in the tagging panel. A scan re-applies them as the files change: a keyword gone from every file takes its tag away, unless the user also added the tag by hand.
+- **Removing one by hand sticks:** it is remembered for that item (`file_tag_removal`), so later scans leave it off; the item's page offers **Restore**, and adding the tag back by hand clears the record.
+- **Finding unmatched keywords:**
+  - a scan that finds new ones says so ("7 new file keywords don't match a tag"), with a **Review** link in the Activity panel;
+  - TOOLS → **File keywords (7)** counts them while any are unmatched;
+  - the **File keywords** page lists each keyword with its item count and example titles, most-used first: **Map to tag…** (the tag picker), **Create tag…** (at a path you choose, then mapped), or **Ignore** (`keyword_ignored`); matched and ignored keywords are listed too, to change;
+  - an item's page has a **From the file** section: its keywords, the tags they give, and Map…/Ignore for unmatched ones;
+  - Triage gains **Unmatched keywords**: items with a keyword that matches no tag and isn't ignored.
 
 ### Tag operations (tag manager)
 
@@ -559,7 +585,7 @@ Importing a theme module never touches a database or a SQLAlchemy registry. This
 
 Every entity has the core `title` column (display name, always text-searchable, shown on cards). A theme relabels it with `title_label` rather than defining its own name column.
 
-Fields are declared as annotated class attributes: `name: <type> = field(label, *, card=False, search=None, editable=True, detail=True, display=None)`. `display` formats a number field for people (#184): `"bytes"` shows a size as `3.0 MB` (1 KB = 1024 bytes, up to TB), `"duration"` shows seconds as `3:25` or `1:02:03`; `DISPLAY_FORMATS` lists them and the loader refuses a format on a field that isn't an int or float. The format applies wherever values are shown (list cells, card lines, detail pages, the preview strip, filter chips and choices, `core/formats.py`); sorting, filtering, and editing use the stored number. Supported types are `str`, `int`, `float`, `bool`, `date`, and `datetime`; `X | None` makes the column nullable. `field()` returns a plain field spec; the core turns it into a typed column when the keep opens. `search` is one of `"text"`, `"range"` (numbers/dates), `"choice"` (distinct values), or `None`. The core generates cards, detail sections, edit forms, and filter widgets from this metadata. Every entity also has the JSON `extra` column for ad-hoc user fields (searchable by text only).
+Fields are declared as annotated class attributes: `name: <type> = field(label, *, card=False, search=None, editable=True, detail=True, display=None)`. `display` formats a number field for people (#184): `"bytes"` shows a size as `3.0 MB` (1 KB = 1024 bytes, up to TB), `"duration"` shows seconds as `3:25` or `1:02:03`; `DISPLAY_FORMATS` lists them and the loader refuses a format on a field that isn't an int or float. **Planned** (M20, #298; additive): `"url"` on a `str` field shows a web address as a link that opens in the browser, only for `http` and `https` addresses (anything else shows as plain text). The format applies wherever values are shown (list cells, card lines, detail pages, the preview strip, filter chips and choices, `core/formats.py`); sorting, filtering, and editing use the stored number. Supported types are `str`, `int`, `float`, `bool`, `date`, and `datetime`; `X | None` makes the column nullable. `field()` returns a plain field spec; the core turns it into a typed column when the keep opens. `search` is one of `"text"`, `"range"` (numbers/dates), `"choice"` (distinct values), or `None`. The core generates cards, detail sections, edit forms, and filter widgets from this metadata. Every entity also has the JSON `extra` column for ad-hoc user fields (searchable by text only).
 
 ### Roles
 
@@ -584,6 +610,7 @@ Themes read and write keep data only through the context object `ctx` passed to 
 - `ctx.contain(parent, child)`, `ctx.uncontain(parent, child)`. Within a batch the last call for an edge wins, so a theme may contain and later uncontain (or the reverse) as it works things out.
 - `ctx.relate(name, a, b)`, `ctx.unrelate(name, a, b)` (the user's hand edits win, #260: `unrelate` leaves a relationship the user added, `relate` doesn't restore one the user removed, and in a `many=False` relationship it doesn't displace the user's partner), and `ctx.related(name, entity) -> list[EntityRef]` (the entities on the other side, from either end, in id order; #258), so a theme can see what it related before and let go of what's gone.
 - `ctx.find(Type, **equals) -> list[EntityRef]` and `ctx.get(entity) -> Record` (read-only field values) for lookups.
+- **Planned** (M20, #294; additive): `ctx.keywords(entity, resource, keywords)`: the keywords one file gives an item (§7 *File keywords*), replacing what that file gave before; they become tags only by matching defined tags.
 - `ctx.option(name)`: an option's value for the root being scanned (its override, else the keep's, else the default); `ctx.contents(entity)` (direct children, counting this batch's pending `contain`/`uncontain`) and `ctx.linked(entity, role=None)` (linked resource ids); `ctx.delete(entity)` deletes an entity the theme made (its links, containment, and tags go with it; resources stay), for example an artist left empty. In a scan, an item the user made by hand (no ingest key, such as an actor added to a cast as new, #260) is left alone.
 - `ctx.prepared(resource)`: what `prepare()` returned for the resource, or `None` (nothing returned for it, or no prepare step, as in `migrate` and actions).
 - `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
@@ -683,6 +710,24 @@ Details (`core/theme_db.py`, `open_theme()`, run after the core schema is open):
    - **Cast by hand** (#260): a related section (Cast on a movie's page, Filmography on an actor's) is an embedded search (§12) with an **Add…** button, and **Remove from cast** on its items' menus (several at once, as one step). Add… opens a dialog (`ui/relate_dialog.py`) that searches the other side's items as you type (those already there are greyed out) and offers "New actor: <name>" for the text typed. Adding and removing are each one undo step (`core/relations.py`) and are recorded in `user_relation`, so reading the movie's .nfo again neither removes someone added by hand nor brings back someone removed. A new actor is an item the user made (no ingest key), so scans never delete it, even out of every cast.
    - **Views** (#125), all grids sorted by title: **Movies** (`inherit_tags`, so a tag on a collection counts for its movies: tag The Lord of the Rings "Fantasy" and Movies with Fantasy lists its films), **Actors**, and **Collections**. An actor's page shows their fields and **Filmography** (the cast relationship from their side, as a list or a grid of posters, with Add… and Remove, #260); a movie's **Cast** is a list or grid of actors' photos; a collection's page lists its movies by year, then title (`contents_sort`). Movie cards show the year and quality.
    - **Pages and thumbnails:** a movie's page shows its fields, its videos, its cast (links to the actors), a gallery of its screenshots, and its .nfo, with the poster as its header picture. A movie's thumbnail is its poster, else its first screenshot, else the video icon; a collection's its poster, else one of its first five movies'; an actor's their photo.
+5. **books** — Universe ⊃ Series ⊃ Book, Comic; Collection ⊃ Book, Comic; Author ↔ Book, Comic (M20, #293; **planned**, designed in review). Fiction and nonfiction alike: novels, nonfiction, comics, stories, and documents.
+   - **Types:** **Book** (EPUB, PDF, Markdown, DOCX, ODT, Pages, `.doc`, and link files) and **Comic** (CBZ, CBR, CB7), separate types like assets2d's, so views and fields can differ (a comic has an issue number and a story arc). **Author** (with `sort_name`, "Pratchett, Terry"). **Series**: works in reading order, by `series_index` (a float: 1, 2, 2.5). **Universe**: series and standalone works sharing a world (Discworld, Cosmere, Marvel). **Collection**: an omnibus or anthology holding works.
+   - **Credits:** relationships from a work to its people: `writers` ("Written by" / "Bibliography") and `artists` (pencils, inks, colors, covers: "Art by" / "Artwork"), as cast is in the movies theme, with hand edits that stick (#260).
+   - **A work and its files:** a work is keyed by its normalized title and first writer (or series and number), so the same novel as an EPUB and a PDF, bought from two sites, is one work whose files are its versions (role `file`, many), as songs and movies have versions. A file already linked to a work updates it in place.
+   - **Sources:** where a file was bought or downloaded. The theme option `source_level` names the folder level that is the site (0, the default: none; `1` for `Humble Bundle/…`), else front matter's `source`, ComicInfo's `Web`, or EPUB's publisher. A work's `sources` field lists its files' sources ("Humble Bundle, Kobo"); each file's shows on the page.
+   - **Different names for one writer:** one author per spelling, as the files give them; **merging** them (§13) keeps the merged names pointing at the kept author, so later files under either spelling land there. Pen names stay separate authors, related by hand.
+   - **Reading files** in `prepare()`, by format (the order they are built in):
+     - **EPUB** (#296): the OPF package (`zipfile` and `xml.etree`): `dc:title`, `dc:creator` (with its role: `aut` writer, `ill` artist, `edt`), `calibre:series` and `series_index` or EPUB 3 `belongs-to-collection`, `dc:subject` (keywords), `dc:publisher`, `dc:language`, `dc:date`, `dc:identifier` (ISBN), `dc:description`; the cover from the manifest's `cover-image` (or `meta name="cover"`).
+     - **Comic archives** (#296): `ComicInfo.xml` (`Series`, `Number`, `Volume`, `Title`, `Writer`, `Penciller`, `Inker`, `Colorist`, `CoverArtist`, `Publisher`, `Imprint`, `Genre` and `Tags` as keywords, `Web`, `Year`, `StoryArc`, `SeriesGroup` as the universe); the cover is the first page (`ArchiveFirstImage`).
+     - **PDF** (#297): the document info (`Title`, `Author`, `Subject`, `Keywords`) and the first page rendered as the cover, with `pypdfium2`.
+     - **Markdown** (#297): front matter, YAML between `---` lines or TOML between `+++` lines: `title`, `author`/`authors`, `series`, `series_index` (or `number`), `universe`, `tags`/`keywords`, `source`, `date`, `publisher`, `language`, `cover` (a picture path beside the file).
+     - **DOCX and ODT** (#298): `docProps/core.xml` / `meta.xml` (title, creator, keywords, subject) and their embedded thumbnails. **Pages** (#298): the package's preview image (Apple's own format holds the rest); the title from the file name. Legacy **`.doc`**: the file name only.
+     - **Link files** (#298), for works that live on the web (a serial on Royal Road or AO3): Windows `.url` (an INI file's `URL=`), macOS `.webloc` (a property list's `URL`), and Linux `.desktop` links (`Type=Link`, `URL=`). The address becomes the work's `link`; the title comes from the file name (Tagalot never visits the page, §14 *Metadata fetchers*). Opening one opens the address in the browser, as the operating system does for the file.
+     - Without metadata, the file name: `Author - Title (Year)`, `Series 03 - Title`, comics as `Series #012 (2020)`.
+   - **Links:** a work's `link` field (`display="url"`, §9 *Fields*) holds its web address, from a link file, front matter's `url`, ComicInfo's `Web`, or EPUB's `dc:source`; clicking it opens the page.
+   - **Keywords** from files (subjects, tags, genres) are reported with `ctx.keywords` and become tags only through **file keywords** (§7): defined tags they match, never new ones.
+   - **Views:** **Books** and **Comics** (grids; `inherit_tags`, so a tag on a series or universe counts for its works), **Authors**, **Series** (sorted by title, opening to its works in reading order), **Universes**, and **Collections**. A work's page shows its fields, files with their sources, credits, series and number, and its keywords (§7). Near-duplicates: works with the same writer and a similar title.
+   - **Write-back** (#299): **Write to file…** on Markdown works in a writable folder (§4 *Writing back to files*) writes their tags and fields into the front matter.
 
 ## 10. Thumbnails
 
@@ -947,6 +992,8 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 
 ## 14. Future work
 
+- **The books theme and file keywords** (M20, #293): §7 *File keywords*, §9 *Built-in themes* (books), §4 *Writing back to files*.
+- **Works from a link alone**: a book with no file at all, made by pasting an address ("New book from link…"). It needs works made by hand, an exemption from Missing files, and an answer for where the link lives; link files (§9 books) cover the common case meanwhile.
 - **Archive members as resources**, using `resource.parent_resource_id` and paths inside the archive, so a font inside a zip can be its own entity.
 - **Metadata fetchers** (TMDb, MusicBrainz) as an optional theme hook writing fields with provenance `fetched`.
 - **Rust hot spots** via PyO3 if profiling justifies them (profiled in #131: not yet, §3 Performance).
@@ -1089,3 +1136,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Cheaper ingest (#276, §3 Performance): the ingest session caches what only it can change during its transaction (next id, keys, items it made, user-edited fields, values written, whether any merges exist) and runs prebuilt Core statements. 14.1 statements per new file became 6.2; 50,000 files ingest in 13 s instead of 122 s. Tests that change the database behind an open session's back don't reflect the app (all writes go through the one writer), so one such test was restructured. |
 | 2026-10 | `aggregate_up` is the filter bar's **By contents** toggle beside Contained and Inherit tags, remembered per view and in saved searches; themes can start a view with it on (`SearchView(aggregate_up=True)`, theme API additive) (#133, §8, §12, §15). |
 | 2026-10 | MediaInfo parses one video at a time (a lock in the movies theme, #292): since `prepare` runs on several threads (#274), concurrent parses crashed the test process on macOS twice. Native libraries a theme uses must be thread-safe or guarded; PDFium (planned for books, #297) needs the same. |
+| 2026-10 | Planned in review: a **Books** built-in theme (M20, #293): Book and Comic works with files as versions and per-file sources, authors (merging joins one writer's spellings), series, universes, and collections; EPUB, comic archives, PDF, and Markdown first, then DOCX, ODT, and Pages; new dependencies pypdfium2 and PyYAML (§3, §9). |
+| 2026-10 | Planned in review: **file keywords** (§7): files' own tags become Tagalot tags only by matching defined tags (full path, alias, or unique name); mapping a keyword adds it as the tag's alias; unmatched ones are surfaced (a page, a TOOLS count, a scan notice, the item page, Triage); a file-derived tag removed by hand stays removed for that item. Aliases were chosen over a separate mapping table: one concept, already undoable and shown in the tag manager; the cost is one tag per keyword. |
+| 2026-10 | Planned in review: **writing back** front matter, the one exception to never modifying user files: only in folders marked writable, only by an explicit action, with a preview, a backup in the keep folder, and a changed-file check; only the metadata block changes (§4). |
+| 2026-10 | Planned in review: link files (`.url`, `.webloc`, `.desktop`) are a books format, giving a work its `link`; a `"url"` field display opens http(s) links in the browser. Works from a pasted link with no file are future work (§14). Tagalot still never fetches pages. |
