@@ -2,13 +2,15 @@
 
     uv run python scripts/profile_scan.py PATH [--theme assets2d] [--threads 1 4 8]
                                                [--thumbnails 500] [--cprofile]
+                                               [--fingerprint-threads N]
 
 makes a fresh keep in scratch/profile/ with one root at PATH (a local folder or a network
 share; Tagalot only reads it), scans it with the theme, times each phase from the scan's
 own progress messages, scans again (nothing changed: the cost of a routine rescan), then
 makes thumbnails for the first ``--thumbnails`` items, one thread at a time and with each
 ``--threads`` count, from a cold cache each time. ``--cprofile`` also profiles the first
-scan and prints where its time went.
+scan and prints where its time went; ``--fingerprint-threads`` sets how many files the scan
+hashes at once (``core.fingerprint.THREADS``).
 """
 
 import argparse
@@ -23,6 +25,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from tagalot.core import fingerprint
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
@@ -130,14 +133,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--thumbnails", type=int, default=500, help="items to thumbnail")
     parser.add_argument("--threads", type=int, nargs="+", default=[1, 4, 8])
     parser.add_argument("--cprofile", action="store_true", help="profile the first scan")
+    parser.add_argument("--fingerprint-threads", type=int, help="files hashed at once")
     args = parser.parse_args(argv)
+    if args.fingerprint_threads is not None:
+        fingerprint.THREADS = args.fingerprint_threads
 
     theme = load_themes().get(args.theme)
     if theme is None:
         print(f"No theme {args.theme!r}")
         return 1
     files = sum(1 for p in args.path.rglob("*") if p.is_file())
-    print(f"{args.path}: {files:,} files; theme {args.theme}")
+    print(
+        f"{args.path}: {files:,} files; theme {args.theme}; hashing {fingerprint.THREADS} at once"
+    )
     keep_dir = fresh_keep(args.path, args.theme, theme.theme.version)
     with KeepSession.open(keep_dir, Settings()) as session:
         first = scan(session, "First scan", args.cprofile)
