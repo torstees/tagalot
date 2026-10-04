@@ -29,6 +29,7 @@ def _full_settings() -> Settings:
     settings = Settings(
         recent_keeps=[Path(r"C:\Keeps\Music.keep"), Path("/home/ana/Art.keep")],
         theme_dirs=[Path(r"D:\tagalot-themes")],
+        last_folder=Path(r"\\nas\music\New"),
         handlers=[
             HandlerOverride(ext=".psd", command=r'"C:\Tools\viewer.exe" "{path}"'),
             HandlerOverride(ext="FLAC", role="audio", command="foobar2000 /add {path}"),
@@ -65,6 +66,16 @@ def test_output_is_hand_editable() -> None:
     assert "'odd id with spaces' = " in text
     assert "ext = '.flac'" in text  # normalized
     assert tomllib.loads(text)["handlers"][1]["role"] == "audio"
+
+
+def test_last_folder(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    assert "last_folder" not in dump_settings(Settings())  # only once something was chosen
+    assert r"last_folder = '\\nas\music\New'" in dump_settings(_full_settings())
+    path = tmp_path / "settings.toml"
+    path.write_text("last_folder = 3\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_settings(path).last_folder is None
+    assert "last_folder must be a path" in caplog.text
 
 
 def test_empty_settings_round_trip(tmp_path: Path) -> None:

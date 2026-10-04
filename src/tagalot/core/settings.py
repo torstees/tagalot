@@ -58,6 +58,9 @@ class Settings:
     """Keep id -> root id -> local path, for reaching a share through a different mount."""
     handlers: list[HandlerOverride] = field(default_factory=list)
     theme_dirs: list[Path] = field(default_factory=list)
+    last_folder: Path | None = None
+    """The folder last chosen in one of Tagalot's folder pickers, where the next one (and a
+    new keep's location) starts."""
     """Extra directories searched for themes."""
 
     def add_recent_keep(self, keep_dir: Path) -> None:
@@ -163,6 +166,8 @@ def dump_settings(settings: Settings) -> str:
         f"recent_keeps = {toml_list(str(p) for p in settings.recent_keeps)}",
         f"theme_dirs = {toml_list(str(p) for p in settings.theme_dirs)}",
     ]
+    if settings.last_folder is not None:
+        lines.append(f"last_folder = {toml_str(str(settings.last_folder))}")
     for keep_id, overrides in settings.root_overrides.items():
         if not overrides:
             continue
@@ -204,13 +209,19 @@ def _string_list(path: Path, data: Mapping[str, Any], key: str) -> list[str]:
 
 
 def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
-    for key in sorted(set(data) - {"recent_keeps", "theme_dirs", "root_overrides", "handlers"}):
+    known = {"recent_keeps", "theme_dirs", "last_folder", "root_overrides", "handlers"}
+    for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
 
     settings = Settings(
         recent_keeps=[Path(p) for p in _string_list(path, data, "recent_keeps")][:MAX_RECENT_KEEPS],
         theme_dirs=[Path(p) for p in _string_list(path, data, "theme_dirs")],
     )
+    last_folder = data.get("last_folder")
+    if isinstance(last_folder, str) and last_folder.strip():
+        settings.last_folder = Path(last_folder)
+    elif last_folder is not None:
+        logger.warning("%s: last_folder must be a path; ignoring it", path)
 
     raw_overrides = data.get("root_overrides", {})
     if not isinstance(raw_overrides, dict):
