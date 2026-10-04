@@ -28,6 +28,7 @@ from tagalot.core.keep_settings import (
     with_thumbnail_max,
     with_thumbnails_after_scan,
 )
+from tagalot.core.keywords import any_keywords
 from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
@@ -97,6 +98,9 @@ class KeepSession:
     """Full-hash checks of duplicate files, kept for the session (core.dedupe)."""
     """What went wrong while the keep was open: scans and thumbnails (the activity panel)."""
     last_scan_started: datetime | None = field(default=None, init=False)
+    has_keywords: bool = field(default=False, init=False)
+    """Some file has given an item keywords (§7): lists then offer a Keywords column.
+    Read at open; the window updates it when it recounts keywords."""
     """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
@@ -162,6 +166,8 @@ class KeepSession:
         # From now on, root paths follow the configuration (roots added, moved, overridden).
         thumbnails.root_path = session.root_path
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
+        with reader.connect() as conn:
+            session.has_keywords = any_keywords(conn)
         return session
 
     @property

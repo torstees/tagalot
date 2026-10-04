@@ -109,7 +109,9 @@ def test_the_tags_column_is_hidden_until_shown_and_remembered(
     assert f"Places{PATH_SEPARATOR}Beach" in tooltip.split("\n")
     assert _cell(page, "notes.txt") == ""
     state = load_ui_state(session.keep.ui_state_path)
-    assert state["hidden_columns"] == {"search:": []}
+    assert state["hidden_columns"] == {
+        "search:": ["keywords"]
+    }  # Keywords stays hidden by default (#295)
 
     again = _window(qtbot, session)  # a new window for the keep restores the choice
     assert not _page(again).table.isColumnHidden(_tags_column(_page(again)))

@@ -37,6 +37,7 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.keywords import (
     KeywordInfo,
+    any_keywords,
     file_tag_counts,
     keyword_index,
     keyword_key,
@@ -74,8 +75,10 @@ from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.merge_dialog import MergeDialog
+from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
+from tagalot.ui.result_table import DEFAULT_HIDDEN
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
@@ -572,6 +575,9 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
         hidden = self._ui_state.get("hidden_columns", {}).get(state_key)
+        if hidden is None and state_key == "triage:keywords":
+            hidden = sorted(DEFAULT_HIDDEN - {KEYWORDS})  # the keywords are the point
+
         layout = self._ui_state.get("layouts", {}).get(state_key, layout)
         card_lines = self._ui_state.get("card_lines", {}).get(state_key)
         toggles = self._ui_state.get("toggles", {}).get(state_key)
@@ -917,14 +923,19 @@ class MainWindow(QMainWindow):
             if isinstance(page, KeywordsPage):
                 page.refresh()
 
-        def count() -> frozenset[str]:
+        def count() -> tuple[frozenset[str], bool]:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                return unmatched_keys(conn, tree)
+                return unmatched_keys(conn, tree), any_keywords(conn)
 
-        def counted(keys: frozenset[str]) -> None:
+        def counted(found: tuple[frozenset[str], bool]) -> None:
             if not shiboken6.isValid(self):
                 return
+            keys, present = found
+            if present != session.has_keywords:  # lists gain or lose the column
+                session.has_keywords = present
+                for page in self.search_pages():
+                    page.refresh()
             new = keys - self._unmatched_keywords if after_scan else frozenset()
             self._unmatched_keywords = keys
             self.navigation.set_count("keywords", len(keys))

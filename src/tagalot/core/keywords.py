@@ -236,6 +236,11 @@ def _chunks(ids: Iterable[int] | None) -> list[list[int] | None]:
     return [unique[i : i + BATCH] for i in range(0, len(unique), BATCH)]
 
 
+def any_keywords(conn: Connection) -> bool:
+    """Whether any file has given an item keywords (lists offer a Keywords column)."""
+    return conn.scalar(select(EntityKeyword.entity_id).limit(1)) is not None
+
+
 def keywords_of(conn: Connection, entity_ids: Iterable[int]) -> Mapping[int, list[str]]:
     """Each item's keywords, as its files wrote them (the first spelling of each), in
     alphabetical order."""
