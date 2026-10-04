@@ -126,7 +126,7 @@ docs/THEMES.md           # the guide for theme authors
 
 ## Architecture rules (do not break these)
 
-1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug.
+1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug. The single planned exception (M20) is writing metadata back by an explicit action in a root the user marked writable, through the one core code path described in DESIGN.md §4 *Writing back to files*; nothing else may write under a root.
 2. **`core` never imports Qt or `ui`.** Core logic must be testable without a display. The UI depends on core, never the reverse.
 3. **Themes import only `tagalot.themes.api`.** Treat `api.py` as a public, versioned contract. Changes to it need a design-doc update. Built-in themes follow the same rule as third-party ones.
 4. **The GUI thread never blocks on I/O.** File-system walks, network access, hashing, metadata extraction, archive reading, image decoding, and slow queries run in workers and report back through signals.
