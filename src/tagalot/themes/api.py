@@ -1018,8 +1018,11 @@ class Theme:
         font names. Returns ``{resource id: value}``; ``ingest`` gets each value with
         ``ctx.prepared(resource)``.
 
-        It runs in a scan worker, outside any database transaction, so slow reads (a network
-        share) never hold up other writes. It has no ``ctx`` and must not touch the keep.
+        It runs on scan worker threads, outside any database transaction, so slow reads (a
+        network share) never hold up other writes, and the next batch is read while the
+        last is ingested. It has no ``ctx`` and must not touch the keep. Several calls run at
+        once, each with a few resources, so keep what it remembers local to the call (or
+        guard it with a lock): not in ``self`` or module globals.
         Catch problems with single files and leave them out (or ``ctx.warn`` about them
         later); if ``prepare`` raises, the core retries the batch one resource at a time and
         a resource that still fails is reported and stays pending for the next scan. The

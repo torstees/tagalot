@@ -7,6 +7,7 @@ Thumbnails (step 7) arrive in M8.
 
 import logging
 from collections.abc import Callable, Collection, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -53,6 +54,15 @@ Progress = Callable[[str], None]
 INGEST_BATCH = 100
 """Resources per ingest transaction: the theme's ingest runs inside the writer's transaction,
 so batches stay small to keep the write lock short."""
+PREPARE_THREADS = 8
+"""Threads running the theme's ``prepare`` at once (#274): reading files is mostly waiting
+(a share's latency) or decoding that releases the GIL, so threads overlap it."""
+PREPARE_CHUNK = 10
+"""Resources per ``prepare`` call, so one ingest batch is read by several threads."""
+
+Prepared = tuple[list[ResourceInfo], dict[int, Any], list[tuple[str, str]]]
+"""What reading some resources gave: those read (in order), their values, and the
+``(relpath, error)`` of each that couldn't be read."""
 
 
 @dataclass
@@ -321,55 +331,102 @@ def _ingest_pending(
     ]
     ingester = theme()
     reads = type(ingester).prepare is not Theme.prepare
-    for start in range(0, len(pending), INGEST_BATCH):
-        batch = pending[start : start + INGEST_BATCH]
-        done = f"{start + len(batch)} of {len(pending)} in {root.name}"
-        prepared: Mapping[int, Any] = {}
-        if reads:
-            say(f"Reading {done}…")
-            batch, prepared = _prepare(ingester, batch, report, root)
-        say(f"Ingesting {done}…")
-        try:
-            _record(
-                report,
-                writer.run(partial(_ingest, ingester, schema, batch, when, prepared, options)),
-                batch,
-            )
-        except Exception:
-            for info in batch:
-                try:
-                    _record(
-                        report,
-                        writer.run(
-                            partial(_ingest, ingester, schema, [info], when, prepared, options)
-                        ),
-                        [info],
-                    )
-                except Exception as e:
-                    report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
-                    logger.warning("Ingest of %s in root %s failed: %s", info.relpath, root.id, e)
+    batches = [pending[i : i + INGEST_BATCH] for i in range(0, len(pending), INGEST_BATCH)]
+    if not batches:
+        return
+    # The next batch is read (on several threads) while the writer ingests this one.
+    pool = ThreadPoolExecutor(PREPARE_THREADS, thread_name_prefix="prepare") if reads else None
 
+    def start_reading(batch: list[ResourceInfo]) -> list[Future[Prepared]]:
+        if pool is None:
+            return []
+        chunks = [batch[i : i + PREPARE_CHUNK] for i in range(0, len(batch), PREPARE_CHUNK)]
+        return [pool.submit(_prepare, ingester, chunk, root) for chunk in chunks]
 
-def _prepare(
-    ingester: Theme, batch: list[ResourceInfo], report: ScanReport, root: RootConfig
-) -> tuple[list[ResourceInfo], Mapping[int, Any]]:
-    """Run the theme's ``prepare`` for a batch, in this worker (no transaction). If it
-    raises, each resource is prepared alone; those that still fail are reported and left
-    out of the ingest, so they stay pending for the next scan."""
     try:
-        return batch, dict(ingester.prepare(batch))
+        reading = start_reading(batches[0])
+        for number, batch in enumerate(batches):
+            done = f"{number * INGEST_BATCH + len(batch)} of {len(pending)} in {root.name}"
+            prepared: dict[int, Any] = {}
+            if pool is not None:
+                say(f"Reading {done}…")
+                batch, prepared = _gather(reading, report)
+                if number + 1 < len(batches):
+                    reading = start_reading(batches[number + 1])
+            say(f"Ingesting {done}…")
+            _ingest_batch(writer, ingester, schema, batch, when, prepared, options, report, root)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _ingest_batch(
+    writer: DbWriter,
+    ingester: Theme,
+    schema: ThemeSchema,
+    batch: list[ResourceInfo],
+    when: datetime,
+    prepared: Mapping[int, Any],
+    options: Mapping[str, Any],
+    report: ScanReport,
+    root: RootConfig,
+) -> None:
+    """Ingest one batch; if it fails, each resource alone (see :func:`_ingest_pending`)."""
+    if not batch:
+        return
+    try:
+        _record(
+            report,
+            writer.run(partial(_ingest, ingester, schema, batch, when, prepared, options)),
+            batch,
+        )
+    except Exception:
+        for info in batch:
+            try:
+                _record(
+                    report,
+                    writer.run(partial(_ingest, ingester, schema, [info], when, prepared, options)),
+                    [info],
+                )
+            except Exception as e:
+                report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
+                logger.warning("Ingest of %s in root %s failed: %s", info.relpath, root.id, e)
+
+
+def _prepare(ingester: Theme, batch: list[ResourceInfo], root: RootConfig) -> Prepared:
+    """Run the theme's ``prepare`` for some resources, on a reading thread (no database).
+    If it raises, each resource is prepared alone; those that still fail are returned as
+    errors and left out of the ingest, so they stay pending for the next scan."""
+    try:
+        return batch, dict(ingester.prepare(batch)), []
     except Exception:
         kept: list[ResourceInfo] = []
         prepared: dict[int, Any] = {}
+        errors: list[tuple[str, str]] = []
         for info in batch:
             try:
                 prepared.update(ingester.prepare([info]))
             except Exception as e:
-                report.ingest_errors.append((info.relpath, f"{type(e).__name__}: {e}"))
+                errors.append((info.relpath, f"{type(e).__name__}: {e}"))
                 logger.warning("Reading %s in root %s failed: %s", info.relpath, root.id, e)
             else:
                 kept.append(info)
-        return kept, prepared
+        return kept, prepared, errors
+
+
+def _gather(
+    reading: list[Future[Prepared]], report: ScanReport
+) -> tuple[list[ResourceInfo], dict[int, Any]]:
+    """Wait for a batch's reading, and put its pieces back together in order. Errors are
+    recorded here, on the scan's thread."""
+    kept: list[ResourceInfo] = []
+    prepared: dict[int, Any] = {}
+    for future in reading:
+        chunk, values, errors = future.result()
+        kept.extend(chunk)
+        prepared.update(values)
+        report.ingest_errors.extend(errors)
+    return kept, prepared
 
 
 def _record(report: ScanReport, warnings: list[IngestWarning], batch: list[ResourceInfo]) -> None:

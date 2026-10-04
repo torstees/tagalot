@@ -128,7 +128,7 @@ class MusicTheme(Theme):
 
 A scan hands your theme **batches** of new and changed files and folders, as `ResourceInfo` values: `id`, `root_id`, `relpath` (POSIX, relative to the root), `kind` (`"file"` or `"dir"`), `ext`, `size`, `mtime_ns`, and `path` (this computer's path, for reading).
 
-- **`prepare(batch)`** runs first, in a worker, with **no database**. Read the files here: tags, image sizes, the first line of a text file. Return `{resource id: whatever ingest needs}`. Catch a bad file and return an error marker for it rather than raising; one bad file must never stop a scan.
+- **`prepare(batch)`** runs first, in a worker, with **no database**. Read the files here: tags, image sizes, the first line of a text file. Return `{resource id: whatever ingest needs}`. Catch a bad file and return an error marker for it rather than raising; one bad file must never stop a scan. Several `prepare` calls run at once on different threads, each with a few resources, so keep anything it remembers in local variables, not on `self` or in module globals.
 - **`ingest(batch, ctx)`** then runs in the database writer, inside a transaction: turn files into items, links, containment, and fields through `ctx`. Keep it quick, and don't read files here.
 
 ### What `ctx` can do

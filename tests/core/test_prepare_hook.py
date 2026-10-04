@@ -2,6 +2,7 @@
 transaction (#176, DESIGN.md §6, §9)."""
 
 import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from typing import Any
 import pytest
 from sqlalchemy import Engine, select
 
+from tagalot.core import scanjob
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
@@ -165,3 +167,84 @@ def test_prepared_outside_a_scan_is_none(env: Env) -> None:
         return IngestSession(conn, env.schema).prepared(1)
 
     assert env.writer.run(work) is None
+
+
+# --- reading on several threads, ahead of ingest (#274) ---
+
+
+def _many(env: Env, count: int) -> list[str]:
+    names = [f"n{i:02}.txt" for i in range(count)]
+    for name in names:
+        (env.files / name).write_text(f"Title {name}\nbody", encoding="utf-8")
+    return names
+
+
+@pytest.fixture
+def small_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanjob, "INGEST_BATCH", 10)
+    monkeypatch.setattr(scanjob, "PREPARE_CHUNK", 3)
+
+
+class Threaded(NotesTheme):
+    threads: set[int] = set()
+
+    def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
+        type(self).threads.add(threading.get_ident())
+        time.sleep(0.02)  # a file on a share
+        return super().prepare(batch)
+
+
+def test_reading_is_spread_over_threads(env: Env, small_batches: None) -> None:
+    names = _many(env, 45)
+    Threaded.threads = set()
+    report = env.scan(Threaded)
+    assert (report.ingested, report.ingest_errors) == (47, [])
+    assert env.titles() == sorted(["Ideas", "Shopping", *(f"Title {n}" for n in names)])
+    assert len(Threaded.threads) > 1
+    assert threading.get_ident() not in Threaded.threads  # never the scan's own thread
+    assert not [t for t in threading.enumerate() if t.name.startswith("prepare")]
+
+
+class Overlapping(NotesTheme):
+    events: list[tuple[str, str]] = []
+    lock = threading.Lock()
+
+    def _note(self, what: str, batch: Sequence[ResourceInfo]) -> None:
+        with type(self).lock:
+            type(self).events.append((what, batch[0].relpath))
+
+    def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
+        self._note("read", batch)
+        return super().prepare(batch)
+
+    def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
+        self._note("ingest", batch)
+        time.sleep(0.2)  # a slow transaction
+        super().ingest(batch, ctx)
+        self._note("ingested", batch)
+
+
+def test_the_next_batch_is_read_while_this_one_is_ingested(env: Env, small_batches: None) -> None:
+    _many(env, 18)  # with a.txt and b.txt: two batches of 10
+    Overlapping.events = []
+    env.scan(Overlapping)
+    events = Overlapping.events
+    first_done = events.index(("ingested", "a.txt"))
+    second_batch = [rel for what, rel in events if what == "ingest"][1]
+    second_read = events.index(("read", second_batch))
+    assert second_read < first_done
+
+
+class PickyAmongMany(NotesTheme):
+    def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
+        if any(r.relpath == "n13.txt" for r in batch):
+            raise ValueError("unreadable")
+        return super().prepare(batch)
+
+
+def test_one_unreadable_file_among_many(env: Env, small_batches: None) -> None:
+    _many(env, 30)
+    report = env.scan(PickyAmongMany)
+    assert report.ingested == 31
+    assert report.ingest_errors == [("n13.txt", "ValueError: unreadable")]
+    assert env.pending() == ["n13.txt"]

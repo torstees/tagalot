@@ -2,7 +2,7 @@
 
     uv run python scripts/profile_scan.py PATH [--theme assets2d] [--threads 1 4 8]
                                                [--thumbnails 500] [--cprofile]
-                                               [--fingerprint-threads N]
+                                               [--fingerprint-threads N] [--prepare-threads N]
 
 makes a fresh keep in scratch/profile/ with one root at PATH (a local folder or a network
 share; Tagalot only reads it), scans it with the theme, times each phase from the scan's
@@ -10,7 +10,8 @@ own progress messages, scans again (nothing changed: the cost of a routine resca
 makes thumbnails for the first ``--thumbnails`` items, one thread at a time and with each
 ``--threads`` count, from a cold cache each time. ``--cprofile`` also profiles the first
 scan and prints where its time went; ``--fingerprint-threads`` sets how many files the scan
-hashes at once (``core.fingerprint.THREADS``).
+hashes at once (``core.fingerprint.THREADS``), and ``--prepare-threads`` how many run the
+theme's ``prepare`` (``core.scanjob.PREPARE_THREADS``).
 """
 
 import argparse
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from tagalot.core import fingerprint
+from tagalot.core import fingerprint, scanjob
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
@@ -134,9 +135,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--threads", type=int, nargs="+", default=[1, 4, 8])
     parser.add_argument("--cprofile", action="store_true", help="profile the first scan")
     parser.add_argument("--fingerprint-threads", type=int, help="files hashed at once")
+    parser.add_argument("--prepare-threads", type=int, help="threads reading for the theme")
     args = parser.parse_args(argv)
     if args.fingerprint_threads is not None:
         fingerprint.THREADS = args.fingerprint_threads
+    if args.prepare_threads is not None:
+        scanjob.PREPARE_THREADS = args.prepare_threads
 
     theme = load_themes().get(args.theme)
     if theme is None:
@@ -144,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     files = sum(1 for p in args.path.rglob("*") if p.is_file())
     print(
-        f"{args.path}: {files:,} files; theme {args.theme}; hashing {fingerprint.THREADS} at once"
+        f"{args.path}: {files:,} files; theme {args.theme}; hashing {fingerprint.THREADS} "
+        f"at once, reading on {scanjob.PREPARE_THREADS}"
     )
     keep_dir = fresh_keep(args.path, args.theme, theme.theme.version)
     with KeepSession.open(keep_dir, Settings()) as session:
