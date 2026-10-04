@@ -104,6 +104,7 @@ class TypeSection(QWidget):
         group: TypeGroup,
         expanded: bool = True,
         hidden_columns: Iterable[str] = (),
+        shown_columns: Iterable[str] = (),
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -129,7 +130,7 @@ class TypeSection(QWidget):
         self.table.setModel(self.model)
         self.table.tags_dropped.connect(self._tags_dropped)
         set_column_widths(self.table, group.columns)
-        self.table.set_columns(group.columns, hidden_columns)
+        self.table.set_columns(group.columns, hidden_columns, shown_columns)
         self.table.column_toggled.connect(self.column_toggled)
         self.table.activated.connect(self._activated)
         add_open_keys(self.table, self._activated)
@@ -216,6 +217,8 @@ class GroupedResults(QScrollArea):
         self._folded: set[str] = set()
         self.hidden_columns: set[str] = set()
         """Column keys hidden in every section (the page's choice)."""
+        self.shown_columns: set[str] = set()
+        """Columns hidden by default that the page's user showed."""
         self.sections: list[TypeSection] = []
         self._content = QWidget()
         self._layout = QVBoxLayout(self._content)
@@ -238,7 +241,7 @@ class GroupedResults(QScrollArea):
         self.sections = []
         for group in groups:
             expanded = group.type_id not in self._folded
-            section = TypeSection(group, expanded, self.hidden_columns)
+            section = TypeSection(group, expanded, self.hidden_columns, self.shown_columns)
             section.show_all.connect(self.show_all)
             section.tags_dropped.connect(self.tags_dropped)
             section.column_toggled.connect(self.column_toggled)
@@ -257,11 +260,14 @@ class GroupedResults(QScrollArea):
                     )
         self.selection_changed.emit()
 
-    def set_hidden_columns(self, hidden: Iterable[str]) -> None:
-        """Hide ``hidden`` in every section, now and in later results."""
-        self.hidden_columns = set(hidden)
+    def set_hidden_columns(self, hidden: Iterable[str], shown: Iterable[str] = ()) -> None:
+        """Hide ``hidden`` in every section, and show ``shown`` of the columns hidden by
+        default, now and in later results."""
+        self.hidden_columns, self.shown_columns = set(hidden), set(shown)
         for section in self.sections:
-            section.table.set_columns(section.group.columns, self.hidden_columns)
+            section.table.set_columns(
+                section.group.columns, self.hidden_columns, self.shown_columns
+            )
 
     def _remember_fold(self, type_id: str, expanded: bool) -> None:
         if expanded:
