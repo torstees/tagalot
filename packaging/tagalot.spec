@@ -14,6 +14,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 (PyInstaller defines SPECPATH)
 SRC = ROOT / "src"
+PACKAGING = ROOT / "packaging"
 
 sys.path.insert(0, str(SRC))
 import tagalot  # noqa: E402
@@ -24,7 +25,11 @@ a = Analysis(  # noqa: F821
     # Built-in themes are found with pkgutil at run time, so nothing imports them by name.
     hiddenimports=collect_submodules("tagalot.builtin_themes"),
     # The theme template is copied as source by `tagalot --new-theme`.
-    datas=[(str(SRC / "tagalot" / "themes" / "template.py"), "tagalot/themes")],
+    datas=[
+        (str(SRC / "tagalot" / "themes" / "template.py"), "tagalot/themes"),
+        # The window icon (ui.app), at each size.
+        (str(SRC / "tagalot" / "resources" / "tagalot-*.png"), "tagalot/resources"),
+    ],
     excludes=["tkinter"],
     noarchive=False,
 )
@@ -36,6 +41,7 @@ exe = EXE(  # noqa: F821
     exclude_binaries=True,
     name="tagalot",
     console=False,  # a desktop app: no console window on Windows
+    icon=str(PACKAGING / "tagalot.ico"),  # the .exe's icon in Explorer and the taskbar
     disable_windowed_traceback=False,
     upx=False,
 )
@@ -46,6 +52,7 @@ if sys.platform == "darwin":
         coll,
         name="Tagalot.app",
         bundle_identifier="io.github.torstees.tagalot",
+        icon=str(PACKAGING / "tagalot.icns"),
         version=tagalot.__version__,
         info_plist={
             "CFBundleName": "Tagalot",

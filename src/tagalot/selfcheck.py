@@ -1,9 +1,10 @@
 """``tagalot --check``: report what this Tagalot can do, without opening a window (#129).
 
-It prints the version, Python, Qt, SQLite's FTS5, the built-in themes found, and each file
-reader (Pillow, mutagen, MediaInfo, 7z, RAR), and exits 1 if something Tagalot needs is
-missing. Packaged builds run it in CI, since a frozen app is where a module or a native
-library quietly goes missing.
+It prints the version, Python, Qt, SQLite's FTS5, the built-in themes found, the theme
+template and the icon (files the build must carry along), and each file reader (Pillow,
+mutagen, MediaInfo, 7z, RAR), and exits 1 if something Tagalot needs is missing.
+Packaged builds run it in CI, since a frozen app is where a module or a native library
+quietly goes missing.
 """
 
 import platform
@@ -61,6 +62,11 @@ def run_check(out: Callable[[str], None] = print) -> int:
         line("Template", f"theme template, {len(template_source().splitlines())} lines")
     except Exception as e:
         line("Template", f"{type(e).__name__}: {e}", ok=False)
+
+    from tagalot.resources import icon_files
+
+    found = [size for size, path in icon_files().items() if path.is_file()]
+    line("Icon", f"{len(found)} of {len(icon_files())} sizes", ok=len(found) == len(icon_files()))
 
     for name, probe, needed in READERS:
         try:

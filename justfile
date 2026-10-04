@@ -71,6 +71,14 @@ package:
     uv run pyinstaller packaging/tagalot.spec --noconfirm
     uv run python scripts/check_package.py
 
+# Build the app, then this OS's installer into dist/ (setup .exe, .dmg, or AppImage)
+installer: package
+    bash packaging/installer.sh
+
+# Render the icon (src/tagalot/resources/tagalot.svg) to its PNGs, .ico, and .icns
+icons:
+    uv run python scripts/make_icons.py
+
 # Time scanning and thumbnailing a folder or share: just profile PATH [--theme generic] [--cprofile]
 profile path *args:
     uv run python scripts/profile_scan.py "{{path}}" {{args}}

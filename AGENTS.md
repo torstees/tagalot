@@ -40,7 +40,7 @@ uv run mypy src                  # type-check
 uv run tagalot --check           # what this install can do (themes, readers)
 ```
 
-The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, `just demo` resets and opens the demo keep, and `just package` builds the app with PyInstaller (`packaging/tagalot.spec`) and checks it. just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
+The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, `just demo` resets and opens the demo keep, and `just package` builds the app with PyInstaller (`packaging/tagalot.spec`) and checks it, and `just installer` then makes this OS's installer (`packaging/installer.sh`). just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
 
 GUI tests use pytest-qt and must run headless: `QT_QPA_PLATFORM=offscreen` is set in the pytest config. All four checks (pytest, ruff check, ruff format --check, mypy) must pass before a task is done.
 
@@ -71,6 +71,7 @@ src/tagalot/
   __main__.py            # entry point
   selfcheck.py           # `tagalot --check`: what a build can do
   theme_tools.py         # `--new-theme` and `--check-theme` for theme authors
+  resources/             # the icon: tagalot.svg and its PNGs (scripts/make_icons.py)
   core/                  # no Qt imports allowed here
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)
@@ -114,6 +115,7 @@ src/tagalot/
     opening.py           # opening a keep in the background, with prompts
 scripts/
   make_demo_keep.py      # scratch/Demo.keep for manual testing
+  make_icons.py          # render the icon SVG to PNGs, .ico, .icns (just icons)
   profile_scan.py        # time scanning and thumbnails on a real folder or share (just profile)
 tests/
   fixtures/              # tiny sample files (images, zips, audio)

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Tagalot
+GenericName=Tagged file browser
+Comment=Tag, search, and browse folders of music, movies, art, or any files
+Exec=tagalot %f
+Icon=tagalot
+Terminal=false
+Categories=Utility;FileTools;
+Keywords=tags;files;music;movies;assets;

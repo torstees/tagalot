@@ -1,16 +1,19 @@
 """QApplication setup."""
 
 import logging
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QSize, QThreadPool
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 import tagalot
 from tagalot.core.db import check_sqlite_support
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
+from tagalot.resources import icon_files
 from tagalot.ui.launcher import LauncherDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.opening import open_keep_async
@@ -20,15 +23,39 @@ logger = logging.getLogger(__name__)
 
 SHUTDOWN_WAIT_MS = 30_000
 """How long quitting waits for background jobs (a keep finishing its writes) to finish."""
+WINDOWS_APP_ID = "torstees.Tagalot"
+
+
+def app_icon() -> QIcon:
+    """Tagalot's icon (a tag on a folder), at every size it is drawn at."""
+    icon = QIcon()
+    for size, path in icon_files().items():
+        icon.addFile(str(path), QSize(size, size))
+    return icon
+
+
+def _set_windows_app_id() -> None:
+    """Group Tagalot's windows under its own taskbar button and icon, not Python's (when
+    run from source; a packaged tagalot.exe has its own already)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+        except (AttributeError, OSError):
+            logger.debug("Couldn't set the taskbar app id", exc_info=True)
 
 
 def run(argv: Sequence[str]) -> int:
     """Create the application and main window, run the event loop, and return its exit code."""
+    _set_windows_app_id()
     app = QApplication.instance()
     if not isinstance(app, QApplication):
         app = QApplication(list(argv))
     app.setApplicationName("Tagalot")
     app.setApplicationVersion(tagalot.__version__)
+    app.setDesktopFileName("tagalot")  # Linux: matches the AppImage's tagalot.desktop
+    app.setWindowIcon(app_icon())
 
     if problem := check_sqlite_support():
         logger.error("Cannot start: %s", problem)
