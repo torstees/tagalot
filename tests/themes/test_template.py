@@ -28,6 +28,7 @@ from tagalot.theme_tools import (
     template_source,
 )
 from tagalot.themes import template
+from tagalot.themes.api import API_VERSION
 from tagalot.themes.loader import validate_theme
 from tagalot.themes.template import Group, Item, TemplateTheme
 
@@ -116,6 +117,7 @@ def test_new_theme_fills_in_the_template(tmp_path: Path) -> None:
     assert "id = 'my_photos'" in source
     assert "name = 'My photos'" in source
     assert "class MyPhotosTheme(Theme):" in source
+    assert f"api_version = {API_VERSION}" in source  # stated, so authors see it
     lines: list[str] = []
     assert check_theme(path, lines.append) == 0
     assert lines[0].startswith("ok: 'my_photos' (My photos, version 1)")
@@ -224,3 +226,8 @@ def test_an_id_no_theme_has(tmp_path: Path) -> None:
     assert lines[0] == "problem: no theme 'nope': not a file, and no theme has that id"
     assert lines[1] == f"   looked in: {tmp_path}"
     assert any(line.strip() == str(tmp_path / "broken.py") for line in lines)  # maybe it
+
+
+def test_the_template_states_the_current_api_version() -> None:
+    # Stated in the class (not inherited), and kept current when the API version changes.
+    assert vars(template.TemplateTheme)["api_version"] == API_VERSION

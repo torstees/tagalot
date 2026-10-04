@@ -89,7 +89,7 @@ class ThemeSchema:
         raise KeyError(type_id)
 
 
-def _entity_key(name: str) -> Column[int]:
+def entity_key_column(name: str) -> Column[int]:
     """A primary-key column referencing ``entity.id``; deleting the entity deletes the row."""
     return Column(
         name, Integer, ForeignKey(Entity.__table__.c.id, ondelete="CASCADE"), primary_key=True
@@ -138,7 +138,7 @@ def build_theme_schema(theme: type[Theme]) -> ThemeSchema:
         except ThemeDeclarationError as e:
             problems.append(str(e))
             continue
-        columns: list[Column[Any]] = [_entity_key("id")]
+        columns: list[Column[Any]] = [entity_key_column("id")]
         indexes = []
         for f in fields:
             if f.name in _RESERVED_FIELDS or f.name.startswith("_"):
@@ -186,8 +186,8 @@ def build_theme_schema(theme: type[Theme]) -> ThemeSchema:
         table = Table(
             table_name,
             metadata,
-            _entity_key("a_id"),
-            _entity_key("b_id"),
+            entity_key_column("a_id"),
+            entity_key_column("b_id"),
             *constraints,
         )
         relationships[rel.name] = RelationshipTable(rel, table)
