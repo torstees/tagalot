@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -62,6 +61,7 @@ from tagalot.core.settings import save_settings
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
+from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -677,7 +677,7 @@ class KeepConfigWindow(QWidget):
     # --- asking (tests replace these) ---
 
     def pick_folder(self, title: str) -> str:
-        return QFileDialog.getExistingDirectory(self, title)
+        return choose_folder(self, title, self.session.settings, self.settings_path)
 
     def ask_scan(self, root: RootConfig) -> bool:
         answer = QMessageBox.question(

@@ -195,6 +195,7 @@ Stored in `platformdirs.user_config_dir("tagalot", appauthor=False)/settings.tom
 - Per-machine root path overrides: `[root_overrides.<keep id>]` tables mapping root id → local path.
 - File-handler overrides (§11), because application paths differ by machine: `[[handlers]]` tables with `ext`, optional `role`, and `command`. A rule for an extension and role wins over one for the extension alone. Commands may only use the `{path}`, `{dir}`, and `{name}` placeholders.
 - Extra theme search directories (`theme_dirs`).
+- The folder last chosen in any of Tagalot's folder pickers (`last_folder`): every picker starts there (`ui/folder_picker.py`), and a new keep's location is filled in with it. Opening a keep folder remembers the folder holding it. Until something is chosen, pickers start at the home folder.
 
 Settings never block startup: a missing file means defaults; a file that cannot be parsed is renamed to `settings.toml.invalid` and defaults are used; individual invalid entries are skipped. Every problem is logged.
 
@@ -790,7 +791,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 **Keep launcher.** Recent keeps, create keep (name, location, theme, first root), open folder. Shows theme problems: theme missing, stored version newer or older (offer migration with backup). It is a separate start dialog, shown when Tagalot starts without a keep and from Keep → Open another keep… (Ctrl+O); each keep opens in its own main window, and closing that window closes the keep (in a worker, since it waits for queued writes), so it can be reopened, moved, or deleted while Tagalot keeps running.
 
 - **Recent keeps** show name, theme, and path, read in a worker (keeps may be on slow drives); unreadable ones are greyed as "not found" and can be removed from the list (the keep itself is untouched). Double-click or Open opens one.
-- **New keep…:** name, location (the keep becomes `<location>/<name>.keep`, previewed as you type), theme, and the folder to watch; Create is enabled once the form is valid. The folder is stored exactly as typed (a UNC share such as `\\nas\music` keeps its form), and the root's name and id come from its last segment (`"My Photos"` → id `my-photos`). The keep is created in a worker and then opened.
+- **New keep…:** name, location (the keep becomes `<location>/<name>.keep`, previewed as you type; it starts as the folder last chosen in a folder picker, §4), theme, and the folder to watch; Create is enabled once the form is valid. The folder is stored exactly as typed (a UNC share such as `\\nas\music` keeps its form), and the root's name and id come from its last segment (`"My Photos"` → id `my-photos`). The keep is created in a worker and then opened.
 - A "⚠ N theme files have problems (details)" line appears when any theme failed to load.
 
 **Keep configuration.** Roots: add, remove, rename, change path, per-machine override, exclude patterns, status (online, item count, last scan, last error), "Scan now". Also thumbnail size, clear thumbnail cache, theme info.
@@ -1076,3 +1077,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Fingerprints are hashed 8 files at a time (#273, §3 Performance, §5 Fingerprints): 77 s down to 15.5 s on a 9,341-file share. More threads gained little (12 s at 32); results stay in queue order and errors are reported on the scan's thread. |
 | 2026-10 | The theme's `prepare` runs on 8 threads, 10 resources per call, reading the next batch while the writer ingests the current one (#274, §3 Performance, §6). The assets2d first scan on the share went from 192 s to 107 s. Theme API: `prepare` calls may run at once, so they keep state local (documented in `api.py` and THEMES.md; built-in themes already did). |
 | 2026-10 | The background thumbnail queue makes 4 thumbnails at once (#275, §3 Performance, §6 step 7): 4 times as fast on the share. 8 would be 7 times, but would compete with the grids' own 4 threads for the share while someone browses. |
+| 2026-10 | Folder pickers start where a folder was last chosen in any of them, remembered across sessions in `settings.toml` (`last_folder`, §4); a new keep's location starts there too, rather than the home folder (asked for in review). |

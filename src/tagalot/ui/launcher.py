@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -41,6 +40,7 @@ from tagalot.core.keep import (
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, save_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
+from tagalot.ui.folder_picker import choose_folder, start_folder
 from tagalot.ui.opening import open_keep_async
 from tagalot.ui.workers import run_in_pool
 
@@ -186,7 +186,9 @@ class LauncherDialog(QDialog):
             self._open(item.data(_PATH))
 
     def _open_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Open a keep folder")
+        folder = choose_folder(
+            self, "Open a keep folder", self.settings, self.settings_path, remember_parent=True
+        )
         if folder:
             self._open(Path(folder))
 
@@ -211,7 +213,9 @@ class LauncherDialog(QDialog):
     def _new_keep(self) -> None:
         if self.catalog is None:
             return
-        dialog = NewKeepDialog(self.catalog, parent=self)
+        dialog = NewKeepDialog(
+            self.catalog, parent=self, settings=self.settings, settings_path=self.settings_path
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._create(dialog)
 
@@ -289,13 +293,22 @@ class LauncherDialog(QDialog):
 class NewKeepDialog(QDialog):
     """Name, location, theme, and first root for a new keep (DESIGN.md §12)."""
 
-    def __init__(self, catalog: ThemeCatalog, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        catalog: ThemeCatalog,
+        parent: QWidget | None = None,
+        *,
+        settings: Settings | None = None,
+        settings_path: Path | None = None,
+    ) -> None:
         super().__init__(parent)
+        self.settings, self.settings_path = settings, settings_path
         self.setWindowTitle("New keep")
         self.resize(520, 0)
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("e.g. Music")
-        self.location_edit = QLineEdit(str(Path.home()))
+        # Both folders start where a folder was last chosen (the home folder at first).
+        self.location_edit = QLineEdit(start_folder(settings))
         self.root_edit = QLineEdit()
         self.root_edit.setPlaceholderText(
             "The folder this keep watches (a local or network folder)"
@@ -377,6 +390,7 @@ class NewKeepDialog(QDialog):
         return row
 
     def _browse(self, edit: QLineEdit, title: str) -> None:
-        folder = QFileDialog.getExistingDirectory(self, title, edit.text())
+        start = edit.text().strip()
+        folder = choose_folder(self, title, self.settings, self.settings_path, start=start)
         if folder:
             edit.setText(folder)
