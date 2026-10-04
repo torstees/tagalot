@@ -34,7 +34,8 @@ def list_columns(
     """The list layout's columns for a scope: the title (named as the types call it), the
     type when several types are in scope, the item's tags (hidden unless the user shows
     them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
-    the card fields every scoped type has."""
+    every field the scoped types share that their pages show: card fields first, shown,
+    then the rest, hidden until the user shows them (#314)."""
     tables = scoped_tables(schema, types)
     labels = {t.entity.title_label for t in tables}
     columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
@@ -43,12 +44,31 @@ def list_columns(
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     if keywords:  # only in keeps whose files give keywords (§7)
         columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
+    fields = [f for f in scope_fields(schema, types) if f.spec.card or f.spec.detail]
     columns.extend(
-        ResultColumn(f.name, f.spec.label, numeric=f.type in (int, float), display=f.spec.display)
-        for f in scope_fields(schema, types)
-        if f.spec.card
+        ResultColumn(
+            f.name,
+            f.spec.label,
+            numeric=f.type in (int, float),
+            display=f.spec.display,
+            hidden_by_default=not f.spec.card,
+        )
+        for f in sorted(fields, key=lambda f: not f.spec.card)  # card fields first
     )
     return columns
+
+
+def hidden_keys(
+    columns: Iterable[ResultColumn], hidden: Iterable[str], shown: Iterable[str] = ()
+) -> set[str]:
+    """The keys of ``columns`` to hide: those the user hid, and those hidden by default
+    that the user hasn't shown. Never the title."""
+    hide, show = set(hidden), set(shown)
+    return {
+        c.key
+        for c in columns
+        if c.key != "title" and (c.key in hide or (c.hidden_by_default and c.key not in show))
+    }
 
 
 def count_text(total: int) -> str:
@@ -81,12 +101,15 @@ class ResultTable(QTableView):
 
     # --- columns ---
 
-    def set_columns(self, columns: Sequence[ResultColumn], hidden: Iterable[str]) -> None:
-        """Record the model's columns and hide those in ``hidden`` (never the title)."""
+    def set_columns(
+        self, columns: Sequence[ResultColumn], hidden: Iterable[str], shown: Iterable[str] = ()
+    ) -> None:
+        """Record the model's columns and hide those the user hid, and those hidden by
+        default the user hasn't shown (:func:`hidden_keys`)."""
         self.columns = list(columns)
-        hide = set(hidden)
+        hide = hidden_keys(self.columns, hidden, shown)
         for i, column in enumerate(self.columns):
-            self.setColumnHidden(i, column.key != "title" and column.key in hide)
+            self.setColumnHidden(i, column.key in hide)
 
     def column_menu(self) -> QMenu:
         """A menu with a checkbox per column (the title can't be hidden)."""

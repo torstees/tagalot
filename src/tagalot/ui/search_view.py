@@ -65,6 +65,7 @@ from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
     DEFAULT_HIDDEN,
     count_text,
+    hidden_keys,
     list_columns,
     make_result_table,
     set_column_widths,
@@ -114,6 +115,8 @@ class SearchPage(QWidget):
     tags_dropped = Signal(list, list)
     hidden_columns_changed = Signal(list)
     """The column keys now hidden, after the user showed or hid one (to remember it)."""
+    shown_columns_changed = Signal(list)
+    """The column keys the user showed (of those hidden by default), to remember it."""
     selection_changed = Signal()
     """The selected items may be different (a click, new results, grouped or not)."""
     layout_changed = Signal(str)
@@ -140,6 +143,7 @@ class SearchPage(QWidget):
         *,
         grouped: bool = False,
         hidden_columns: Iterable[str] | None = None,
+        shown_columns: Iterable[str] = (),
         layout_mode: str = "list",
         card_lines: Sequence[str] | None = None,
         thumbnails: ThumbnailLoader | None = None,
@@ -156,6 +160,8 @@ class SearchPage(QWidget):
         self.title = title
         self._base = spec
         self.hidden_columns = set(DEFAULT_HIDDEN if hidden_columns is None else hidden_columns)
+        self.shown_columns = set(shown_columns)
+        """Columns hidden by default (fields not on cards) that the user showed (#314)."""
         self._sort = spec.sort
         self._pool = pool
         self._generation = 0
@@ -259,7 +265,7 @@ class SearchPage(QWidget):
         self.groups.show_all.connect(self.show_all)
         self.groups.tags_dropped.connect(self.tags_dropped)
         self.groups.column_toggled.connect(self._column_toggled)
-        self.groups.set_hidden_columns(self.hidden_columns)
+        self.groups.set_hidden_columns(self.hidden_columns, self.shown_columns)
         self.groups.selection_changed.connect(self.selection_changed)
         self.groups.hit_activated.connect(self.activate)
         self.groups.item_menu_requested.connect(lambda hit, at: self.item_menu(hit).exec(at))
@@ -561,8 +567,10 @@ class SearchPage(QWidget):
             self.model.set_search(spec)
         else:
             self.model.refresh()  # the same search again: keep the rows until new ones arrive
-        self.table.set_columns(columns, self.hidden_columns)
-        self.tree.set_columns_hidden([c.key for c in columns], self.hidden_columns)
+        self.table.set_columns(columns, self.hidden_columns, self.shown_columns)
+        self.tree.set_columns_hidden(
+            [c.key for c in columns], hidden_keys(columns, self.hidden_columns, self.shown_columns)
+        )
         self._tree_column_widths()
         self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
@@ -756,12 +764,18 @@ class SearchPage(QWidget):
         """Show or hide a column in the list and every section, and report it."""
         if visible:
             self.hidden_columns.discard(key)
+            self.shown_columns.add(key)
         else:
             self.hidden_columns.add(key)
-        self.table.set_columns(self.table.columns, self.hidden_columns)
-        self.tree.set_columns_hidden([c.key for c in self.table.columns], self.hidden_columns)
-        self.groups.set_hidden_columns(self.hidden_columns)
+            self.shown_columns.discard(key)
+        columns = self.table.columns
+        self.table.set_columns(columns, self.hidden_columns, self.shown_columns)
+        self.tree.set_columns_hidden(
+            [c.key for c in columns], hidden_keys(columns, self.hidden_columns, self.shown_columns)
+        )
+        self.groups.set_hidden_columns(self.hidden_columns, self.shown_columns)
         self.hidden_columns_changed.emit(sorted(self.hidden_columns))
+        self.shown_columns_changed.emit(sorted(self.shown_columns))
 
     def _remember_selection(self) -> None:
         self._kept_selection = {

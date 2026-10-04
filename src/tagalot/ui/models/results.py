@@ -61,6 +61,9 @@ class ResultColumn:
     numeric: bool = False
     display: str | None = None
     """The field's display format (``"bytes"``, ``"duration"``), if any."""
+    hidden_by_default: bool = False
+    """Hidden until the user shows it from the header menu: a field that isn't on cards
+    (#314)."""
 
 
 TAGS = "tags"
