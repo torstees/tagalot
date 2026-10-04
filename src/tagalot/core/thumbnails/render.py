@@ -19,7 +19,14 @@ from mutagen.mp4 import MP4Tags
 from PIL import Image, ImageDraw, ImageFont
 
 from tagalot.core.thumbnails.archive import archive_image_bytes
-from tagalot.themes.api import Kind, ResourceInfo, epub_cover, kind_of, pdf_cover
+from tagalot.themes.api import (
+    Kind,
+    ResourceInfo,
+    epub_cover,
+    kind_of,
+    office_cover,
+    pdf_cover,
+)
 
 
 @dataclass(frozen=True)
@@ -129,6 +136,12 @@ def load_pdf_cover(path: str, size: int) -> Image.Image | None:
     return None if data is None else load_image_bytes(data, size)
 
 
+def load_office_cover(path: str, size: int) -> Image.Image | None:
+    """The picture of its first page a Word, OpenDocument, or Pages file keeps."""
+    data = office_cover(path)
+    return None if data is None else load_image_bytes(data, size)
+
+
 RENDERERS: dict[Kind, Renderer] = {
     Kind.IMAGE: Renderer("image", 1, load_image),
     Kind.AUDIO: Renderer("audio_art", 1, load_audio_art),
@@ -141,6 +154,9 @@ RENDERERS: dict[Kind, Renderer] = {
 EXTENSION_RENDERERS: dict[str, Renderer] = {
     ".epub": Renderer("epub_cover", 1, load_epub_cover),
     ".pdf": Renderer("pdf_cover", 1, load_pdf_cover),
+    ".docx": Renderer("office_cover", 1, load_office_cover),
+    ".odt": Renderer("office_cover", 1, load_office_cover),
+    ".pages": Renderer("office_cover", 1, load_office_cover),
 }
 """Renderers for formats that are no resource kind of their own (an EPUB is a zip, but not
 an archive a theme lists as one): tried before the kinds."""

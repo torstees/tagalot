@@ -11,11 +11,18 @@ that doesn't parse stays in the box with the reason, and a good one is reported 
 :attr:`EditableValue.committed`. Yes/no fields are a checkbox that saves when ticked.
 """
 
+import html
 from datetime import UTC, date, datetime
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QEnterEvent, QFocusEvent, QKeyEvent, QMouseEvent
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import (
+    QDesktopServices,
+    QEnterEvent,
+    QFocusEvent,
+    QKeyEvent,
+    QMouseEvent,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -26,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.formats import is_web_address
 from tagalot.ui.models.results import display_value
 
 PENCIL = "✎"
@@ -122,6 +130,12 @@ class _Stack(QStackedWidget):
         return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
 
 
+def open_web_address(url: str) -> None:
+    """Open an ``http(s)`` address in the browser (a ``"url"`` field's link). Tagalot itself
+    never fetches it."""
+    QDesktopServices.openUrl(QUrl(url))
+
+
 class EditableValue(QWidget):
     """One value: shown, and editable in place when ``editable``. Emits :attr:`committed`
     with the new (typed) value."""
@@ -152,8 +166,13 @@ class EditableValue(QWidget):
         self.check: QCheckBox | None = None
         self.stack = _Stack()
         self.label = QLabel()
-        self.label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
         self.label.setWordWrap(True)
+        # Looked up when clicked, so tests can stand in for the browser.
+        self.label.linkActivated.connect(lambda url: open_web_address(url))
         self.box = _Box()
         self.box.setMinimumWidth(BOX_WIDTH)
         self.box.submitted.connect(self._submit)
@@ -188,7 +207,7 @@ class EditableValue(QWidget):
     def show_value(self, value: Any, edited: bool) -> None:
         """Show ``value`` (after a save, or a reload), leaving edit mode."""
         self.value = value
-        self.label.setText(display_value(value, self.display))
+        self._show_text(value)
         self.stack.updateGeometry()
         self.marker.setVisible(edited)
         if self.check is not None:
@@ -198,6 +217,19 @@ class EditableValue(QWidget):
         self.stack.setCurrentWidget(self.label)
         self.box.setStyleSheet("")
         self.box.setToolTip("")
+
+    def _show_text(self, value: Any) -> None:
+        """The value as text, or, for a ``"url"`` field holding a web address, as a link that
+        opens it in the browser (double-click still edits it)."""
+        if self.display == "url" and is_web_address(value):
+            address = html.escape(value.strip(), quote=True)
+            self.label.setTextFormat(Qt.TextFormat.RichText)
+            self.label.setText(f'<a href="{address}">{address}</a>')
+            self.label.setToolTip(f"Open {value.strip()} in your browser")
+        else:
+            self.label.setTextFormat(Qt.TextFormat.PlainText)
+            self.label.setText(display_value(value, self.display))
+            self.label.setToolTip("")
 
     def editing(self) -> bool:
         """Whether the text box is showing."""
@@ -232,7 +264,7 @@ class EditableValue(QWidget):
             value = value.astimezone(UTC)  # local time, compared as stored
         self.stack.setCurrentWidget(self.label)
         if value != self.value:
-            self.label.setText(display_value(value, self.display))  # at once; the page reloads
+            self._show_text(value)  # at once; the page reloads
             self.committed.emit(value)
 
     def _toggled(self, on: bool) -> None:

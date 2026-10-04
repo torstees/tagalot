@@ -6,21 +6,28 @@ Universe ⊃ Series ⊃ Book, Comic     Author ↔ Book, Comic (writers, artists
 Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 ```
 
-- **A work and its files:** a book (EPUB) or comic (CBZ, CBR, CB7) is keyed by its title and
+- **Formats:** books are EPUB, PDF, Markdown, Word (DOCX, and legacy DOC by name only),
+  OpenDocument (ODT), Pages, and link files (``.url``, ``.webloc``, ``.desktop``) for works
+  that live on the web; comics are CBZ, CBR, and CB7.
+- **A work and its files:** a book or comic is keyed by its title and
   first writer (a comic by its series, volume, and number), so the same novel bought from two
   sites is one work whose files are its versions. A file already linked to a work updates it
   in place. What a file says replaces what it said before only while it is the work's one
   file; with several, each adds to the work (its writers, its series).
-- **Reading files** (``prepare``, a scan worker): an EPUB's package metadata, a comic's
-  ``ComicInfo.xml`` (the :mod:`tagalot.themes.api` readers), else the file name:
+- **Reading files** (``prepare``, a scan worker), with the :mod:`tagalot.themes.api`
+  readers: an EPUB's package, a PDF's document info, Markdown front matter, an office
+  document's properties, a link file's address, a comic's ``ComicInfo.xml``; else the file
+  name:
   ``Author - Title (Year)``, ``Series 03 - Title``, ``Series #012 (2020)``.
 - **Sources:** where a file came from: the folder at the ``source_level`` option's depth
   (``1`` for ``Humble Bundle/…``), else a comic's web address's site, else an EPUB's
   publisher. A work's ``sources`` lists its files'.
 - **Keywords:** an EPUB's subjects and a comic's genres and tags become tags only through
   file keywords (DESIGN.md §7).
-- **Thumbnails:** a work shows its cover (an EPUB's named cover, a comic's first page); a
-  series, universe, or collection one of its first works'.
+- **Links:** a work's ``link`` (``display="url"``) opens in the browser from its page.
+- **Thumbnails:** a work shows its cover (a picture front matter names, an EPUB's named
+  cover, a PDF's first page, an office document's preview, a comic's first page); a series,
+  universe, or collection one of its first works'.
 """
 
 import difflib
@@ -53,6 +60,8 @@ from tagalot.themes.api import (
     read_comic_info,
     read_epub,
     read_front_matter,
+    read_link_file,
+    read_office_info,
     read_pdf_info,
     related,
     role,
@@ -61,7 +70,12 @@ from tagalot.themes.api import (
 
 logger = logging.getLogger(__name__)
 
-BOOK_EXTENSIONS = frozenset({".epub", ".pdf", ".md", ".markdown"})
+LINK_EXTENSIONS = frozenset({".url", ".webloc", ".desktop"})
+"""Link files: works that live on the web (a serial), by address."""
+BOOK_EXTENSIONS = (
+    frozenset({".epub", ".pdf", ".md", ".markdown", ".docx", ".odt", ".pages", ".doc"})
+    | LINK_EXTENSIONS
+)
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
 COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 """Pictures scanned so a Markdown book's front matter can name one as its cover."""
@@ -113,7 +127,7 @@ class Book(Entity):
     description: str | None = field("Description", search="text")
     sources: str | None = field("Sources", search="text", editable=False)
     """Where its files came from (``Humble Bundle, Kobo``)."""
-    link: str | None = field("Link", search="text")
+    link: str | None = field("Link", search="text", display="url")
     cover: str | None = field("Cover file", editable=False, detail=False)
     """The picture front matter names (``<root id>:<path in the root>``), so the picture is
     linked whichever is read first."""
@@ -142,7 +156,7 @@ class Comic(Entity):
     imprint: str | None = field("Imprint", search="choice")
     description: str | None = field("Summary", search="text")
     sources: str | None = field("Sources", search="text", editable=False)
-    link: str | None = field("Link", search="text")
+    link: str | None = field("Link", search="text", display="url")
     roles = [role("file", kinds={"any"}, many=True, primary=True, label="Files")]
     card_lines = ("series", "number")
 
@@ -302,7 +316,10 @@ class BooksTheme(Theme):
             try:
                 if resource.ext in BOOK_EXTENSIONS:
                     read, details = READERS[resource.ext]
-                    found[resource.id] = book_work(resource.relpath, details(read(resource.path)))
+                    info = read(resource.path)
+                    if resource.ext == ".desktop" and not info.get("url"):
+                        continue  # an application's launcher, not a link: not a book
+                    found[resource.id] = book_work(resource.relpath, details(info))
                 elif resource.ext in COMIC_EXTENSIONS:
                     info = read_comic_info(resource.path)
                     found[resource.id] = comic_work(resource.relpath, info)
@@ -485,11 +502,39 @@ def markdown_details(front: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def office_details(info: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_office_info` found: its authors are writers, its description (else
+    its subject) the description. A Pages file gives nothing: its file name names it."""
+    return {
+        **{k: info.get(k) for k in ("title", "keywords", "year", "language")},
+        "writers": info.get("authors") or [],
+        "description": info.get("description") or info.get("subject"),
+    }
+
+
+def link_details(info: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_link_file` found: its address is the work's link; a ``.desktop``
+    link's name is its title, else the file name is."""
+    return {"title": info.get("title"), "link": info.get("url")}
+
+
+def nothing(path: str) -> dict[str, Any]:
+    """A legacy Word ``.doc``: nothing is read; its file name names it."""
+    return {}
+
+
 READERS: Mapping[str, tuple[Callable[[str], Any], Callable[[Any], dict[str, Any]]]] = {
     ".epub": (read_epub, epub_details),
     ".pdf": (read_pdf_info, pdf_details),
     ".md": (read_front_matter, markdown_details),
     ".markdown": (read_front_matter, markdown_details),
+    ".docx": (read_office_info, office_details),
+    ".odt": (read_office_info, office_details),
+    ".pages": (read_office_info, office_details),
+    ".doc": (nothing, dict),
+    ".url": (read_link_file, link_details),
+    ".webloc": (read_link_file, link_details),
+    ".desktop": (read_link_file, link_details),
 }
 """Each book format's reader, and what turns its result into :func:`book_work`'s details."""
 

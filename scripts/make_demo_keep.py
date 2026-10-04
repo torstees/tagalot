@@ -811,6 +811,54 @@ def _cbz(path: Path, info: dict[str, str] | None) -> None:
             comic.writestr("ComicInfo.xml", f'<?xml version="1.0"?><ComicInfo>{body}</ComicInfo>')
 
 
+def _office_and_links(files: Path) -> None:
+    """Office documents (Word with its thumbnail, OpenDocument, Pages, a legacy .doc) and
+    link files (.url, .webloc, .desktop) for the books demo."""
+    import plistlib
+
+    core = (
+        '<?xml version="1.0"?><cp:coreProperties'
+        ' xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+        ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">'
+        "<dc:title>The Hedge Knight</dc:title><dc:creator>George R. R. Martin</dc:creator>"
+        "<cp:keywords>Fantasy</cp:keywords><dc:subject>A tale of the Seven Kingdoms</dc:subject>"
+        "</cp:coreProperties>"
+    )
+    (files / "Loose").mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(files / "Loose/hedge-knight.docx", "w") as doc:
+        doc.writestr("[Content_Types].xml", "<Types/>")
+        doc.writestr("word/document.xml", "<document/>")
+        doc.writestr("docProps/core.xml", core)
+        doc.writestr("docProps/thumbnail.jpeg", _cover((90, 70, 30), "The Hedge Knight"))
+    meta = (
+        '<?xml version="1.0"?><office:document-meta'
+        ' xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"'
+        ' xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"'
+        ' xmlns:dc="http://purl.org/dc/elements/1.1/"><office:meta>'
+        "<dc:title>Notes on Dragons</dc:title>"
+        "<meta:initial-creator>Samwell Tarly</meta:initial-creator>"
+        "<meta:keyword>Essay</meta:keyword></office:meta></office:document-meta>"
+    )
+    with zipfile.ZipFile(files / "Loose/dragons.odt", "w") as doc:
+        doc.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+        doc.writestr("meta.xml", meta)
+        doc.writestr("Thumbnails/thumbnail.png", _cover((40, 120, 40), "Notes on Dragons"))
+    with zipfile.ZipFile(files / "Loose/My Novel Draft.pages", "w") as doc:
+        doc.writestr("Index/Document.iwa", b"\x00")
+        doc.writestr("preview.jpg", _cover((200, 200, 220), "My Novel Draft"))
+    (files / "Loose/Old Draft.doc").write_bytes(b"\xd0\xcf\x11\xe0 not really Word")
+    (files / "Web").mkdir(parents=True, exist_ok=True)
+    (files / "Web/Worm.url").write_text(
+        "[InternetShortcut]\r\nURL=https://parahumans.example.com/\r\n", encoding="utf-8"
+    )
+    (files / "Web/Pale.webloc").write_bytes(plistlib.dumps({"URL": "https://pale.example.com/"}))
+    (files / "Web/guide.desktop").write_text(
+        "[Desktop Entry]\nType=Link\nName=A Practical Guide to Evil\n"
+        "URL=https://practicalguide.example.com/\n",
+        encoding="utf-8",
+    )
+
+
 def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/book-files`` and ``scratch/Books.keep`` (the books theme), scanned
     and tagged; returns the keep folder. The first folder names where a file came from
@@ -842,6 +890,7 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         subject="The world will end on a Saturday. Next Saturday, in fact.",
         keywords="Fantasy; Humor",
     )
+    _office_and_links(files)
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}
     )
