@@ -81,7 +81,7 @@ class Song(Entity):
   - `search` makes it filterable: `"text"` (contains, or starts with), `"range"` (numbers and dates, from–to), or `"choice"` (pick from its values).
   - `editable=False` stops people editing it on the item's page. Values people edit by hand always win: your `ingest` never overwrites them.
   - `detail=False` hides it from the item's page (a value you keep for yourself, like assets2d's picture hash).
-  - `display` shows a number as `"bytes"` (3.0 MB) or `"duration"` (seconds as 3:25).
+  - `display` shows a number as `"bytes"` (3.0 MB) or `"duration"` (seconds as 3:25), and a text field as `"url"`: on the item's page, a web address (`http`/`https`) is a link that opens in the browser (needs `api_version = 3`).
 - **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys).
 - Every item also has a **title** (its name), **tags**, and **extra fields** people add themselves; you don't declare those.
 
@@ -142,7 +142,8 @@ The API has readers for formats several themes want, so they all read them the s
 - **`read_front_matter(path)`**: a Markdown file's YAML (`---`) or TOML (`+++`) front matter as `title` (else the first `# heading`), `authors`, `series`, `series_index`, `universe`, `keywords` (`tags` and `keywords`), `source`, `link`, `year`, `publisher`, `language`, `description`, `cover` (a path relative to the file), and `fields`: every key as written, for your own.
 - **`split_people(value)`** and **`split_keywords(value)`**: names and keywords as documents write them (`"Terry Pratchett & Neil Gaiman"`, `"fantasy, #to-read"`).
 
-More come with office documents and link files.
+- **`read_office_info(path)`**: a Word (DOCX) or OpenDocument (ODT) file's `title`, `authors`, `subject`, `keywords`, `description`, `year`, `language`, and `format`; a Pages file gives only its preview. **`office_cover(path)`** gives the preview picture's bytes those formats keep.
+- **`read_link_file(path)`**: a `.url`, `.webloc`, or `.desktop` link's `url` and `title` (a `.desktop` file's `Name=`; else `None`).
 
 ### What `ctx` can do
 

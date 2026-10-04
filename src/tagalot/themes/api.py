@@ -20,7 +20,8 @@ from typing import Any, ClassVar, Literal, Protocol, TypeVar
 API_VERSION = 3
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
-the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …)."""
+the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), and the
+``"url"`` field display."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -28,8 +29,9 @@ FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 SearchKind = Literal["text", "range", "choice"]
 SEARCH_KINDS: frozenset[str] = frozenset(typing.get_args(SearchKind))
 
-DISPLAY_FORMATS: frozenset[str] = frozenset({"bytes", "duration"})
-"""How a number field may be shown (:func:`field`'s ``display``)."""
+DISPLAY_FORMATS: frozenset[str] = frozenset({"bytes", "duration", "url"})
+"""How a field may be shown (:func:`field`'s ``display``): ``"bytes"`` and ``"duration"``
+for number fields, ``"url"`` for text fields."""
 
 
 class Kind(enum.StrEnum):
@@ -81,7 +83,8 @@ class FieldSpec:
     detail: bool = True
     """Show in the detail page's fields section."""
     display: str | None = None
-    """How a number reads: ``"bytes"`` (3.0 MB) or ``"duration"`` (seconds as 3:25)."""
+    """How the value reads: ``"bytes"`` (3.0 MB) or ``"duration"`` (seconds as 3:25) for a
+    number, ``"url"`` (a link that opens in the browser) for text."""
     name: str = ""
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -99,9 +102,11 @@ def field(
 ) -> Any:
     """Declare a field: ``year: int | None = field("Year", card=True, search="range")``.
 
-    ``display`` formats a number field for people: ``"bytes"`` shows a size as ``3.0 MB``,
-    ``"duration"`` shows seconds as ``3:25``. Sorting, filtering, and editing still use the
-    number. Typed ``Any`` so the declaration type-checks against its annotation.
+    ``display`` formats a field for people: on a number field, ``"bytes"`` shows a size as
+    ``3.0 MB`` and ``"duration"`` shows seconds as ``3:25``; on a text field, ``"url"``
+    shows a web address (``http`` or ``https``) as a link that opens in the browser on the
+    item's page (API version 3). Sorting, filtering, and editing still use the value.
+    Typed ``Any`` so the declaration type-checks against its annotation.
     """
     if display is not None and display not in DISPLAY_FORMATS:
         raise ThemeDeclarationError(
@@ -1138,10 +1143,13 @@ class Theme:
 from tagalot.themes.readers import (  # noqa: E402
     PDFIUM,
     epub_cover,
+    office_cover,
     pdf_cover,
     read_comic_info,
     read_epub,
     read_front_matter,
+    read_link_file,
+    read_office_info,
     read_pdf_info,
     split_keywords,
     split_people,
@@ -1203,12 +1211,15 @@ __all__ = [
     "epub_cover",
     "field",
     "kind_of",
+    "office_cover",
     "option",
     "pdf_cover",
     "plural_of",
     "read_comic_info",
     "read_epub",
     "read_front_matter",
+    "read_link_file",
+    "read_office_info",
     "read_pdf_info",
     "related",
     "role",

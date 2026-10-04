@@ -121,3 +121,69 @@ def write_markdown(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def write_docx(path: Path, core: str | None = None, thumbnail: bytes | None = None) -> Path:
+    """A Word document's zip with ``core`` as ``docProps/core.xml`` (just the elements
+    inside ``cp:coreProperties``) and an optional thumbnail."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as doc:
+        doc.writestr("[Content_Types].xml", "<Types/>")
+        doc.writestr("word/document.xml", "<document/>")
+        if core is not None:
+            doc.writestr(
+                "docProps/core.xml",
+                '<?xml version="1.0"?><cp:coreProperties'
+                ' xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+                ' xmlns:dc="http://purl.org/dc/elements/1.1/"'
+                ' xmlns:dcterms="http://purl.org/dc/terms/">' + core + "</cp:coreProperties>",
+            )
+        if thumbnail is not None:
+            doc.writestr("docProps/thumbnail.jpeg", thumbnail)
+    return path
+
+
+def write_odt(path: Path, meta: str, thumbnail: bytes | None = None) -> Path:
+    """An OpenDocument text's zip with ``meta`` inside ``office:meta`` in ``meta.xml``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as doc:
+        doc.writestr("mimetype", "application/vnd.oasis.opendocument.text")
+        doc.writestr(
+            "meta.xml",
+            '<?xml version="1.0"?><office:document-meta'
+            ' xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"'
+            ' xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"'
+            ' xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            "<office:meta>" + meta + "</office:meta></office:document-meta>",
+        )
+        if thumbnail is not None:
+            doc.writestr("Thumbnails/thumbnail.png", thumbnail)
+    return path
+
+
+def write_pages(path: Path, preview: bytes | None = None) -> Path:
+    """A Pages file saved as one file: a zip of Apple's own data and a preview picture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as doc:
+        doc.writestr("Index/Document.iwa", b"\x00apple")
+        if preview is not None:
+            doc.writestr("preview.jpg", preview)
+    return path
+
+
+def write_link(path: Path, url: str, name: str | None = None, kind: str = "Link") -> Path:
+    """A link file for ``url`` in the format its extension names (``.url``, ``.webloc``,
+    ``.desktop``)."""
+    import plistlib
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".url":
+        path.write_text(f"[InternetShortcut]\r\nURL={url}\r\nIconIndex=0\r\n", encoding="utf-8")
+    elif path.suffix == ".webloc":
+        path.write_bytes(plistlib.dumps({"URL": url}))
+    else:
+        lines = ["[Desktop Entry]", "Version=1.0", f"Type={kind}", f"URL={url}"]
+        if name:
+            lines.append(f"Name={name}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path

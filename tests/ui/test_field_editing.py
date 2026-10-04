@@ -226,3 +226,27 @@ def test_a_duplicate_extra_name_is_refused(
         page._add_extra()
         qtbot.waitUntil(lambda: window.tag_actions.busy == 0, timeout=5000)
     assert "already has a field named 'Licence'" in window.statusBar().currentMessage()
+
+
+def test_a_url_field_shows_a_link_that_opens_the_browser(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("tagalot.ui.field_editor.open_web_address", opened.append)
+    url = "https://example.com/a?b=1&c=<2>"
+    value = EditableValue(url, str, editable=True, label="Link", display="url")
+    qtbot.addWidget(value)
+    assert value.label.textFormat() == Qt.TextFormat.RichText
+    assert value.label.text() == (
+        '<a href="https://example.com/a?b=1&amp;c=&lt;2&gt;">'
+        "https://example.com/a?b=1&amp;c=&lt;2&gt;</a>"
+    )
+    value.label.linkActivated.emit(url)  # as a click on the link does
+    assert opened == [url]
+    value.start_editing()
+    assert value.box.text() == url  # still edited as text
+    value.show_value("not a web address", False)
+    assert value.label.textFormat() == Qt.TextFormat.PlainText
+    assert value.label.text() == "not a web address"
+    value.show_value("<b>plain</b>", False)  # other fields never render markup
+    assert value.label.textFormat() == Qt.TextFormat.PlainText

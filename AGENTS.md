@@ -102,7 +102,7 @@ src/tagalot/
     dedupe.py
   themes/
     api.py               # PUBLIC theme API — the only module themes import
-    readers.py           # format readers themes share (EPUB, ComicInfo, PDF, front matter), part of the API
+    readers.py           # format readers themes share (EPUB, comics, PDF, Markdown, office, links), in the API
     loader.py            # discovery and validation
     template.py          # the template theme (`tagalot --new-theme`), kept valid by tests
   builtin_themes/        # generic.py, assets2d.py, music.py, movies.py, books.py

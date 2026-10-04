@@ -228,9 +228,14 @@ def validate_theme(theme: type[Theme]) -> list[str]:
         except ThemeDeclarationError:
             infos = []  # reported by the table build below
         for info in infos:
-            if info.spec.display is not None and info.type not in (int, float):
+            display = info.spec.display
+            if display == "url" and info.type is not str:
                 problems.append(
-                    f"{names[entity]}.{info.name}: display={info.spec.display!r} needs a "
+                    f"{names[entity]}.{info.name}: display='url' needs a text field (str)"
+                )
+            elif display not in (None, "url") and info.type not in (int, float):
+                problems.append(
+                    f"{names[entity]}.{info.name}: display={display!r} needs a "
                     "number field (int or float)"
                 )
         known = _safe_field_names(entity)
