@@ -17,9 +17,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 2
+API_VERSION = 3
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
-added :meth:`Theme.migrate_schema`."""
+added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
+the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -568,6 +569,14 @@ class IngestContext(Protocol):
 
     def warn(self, resource: ResourceInfo | None, message: str) -> None:
         """Report a problem with a file to the activity panel."""
+        ...
+
+    def resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
+        """The file or folder at ``relpath`` (POSIX, relative to the root) in the same root
+        as ``beside``: a cover picture a Markdown file names, say, to :meth:`link` it. It
+        must be among the files the theme accepts (:attr:`Theme.extensions`) and not known
+        to be missing; else ``None``. Case is ignored when no file matches exactly. Needs
+        ``api_version = 3``."""
         ...
 
     def prepared(self, resource: ResourceInfo | int) -> Any:
@@ -1126,7 +1135,17 @@ class Theme:
 
 # --- Reading files (DESIGN.md §9 books, "Reading files") ---
 
-from tagalot.themes.readers import epub_cover, read_comic_info, read_epub  # noqa: E402
+from tagalot.themes.readers import (  # noqa: E402
+    PDFIUM,
+    epub_cover,
+    pdf_cover,
+    read_comic_info,
+    read_epub,
+    read_front_matter,
+    read_pdf_info,
+    split_keywords,
+    split_people,
+)
 
 __all__ = [
     "API_VERSION",
@@ -1136,6 +1155,7 @@ __all__ = [
     "FOLDER_IMAGE_NAMES",
     "KIND_EXTENSIONS",
     "OPTION_TYPES",
+    "PDFIUM",
     "SEARCH_KINDS",
     "ActionContext",
     "ActionSpec",
@@ -1184,11 +1204,16 @@ __all__ = [
     "field",
     "kind_of",
     "option",
+    "pdf_cover",
     "plural_of",
     "read_comic_info",
     "read_epub",
+    "read_front_matter",
+    "read_pdf_info",
     "related",
     "role",
+    "split_keywords",
+    "split_people",
     "stat",
     "top_values",
 ]

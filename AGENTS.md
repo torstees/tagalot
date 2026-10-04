@@ -59,7 +59,7 @@ For views with several entity types, `--media` creates `scratch/Media.keep` inst
 
 - Python 3.12+, managed with **uv**. `src/` layout.
 - **PySide6** for the UI. **SQLAlchemy 2.0** (typed `Mapped[...]`, `select()` style; no legacy `Query` API) on **SQLite**.
-- Pillow, mutagen, py7zr, rarfile (optional at runtime), platformdirs, tomli-w.
+- Pillow, mutagen, pymediainfo, py7zr, rarfile (optional at runtime), pypdfium2, PyYAML, platformdirs, tomli-w.
 - pytest, pytest-qt, ruff, mypy.
 
 Do not add a dependency without a clear need. When you add one, note it and the reason in `docs/DESIGN.md` §3.
@@ -102,7 +102,7 @@ src/tagalot/
     dedupe.py
   themes/
     api.py               # PUBLIC theme API — the only module themes import
-    readers.py           # format readers themes share (EPUB, ComicInfo), part of the API
+    readers.py           # format readers themes share (EPUB, ComicInfo, PDF, front matter), part of the API
     loader.py            # discovery and validation
     template.py          # the template theme (`tagalot --new-theme`), kept valid by tests
   builtin_themes/        # generic.py, assets2d.py, music.py, movies.py, books.py

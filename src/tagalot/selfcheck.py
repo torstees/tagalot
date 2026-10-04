@@ -2,7 +2,7 @@
 
 It prints the version, Python, Qt, SQLite's FTS5, the built-in themes found, the theme
 template and the icon (files the build must carry along), and each file reader (Pillow,
-mutagen, MediaInfo, 7z, RAR), and exits 1 if something Tagalot needs is missing.
+mutagen, MediaInfo, PDFium, PyYAML, 7z, RAR), and exits 1 if something Tagalot needs is missing.
 Packaged builds run it in CI, since a frozen app is where a module or a native library
 quietly goes missing.
 """
@@ -98,6 +98,34 @@ def _mediainfo() -> str:
     return "MediaInfo library loaded"
 
 
+def _pdfium() -> str:
+    """Draw a one-page PDF (made with Pillow), so the bundled PDFium library must load."""
+    import io
+
+    from PIL import Image
+
+    from tagalot.themes.readers import pdf_cover
+
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "check.pdf"
+        buffer = io.BytesIO()
+        Image.new("RGB", (8, 8), (255, 255, 255)).save(buffer, "PDF")
+        path.write_bytes(buffer.getvalue())
+        if not pdf_cover(str(path), 16):
+            raise RuntimeError("PDFium drew nothing")
+    import pypdfium2
+
+    return f"pypdfium2 {pypdfium2.version.PYPDFIUM_INFO}, drew a page"
+
+
+def _yaml() -> str:
+    import yaml
+
+    if yaml.safe_load("a: 1") != {"a": 1}:
+        raise RuntimeError("PyYAML read nothing")
+    return f"PyYAML {yaml.__version__}"
+
+
 def _py7zr() -> str:
     import py7zr
 
@@ -116,6 +144,8 @@ READERS: list[tuple[str, Callable[[], str], bool]] = [
     ("Pillow", _pillow, True),
     ("mutagen", _mutagen, True),
     ("MediaInfo", _mediainfo, True),
+    ("PDFium", _pdfium, True),
+    ("PyYAML", _yaml, True),
     ("py7zr", _py7zr, True),
     ("RAR", _rarfile, False),  # optional: needs an external unrar (DESIGN.md §3)
 ]

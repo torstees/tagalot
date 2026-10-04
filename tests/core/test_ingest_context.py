@@ -1,5 +1,6 @@
 """Tests for the ingest context (DESIGN.md §9 "Ingest context")."""
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
@@ -20,6 +21,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     ResourceKind,
+    ResourceStatus,
     Root,
     entity_fts,
 )
@@ -415,3 +417,46 @@ def test_entities_of_a_resource(env: Env) -> None:
         assert ctx.entities_of(cover.id) == [album, other]
         assert ctx.entities_of(cover, "scan") == [other]
         assert ctx.entities_of(folder, "cover") == []
+
+
+# --- resource_at (#297) ---
+
+
+def test_resource_at_finds_a_file_in_the_same_root(env: Env) -> None:
+    album, cover = env.resources[0], env.resources[1]
+    beside = ResourceInfo(album.id, "r", "Album", "dir", "", None, None, str(Path("/x/Album")))
+    with env.engine.begin() as conn:
+        ctx = env.session(conn)
+        found = ctx.resource_at(beside, "Album/cover.jpg")
+        assert found is not None
+        assert (found.id, found.relpath, found.kind) == (cover.id, "Album/cover.jpg", "file")
+        assert found.path == str(Path("/x/Album/cover.jpg"))  # this machine's path
+        assert ctx.resource_at(beside, "album/COVER.jpg") == found  # case, when nothing else
+        assert ctx.resource_at(beside, "./Album/../Album/cover.jpg") == found
+        assert ctx.resource_at(beside, "Album/none.jpg") is None
+        assert ctx.resource_at(beside, "../Album/cover.jpg") is None  # outside the root
+        conn.execute(
+            update(Resource).where(Resource.id == cover.id).values(status=ResourceStatus.MISSING)
+        )
+        assert ctx.resource_at(beside, "Album/cover.jpg") is None  # known to be missing
+
+
+def test_resource_at_with_no_path_here(env: Env) -> None:
+    # A root with no path on this computer: the resource is found, with no path either.
+    beside = ResourceInfo(env.resources[2].id, "r", "Album/back.jpg", "file", ".jpg", 1, 1, "")
+    with env.engine.begin() as conn:
+        found = env.session(conn).resource_at(beside, "Album/cover.jpg")
+    assert found is not None
+    assert found.path == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows paths")
+def test_resource_at_on_a_unc_share(env: Env) -> None:
+    beside = ResourceInfo(
+        env.resources[2].id, "r", "Album/back.jpg", "file", ".jpg", 1, 1,
+        r"\\nas\books\Album\back.jpg",
+    )  # fmt: skip
+    with env.engine.begin() as conn:
+        found = env.session(conn).resource_at(beside, "Album/cover.jpg")
+    assert found is not None
+    assert found.path == r"\\nas\books\Album\cover.jpg"

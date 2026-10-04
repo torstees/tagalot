@@ -8,6 +8,8 @@ batches containment edges and search-index updates until :meth:`IngestSession.fl
 """
 
 import logging
+import os
+import posixpath
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -25,9 +27,12 @@ from tagalot.core.models import (
     EntityResource,
     FieldProvenance,
     FieldSource,
+    Resource,
+    ResourceStatus,
     UserRelation,
     utcnow,
 )
+from tagalot.core.roots import local_path
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import EntityRef, Record, ResourceInfo
@@ -295,6 +300,34 @@ class IngestSession:
         self.conn.execute(delete(Entity).where(Entity.id == entity.id))
         self._forget(entity.id)
         self._dirty.add(entity.id)  # its search row goes at flush
+
+    def resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
+        """The resource at ``relpath`` in ``beside``'s root (see the API); its local path is
+        made from ``beside``'s, so it is only as known as that one."""
+        relpath = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
+        if relpath in ("", ".") or relpath == ".." or relpath.startswith("../"):
+            return None
+        columns = (Resource.id, Resource.relpath, Resource.kind, Resource.ext)
+        found = select(*columns, Resource.size, Resource.mtime_ns).where(
+            Resource.root_id == beside.root_id,
+            Resource.status == ResourceStatus.OK,
+            Resource.skipped.is_(False),
+            Resource.parent_resource_id.is_(None),
+        )
+        row = self.conn.execute(found.where(Resource.relpath == relpath)).first()
+        if row is None:  # as written, in another case (a file system that ignores case)
+            lower = found.where(func.lower(Resource.relpath) == relpath.lower())
+            row = self.conn.execute(lower.order_by(Resource.relpath).limit(1)).first()
+        if row is None:
+            return None
+        rid, stored, kind, ext, size, mtime = row
+        path = ""
+        if beside.path:
+            root = beside.path
+            for _ in beside.relpath.split("/"):
+                root = os.path.dirname(root)
+            path = local_path(root, stored)
+        return ResourceInfo(rid, beside.root_id, stored, kind.value, ext, size, mtime, path)
 
     def prepared(self, resource: ResourceInfo | int) -> Any:
         """What the theme's ``prepare`` returned for ``resource``, or ``None``."""

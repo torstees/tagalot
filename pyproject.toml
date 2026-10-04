@@ -17,6 +17,8 @@ dependencies = [
     "platformdirs>=4.0",
     "tomli-w>=1.0",
     "pymediainfo>=7.0.1",
+    "pypdfium2>=5.14.0",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
@@ -28,6 +30,7 @@ dev = [
     "pytest-qt>=4.4",
     "ruff>=0.6",
     "mypy>=1.11",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 package = [
     "pyinstaller>=6.20",
@@ -69,7 +72,7 @@ warn_unreachable = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["rarfile"]  # no type information
+module = ["rarfile", "pypdfium2"]  # no type information
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

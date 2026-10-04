@@ -4,6 +4,7 @@ import io
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 from xml.sax.saxutils import escape
 
 from PIL import Image
@@ -101,4 +102,22 @@ def write_cbz(path: Path, info: str | None = None, pages: int = 2) -> Path:
             comic.writestr(f"{n:03}.jpg", jpeg((20 * n, 90, 160)))
         if info is not None:
             comic.writestr("ComicInfo.xml", info)
+    return path
+
+
+def write_pdf(
+    path: Path, pages: int = 1, color: tuple[int, int, int] = (30, 120, 60), **info: Any
+) -> Path:
+    """A PDF of ``pages`` solid pages (Pillow writes it), with document info such as
+    ``title``, ``author``, ``subject``, ``keywords``, and ``creationDate``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    info.setdefault("title", "")  # else Pillow names it after the file
+    images = [Image.new("RGB", (60, 90), color) for _ in range(pages)]
+    images[0].save(path, "PDF", save_all=True, append_images=images[1:], **info)
+    return path
+
+
+def write_markdown(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
     return path

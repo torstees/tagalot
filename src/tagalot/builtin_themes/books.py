@@ -27,7 +27,7 @@ import difflib
 import logging
 import posixpath
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -40,6 +40,7 @@ from tagalot.themes.api import (
     IngestContext,
     Record,
     ResourceInfo,
+    RoleImage,
     SearchView,
     Section,
     SortBy,
@@ -51,6 +52,8 @@ from tagalot.themes.api import (
     option,
     read_comic_info,
     read_epub,
+    read_front_matter,
+    read_pdf_info,
     related,
     role,
     top_values,
@@ -58,8 +61,10 @@ from tagalot.themes.api import (
 
 logger = logging.getLogger(__name__)
 
-BOOK_EXTENSIONS = frozenset({".epub"})
+BOOK_EXTENSIONS = frozenset({".epub", ".pdf", ".md", ".markdown"})
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
+COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
+"""Pictures scanned so a Markdown book's front matter can name one as its cover."""
 
 
 class Author(Entity):
@@ -109,7 +114,13 @@ class Book(Entity):
     sources: str | None = field("Sources", search="text", editable=False)
     """Where its files came from (``Humble Bundle, Kobo``)."""
     link: str | None = field("Link", search="text")
-    roles = [role("file", kinds={"any"}, many=True, primary=True, label="Files")]
+    cover: str | None = field("Cover file", editable=False, detail=False)
+    """The picture front matter names (``<root id>:<path in the root>``), so the picture is
+    linked whichever is read first."""
+    roles = [
+        role("file", kinds={"any"}, many=True, primary=True, label="Files"),
+        role("cover", kinds={"image"}, thumbnail=True),
+    ]
     card_lines = ("authors", "series")
 
 
@@ -162,7 +173,8 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 1
-    extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS
+    api_version = 3  # ctx.resource_at, for Markdown covers
+    extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
     entities = [Author, Universe, Series, Collection, Book, Comic]
     containment = [
         contains(Universe, Series),
@@ -255,7 +267,7 @@ class BooksTheme(Theme):
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Book:
-            return [ImageFile(), Icon("file")]
+            return [RoleImage("cover"), ImageFile(), Icon("file")]
         if entity_type is Comic:
             return [ImageFile(), Icon("archive")]
         if entity_type in (Series, Universe, Collection):
@@ -289,7 +301,8 @@ class BooksTheme(Theme):
                 continue
             try:
                 if resource.ext in BOOK_EXTENSIONS:
-                    found[resource.id] = book_work(resource.relpath, read_epub(resource.path))
+                    read, details = READERS[resource.ext]
+                    found[resource.id] = book_work(resource.relpath, details(read(resource.path)))
                 elif resource.ext in COMIC_EXTENSIONS:
                     info = read_comic_info(resource.path)
                     found[resource.id] = comic_work(resource.relpath, info)
@@ -306,6 +319,10 @@ class BooksTheme(Theme):
             work = ctx.prepared(resource)
             if work:
                 self._ingest_work(resource, dict(work), ctx)
+            elif resource.ext in COVER_EXTENSIONS:  # a cover read after its book
+                key = f"{resource.root_id}:{resource.relpath}"
+                for book in ctx.find(Book, cover=key):
+                    ctx.link(book, resource, "cover")
 
     def _ingest_work(
         self, resource: ResourceInfo, work: dict[str, Any], ctx: IngestContext
@@ -320,6 +337,7 @@ class BooksTheme(Theme):
         collections: list[str] = work.pop("collections")
         source = source_of(resource.relpath, ctx.option("source_level"), work.pop("source"))
         title = work.pop("title")
+        cover = work.pop("cover", None)
 
         existing = ctx.entities_of(resource, "file")
         if existing:
@@ -350,6 +368,8 @@ class BooksTheme(Theme):
         ctx.update(entity, title=title if alone else None, **values)
         ctx.keywords(entity, resource, keywords)
 
+        if kind is Book:
+            set_cover(entity, resource, cover, alone, ctx)
         writes, draws = CREDITS[kind]
         set_people(entity, writes, writers, alone, ctx)
         set_people(entity, draws, artists, alone, ctx)
@@ -400,32 +420,78 @@ class BooksTheme(Theme):
 # --- what a file says ---
 
 
-def book_work(relpath: str, epub: Mapping[str, Any] | None) -> dict[str, Any]:
-    """A book's details from its EPUB metadata (``None``: unreadable), else its file name."""
+def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A book's details from what its file says (``None``: unreadable, or says nothing),
+    each missing one from its file name. ``details`` has the keys :func:`epub_details`
+    gives."""
     guess = book_name(relpath)
-    meta = epub or {}
-    creators: list[tuple[str, str | None]] = meta.get("creators") or []
-    writers = [n for n, r in creators if r in (None, "writer")] or guess["writers"]
-    artists = [n for n, r in creators if r == "artist"]
-    title = meta.get("title") or guess["title"]
+    meta = details or {}
     return {
         "type": "book",
-        "title": title,
-        "writers": unique(writers),
-        "artists": unique(artists),
+        "title": meta.get("title") or guess["title"],
+        "writers": unique(meta.get("writers") or guess["writers"]),
+        "artists": unique(meta.get("artists") or []),
         "series": meta.get("series") or guess["series"],
         "series_index": first_of(meta.get("series_index"), guess["series_index"]),
-        "universe": None,
+        "universe": meta.get("universe"),
         "collections": list(meta.get("collections") or []),
-        "keywords": list(meta.get("subjects") or []),
+        "keywords": list(meta.get("keywords") or []),
         "year": meta.get("year") or guess["year"],
         "publisher": meta.get("publisher"),
         "language": meta.get("language"),
         "isbn": meta.get("isbn"),
         "description": meta.get("description"),
-        "link": web_link(meta.get("source")),
-        "source": meta.get("publisher"),
+        "link": web_link(meta.get("link")),
+        "source": meta.get("source"),
+        "cover": meta.get("cover"),
     }
+
+
+def epub_details(epub: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_epub` found, as :func:`book_work` takes it: creators without a
+    role are writers, its subjects are keywords, its publisher is the source."""
+    creators: list[tuple[str, str | None]] = epub.get("creators") or []
+    return {
+        **{k: epub.get(k) for k in ("title", "series", "series_index", "year", "publisher")},
+        **{k: epub.get(k) for k in ("language", "isbn", "description")},
+        "writers": [n for n, role in creators if role in (None, "writer")],
+        "artists": [n for n, role in creators if role == "artist"],
+        "collections": epub.get("collections") or [],
+        "keywords": epub.get("subjects") or [],
+        "link": epub.get("source"),
+        "source": epub.get("publisher"),
+    }
+
+
+def pdf_details(info: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_pdf_info` found: its author is the writer, its subject the
+    description, its keywords keywords. A PDF names no source."""
+    return {
+        "title": info.get("title"),
+        "writers": info.get("authors") or [],
+        "keywords": info.get("keywords") or [],
+        "description": info.get("subject"),
+        "year": info.get("year"),
+    }
+
+
+def markdown_details(front: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_front_matter` found (its ``authors`` are writers)."""
+    names = ("title", "series", "series_index", "universe", "keywords", "source", "link")
+    more = ("year", "publisher", "language", "description", "cover")
+    return {
+        **{k: front.get(k) for k in (*names, *more)},
+        "writers": front.get("authors") or [],
+    }
+
+
+READERS: Mapping[str, tuple[Callable[[str], Any], Callable[[Any], dict[str, Any]]]] = {
+    ".epub": (read_epub, epub_details),
+    ".pdf": (read_pdf_info, pdf_details),
+    ".md": (read_front_matter, markdown_details),
+    ".markdown": (read_front_matter, markdown_details),
+}
+"""Each book format's reader, and what turns its result into :func:`book_work`'s details."""
 
 
 def comic_work(relpath: str, info: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -608,6 +674,40 @@ def set_people(
 
 
 RELATIONSHIPS = ("writers", "artists", "comic_writers", "comic_artists")
+
+
+def cover_path(relpath: str, cover: str | None) -> str | None:
+    """Where the picture front matter names is in the root: relative to the Markdown file's
+    folder, or to the root with a leading ``/``; Obsidian's ``[[cover.jpg]]`` too. ``None``
+    for a web address or a path outside the root."""
+    if not cover:
+        return None
+    cover = cover.strip().removeprefix("![[").removeprefix("[[").removesuffix("]]")
+    cover = cover.replace("\\", "/")
+    if re.match(r"^[a-z][a-z0-9+.-]*:", cover, re.IGNORECASE):  # a web address, or C:/…
+        return None
+    folder = "" if cover.startswith("/") else relpath.rpartition("/")[0]
+    path = posixpath.normpath(posixpath.join(folder, cover.lstrip("/")))
+    return None if path in (".", "..") or path.startswith("../") else path
+
+
+def set_cover(
+    book: EntityRef, resource: ResourceInfo, cover: str | None, alone: bool, ctx: IngestContext
+) -> None:
+    """Link the picture a Markdown file's front matter names as the book's cover, if it is
+    scanned; remember it, so a picture read later is linked then. While the file is the
+    book's only one, a cover it no longer names is let go."""
+    target = cover_path(resource.relpath, cover)
+    if target is None:
+        if alone and resource.ext in (".md", ".markdown"):
+            ctx.update(book, cover=None)
+            for picture_id in ctx.linked(book, "cover"):
+                ctx.unlink(book, picture_id, "cover")
+        return
+    ctx.update(book, cover=f"{resource.root_id}:{target}")
+    picture = ctx.resource_at(resource, target)
+    if picture is not None:
+        ctx.link(book, picture, "cover")
 
 
 def delete_if_empty(entity: EntityRef, ctx: IngestContext) -> None:
