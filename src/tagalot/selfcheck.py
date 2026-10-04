@@ -15,7 +15,7 @@ from pathlib import Path
 
 import tagalot
 
-BUILTIN = ("assets2d", "generic", "movies", "music")
+BUILTIN = ("assets2d", "books", "generic", "movies", "music")
 """The built-in themes every build must find."""
 
 

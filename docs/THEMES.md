@@ -2,7 +2,7 @@
 
 A **theme** tells Tagalot what a keep's files *are*: which kinds of items to make from them (songs, fonts, movies, recipes), what fields each item has, how items contain or relate to each other, and which searches, pages, thumbnails, and commands to offer. Tagalot handles everything else: scanning, tags, search, undo, the window.
 
-A theme is **one Python file** with **one `Theme` subclass**, importing only `tagalot.themes.api`. Tagalot ships four you can read as examples, from simplest to richest: [`generic.py`](../src/tagalot/builtin_themes/generic.py) (one item per file), [`assets2d.py`](../src/tagalot/builtin_themes/assets2d.py) (artists, images, fonts, archives), [`music.py`](../src/tagalot/builtin_themes/music.py) (artists ⊃ albums ⊃ songs), and [`movies.py`](../src/tagalot/builtin_themes/movies.py) (collections, movies, a cast). The design behind all of this is [DESIGN.md §9](DESIGN.md#9-theme-api).
+A theme is **one Python file** with **one `Theme` subclass**, importing only `tagalot.themes.api`. Tagalot ships five you can read as examples, from simplest to richest: [`generic.py`](../src/tagalot/builtin_themes/generic.py) (one item per file), [`assets2d.py`](../src/tagalot/builtin_themes/assets2d.py) (artists, images, fonts, archives), [`music.py`](../src/tagalot/builtin_themes/music.py) (artists ⊃ albums ⊃ songs), [`movies.py`](../src/tagalot/builtin_themes/movies.py) (collections, movies, a cast), and [`books.py`](../src/tagalot/builtin_themes/books.py) (books and comics, their writers and artists, series, universes, collections). The design behind all of this is [DESIGN.md §9](DESIGN.md#9-theme-api).
 
 ## Quick start
 
@@ -131,6 +131,15 @@ A scan hands your theme **batches** of new and changed files and folders, as `Re
 - **`prepare(batch)`** runs first, in a worker, with **no database**. Read the files here: tags, image sizes, the first line of a text file. Return `{resource id: whatever ingest needs}`. Catch a bad file and return an error marker for it rather than raising; one bad file must never stop a scan. Several `prepare` calls run at once on different threads, each with a few resources, so keep anything it remembers in local variables, not on `self` or in module globals.
 - **`ingest(batch, ctx)`** then runs in the database writer, inside a transaction: turn files into items, links, containment, and fields through `ctx`. Keep it quick, and don't read files here.
 
+### Reading common formats
+
+The API has readers for formats several themes want, so they all read them the same way. Call them in `prepare`. They only read, return plain dicts (`None` or empty for what a file doesn't say), and raise `OSError` or `ValueError` for a file that can't be read at all:
+
+- **`read_epub(path)`**: an EPUB's `title`, `creators` (`(name, role)` pairs: `"writer"`, `"artist"`, `"editor"`, `"translator"`, or `None`), `series` and `series_index`, `collections`, `subjects`, `publisher`, `language`, `year`, `isbn`, `description` (HTML removed), `source`, and `cover` (the cover's path inside the file). **`epub_cover(path)`** gives the cover's bytes.
+- **`read_comic_info(path)`**: a comic archive's (CBZ, CB7, CBR) `ComicInfo.xml` as `series`, `number` (text: `"12"`, `"Annual 1"`), `volume`, `title`, `writers`, `artists`, `publisher`, `imprint`, `genres`, `tags`, `web`, `year`, `story_arc`, `series_group`, and `summary`; `None` when it has none.
+
+More come with the books theme's other formats (PDF, Markdown front matter, office documents, link files).
+
 ### What `ctx` can do
 
 | | |
@@ -189,7 +198,7 @@ def thumbnail_chain(self, entity_type):
     return super().thumbnail_chain(entity_type)
 ```
 
-Providers in the API: `RoleImage(role)`, `ImageFile()` (the primary file, drawn by its kind: an audio file shows its embedded art, an archive its first picture), `FolderImage(names)` (`folder.jpg`, `cover.png`…), `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, and `Icon(kind)`, which ends the chain. For your own, subclass `ThumbnailProvider` and yield candidate files from `candidates(entity, ctx)`, using the read-only `ThumbnailContext` (`resources`, `parents`, `children`, `folder_files`, `thumbnail_of`).
+Providers in the API: `RoleImage(role)`, `ImageFile()` (the primary file, drawn by its kind: an audio file shows its embedded art, an archive its first picture, an EPUB its cover), `FolderImage(names)` (`folder.jpg`, `cover.png`…), `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, and `Icon(kind)`, which ends the chain. For your own, subclass `ThumbnailProvider` and yield candidate files from `candidates(entity, ctx)`, using the read-only `ThumbnailContext` (`resources`, `parents`, `children`, `folder_files`, `thumbnail_of`).
 
 ## Commands: actions
 

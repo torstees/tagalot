@@ -8,6 +8,7 @@ Usage (from the repository folder):
     uv run python scripts/make_demo_keep.py --reset --media   # the media keep instead
     uv run python scripts/make_demo_keep.py --reset --assets  # the 2D assets keep instead
     uv run python scripts/make_demo_keep.py --reset --music   # the music keep instead
+    uv run python scripts/make_demo_keep.py --reset --books   # the books keep instead
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
 it watches): a few real images, documents, nested folders, and names with accents and spaces,
@@ -31,6 +32,13 @@ archive of images, and a picture directly in the root (no artist), with a few ta
 music theme: short silent MP3s with tags. There is an album with a cover and a song in two
 versions (MP3 and FLAC; the FLAC holds no audio), an album with embedded cover art, a
 two-disc album, a compilation, an untagged folder, and a song directly in the root.
+
+``--books`` creates ``scratch/Books.keep`` watching ``scratch/book-files`` with the built-in
+books theme: small EPUBs and comic archives in folders named for where they came from (Kobo,
+Humble Bundle, Comixology, Loose). One book is in two stores (one work, two files), two
+series are in reading order, a comic series is in a universe, some files have no metadata
+(named from their file names), and one book is a near-duplicate of another. Genres come from
+the files' subjects (file keywords); "Humor" and "Epic Fantasy" match no tag.
 """
 
 import argparse
@@ -43,6 +51,8 @@ import struct
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
+from xml.sax.saxutils import escape
 
 import py7zr
 from mutagen.easyid3 import EasyID3
@@ -52,6 +62,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import Connection, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from tagalot.builtin_themes.books import BooksTheme
 from tagalot.builtin_themes.movies import MoviesTheme
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
@@ -631,6 +642,176 @@ def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
     return header + element(0x18538067, info + element(0x1654AE6B, tracks))
 
 
+BOOK_EPUBS: dict[str, dict[str, Any]] = {
+    "Kobo/The Colour of Magic.epub": {
+        "title": "The Colour of Magic",
+        "creators": [("Terry Pratchett", "aut")],
+        "series": ("Discworld", 1),
+        "subjects": ["Fantasy", "Humor"],
+        "cover": ((40, 90, 150), "The Colour of Magic"),
+    },
+    "Humble Bundle/The Colour of Magic.epub": {  # the same book from another store
+        "title": "The Colour of Magic",
+        "creators": [("Terry Pratchett", "aut"), ("Josh Kirby", "ill")],
+        "series": ("Discworld", 1),
+        "subjects": ["Fantasy"],
+    },
+    "Kobo/Equal Rites.epub": {
+        "title": "Equal Rites",
+        "creators": [("Terry Pratchett", "aut")],
+        "series": ("Discworld", 3),
+        "subjects": ["Fantasy", "Humor"],
+        "cover": ((120, 50, 110), "Equal Rites"),
+    },
+    "Kobo/The Final Empire.epub": {
+        "title": "The Final Empire",
+        "creators": [("Brandon Sanderson", "aut")],
+        "epub3_series": ("Mistborn", 1),
+        "sets": ["The Mistborn Trilogy"],
+        "subjects": ["Fantasy", "Epic Fantasy"],
+        "cover": ((150, 60, 30), "The Final Empire"),
+    },
+    "Humble Bundle/The Well of Ascension.epub": {
+        "title": "The Well of Ascension",
+        "creators": [("Brandon Sanderson", "aut")],
+        "epub3_series": ("Mistborn", 2),
+        "sets": ["The Mistborn Trilogy"],
+        "subjects": ["Fantasy", "Epic Fantasy"],
+        "cover": ((170, 120, 30), "The Well of Ascension"),
+    },
+    # Files without metadata: named from their file names.
+    "Loose/Discworld 02 - The Light Fantastic.epub": {},
+    "Loose/Ursula K. Le Guin - A Wizard of Earthsea (1968).epub": {},
+    "Loose/Terry Pratchett - The Color of Magic.epub": {},  # a near-duplicate
+}
+"""EPUBs for the books demo, by path: their metadata (a cover as color and text)."""
+
+BOOK_COMICS: dict[str, dict[str, str] | None] = {
+    "Comixology/Saga 001.cbz": {
+        "Series": "Saga",
+        "Number": "1",
+        "Writer": "Brian K. Vaughan",
+        "Penciller": "Fiona Staples",
+        "Genre": "Science Fiction, Space Opera",
+        "Publisher": "Image",
+        "Year": "2012",
+    },
+    "Comixology/Saga 002.cbz": {
+        "Series": "Saga",
+        "Number": "2",
+        "Writer": "Brian K. Vaughan",
+        "Penciller": "Fiona Staples",
+        "Genre": "Science Fiction",
+        "Publisher": "Image",
+        "Year": "2012",
+    },
+    "Loose/Ms Marvel 001.cbz": {
+        "Series": "Ms. Marvel",
+        "Number": "1",
+        "Title": "No Normal",
+        "Writer": "G. Willow Wilson",
+        "Penciller": "Adrian Alphona",
+        "Genre": "Superhero",
+        "SeriesGroup": "Marvel",
+        "Publisher": "Marvel",
+        "Year": "2014",
+        "Web": "https://comics.example.com/ms-marvel-1",
+    },
+    "Loose/Sandman #001 (1989).cbz": None,  # no ComicInfo.xml: named from its file name
+}
+"""Comic archives for the books demo, by path: their ComicInfo.xml fields."""
+
+BOOK_TAGS = {
+    ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)
+    ("Genre", "Science Fiction"): [],
+    ("Genre", "Humour"): ["Discworld"],  # on the series: its books count (inherit tags)
+    ("Read",): ["The Colour of Magic", "Saga #1"],
+}
+
+
+def _epub(path: Path, details: dict[str, Any]) -> None:
+    """A small EPUB with this metadata (as ``tests/core/book_files.write_epub``)."""
+    lines = []
+    if "title" in details:
+        lines.append(f"<dc:title>{escape(details['title'])}</dc:title>")
+    for name, code in details.get("creators", []):
+        lines.append(f'<dc:creator opf:role="{code}">{escape(name)}</dc:creator>')
+    lines += [f"<dc:subject>{escape(s)}</dc:subject>" for s in details.get("subjects", [])]
+    if "series" in details:
+        name, index = details["series"]
+        lines.append(f'<meta name="calibre:series" content="{escape(name)}"/>')
+        lines.append(f'<meta name="calibre:series_index" content="{index}"/>')
+    if "epub3_series" in details:
+        name, index = details["epub3_series"]
+        lines.append(f'<meta property="belongs-to-collection" id="s">{escape(name)}</meta>')
+        lines.append('<meta refines="#s" property="collection-type">series</meta>')
+        lines.append(f'<meta refines="#s" property="group-position">{index}</meta>')
+    for n, name in enumerate(details.get("sets", [])):
+        lines.append(f'<meta property="belongs-to-collection" id="c{n}">{escape(name)}</meta>')
+        lines.append(f'<meta refines="#c{n}" property="collection-type">set</meta>')
+    items = '<item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>'
+    if "cover" in details:
+        items += (
+            '<item id="cover" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>'
+        )
+    opf = (
+        '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"'
+        ' xmlns:opf="http://www.idpf.org/2007/opf">'
+        f"{''.join(lines)}</metadata><manifest>{items}</manifest>"
+        '<spine><itemref idref="text"/></spine></package>'
+    )
+    container = (
+        '<?xml version="1.0"?><container version="1.0"'
+        ' xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+        "</rootfiles></container>"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as book:
+        book.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        book.writestr("META-INF/container.xml", container)
+        book.writestr("OEBPS/content.opf", opf)
+        book.writestr("OEBPS/text.xhtml", "<html><body><p>Once upon a time.</p></body></html>")
+        if "cover" in details:
+            color, text = details["cover"]
+            book.writestr("OEBPS/cover.jpg", _cover(color, text))
+
+
+def _cbz(path: Path, info: dict[str, str] | None) -> None:
+    """A comic archive of two pages, with ``info`` as its ComicInfo.xml."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as comic:
+        comic.writestr("001.jpg", _cover((30, 30, 30), path.stem))
+        comic.writestr("002.jpg", _cover((200, 200, 200), f"{path.stem}, page 2"))
+        if info is not None:
+            body = "".join(f"<{k}>{escape(v)}</{k}>" for k, v in info.items())
+            comic.writestr("ComicInfo.xml", f'<?xml version="1.0"?><ComicInfo>{body}</ComicInfo>')
+
+
+def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+    """Create ``scratch/book-files`` and ``scratch/Books.keep`` (the books theme), scanned
+    and tagged; returns the keep folder. The first folder names where a file came from
+    (``source_level = 1``)."""
+    files, keep_dir = scratch / "book-files", scratch / "Books.keep"
+    if reset:
+        _remove([keep_dir, files])
+    elif keep_dir.exists():
+        raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
+    for relpath, details in BOOK_EPUBS.items():
+        _epub(files / relpath, details)
+    for relpath, info in BOOK_COMICS.items():
+        _cbz(files / relpath, info)
+    root = RootConfig(
+        "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}
+    )
+    create_keep(keep_dir, "Books", ThemeRef("books", BooksTheme.version), [root])
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        _tag(session, BOOK_TAGS, {}, {})
+    return keep_dir
+
+
 def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/movie-files`` and ``scratch/Movies.keep`` (the movies theme),
     scanned and tagged; returns the keep folder."""
@@ -717,6 +898,11 @@ def main(argv: list[str] | None = None) -> int:
         help="create scratch/Movies.keep (the movies theme) instead",
     )
     parser.add_argument(
+        "--books",
+        action="store_true",
+        help="create scratch/Books.keep (the books theme) instead",
+    )
+    parser.add_argument(
         "--music",
         action="store_true",
         help="create scratch/Music.keep (the music theme) instead",
@@ -724,7 +910,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        if args.movies:
+        if args.books:
+            keep_dir = make_books_demo(scratch, reset=args.reset)
+        elif args.movies:
             keep_dir = make_movies_demo(scratch, reset=args.reset)
         elif args.music:
             keep_dir = make_music_demo(scratch, reset=args.reset)
@@ -737,7 +925,10 @@ def main(argv: list[str] | None = None) -> int:
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    if args.movies:
+    if args.books:
+        print(f"Created {keep_dir} watching book-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Books.keep")
+    elif args.movies:
         print(f"Created {keep_dir} watching movie-files (scanned and tagged).")
         print("Open it with:  uv run tagalot scratch/Movies.keep")
     elif args.music:

@@ -30,6 +30,11 @@ demo-assets:
     uv run python scripts/make_demo_keep.py --reset --assets
     uv run tagalot scratch/Assets.keep
 
+# (Re)create Books.keep (the books theme) and open it; Demo.keep is left alone
+demo-books:
+    uv run python scripts/make_demo_keep.py --reset --books
+    uv run tagalot scratch/Books.keep
+
 # (Re)create Movies.keep (the movies theme) and open it; Demo.keep is left alone
 demo-movies:
     uv run python scripts/make_demo_keep.py --reset --movies

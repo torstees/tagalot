@@ -53,7 +53,7 @@ uv run python scripts/make_demo_keep.py --reset   # (re)creates scratch/Demo.kee
 uv run tagalot scratch/Demo.keep
 ```
 
-For views with several entity types, `--media` creates `scratch/Media.keep` instead (artists, albums, songs; `Demo.keep` is left alone) and installs its tiny theme as `tagalot_demo_media.py` in the user themes folder (`just demo-media` does both and opens it). `--assets`, `--music`, and `--movies` create `scratch/Assets.keep`, `scratch/Music.keep`, and `scratch/Movies.keep` with the built-in 2D assets, music, and movies themes (`just demo-assets`, `just demo-music`, `just demo-movies`).
+For views with several entity types, `--media` creates `scratch/Media.keep` instead (artists, albums, songs; `Demo.keep` is left alone) and installs its tiny theme as `tagalot_demo_media.py` in the user themes folder (`just demo-media` does both and opens it). `--assets`, `--music`, `--movies`, and `--books` create `scratch/Assets.keep`, `scratch/Music.keep`, `scratch/Movies.keep`, and `scratch/Books.keep` with the built-in 2D assets, music, movies, and books themes (`just demo-assets`, `just demo-music`, `just demo-movies`, `just demo-books`).
 
 ## Stack
 
@@ -102,9 +102,10 @@ src/tagalot/
     dedupe.py
   themes/
     api.py               # PUBLIC theme API — the only module themes import
+    readers.py           # format readers themes share (EPUB, ComicInfo), part of the API
     loader.py            # discovery and validation
     template.py          # the template theme (`tagalot --new-theme`), kept valid by tests
-  builtin_themes/        # generic.py, assets2d.py, music.py, movies.py
+  builtin_themes/        # generic.py, assets2d.py, music.py, movies.py, books.py
   ui/                    # all Qt code
     app.py, main_window.py, launcher.py, keep_config.py,
     search_view.py, detail_view.py, tag_panel.py, tag_manager.py,

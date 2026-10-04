@@ -254,17 +254,28 @@ def test_values() -> None:
     assert isinstance(entity_fields(Movie)[0], FieldInfo)
 
 
+def _imports(source: str, top_level_only: bool = False) -> set[str]:
+    tree = ast.parse(source)
+    nodes = tree.body if top_level_only else list(ast.walk(tree))
+    imported: set[str] = set()
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+    return imported
+
+
 def test_api_imports_only_the_standard_library() -> None:
     # The core and the launcher import the API; it must not pull in SQLAlchemy, Qt, or
-    # other tagalot modules (DESIGN.md §9 "Mapping and isolation").
-    source = Path(api.__file__).read_text(encoding="utf-8")
-    imported: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Import):
-            imported.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
-    assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
+    # other tagalot modules (DESIGN.md §9 "Mapping and isolation"), except its file
+    # readers (#296), which import only the standard library when loaded.
+    imported = _imports(Path(api.__file__).read_text(encoding="utf-8"))
+    others = {m for m in imported if m.split(".")[0] not in sys.stdlib_module_names}
+    assert others == {"tagalot.themes.readers"}
+    readers = Path(api.__file__).with_name("readers.py").read_text(encoding="utf-8")
+    loaded = {m.split(".")[0] for m in _imports(readers, top_level_only=True)}
+    assert loaded <= set(sys.stdlib_module_names), loaded - set(sys.stdlib_module_names)
 
 
 @pytest.mark.parametrize(

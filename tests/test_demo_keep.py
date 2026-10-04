@@ -179,6 +179,35 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
         script.make_movies_demo(tmp_path)
 
 
+def test_creates_a_books_keep(tmp_path: Path) -> None:
+    script = _script()
+    keep_dir = script.make_books_demo(tmp_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        assert session.theme.id == "books"
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            # Humour is on the Discworld series; its books count with inherited tags.
+            humour = SearchSpec(
+                types=("books.book",), include=_ids(tree, "Humour"), inherit_tags=True
+            )
+            funny = count_by_type(conn, humour, tree)
+            # Fantasy comes from the books' own subjects (file keywords).
+            fantasy = count_by_type(conn, SearchSpec(include=_ids(tree, "Fantasy")), tree)
+    assert everything == {
+        "books.author": 8,
+        "books.book": 7,
+        "books.collection": 1,
+        "books.comic": 4,
+        "books.series": 5,
+        "books.universe": 1,
+    }
+    assert funny == {"books.book": 3}
+    assert fantasy == {"books.book": 4}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_books_demo(tmp_path)
+
+
 def test_creates_a_music_keep(tmp_path: Path) -> None:
     script = _script()
     keep_dir = script.make_music_demo(tmp_path)
