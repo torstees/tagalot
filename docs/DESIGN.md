@@ -157,7 +157,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 10                         # core schema version
+format_version = 11                         # core schema version
 
 [theme]
 id = "music"
@@ -252,7 +252,7 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 
 **tag_alias** — `tag_id`, `alias`. Used for matching in the tag filter box and, planned (M20), for matching file keywords to tags (§7 *File keywords*).
 
-**Planned (M20, #294, the next core format):** **entity_keyword** — `entity_id`, `resource_id` (the file that said it; both cascade), `keyword` (as written), `match_key` (case- and accent-folded); PK `(entity_id, resource_id, match_key)`. **keyword_ignored** — `match_key` (PK). **file_tag_removal** — `entity_id`, `tag_id` (both cascade; PK both): a file-derived tag the user removed from that item. **entity_tag** gains `by_file` (bool): the tag is there only because a file's keyword matched it.
+**File keywords** (core format 11, #294, §7 *File keywords*): **entity_keyword** — `entity_id`, `resource_id` (the file that said it; both cascade), `match_key` (indexed; `core.keywords.keyword_key`: each level case- and accent-folded, levels joined by `/`), `keyword` (as written); PK `(entity_id, resource_id, match_key)`. **keyword_ignored** — `match_key` (PK). **file_tag_removal** — `entity_id`, `tag_id` (both cascade; PK both): a file-derived tag the user removed from that item. **entity_tag** gains `by_file` (bool, default false): the tag is there only because a file's keyword matched it; these rows are derived (§7).
 
 **entity_tag** — `entity_id`, `tag_id`, `added_at`. PK `(entity_id, tag_id)`; index `(tag_id, entity_id)`. Only directly applied tags are stored; parent tags are never stored implicitly.
 
@@ -369,13 +369,14 @@ Scans are incremental and resumable. File-system watchers are not relied upon be
 
 ### File keywords
 
-**Planned** (M20: #294 core, #295 page; designed in review). Files often carry their own tags: front matter's `tags`, EPUB subjects, ComicInfo genres, PDF keywords. They become Tagalot tags only by matching tags you defined, so the tag tree never fills with every spelling a file used:
+Built in #294 (the core); the page and the rest of the UI below are **planned** in #295. Designed in review. Files often carry their own tags: front matter's `tags`, EPUB subjects, ComicInfo genres, PDF keywords. They become Tagalot tags only by matching tags you defined, so the tag tree never fills with every spelling a file used:
 
 - **Themes report keywords** (`ctx.keywords(entity, resource, keywords)`, §9): what one file says about one item, replacing what that file said before. An item's keywords are those of all its files.
-- **Matching:** a keyword matches a tag when it equals the tag's **full path** (`Genre/Fantasy`), one of its **aliases**, or its **name** when no other tag has that name, ignoring case and accents. An item gets the tags its keywords match; nothing creates a tag.
+- **Matching** (`core/keywords.py`, `keyword_index`): a keyword matches a tag when it equals the tag's **full path** (written `Genre/Fantasy`, `Genre > Fantasy`, or as Tagalot shows paths), one of its **aliases**, or its **name** when no other tag has that name, ignoring case and accents. Paths win over aliases, and aliases over names; an alias or a name two tags share matches neither. An item gets the tags its keywords match, if the tag's types allow the item (§7 *Tag types*); nothing creates a tag.
+- **File tags are derived** (`apply_file_tags`): the `by_file` rows are a function of the keywords, the tag tree (paths, aliases, types), and the removal records, recomputed for the items a scan touched (at the ingest flush) and for every item after a tag operation and its undo or redo. Undo history records only the user's own rows (and removal records), never file tags, so undo can't turn one kind into the other. A tag the user also applied by hand is the user's row and is never touched; a merge carries file tags and removal records to the target.
 - **Mapping is aliasing:** tying an unmatched keyword to a tag adds it as that tag's alias, so it matches from then on, for every item, and also finds the tag in the filter box. Renaming, merging (the old name becomes an alias, §7 operations), and deleting tags, and editing aliases, re-apply file tags; each is undoable as usual. Deleting a tag sends its keywords back to unmatched.
 - **Tags from files are marked** (`entity_tag.by_file`) and shown so in the tagging panel. A scan re-applies them as the files change: a keyword gone from every file takes its tag away, unless the user also added the tag by hand.
-- **Removing one by hand sticks:** it is remembered for that item (`file_tag_removal`), so later scans leave it off; the item's page offers **Restore**, and adding the tag back by hand clears the record.
+- **Removing one by hand sticks:** it is remembered for that item (`file_tag_removal`, recorded with the removal's undo step), so later scans leave it off; undoing the removal brings it back as a file tag; the item's page will offer **Restore** (#295); adding the tag back by hand clears the record.
 - **Finding unmatched keywords:**
   - a scan that finds new ones says so ("7 new file keywords don't match a tag"), with a **Review** link in the Activity panel;
   - TOOLS → **File keywords (7)** counts them while any are unmatched;
@@ -620,7 +621,7 @@ Themes read and write keep data only through the context object `ctx` passed to 
 - `ctx.contain(parent, child)`, `ctx.uncontain(parent, child)`. Within a batch the last call for an edge wins, so a theme may contain and later uncontain (or the reverse) as it works things out.
 - `ctx.relate(name, a, b)`, `ctx.unrelate(name, a, b)` (the user's hand edits win, #260: `unrelate` leaves a relationship the user added, `relate` doesn't restore one the user removed, and in a `many=False` relationship it doesn't displace the user's partner), and `ctx.related(name, entity) -> list[EntityRef]` (the entities on the other side, from either end, in id order; #258), so a theme can see what it related before and let go of what's gone.
 - `ctx.find(Type, **equals) -> list[EntityRef]` and `ctx.get(entity) -> Record` (read-only field values) for lookups.
-- **Planned** (M20, #294; additive): `ctx.keywords(entity, resource, keywords)`: the keywords one file gives an item (§7 *File keywords*), replacing what that file gave before; they become tags only by matching defined tags.
+- `ctx.keywords(entity, resource, keywords)` (#294; additive, so `API_VERSION` stays 2): the keywords one file gives an item (§7 *File keywords*), replacing what that file gave before (an empty list clears them; unlinking the file from the item clears them too); they become tags only by matching defined tags.
 - `ctx.option(name)`: an option's value for the root being scanned (its override, else the keep's, else the default); `ctx.contents(entity)` (direct children, counting this batch's pending `contain`/`uncontain`) and `ctx.linked(entity, role=None)` (linked resource ids); `ctx.delete(entity)` deletes an entity the theme made (its links, containment, and tags go with it; resources stay), for example an artist left empty. In a scan, an item the user made by hand (no ingest key, such as an actor added to a cast as new, #260) is left alone.
 - `ctx.prepared(resource)`: what `prepare()` returned for the resource, or `None` (nothing returned for it, or no prepare step, as in `migrate` and actions).
 - `ctx.update(entity, title=None, **fields)`: set extracted values on a known entity, with the same provenance rules as `upsert`.
@@ -1151,3 +1152,4 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Planned in review: **writing back** front matter, the one exception to never modifying user files: only in folders marked writable, only by an explicit action, with a preview, a backup in the keep folder, and a changed-file check; only the metadata block changes (§4). |
 | 2026-10 | Planned in review: link files (`.url`, `.webloc`, `.desktop`) are a books format, giving a work its `link`; a `"url"` field display opens http(s) links in the browser. Works from a pasted link with no file are future work (§14). Tagalot still never fetches pages. |
 | 2026-10 | Tag types (#135, §7 *Tag types*, core format 10): any tag can be limited to some item types, inherited by its sub-tags, which can only narrow them; setting a limit asks before taking the tag off items of other types (undoable); tagging skips and reports items a tag doesn't allow; the tagging panel hides tags the selection can't have (decided in review). Stored as a column on `tag`, so tag undo covers it with no new machinery. |
+| 2026-10 | File keywords, the core (#294, §7, core format 11): `ctx.keywords` stores what a file says about an item; matching by path, alias, or unique name; file tags are derived `by_file` rows recomputed after scans and tag operations (and their undo), so undo history holds only the user's rows and removal records. A removal by hand is remembered with its undo step; a merge moves file tags and removals to the target. |

@@ -145,6 +145,7 @@ A scan hands your theme **batches** of new and changed files and folders, as `Re
 | `ctx.contents(item)` / `ctx.linked(item, role)` | What an item holds; which files it has. |
 | `ctx.delete(item)` | Delete an item your theme made (an artist left with nothing). |
 | `ctx.prepared(resource)` | What `prepare` returned for a file. |
+| `ctx.keywords(item, resource, ["Fantasy", "Genre/Space opera"])` | What a file says the item is about (front matter's tags, an EPUB's subjects). They become Tagalot tags only by matching tags the user defined (a path, an alias, or a name), never new ones; unmatched ones are listed for the user to map. |
 | `ctx.option(name)` | A theme option's value for the folder being scanned. |
 | `ctx.warn(resource, message)` | Report a problem with a file to the Activity panel. |
 

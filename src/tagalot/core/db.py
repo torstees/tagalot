@@ -170,6 +170,13 @@ def _v9_tag_types(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE tag ADD COLUMN types VARCHAR"))
 
 
+def _v10_file_keywords(conn: Connection) -> None:
+    """Format 11: keywords from files, and the tags they give (#294)."""
+    conn.execute(text("ALTER TABLE entity_tag ADD COLUMN by_file BOOLEAN NOT NULL DEFAULT 0"))
+    for name in ("entity_keyword", "keyword_ignored", "file_tag_removal"):
+        Base.metadata.tables[name].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -180,6 +187,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     7: _v7_dedupe_dismissals,
     8: _v8_user_relations,
     9: _v9_tag_types,
+    10: _v10_file_keywords,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -270,6 +270,48 @@ class EntityTag(Base):
     )
     tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete=CASCADE), primary_key=True)
     added_at: Mapped[datetime] = mapped_column(default=utcnow)
+    by_file: Mapped[bool] = mapped_column(default=False, server_default="0")
+    """There only because one of the item's files has a keyword matching the tag (core format
+    11, #294, DESIGN.md §7 "File keywords"); scans keep these in step with the files."""
+
+
+class EntityKeyword(Base):
+    """A keyword one of an item's files gives it: front matter's tags, an EPUB subject
+    (#294). It becomes a tag only by matching one the user defined."""
+
+    __tablename__ = "entity_keyword"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    match_key: Mapped[str] = mapped_column(primary_key=True, index=True)
+    """The keyword as it is matched: case and accents ignored, a path's levels joined by
+    ``/`` (``core.keywords.keyword_key``)."""
+    keyword: Mapped[str]
+    """As the file wrote it."""
+
+
+class KeywordIgnored(Base):
+    """A keyword the user chose to ignore: not listed as unmatched (#295)."""
+
+    __tablename__ = "keyword_ignored"
+
+    match_key: Mapped[str] = mapped_column(primary_key=True)
+
+
+class FileTagRemoval(Base):
+    """A tag the user took off an item although its file's keyword matches it: scans leave it
+    off (#294). Adding the tag back by hand, or Restore, deletes this."""
+
+    __tablename__ = "file_tag_removal"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete=CASCADE), primary_key=True)
 
 
 class FieldProvenance(Base):

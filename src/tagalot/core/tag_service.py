@@ -28,8 +28,9 @@ from tagalot.core.fields import (
     restore_extra,
     restore_field,
 )
+from tagalot.core.keywords import apply_file_tags, forget_removals, remember_removals
 from tagalot.core.merge import MergeChange, restore_merge
-from tagalot.core.models import Entity, EntityTag, Tag, TagAlias
+from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
@@ -78,9 +79,23 @@ class TagChange:
     aliases_before: frozenset[tuple[int, str]]
     aliases_after: frozenset[tuple[int, str]]
     removed: frozenset[EntityTagRow]
-    """``entity_tag`` rows the operation deleted."""
+    """The user's ``entity_tag`` rows the operation deleted (file tags are derived, #294)."""
     added: frozenset[EntityTagRow]
-    """``entity_tag`` rows the operation created."""
+    """The user's ``entity_tag`` rows the operation created."""
+    removals_added: frozenset[tuple[int, int]] = frozenset()
+    """``(entity, tag)``: file tags the user removed by hand, remembered (#294)."""
+    removals_dropped: frozenset[tuple[int, int]] = frozenset()
+    """Removal records dropped because the user put the tag back by hand."""
+
+
+LinkDelta = tuple[
+    frozenset[EntityTagRow],
+    frozenset[EntityTagRow],
+    frozenset[tuple[int, int]],
+    frozenset[tuple[int, int]],
+]
+"""What a tagging operation did: the user's rows added and removed, removal records added,
+and removal records dropped."""
 
 
 Step = (
@@ -200,18 +215,30 @@ class TagService:
         """Tag entities (undoable), reporting what a tag's types left out (#135)."""
         entities, tags = frozenset(entity_ids), frozenset(tag_ids)
         skipped: list[tuple[int, int, str]] = []
+
+        def op(conn: Connection) -> LinkDelta:
+            added = tag_entities(conn, entities, tags, skipped)
+            # Putting a file's tag back by hand forgets that it was removed (#294).
+            dropped = forget_removals(conn, {(e, t) for e, t, _ in added})
+            return added, frozenset(), frozenset(), dropped
+
         added = self._record_links(
-            lambda tree: f"Tag {_items(len(entities))} with {_names(tree, tags)}",
-            lambda conn: (tag_entities(conn, entities, tags, skipped), frozenset()),
+            lambda tree: f"Tag {_items(len(entities))} with {_names(tree, tags)}", op
         )
         return Applied(added, tuple(skipped))
 
     def remove(self, entity_ids: Iterable[int], tag_ids: Iterable[int]) -> int:
         """Untag entities (undoable); returns how many ``entity_tag`` rows were removed."""
         entities, tags = frozenset(entity_ids), frozenset(tag_ids)
+
+        def op(conn: Connection) -> LinkDelta:
+            removed = untag_entities(conn, entities, tags)
+            # A tag the item's files give stays off from now on (#294).
+            kept_off = remember_removals(conn, TagTree.load(conn), {(e, t) for e, t, _ in removed})
+            return frozenset(), removed, kept_off, frozenset()
+
         return self._record_links(
-            lambda tree: f"Remove {_names(tree, tags)} from {_items(len(entities))}",
-            lambda conn: (frozenset(), untag_entities(conn, entities, tags)),
+            lambda tree: f"Remove {_names(tree, tags)} from {_items(len(entities))}", op
         )
 
     def add_alias(self, tag_id: int, alias: str) -> None:
@@ -334,9 +361,12 @@ class TagService:
             tag_ids = frozenset(scope(tree))
             tags_before, aliases_before = _tag_tables(conn)
             links_before = _links(conn, tag_ids)
+            removals_before = _removals(conn, tag_ids)
             result = op(conn)
+            apply_file_tags(conn)  # a rename, alias, or type change changes what matches
             tags_after, aliases_after = _tag_tables(conn)
             links_after = _links(conn, tag_ids)
+            removals_after = _removals(conn, tag_ids)
             change = TagChange(
                 label=label(tree),
                 tags_before=tags_before,
@@ -345,6 +375,9 @@ class TagService:
                 aliases_after=aliases_after,
                 removed=links_before - links_after,
                 added=links_after - links_before,
+                # A merge moves removal records; a delete takes them with the tag (#294).
+                removals_added=removals_after - removals_before,
+                removals_dropped=removals_before - removals_after,
             )
             return result, change
 
@@ -355,7 +388,7 @@ class TagService:
     def _record_links(
         self,
         label: Callable[[TagTree], str],
-        op: Callable[[Connection], tuple[frozenset[EntityTagRow], frozenset[EntityTagRow]]],
+        op: Callable[[Connection], "LinkDelta"],
     ) -> int:
         """Run a tagging operation, recording exactly the rows it added and removed. Unlike
         :meth:`_record`, it never reads every use of a tag, so tagging stays cheap for tags
@@ -364,8 +397,10 @@ class TagService:
         def job(conn: Connection) -> TagChange:
             tree = TagTree.load(conn)
             tags, aliases = _tag_tables(conn)
-            added, removed = op(conn)
-            return TagChange(label(tree), tags, tags, aliases, aliases, removed, added)
+            added, removed, kept_off, dropped = op(conn)
+            return TagChange(
+                label(tree), tags, tags, aliases, aliases, removed, added, kept_off, dropped
+            )
 
         change = self.writer.run(job)  # the tag tree is unchanged: no cache refresh
         if change.added or change.removed:
@@ -411,10 +446,23 @@ def _links(conn: Connection, tag_ids: frozenset[int]) -> frozenset[EntityTagRow]
         return frozenset()
     rows = conn.execute(
         select(EntityTag.entity_id, EntityTag.tag_id, EntityTag.added_at).where(
-            EntityTag.tag_id.in_(tag_ids)
+            EntityTag.tag_id.in_(tag_ids),
+            EntityTag.by_file.is_(False),  # the user's own
         )
     )
     return frozenset((e, t, a) for e, t, a in rows)
+
+
+def _removals(conn: Connection, tag_ids: frozenset[int]) -> frozenset[tuple[int, int]]:
+    """Removal records (#294) for these tags."""
+    if not tag_ids:
+        return frozenset()
+    rows = conn.execute(
+        select(FileTagRemoval.entity_id, FileTagRemoval.tag_id).where(
+            FileTagRemoval.tag_id.in_(tag_ids)
+        )
+    )
+    return frozenset((e, t) for e, t in rows)
 
 
 def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
@@ -449,6 +497,23 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
         conn.execute(
             delete(EntityTag).where(tuple_(EntityTag.entity_id, EntityTag.tag_id).in_(pairs))
         )
+    # File tags (#294) follow the restored tags and removal records; then the user's rows go
+    # back, so a file tag removed by hand returns as a file tag, not as the user's.
+    keep_off = change.removals_added if forward else change.removals_dropped
+    forget = change.removals_dropped if forward else change.removals_added
+    if forget:
+        forget_removals(conn, forget)
+    if keep_off:
+        conn.execute(
+            insert(FileTagRemoval).prefix_with("OR IGNORE"),
+            [{"entity_id": e, "tag_id": t} for e, t in keep_off],
+        )
+    if change.tags_before != change.tags_after or change.aliases_before != change.aliases_after:
+        apply_file_tags(conn)
+    else:
+        touched = {e for e, _, _ in unlink | relink} | {e for e, _ in keep_off | forget}
+        if touched:
+            apply_file_tags(conn, touched)
     if relink:
         existing = set(
             conn.scalars(select(Entity.id).where(Entity.id.in_({e for e, _, _ in relink})))

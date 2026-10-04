@@ -215,6 +215,9 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         # Put the database back the way format 1 made it.
         conn.exec_driver_sql("ALTER TABLE tag DROP COLUMN description")
         conn.exec_driver_sql("ALTER TABLE tag DROP COLUMN types")
+        conn.exec_driver_sql("ALTER TABLE entity_tag DROP COLUMN by_file")
+        for table in ("entity_keyword", "keyword_ignored", "file_tag_removal"):
+            conn.exec_driver_sql(f"DROP TABLE {table}")
         conn.exec_driver_sql("ALTER TABLE root DROP COLUMN ingest_options")
         conn.exec_driver_sql("DROP TABLE triage_dismissal")
         conn.exec_driver_sql("ALTER TABLE resource DROP COLUMN skipped")
@@ -230,7 +233,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 10)
+    assert (info.value.stored, info.value.current) == (1, 11)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -244,6 +247,10 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "entity_merge" in inspect(engine).get_table_names()
         assert "dedupe_dismissal" in inspect(engine).get_table_names()
         assert "user_relation" in inspect(engine).get_table_names()
+        assert {"entity_keyword", "keyword_ignored", "file_tag_removal"} <= set(
+            inspect(engine).get_table_names()
+        )  # format 11: keywords from files (#294)
+        assert "by_file" in {c["name"] for c in inspect(engine).get_columns("entity_tag")}
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT id, name, description, types FROM tag")).all()
             roots = conn.execute(text("SELECT id, name, ingest_options FROM root")).all()
@@ -251,5 +258,5 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 10
+    assert migrated.config.format_version == 11
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]
