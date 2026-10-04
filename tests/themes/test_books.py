@@ -32,7 +32,12 @@ from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
-from tagalot.core.thumbnails.render import load_epub_cover, load_pdf_cover, renderer_for
+from tagalot.core.thumbnails.render import (
+    load_epub_cover,
+    load_office_cover,
+    load_pdf_cover,
+    renderer_for,
+)
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import ResourceInfo
 from tagalot.themes.loader import validate_theme
@@ -40,8 +45,12 @@ from tests.core.book_files import (
     comic_info,
     jpeg,
     write_cbz,
+    write_docx,
     write_epub,
+    write_link,
     write_markdown,
+    write_odt,
+    write_pages,
     write_pdf,
 )
 
@@ -504,3 +513,53 @@ def test_a_cover_added_later_or_changed_or_dropped(env: Env) -> None:
     story.write_text("---\ntitle: Story\n---\nmore still\n", encoding="utf-8")
     env.scan(T0 + timedelta(minutes=3))
     assert _covers(env, "Story") == []
+
+
+# --- office documents and link files (#298) ---
+
+
+def test_office_documents_and_links_are_books(env: Env) -> None:
+    write_docx(
+        env.files / "Loose/hedge.docx",
+        "<dc:title>The Hedge Knight</dc:title><dc:creator>George R. R. Martin</dc:creator>"
+        "<cp:keywords>Fantasy</cp:keywords><dc:subject>A novella</dc:subject>",
+    )
+    write_odt(
+        env.files / "Loose/notes.odt",
+        "<dc:title>Notes on Dragons</dc:title><meta:initial-creator>Ann Author"
+        "</meta:initial-creator>",
+    )
+    write_pages(env.files / "Loose/My Story.pages")
+    (env.files / "Loose/Old Draft.doc").write_bytes(b"\xd0\xcf\x11\xe0")
+    write_link(env.files / "Royal Road/Mother of Learning.url", "https://example.com/mol")
+    write_link(env.files / "Royal Road/Worm.webloc", "https://example.com/worm")
+    write_link(env.files / "Web/serial.desktop", "https://example.com/pale", name="Pale")
+    write_link(env.files / "Web/editor.desktop", "", name="Editor", kind="Application")
+    write_link(env.files / "Web/local.url", "file:///C:/books/x.epub")
+    env.scan()
+    hedge = env.fields(Book, "The Hedge Knight")
+    assert (hedge["authors"], hedge["description"]) == ("George R. R. Martin", "A novella")
+    assert env.keywords("The Hedge Knight") == ["Fantasy"]
+    assert env.fields(Book, "Notes on Dragons")["authors"] == "Ann Author"
+    titles = env.titles(Book)
+    assert {"My Story", "Old Draft"} <= set(titles)  # their file names
+    assert env.fields(Book, "Mother of Learning")["link"] == "https://example.com/mol"
+    assert env.fields(Book, "Worm")["link"] == "https://example.com/worm"
+    assert env.fields(Book, "Pale")["link"] == "https://example.com/pale"  # its Name=
+    assert "Editor" not in titles  # an application's launcher isn't a book
+    assert env.fields(Book, "local")["link"] is None  # only web addresses
+
+
+def test_office_covers_render(tmp_path: Path) -> None:
+    for name, path in [
+        ("docx", write_docx(tmp_path / "a.docx", thumbnail=jpeg((10, 200, 10)))),
+        ("odt", write_odt(tmp_path / "a.odt", "", thumbnail=jpeg((10, 200, 10)))),
+        ("pages", write_pages(tmp_path / "a.pages", preview=jpeg((10, 200, 10)))),
+    ]:
+        renderer = renderer_for(_resource(path))
+        assert renderer is not None, name
+        assert renderer.id == "office_cover"
+        image = load_office_cover(str(path), 32)
+        assert image is not None
+        assert image.convert("RGB").getpixel((5, 5))[1] > 150  # type: ignore[index]
+    assert load_office_cover(str(write_docx(tmp_path / "b.docx")), 32) is None

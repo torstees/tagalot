@@ -1,10 +1,13 @@
-"""How numbers read for people: file sizes and durations (DESIGN.md §9 "Fields").
+"""How values read for people: file sizes, durations, and web addresses (DESIGN.md §9
+"Fields").
 
 A theme field can declare ``display="bytes"`` or ``display="duration"``; lists, cards,
 detail pages, and filter chips show it this way, while sorting, filtering, and editing keep
-using the stored number.
+using the stored number. ``display="url"`` on a text field makes an item's page show a web
+address as a link (:func:`is_web_address`); elsewhere it reads as the address.
 """
 
+import re
 from typing import Any
 
 
@@ -34,6 +37,15 @@ def format_duration(seconds: float) -> str:
 
 FORMATTERS = {"bytes": format_bytes, "duration": format_duration}
 """The display formats a field may declare, by name."""
+
+
+WEB_ADDRESS = re.compile(r"^https?://[^\s/$.?#][^\s]*$", re.IGNORECASE)
+
+
+def is_web_address(value: Any) -> bool:
+    """Whether ``value`` is an ``http`` or ``https`` address, the only ones a ``"url"``
+    field opens (anything else shows as plain text)."""
+    return isinstance(value, str) and WEB_ADDRESS.match(value.strip()) is not None
 
 
 def format_value(value: Any, display: str | None) -> str | None:

@@ -1,10 +1,10 @@
-"""Display formats for number fields: sizes and durations (#184)."""
+"""Display formats: sizes and durations for numbers (#184), web addresses for text (#298)."""
 
 from datetime import date
 
 import pytest
 
-from tagalot.core.formats import format_bytes, format_duration, format_value
+from tagalot.core.formats import format_bytes, format_duration, format_value, is_web_address
 from tagalot.themes.api import Entity, Theme, ThemeDeclarationError, field
 from tagalot.themes.loader import validate_theme
 
@@ -78,3 +78,35 @@ def test_a_format_needs_a_number_field() -> None:
     assert validate_theme(Tracks) == [
         "Track.note: display='bytes' needs a number field (int or float)"
     ]
+
+
+def test_url_needs_a_text_field() -> None:
+    class Page(Entity):
+        link: str | None = field("Link", display="url")
+        count: int | None = field("Count", display="url")
+
+    class Pages(Theme):
+        id, name = "pages", "Pages"
+        entities = [Page]
+
+    assert validate_theme(Pages) == ["Page.count: display='url' needs a text field (str)"]
+
+
+@pytest.mark.parametrize(
+    ("value", "web"),
+    [
+        ("https://example.com/a?b=1", True),
+        ("HTTP://EXAMPLE.COM", True),
+        ("  https://example.com  ", True),
+        ("ftp://example.com", False),
+        ("file:///C:/x.epub", False),
+        ("javascript:alert(1)", False),
+        ("https://", False),
+        ("https://exa mple.com", False),
+        (None, False),
+        (12, False),
+    ],
+)
+def test_is_web_address(value: object, web: bool) -> None:
+    assert is_web_address(value) is web
+    assert format_value(value, "url") is None  # read as the text itself

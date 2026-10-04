@@ -195,15 +195,15 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
             # Fantasy comes from the books' own subjects (file keywords).
             fantasy = count_by_type(conn, SearchSpec(include=_ids(tree, "Fantasy")), tree)
     assert everything == {
-        "books.author": 10,
-        "books.book": 10,
+        "books.author": 12,
+        "books.book": 17,
         "books.collection": 1,
         "books.comic": 4,
         "books.series": 6,
         "books.universe": 2,
     }
     assert funny == {"books.book": 3}
-    assert fantasy == {"books.book": 6}  # with Good Omens (PDF) and Mother of Learning (Markdown)
+    assert fantasy == {"books.book": 7}  # from EPUBs, a PDF, Markdown, and a Word document
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_books_demo(tmp_path)
 

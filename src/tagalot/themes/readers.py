@@ -13,6 +13,7 @@ several threads, so every PDF call holds :data:`PDFIUM`.
 import datetime
 import html
 import io
+import plistlib
 import posixpath
 import re
 import threading
@@ -473,3 +474,165 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "cover": words("cover", "image"),
         "fields": fields,
     }
+
+
+# --- office documents: Word (DOCX), OpenDocument (ODT), Pages ---
+
+_CP = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}"
+_DCTERMS = "{http://purl.org/dc/terms/}"
+_ODF_OFFICE = "{urn:oasis:names:tc:opendocument:xmlns:office:1.0}"
+_ODF_META = "{urn:oasis:names:tc:opendocument:xmlns:meta:1.0}"
+
+OFFICE_PREVIEWS = (
+    "docProps/thumbnail.jpeg",
+    "docProps/thumbnail.jpg",
+    "docProps/thumbnail.png",
+    "Thumbnails/thumbnail.png",
+    "preview.jpg",
+    "QuickLook/Thumbnail.jpg",
+    "preview-web.jpg",
+    "preview-micro.jpg",
+)
+"""Where office documents keep a picture of their first page, in order of preference: Word's
+(when saved with one), OpenDocument's (always), and Pages' (a Pages file saved as one file,
+which is a zip; a Pages package folder isn't read)."""
+
+
+def _open_zip(path: str) -> zipfile.ZipFile:
+    """Open a zip-based document; ``ValueError`` if it isn't one."""
+    try:
+        return zipfile.ZipFile(path)
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"not a zip-based document: {e}") from e
+
+
+def _member(doc: zipfile.ZipFile, name: str, limit: int) -> bytes | None:
+    """A zip member by name, ignoring case, if it isn't larger than ``limit``."""
+    wanted = name.casefold()
+    for info in doc.infolist():
+        if info.filename.casefold() == wanted:
+            return None if info.file_size > limit else doc.read(info)
+    return None
+
+
+def read_office_info(path: str) -> dict[str, Any]:
+    """An office document's properties: ``title``, ``authors``, ``subject``, ``keywords``,
+    ``description``, ``year`` (when it was created), ``language``, and ``format``
+    (``"docx"``, ``"odt"``, or ``None`` for a zip with neither, such as a Pages file, whose
+    own format holds nothing readable: its title is its file name).
+
+    Word documents keep them in ``docProps/core.xml``; OpenDocument ones in ``meta.xml``,
+    whose initial creator is the author (its creator is whoever saved it last). Raises
+    ``ValueError`` for a file that isn't a zip, as a legacy ``.doc`` isn't: read nothing
+    from those.
+    """
+    found: dict[str, Any] = {
+        "title": None,
+        "authors": [],
+        "subject": None,
+        "keywords": [],
+        "description": None,
+        "year": None,
+        "language": None,
+        "format": None,
+    }
+    with _open_zip(path) as doc:
+        core = _member(doc, "docProps/core.xml", MAX_XML)
+        meta = None if core is not None else _member(doc, "meta.xml", MAX_XML)
+    if core is not None:
+        root = _xml(core)
+        found.update(
+            format="docx",
+            title=_text(root.find(f"{_DC}title")),
+            authors=split_people(_text(root.find(f"{_DC}creator"))),
+            subject=_text(root.find(f"{_DC}subject")),
+            keywords=split_keywords(_text(root.find(f"{_CP}keywords"))),
+            description=_text(root.find(f"{_DC}description")),
+            year=_year(_text(root.find(f"{_DCTERMS}created"))),
+            language=_text(root.find(f"{_DC}language")),
+        )
+    elif meta is not None:
+        office = _xml(meta).find(f"{_ODF_OFFICE}meta")
+        if office is None:
+            office = ElementTree.Element("meta")
+        author = _text(office.find(f"{_ODF_META}initial-creator")) or _text(
+            office.find(f"{_DC}creator")
+        )
+        words = [w for e in office.findall(f"{_ODF_META}keyword") if (w := _text(e))]
+        found.update(
+            format="odt",
+            title=_text(office.find(f"{_DC}title")),
+            authors=split_people(author),
+            subject=_text(office.find(f"{_DC}subject")),
+            keywords=split_keywords(words),
+            description=_text(office.find(f"{_DC}description")),
+            year=_year(_text(office.find(f"{_ODF_META}creation-date"))),
+            language=_text(office.find(f"{_DC}language")),
+        )
+    return found
+
+
+def office_cover(path: str) -> bytes | None:
+    """The picture of its first page an office document keeps (Word's, OpenDocument's, or
+    Pages' preview; see :data:`OFFICE_PREVIEWS`), or ``None``."""
+    with _open_zip(path) as doc:
+        for name in OFFICE_PREVIEWS:
+            data = _member(doc, name, MAX_COVER)
+            if data:
+                return data
+    return None
+
+
+# --- link files: Windows .url, macOS .webloc, Linux .desktop ---
+
+MAX_LINK_FILE = 64 * 1024
+"""Link files are tiny; larger ones aren't read."""
+
+
+def _ini_section(text: str, section: str) -> dict[str, str]:
+    """The ``key=value`` lines of one ``[section]`` of an INI-style file, keys lowercase
+    (the first of a repeated key wins)."""
+    found: dict[str, str] = {}
+    inside = False
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            inside = line[1:-1].strip().casefold() == section.casefold()
+        elif inside and "=" in line and not line.startswith(("#", ";")):
+            key, _, value = line.partition("=")
+            found.setdefault(key.strip().casefold(), value.strip())
+    return found
+
+
+def read_link_file(path: str) -> dict[str, Any]:
+    """A link file's ``url`` and ``title`` (``None`` when it gives none; the file name is
+    the usual title): a Windows Internet shortcut (``.url``: ``URL=`` under
+    ``[InternetShortcut]``), a macOS ``.webloc`` (a property list's ``URL``, XML or binary),
+    or a Linux ``.desktop`` entry of ``Type=Link`` (``URL=`` and ``Name=``; other types,
+    such as applications, give no ``url``). Tagalot never visits the address. Raises
+    ``ValueError`` for another extension or a file that can't be read as one."""
+    ext = posixpath.splitext(path.lower())[1]
+    with open(path, "rb") as file:
+        raw = file.read(MAX_LINK_FILE + 1)
+    if len(raw) > MAX_LINK_FILE:
+        raise ValueError("too large for a link file")
+    if ext == ".webloc":
+        try:
+            plist = plistlib.loads(raw)
+        except (plistlib.InvalidFileException, ValueError, OverflowError) as e:
+            raise ValueError(f"not a property list: {e}") from e
+        url = plist.get("URL") if isinstance(plist, dict) else None
+        return {"url": url.strip() or None if isinstance(url, str) else None, "title": None}
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    if ext == ".url":
+        entry = _ini_section(text, "InternetShortcut")
+        return {"url": entry.get("url") or None, "title": None}
+    if ext == ".desktop":
+        entry = _ini_section(text, "Desktop Entry")
+        if entry.get("type", "").casefold() != "link":
+            return {"url": None, "title": entry.get("name") or None}
+        return {"url": entry.get("url") or None, "title": entry.get("name") or None}
+    raise ValueError(f"not a link file: {ext or 'no extension'}")
