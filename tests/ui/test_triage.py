@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel
+from PySide6.QtCore import QItemSelectionModel, Qt
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
@@ -12,9 +12,10 @@ from tagalot.core.keep import load_keep_config
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
-from tagalot.ui.triage import MISSING_TAB, UNTAGGED_TAB, TriagePage
+from tagalot.ui.triage import KEYWORDS_TAB, MISSING_TAB, UNTAGGED_TAB, TriagePage
 from tests.ui.test_music_views import session, window
 
 pytestmark = pytest.mark.gui
@@ -142,3 +143,20 @@ def test_items_whose_files_are_missing(
         assert conn.scalar(select(Entity.id).where(Entity.id == take_five)) is None
     window.undo_action.trigger()
     qtbot.waitUntil(lambda: _tab_texts(page)[2] == "Missing files (1)", timeout=5000)
+
+
+def test_unmatched_keywords_show_their_keywords(qtbot: QtBot, window: MainWindow) -> None:
+    """The Keywords column (#295) is shown in this list, unmatched keywords first."""
+    page = _triage(qtbot, window)
+    page.tabs.setCurrentIndex(KEYWORDS_TAB)
+    listed = page.keywords
+    qtbot.waitUntil(lambda: listed.model.rowCount() == 10, timeout=5000)
+    qtbot.waitUntil(lambda: listed.model.hit(9) is not None, timeout=5000)
+    keys = [c.key for c in listed.model.columns]
+    assert KEYWORDS in keys
+    column = keys.index(KEYWORDS)
+    assert not listed.table.isColumnHidden(column)
+    row = next(r for r in range(10) if (h := listed.model.hit(r)) and h.title == "So What")
+    index = listed.model.index(row, column)
+    qtbot.waitUntil(lambda: listed.model.data(index) == "Jazz", timeout=5000)
+    assert listed.model.data(index, Qt.ItemDataRole.ToolTipRole) == "Jazz: no tag"
