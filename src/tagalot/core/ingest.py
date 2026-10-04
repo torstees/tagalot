@@ -12,7 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from sqlalchemy import Connection, delete, func, insert, select, update
+from sqlalchemy import Connection, Insert, Table, bindparam, delete, func, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
@@ -32,6 +32,35 @@ from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import EntityRef, Record, ResourceInfo
 
 logger = logging.getLogger(__name__)
+
+# Statements an ingest runs for every item, built once with bound parameters: building one
+# afresh for each call costs more than SQLite takes to run it (#276).
+_ENTITY: Table = Entity.__table__  # type: ignore[assignment]
+_LINKS: Table = EntityResource.__table__  # type: ignore[assignment]
+_PROVENANCE: Table = FieldProvenance.__table__  # type: ignore[assignment]
+_BY_KEY = select(_ENTITY.c.id).where(
+    _ENTITY.c.type == bindparam("type"), _ENTITY.c.ingest_key == bindparam("key")
+)
+_NEW_ENTITY = insert(_ENTITY)
+_LINKED_TO = (
+    select(_ENTITY.c.id, _ENTITY.c.type)
+    .join(_LINKS, _LINKS.c.entity_id == _ENTITY.c.id)
+    .where(_LINKS.c.resource_id == bindparam("resource"), _LINKS.c.by_user.is_(False))
+    .distinct()
+    .order_by(_ENTITY.c.id)
+)
+_LINKED_TO_IN_ROLE = _LINKED_TO.where(_LINKS.c.role == bindparam("role"))
+_link = sqlite_insert(_LINKS)
+_LINK = _link.on_conflict_do_update(
+    index_elements=["entity_id", "resource_id", "role"],
+    set_={"sort_order": _link.excluded.sort_order},
+)
+_mark = sqlite_insert(_PROVENANCE)
+_MARK_EXTRACTED = _mark.on_conflict_do_update(
+    index_elements=["entity_id", "field"],
+    set_={"source": _mark.excluded.source, "updated_at": _mark.excluded.updated_at},
+    where=_PROVENANCE.c.source != FieldSource.USER,
+)
 
 
 class Recorder(Protocol):
@@ -97,6 +126,27 @@ class IngestSession:
             (schema.theme.type_id_of(c.parent), schema.theme.type_id_of(c.child))
             for c in schema.theme.containment
         }
+        # What this session already knows, so each item costs few statements (#276). Only
+        # this session writes while its transaction is open, so these stay true until it
+        # changes them itself.
+        self._next_id: int | None = None
+        """The id the next new entity gets (looked up once, then counted up)."""
+        self._keys: dict[tuple[str, str], int] = {}
+        """``(type id, ingest key)`` -> entity id, for keys looked up or made this session."""
+        self._created: set[int] = set()
+        """Entities made this session: no user edits, no links by hand, no thumbnail yet."""
+        self._linked_roles: set[tuple[int, str]] = set()
+        """``(entity, role)`` linked this session, for entities made this session."""
+        self._user_owned: dict[int, set[str]] = {}
+        """Each entity's user-edited fields (``title`` included), looked up once."""
+        self._written: dict[int, dict[str, Any]] = {}
+        """Values this session wrote for each entity, so writing the same again is skipped."""
+        self._new_closure: list[int] = []
+        """New entities whose depth-0 closure rows are added at the next flush."""
+        self._has_merges: bool | None = None
+        """Whether the keep has merged items (see :meth:`_any_merges`)."""
+        self._inserts: dict[str, Insert] = {}
+        """Each theme table's insert, built once."""
 
     # --- entities ---
 
@@ -116,38 +166,53 @@ class IngestSession:
         if not key:
             raise IngestError(f"{type.__name__}: an ingest key can't be empty")
         type_id = entity_table.type_id
-        existing = self.conn.scalar(
-            select(Entity.id).where(Entity.type == type_id, Entity.ingest_key == key)
-        )
+        existing = self._keys.get((type_id, key))
+        if existing is not None and existing in self._merged:
+            return EntityRef(existing, type_id)
         if existing is None:
-            merged = self.conn.scalar(
-                select(EntityMerge.merged_id)
-                .where(EntityMerge.type == type_id, EntityMerge.ingest_key == key)
-                .order_by(EntityMerge.merged_at.desc())
-                .limit(1)
+            existing = self.conn.scalar(_BY_KEY, {"type": type_id, "key": key})
+        if existing is None:
+            merged = (
+                self.conn.scalar(
+                    select(EntityMerge.merged_id)
+                    .where(EntityMerge.type == type_id, EntityMerge.ingest_key == key)
+                    .order_by(EntityMerge.merged_at.desc())
+                    .limit(1)
+                )
+                if self._any_merges()
+                else None
             )
             if merged is not None:
                 self._merged.add(merged)
+                self._keys[(type_id, key)] = merged
                 return EntityRef(merged, type_id)
-            entity_id = int(
-                self.conn.execute(
-                    insert(Entity)
-                    .values(
-                        id=next_entity_id(self.conn),
-                        type=type_id,
-                        title=title if title is not None else key,
-                        ingest_key=key,
-                    )
-                    .returning(Entity.id)
-                ).scalar_one()
+            if self._next_id is None:
+                self._next_id = next_entity_id(self.conn)
+            entity_id = self._next_id
+            self._next_id += 1
+            self.conn.execute(
+                _NEW_ENTITY,
+                {
+                    "id": entity_id,
+                    "type": type_id,
+                    "title": title if title is not None else key,
+                    "ingest_key": key,
+                },
             )
-            self.conn.execute(insert(entity_table.table).values(id=entity_id, **fields))
-            closure.add_entities(self.conn, [entity_id])
+            table = entity_table.table
+            if table.name not in self._inserts:
+                self._inserts[table.name] = insert(table)
+            self.conn.execute(self._inserts[table.name], {"id": entity_id, **fields})
+            self._new_closure.append(entity_id)
+            self._created.add(entity_id)
+            self._keys[(type_id, key)] = entity_id
             if self.recorder is not None:
                 self.recorder.created(entity_id)
             self._mark_extracted(entity_id, ([TITLE] if title is not None else []) + list(fields))
+            self._written[entity_id] = {**fields, **({TITLE: title} if title is not None else {})}
         else:
             entity_id = existing
+            self._keys[(type_id, key)] = entity_id
             self._touch(entity_id)
             self._apply_extracted(entity_id, entity_table, title, fields)
         self._dirty.add(entity_id)
@@ -161,7 +226,10 @@ class IngestSession:
             raise IngestError(f"{entity_table.entity.__name__} has no field {', '.join(unknown)}")
         if self._gone(entity):
             return
-        if self.conn.scalar(select(Entity.id).where(Entity.id == entity.id)) is None:
+        if (
+            entity.id not in self._created
+            and self.conn.scalar(select(Entity.id).where(Entity.id == entity.id)) is None
+        ):
             raise IngestError(f"entity {entity.id} no longer exists")
         self._touch(entity.id)
         self._apply_extracted(entity.id, entity_table, title, fields)
@@ -222,6 +290,7 @@ class IngestSession:
         self._flush_edges(FlushReport())
         closure.detach(self.conn, [entity.id])
         self.conn.execute(delete(Entity).where(Entity.id == entity.id))
+        self._forget(entity.id)
         self._dirty.add(entity.id)  # its search row goes at flush
 
     def prepared(self, resource: ResourceInfo | int) -> Any:
@@ -234,17 +303,15 @@ class IngestSession:
         that item. An item the user merged away that had the file is (§13): writes to it are
         dropped, so the theme doesn't make a new item for the file."""
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
-        query = (
-            select(Entity.id, Entity.type)
-            .join(EntityResource, EntityResource.entity_id == Entity.id)
-            .where(EntityResource.resource_id == resource_id, EntityResource.by_user.is_(False))
-            .distinct()
-            .order_by(Entity.id)
+        rows = (
+            self.conn.execute(_LINKED_TO, {"resource": resource_id})
+            if role is None
+            else self.conn.execute(_LINKED_TO_IN_ROLE, {"resource": resource_id, "role": role})
         )
-        if role is not None:
-            query = query.where(EntityResource.role == role)
         types = {t.type_id for t in self.schema.entities.values()}
-        found = [EntityRef(i, t) for i, t in self.conn.execute(query) if t in types]
+        found = [EntityRef(i, t) for i, t in rows if t in types]
+        if not self._any_merges():
+            return found
         merged = (
             select(EntityMerge.merged_id, EntityMerge.type)
             .join(EntityMergeResource, EntityMergeResource.merged_id == EntityMerge.merged_id)
@@ -320,7 +387,8 @@ class IngestSession:
         if self._gone(entity):
             return
         self._touch(entity.id)
-        if not declared.many:
+        new = entity.id in self._created  # no links yet but this session's, none by hand
+        if not declared.many and not new:
             by_hand = self.conn.scalar(
                 select(EntityResource.resource_id).where(
                     EntityResource.entity_id == entity.id,
@@ -330,6 +398,7 @@ class IngestSession:
             )
             if by_hand is not None:
                 return  # the user's file stays in the role
+        if not declared.many and (not new or (entity.id, role) in self._linked_roles):
             self.conn.execute(
                 delete(EntityResource).where(
                     EntityResource.entity_id == entity.id,
@@ -337,13 +406,17 @@ class IngestSession:
                     EntityResource.resource_id != resource_id,
                 )
             )
+        if new:
+            self._linked_roles.add((entity.id, role))
         self.conn.execute(
-            sqlite_insert(EntityResource)
-            .values(entity_id=entity.id, resource_id=resource_id, role=role, sort_order=sort_order)
-            .on_conflict_do_update(
-                index_elements=["entity_id", "resource_id", "role"],
-                set_={"sort_order": sort_order},
-            )
+            _LINK,
+            {
+                "entity_id": entity.id,
+                "resource_id": resource_id,
+                "role": role,
+                "sort_order": sort_order,
+                "by_user": False,
+            },
         )
         self._forget_thumbnail(entity)
 
@@ -466,6 +539,9 @@ class IngestSession:
     # --- internals ---
 
     def _flush_edges(self, report: FlushReport) -> None:
+        if self._new_closure:  # before edges: containment builds on these rows
+            closure.add_entities(self.conn, self._new_closure)
+            self._new_closure = []
         if self._added_edges or self._removed_edges:
             result = closure.apply(self.conn, self._added_edges, self._removed_edges)
             report.edges_added += len(result.added)
@@ -530,6 +606,8 @@ class IngestSession:
 
     def _forget_thumbnail(self, entity: EntityRef) -> None:
         """Its links changed, so its thumbnail source is chosen afresh (DESIGN.md §10)."""
+        if entity.id in self._created:
+            return  # none chosen yet
         self.conn.execute(
             update(Entity)
             .where(Entity.id == entity.id, Entity.thumb_resource_id.is_not(None))
@@ -570,11 +648,18 @@ class IngestSession:
         fields: Mapping[str, Any],
     ) -> None:
         user_owned = self._user_fields(entity_id)
-        if title is not None and TITLE not in user_owned:
+        written = self._written.setdefault(entity_id, {})
+        if title is not None and TITLE not in user_owned and written.get(TITLE, _UNSET) != title:
             self.conn.execute(update(Entity).where(Entity.id == entity_id).values(title=title))
             self._mark_extracted(entity_id, [TITLE])
-        writable = {k: v for k, v in fields.items() if k not in user_owned}
+            written[TITLE] = title
+        writable = {
+            k: v
+            for k, v in fields.items()
+            if k not in user_owned and written.get(k, _UNSET) != v  # not what's already set
+        }
         if writable:
+            written.update(writable)
             self.conn.execute(
                 update(entity_table.table)
                 .where(entity_table.table.c.id == entity_id)
@@ -586,35 +671,50 @@ class IngestSession:
             )
 
     def _user_fields(self, entity_id: int) -> set[str]:
-        return set(
-            self.conn.scalars(
-                select(FieldProvenance.field).where(
-                    FieldProvenance.entity_id == entity_id,
-                    FieldProvenance.source == FieldSource.USER,
+        """The entity's user-edited fields. Ingest never makes a field the user's, so they
+        are looked up once a session (none, for an entity made this session)."""
+        if entity_id in self._created:
+            return set()
+        if entity_id not in self._user_owned:
+            self._user_owned[entity_id] = set(
+                self.conn.scalars(
+                    select(FieldProvenance.field).where(
+                        FieldProvenance.entity_id == entity_id,
+                        FieldProvenance.source == FieldSource.USER,
+                    )
                 )
             )
-        )
+        return self._user_owned[entity_id]
+
+    def _any_merges(self) -> bool:
+        """Whether this keep has any merged items (most never do), checked once a session:
+        merging is the user's doing, never during an ingest."""
+        if self._has_merges is None:
+            self._has_merges = self.conn.scalar(select(EntityMerge.merged_id).limit(1)) is not None
+        return self._has_merges
+
+    def _forget(self, entity_id: int) -> None:
+        """Drop what this session remembers about an entity it deleted."""
+        self._keys = {k: v for k, v in self._keys.items() if v != entity_id}
+        self._created.discard(entity_id)
+        self._linked_roles = {(e, r) for e, r in self._linked_roles if e != entity_id}
+        self._user_owned.pop(entity_id, None)
+        self._written.pop(entity_id, None)
+        if entity_id in self._new_closure:
+            self._new_closure.remove(entity_id)
 
     def _mark_extracted(self, entity_id: int, names: Iterable[str]) -> None:
+        now = utcnow()
         rows = [
-            {
-                "entity_id": entity_id,
-                "field": n,
-                "source": FieldSource.EXTRACTED,
-                "updated_at": utcnow(),
-            }
+            {"entity_id": entity_id, "field": n, "source": FieldSource.EXTRACTED, "updated_at": now}
             for n in names
         ]
-        if not rows:
-            return
-        stmt = sqlite_insert(FieldProvenance).values(rows)
-        self.conn.execute(
-            stmt.on_conflict_do_update(
-                index_elements=["entity_id", "field"],
-                set_={"source": stmt.excluded.source, "updated_at": stmt.excluded.updated_at},
-                where=FieldProvenance.source != FieldSource.USER,
-            )
-        )
+        if rows:
+            self.conn.execute(_MARK_EXTRACTED, rows)
+
+
+_UNSET = object()
+"""Not written this session (``None`` is a value that can be written)."""
 
 
 def next_entity_id(conn: Connection) -> int:
