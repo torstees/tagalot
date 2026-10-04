@@ -118,7 +118,9 @@ def test_the_tags_column_is_hidden_until_shown_and_remembered(
     actions = {a.text(): a for a in _page(again).table.column_menu().actions()}
     actions["Size"].setChecked(False)
     assert _page(again).table.isColumnHidden(4)  # title, tags, extension, folder, size
-    assert load_ui_state(session.keep.ui_state_path)["hidden_columns"] == {"search:": ["size"]}
+    assert load_ui_state(session.keep.ui_state_path)["hidden_columns"] == {
+        "search:": ["keywords", "size"]
+    }
 
 
 def test_the_tags_column_updates_after_tagging(qtbot: QtBot, session: KeepSession) -> None:
