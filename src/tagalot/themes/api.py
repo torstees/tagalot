@@ -1189,6 +1189,7 @@ class Theme:
 
 # --- Reading files (DESIGN.md §9 books, "Reading files") ---
 
+from tagalot.themes.bibliography import BIBLIOGRAPHY_EXTENSIONS, read_bibliography  # noqa: E402
 from tagalot.themes.readers import (  # noqa: E402
     PDFIUM,
     epub_cover,
@@ -1208,6 +1209,7 @@ from tagalot.themes.readers import (  # noqa: E402
 
 __all__ = [
     "API_VERSION",
+    "BIBLIOGRAPHY_EXTENSIONS",
     "DISPLAY_FORMATS",
     "FIELD_TYPES",
     "FOLDER_IMAGE_EXTENSIONS",
@@ -1268,6 +1270,7 @@ __all__ = [
     "pdf_cover",
     "pdf_text",
     "plural_of",
+    "read_bibliography",
     "read_comic_info",
     "read_epub",
     "read_front_matter",

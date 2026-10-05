@@ -1,0 +1,26 @@
+TY  - JOUR
+TI  - Array programming with NumPy
+AU  - Harris, Charles R.
+AU  - Millman, K. Jarrod
+T2  - Nature
+DA  - 2020/09/17/
+PY  - 2020
+DO  - 10.1038/s41586-020-2649-2
+VL  - 585
+IS  - 7825
+SP  - 357
+EP  - 362
+AB  - Array programming provides a powerful, compact and expressive syntax
+  for accessing, manipulating and operating on data.
+KW  - numpy
+KW  - Software
+L1  - file:///C:/Users/ann/Zotero/storage/ABCD1234/Harris%20et%20al.%20-%202020%20-%20Array%20programming.pdf
+UR  - https://www.nature.com/articles/s41586-020-2649-2
+ER  -
+
+TY  - THES
+TI  - A Thesis
+AU  - Doe, Jane
+PY  - 2018
+PB  - Some University
+ER  -

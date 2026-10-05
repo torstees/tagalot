@@ -143,6 +143,7 @@ The API has readers for formats several themes want, so they all read them the s
 - **`read_front_matter(path)`**: a Markdown file's YAML (`---`) or TOML (`+++`) front matter as `title` (else the first `# heading`), `authors`, `series`, `series_index`, `universe`, `keywords` (`tags` and `keywords`), `source`, `link`, `year`, `publisher`, `language`, `description`, `cover` (a path relative to the file), and `fields`: every key as written, for your own.
 - **`split_people(value)`** and **`split_keywords(value)`**: names and keywords as documents write them (`"Terry Pratchett & Neil Gaiman"`, `"fantasy, #to-read"`).
 
+- **`read_bibliography(path)`**: the entries of a BibTeX/BibLaTeX (`.bib`), RIS (`.ris`), or CSL-JSON (`.json`) file, as Zotero, Better BibTeX, JabRef, and Mendeley export them, each with the same keys: `type`, `kind`, `citekey`, `title`, `authors` (in order), `editors`, `year`, `venue`, `volume`, `issue`, `pages`, `publisher`, `doi`, `arxiv`, `pmid`, `url`, `abstract`, `keywords`, and `files` (the paths it names, as the exporting computer wrote them).
 - **`read_office_info(path)`**: a Word (DOCX) or OpenDocument (ODT) file's `title`, `authors`, `subject`, `keywords`, `description`, `year`, `language`, and `format`; a Pages file gives only its preview. **`office_cover(path)`** gives the preview picture's bytes those formats keep.
 - **`read_link_file(path)`**: a `.url`, `.webloc`, or `.desktop` link's `url` and `title` (a `.desktop` file's `Name=`; else `None`).
 
