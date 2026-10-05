@@ -72,7 +72,7 @@ class TemplateTheme(Theme):
     id = "template"  # TODO: a unique lowercase identifier (keeps store it)
     name = "Template"  # TODO: what people see in the new-keep dialog
     version = 1  # raise it when ingest reads new things: keeps read their files once again
-    api_version = 3  # the theme API this needs; Tagalots with an older one refuse the theme
+    api_version = 4  # the theme API this needs; Tagalots with an older one refuse the theme
     extensions = frozenset()  # TODO: e.g. {".txt", ".md", ".pdf"}; empty = every file
     dirs = True  # folders become resources (needed for Group's folder role)
     entities = [Group, Item]

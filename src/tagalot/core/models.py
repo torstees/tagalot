@@ -397,6 +397,23 @@ class UserRelation(Base):
     at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+LAST_POSITION = 1 << 30
+"""Where an item of an ordered relationship without a position sorts: after the rest."""
+
+
+class UserOrder(Base):
+    """The user put ``b_id``'s items of ordered relationship ``name`` in order by hand
+    (#317): scans then leave its positions alone (new items go last)."""
+
+    __tablename__ = "user_order"
+
+    name: Mapped[str] = mapped_column(primary_key=True)
+    b_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True, index=True
+    )
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

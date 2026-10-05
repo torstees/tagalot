@@ -5,18 +5,22 @@ Each is one undo step, an :class:`~tagalot.core.actions.ActionChange` over both 
 snapshots (which carry the relationship and the user's record of it). The record, in
 ``user_relation``, is what scans respect: a theme's ``unrelate`` leaves a relationship the
 user added, and its ``relate`` doesn't bring back one the user removed.
+
+In an ordered relationship (#317), an item added by hand goes last, and
+:func:`move_related` reorders a ``b``'s items; ``user_order`` then records that the user
+ordered them, so scans leave that order alone.
 """
 
 from collections.abc import Sequence
 
-from sqlalchemy import Connection, delete, insert, select
+from sqlalchemy import Connection, delete, func, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
 from tagalot.core.actions import ActionChange
 from tagalot.core.entity_state import ChangeRecorder
-from tagalot.core.ingest import next_entity_id, theme_text_source
-from tagalot.core.models import Entity, UserRelation, utcnow
+from tagalot.core.ingest import next_entity_id, next_position, theme_text_source
+from tagalot.core.models import LAST_POSITION, Entity, UserOrder, UserRelation, utcnow
 from tagalot.core.theme_schema import RelationshipTable, ThemeSchema
 
 
@@ -67,7 +71,10 @@ def add_related(
     if not rel.many:  # b's one partner is replaced: the old one is touched too
         recorder.touch(conn.scalars(select(t.c.a_id).where(t.c.b_id == b_id)))
         conn.execute(delete(t).where(t.c.b_id == b_id, t.c.a_id != a_id))
-    conn.execute(insert(t).values(a_id=a_id, b_id=b_id).prefix_with("OR IGNORE"))
+    values = {"a_id": a_id, "b_id": b_id}
+    if rel.ordered:  # last among b's items
+        values["position"] = next_position(conn, t, b_id)
+    conn.execute(insert(t).values(**values).prefix_with("OR IGNORE"))
     _record(conn, name, a_id, b_id, added=True)
     label = (rel.label if this_is_a else rel.reverse_label) or name
     return ActionChange(
@@ -118,6 +125,65 @@ def remove_related(
         recorder.before,
         recorder.after(),
     )
+
+
+def move_related(
+    conn: Connection,
+    schema: ThemeSchema,
+    name: str,
+    b_id: int,
+    a_ids: Sequence[int],
+    by: int,
+) -> ActionChange:
+    """Move ``a_ids`` among ``b_id``'s items of ordered relationship ``name`` by ``by``
+    places (-1: up one, 1: down one), keeping their order among themselves; they stop at
+    the ends. Remembered (``user_order``), so scans leave this order alone. One undo
+    step."""
+    link = _link(schema, name)
+    rel = link.relationship
+    if not rel.ordered:
+        raise RelationError(f"{name!r} has no order to change.")
+    _, title = _item(conn, b_id)
+    t = link.table
+    order: list[int] = list(
+        conn.scalars(
+            select(t.c.a_id)
+            .join(Entity, Entity.id == t.c.a_id)
+            .where(t.c.b_id == b_id)
+            .order_by(func.coalesce(t.c.position, LAST_POSITION), Entity.title, t.c.a_id)
+        )
+    )
+    moving = [a for a in order if a in set(a_ids)]
+    if not moving:
+        raise RelationError(f"Those items aren't in {title}'s list.")
+    new = _moved(order, moving, by)
+    recorder = ChangeRecorder(conn, schema)
+    recorder.touch([b_id])
+    for position, a_id in enumerate(new):
+        conn.execute(update(t).where(t.c.a_id == a_id, t.c.b_id == b_id).values(position=position))
+    conn.execute(
+        sqlite_insert(UserOrder)
+        .values(name=name, b_id=b_id, at=utcnow())
+        .on_conflict_do_update(index_elements=["name", "b_id"], set_={"at": utcnow()})
+    )
+    label = (rel.reverse_label or name).lower()
+    what = "up" if by < 0 else "down"
+    return ActionChange(f"Move {what} in {title}'s {label}", recorder.before, recorder.after())
+
+
+def _moved(order: list[int], moving: list[int], by: int) -> list[int]:
+    """``order`` with the ``moving`` items shifted ``by`` places, one step at a time, each
+    stopping at an end or behind another moving item."""
+    items = list(order)
+    chosen = set(moving)
+    for _ in range(abs(by)):
+        step = -1 if by < 0 else 1
+        indexes = range(len(items)) if step < 0 else range(len(items) - 1, -1, -1)
+        for i in indexes:
+            j = i + step
+            if items[i] in chosen and 0 <= j < len(items) and items[j] not in chosen:
+                items[i], items[j] = items[j], items[i]
+    return items
 
 
 def _record(conn: Connection, name: str, a_id: int, b_id: int, *, added: bool) -> None:

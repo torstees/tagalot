@@ -177,6 +177,11 @@ def _v10_file_keywords(conn: Connection) -> None:
         Base.metadata.tables[name].create(conn)
 
 
+def _v11_user_order(conn: Connection) -> None:
+    """Format 12: ordered relationships put in order by hand (#317)."""
+    Base.metadata.tables["user_order"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -188,6 +193,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     8: _v8_user_relations,
     9: _v9_tag_types,
     10: _v10_file_keywords,
+    11: _v11_user_order,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

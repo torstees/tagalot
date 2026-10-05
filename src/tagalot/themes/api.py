@@ -17,12 +17,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 3
+API_VERSION = 4
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 ``"url"`` field display, and writing back to files (:attr:`Theme.write_back`,
-:meth:`Theme.front_matter`)."""
+:meth:`Theme.front_matter`); version 4 added ordered relationships (:func:`related`'s
+``ordered``, :meth:`IngestContext.relate`'s ``position``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -331,6 +332,8 @@ class Relationship:
     reverse_label: str | None = None
     many: bool = True
     """``False`` limits each ``b`` to at most one ``a``."""
+    ordered: bool = False
+    """Each ``b``'s ``a`` items are in an order (a paper's authors): see :func:`related`."""
 
 
 def related(
@@ -341,6 +344,7 @@ def related(
     label: str | None = None,
     reverse_label: str | None = None,
     many: bool = True,
+    ordered: bool = False,
 ) -> Relationship:
     """Declare a relationship between ``a`` and ``b`` items, such as
     ``related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")``.
@@ -348,10 +352,20 @@ def related(
     ``label`` titles the section on an ``a`` item's page (an actor's movies: Filmography),
     and ``reverse_label`` the one on a ``b`` item's page (a movie's actors: Cast). The core
     builds a link table ``<theme id>_<name>``.
+
+    ``ordered=True`` keeps each ``b``'s ``a`` items in an order, such as a paper's authors
+    (API version 4): :meth:`IngestContext.relate` takes their ``position``,
+    :meth:`IngestContext.related` gives a ``b``'s ``a`` items in that order, and a ``b``'s
+    page lists them in it. The user can reorder them by hand; scans then leave that ``b``'s
+    order alone. It needs ``many=True``.
     """
     if not name.isidentifier():
         raise ThemeDeclarationError(f"relationship name {name!r} must be an identifier")
-    return Relationship(name, a, b, label, reverse_label, many)
+    if ordered and not many:
+        raise ThemeDeclarationError(
+            f"relationship {name!r}: ordered=True needs many=True (one item has no order)"
+        )
+    return Relationship(name, a, b, label, reverse_label, many, ordered)
 
 
 # --- Views ---
@@ -531,13 +545,21 @@ class IngestContext(Protocol):
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None: ...
 
-    def relate(self, name: str, a: EntityRef, b: EntityRef) -> None: ...
+    def relate(self, name: str, a: EntityRef, b: EntityRef, position: int | None = None) -> None:
+        """Relate ``a`` and ``b``. In an ordered relationship, ``position`` places ``a``
+        among ``b``'s items (0 first; numbers need not be consecutive); without it, a new
+        ``a`` goes last and an existing one keeps its place. After the user reorders
+        ``b``'s items by hand, positions are ignored for it and new ones go last.
+        ``position`` on an unordered relationship is an error. ``position`` needs
+        ``api_version = 4``."""
+        ...
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None: ...
 
     def related(self, name: str, entity: EntityRef) -> list[EntityRef]:
         """The entities related to ``entity`` through relationship ``name``, from either
-        side (a movie's cast, an actor's movies), in id order."""
+        side (a movie's cast, an actor's movies), in id order; a ``b``'s items of an ordered
+        relationship in their order (a paper's authors)."""
         ...
 
     def update(self, entity: EntityRef, *, title: str | None = None, **fields: Any) -> None:

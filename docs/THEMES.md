@@ -99,13 +99,14 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 
 - **Containment** makes a hierarchy: `containment = [contains(Artist, Album), contains(Album, Song)]`. An item can be in several containers. Searches can list what matching containers hold, and tags on a container can count for its contents ("inherit tags").
 - **Relationships** link two types without nesting: `relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]`. `label` titles the section on the first type's page (an actor's Filmography), and `reverse_label` the one on the second's (a movie's Cast). People can also add and remove related items by hand on those pages; your `ingest` won't undo what they did.
+- **Ordered relationships** (`api_version = 4`) keep each second-type item's first-type items in order, as a paper's authors: `related("authors", Author, Paper, ordered=True)`, then `ctx.relate("authors", author, paper, position=n)` with `n` counting from 0. `ctx.related("authors", paper)` gives them in order, and the paper's page lists them so. Once someone reorders them by hand (Move up / Move down), your positions are ignored for that paper, and new authors go last.
 
 ## The theme class
 
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 3              # the theme API it needs
+    api_version = 4              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -120,7 +121,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
 

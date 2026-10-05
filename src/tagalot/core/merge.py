@@ -21,15 +21,16 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import Connection, delete, func, insert, or_, select, update
+from sqlalchemy import Connection, delete, func, insert, literal, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
 from tagalot.core.actions import ActionChange
 from tagalot.core.detail import PATH_MARK
 from tagalot.core.entity_state import ChangeRecorder, restore_states
-from tagalot.core.ingest import TITLE, theme_text_source
+from tagalot.core.ingest import TITLE, next_position, theme_text_source
 from tagalot.core.models import (
+    LAST_POSITION,
     Entity,
     EntityContains,
     EntityMerge,
@@ -40,6 +41,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     Root,
+    UserOrder,
     UserRelation,
     utcnow,
 )
@@ -185,6 +187,7 @@ def merge_items(
             ).where(or_(UserRelation.a_id.in_(ids), UserRelation.b_id.in_(ids)))
         )
     )
+    their_orders = set(conn.scalars(select(UserOrder.name).where(UserOrder.b_id.in_(ids))))
     recorder = ChangeRecorder(conn, schema)
     recorder.touch([keep_id, *ids, *parents, *children, *_partners(conn, schema, ids)])
 
@@ -227,9 +230,23 @@ def merge_items(
         removed=[],
     )
     for name, rows in relations.items():
+        link = schema.relationships[name]
+        if not link.relationship.ordered:
+            conn.execute(
+                insert(link.table).prefix_with("OR IGNORE"),
+                [{"a_id": a, "b_id": b} for a, b, _, _ in rows],
+            )
+            continue
+        # An item merged on the a side keeps its place; a merged b's items go last (#317).
+        for a, b, position, moved in rows:
+            at = next_position(conn, link.table, b) if moved else position
+            conn.execute(
+                insert(link.table).prefix_with("OR IGNORE").values(a_id=a, b_id=b, position=at)
+            )
+    if their_orders:  # the user's hand-made orders come along
         conn.execute(
-            insert(schema.relationships[name].table).prefix_with("OR IGNORE"),
-            [{"a_id": a, "b_id": b} for a, b in rows],
+            insert(UserOrder).prefix_with("OR IGNORE"),
+            [{"name": n, "b_id": keep_id} for n in sorted(their_orders)],
         )
     gone = set(ids)
     records = {
@@ -368,31 +385,35 @@ def _edges(conn: Connection, keep_id: int, ids: list[int]) -> tuple[set[int], se
 
 def _relations(
     conn: Connection, schema: ThemeSchema, keep_id: int, ids: list[int]
-) -> dict[str, list[tuple[int, int]]]:
-    """Relationship rows the kept item gains, by relationship name."""
+) -> dict[str, list[tuple[int, int, int | None, bool]]]:
+    """Relationship rows the kept item gains, by relationship name: ``(a, b, position,
+    whether b changed)``, in position order for ordered relationships."""
     gone = set(ids)
-    found: dict[str, list[tuple[int, int]]] = {}
+    found: dict[str, list[tuple[int, int, int | None, bool]]] = {}
     for name, link in schema.relationships.items():
         t = link.table
+        position = t.c.position if link.relationship.ordered else literal(None)
         current = set(
             conn.execute(
                 select(t.c.a_id, t.c.b_id).where(or_(t.c.a_id == keep_id, t.c.b_id == keep_id))
             )
         )
         has_partner = any(b == keep_id for _, b in current)
-        rows: list[tuple[int, int]] = []
-        for a, b in conn.execute(
-            select(t.c.a_id, t.c.b_id).where(or_(t.c.a_id.in_(ids), t.c.b_id.in_(ids)))
+        rows: list[tuple[int, int, int | None, bool]] = []
+        for a, b, at in conn.execute(
+            select(t.c.a_id, t.c.b_id, position)
+            .where(or_(t.c.a_id.in_(ids), t.c.b_id.in_(ids)))
+            .order_by(func.coalesce(position, LAST_POSITION), t.c.a_id)
         ):
             a2 = keep_id if a in gone else a
             b2 = keep_id if b in gone else b
-            if a2 == b2 or (a2, b2) in current or (a2, b2) in rows:
+            if a2 == b2 or (a2, b2) in current or any((r[0], r[1]) == (a2, b2) for r in rows):
                 continue
             if b2 == keep_id and not link.relationship.many:
                 if has_partner:
                     continue  # the kept item keeps its one partner
                 has_partner = True
-            rows.append((a2, b2))
+            rows.append((a2, b2, at, b2 != b))
         if rows:
             found[name] = rows
     return found

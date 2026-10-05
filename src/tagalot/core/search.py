@@ -25,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import InstrumentedAttribute
 
 from tagalot.core.models import (
+    LAST_POSITION,
     Entity,
     EntityAncestor,
     EntityContains,
@@ -316,11 +317,33 @@ def _field_condition(
             return column.in_(values)
 
 
+POSITION = "@position"
+"""The sort key for a search of a ``b`` item's related ``a`` items (``spec.related``) in an
+ordered relationship: their order (a paper's authors, #317)."""
+
+
+def _position(spec: SearchSpec, fields: Mapping[str, ColumnElement[Any]]) -> ColumnElement[Any]:
+    """Each listed item's position among ``spec.related``'s item's items."""
+    if spec.related is None:
+        raise SearchError("Only a related search can be sorted by position.")
+    name, other = spec.related
+    a = fields.get(f"@{name}.a")
+    table = getattr(a, "table", None)
+    if table is None or "position" not in table.c:
+        raise SearchError(f"{name!r} has no order.")
+    position = select(table.c.position).where(table.c.a_id == Entity.id, table.c.b_id == other)
+    return func.coalesce(position.scalar_subquery(), LAST_POSITION)
+
+
 def _order_by(
     spec: SearchSpec, fields: Mapping[str, ColumnElement[Any]]
 ) -> Sequence[ColumnElement[Any]]:
     keys: list[ColumnElement[Any]] = []
     for key in spec.sort:
+        if key.field == POSITION:
+            column = _position(spec, fields)
+            keys.append(column.desc() if key.descending else column.asc())
+            continue
         column = _column(key.field, fields)
         if key.field == "title":
             column = column.collate("NOCASE")

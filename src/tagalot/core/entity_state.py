@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Connection, delete, insert, or_, select, update
+from sqlalchemy import Connection, delete, insert, literal, or_, select, update
 
 from tagalot.core import closure, fts
 from tagalot.core.ingest import theme_text_source
@@ -28,6 +28,7 @@ from tagalot.core.models import (
     EntityTag,
     FieldProvenance,
     FieldSource,
+    UserOrder,
     UserRelation,
 )
 from tagalot.core.theme_schema import ThemeSchema
@@ -52,10 +53,13 @@ class EntitySnapshot:
     """(tag id, when it was added)."""
     parents: frozenset[int]
     children: frozenset[int]
-    relations: frozenset[tuple[str, int, int]]
-    """(relationship name, a id, b id) for relationships this entity is either end of."""
+    relations: frozenset[tuple[str, int, int, int | None]]
+    """(relationship name, a id, b id, position) for relationships this entity is either
+    end of; the position is ``None`` but in ordered relationships (#317)."""
     user_relations: frozenset[tuple[str, int, int, bool]] = frozenset()
     """(name, a id, b id, added) the user's records about those (#260)."""
+    user_orders: frozenset[str] = frozenset()
+    """Ordered relationships whose items of this entity the user ordered by hand (#317)."""
 
 
 States = Mapping[int, EntitySnapshot | None]
@@ -130,6 +134,9 @@ def snapshot_entities(
                     ).where(or_(UserRelation.a_id == entity_id, UserRelation.b_id == entity_id))
                 )
             ),
+            user_orders=frozenset(
+                conn.scalars(select(UserOrder.name).where(UserOrder.b_id == entity_id))
+            ),
         )
     return found
 
@@ -177,6 +184,7 @@ def restore_states(conn: Connection, schema: ThemeSchema, states: States) -> Non
         _replace_rows(conn, present)
         _restore_relations(conn, schema, present)
         _restore_user_relations(conn, present)
+        _restore_user_orders(conn, present)
         _restore_edges(conn, present)
     fts.sync_entities(conn, ids, theme_text_source(schema))
 
@@ -222,13 +230,16 @@ def _values(conn: Connection, schema: ThemeSchema, entity_id: int, type_id: str)
 
 def _relations(
     conn: Connection, schema: ThemeSchema, entity_id: int
-) -> Iterable[tuple[str, int, int]]:
+) -> Iterable[tuple[str, int, int, int | None]]:
     for name, rel in schema.relationships.items():
         t = rel.table
-        for a, b in conn.execute(
-            select(t.c.a_id, t.c.b_id).where(or_(t.c.a_id == entity_id, t.c.b_id == entity_id))
+        position = t.c.position if rel.relationship.ordered else literal(None)
+        for a, b, at in conn.execute(
+            select(t.c.a_id, t.c.b_id, position).where(
+                or_(t.c.a_id == entity_id, t.c.b_id == entity_id)
+            )
         ):
-            yield name, a, b
+            yield name, a, b, at
 
 
 def _replace_rows(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:
@@ -266,7 +277,10 @@ def _restore_relations(
     for name, rel in schema.relationships.items():
         t = rel.table
         conn.execute(delete(t).where(or_(t.c.a_id.in_(ids), t.c.b_id.in_(ids))))
-        rows = [{"a_id": a, "b_id": b} for n, a, b in wanted if n == name]
+        if rel.relationship.ordered:
+            rows = [{"a_id": a, "b_id": b, "position": p} for n, a, b, p in wanted if n == name]
+        else:
+            rows = [{"a_id": a, "b_id": b} for n, a, b, _ in wanted if n == name]
         if rows:
             conn.execute(insert(t).prefix_with("OR IGNORE"), rows)
 
@@ -282,6 +296,14 @@ def _restore_user_relations(conn: Connection, present: Mapping[int, EntitySnapsh
             insert(UserRelation).prefix_with("OR IGNORE"),  # an item gone since: skipped
             [{"name": n, "a_id": a, "b_id": b, "added": added} for n, a, b, added in rows],
         )
+
+
+def _restore_user_orders(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:
+    ids = list(present)
+    conn.execute(delete(UserOrder).where(UserOrder.b_id.in_(ids)))
+    rows = [{"name": n, "b_id": i} for i, s in present.items() for n in s.user_orders]
+    if rows:
+        conn.execute(insert(UserOrder), rows)
 
 
 def _restore_edges(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:
