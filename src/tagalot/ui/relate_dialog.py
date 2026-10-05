@@ -42,6 +42,8 @@ class RelateDialog(QDialog):
         section: str,
         already: set[int],
         parent: QWidget | None = None,
+        *,
+        prompt: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
@@ -75,7 +77,7 @@ class RelateDialog(QDialog):
         note = QLabel("What you add stays: scans reading this item's files won't remove it.")
         note.setWordWrap(True)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"Add to <b>{title}</b>'s {section.lower()}:"))
+        layout.addWidget(QLabel(prompt or f"Add to <b>{title}</b>'s {section.lower()}:"))
         layout.addWidget(self.search)
         layout.addWidget(self.results, 1)
         layout.addWidget(note)

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.actions import actions_for
+from tagalot.core.containers import containers_for, hand_made_types
 from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
 from tagalot.core.search_fields import (
@@ -49,6 +50,7 @@ from tagalot.core.search_fields import (
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
+from tagalot.themes.api import entity_label
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
 from tagalot.ui.file_actions import (
     FileOpener,
@@ -143,6 +145,10 @@ class SearchPage(QWidget):
     open_requested = Signal(int)
     """An item was double-clicked (or Enter pressed on it): its entity id."""
     reread_requested = Signal(list, bool)
+    new_item_requested = Signal(str)
+    """New project… (#329): make an item of this hand-made type."""
+    add_to_requested = Signal(str, list)
+    """Add to project… (#329): (the container type, the items to put in one)."""
     write_back_requested = Signal(list)
     """Write to file… on these items (#299)."""
     action_requested = Signal(str, list)
@@ -200,6 +206,16 @@ class SearchPage(QWidget):
         self.header_row = header_row
         """The heading's row: a page holding this search can add buttons to it."""
         header_row.addWidget(heading)
+        for type_id in hand_made_types(session.schema):  # New project… (#329)
+            if type_id in spec.types:
+                noun = entity_label(session.schema.by_type_id(type_id).entity).lower()
+                new = QPushButton(f"New {noun}\u2026")
+                new.setObjectName(f"new_{type_id}")
+                new.setFlat(True)
+                new.setCursor(Qt.CursorShape.PointingHandCursor)
+                new.setToolTip(f"Make a {noun} to put items in")
+                new.clicked.connect(lambda _=False, t=type_id: self.new_item_requested.emit(t))
+                header_row.addWidget(new)
         header_row.addStretch(1)
         self.save_button = QPushButton("Save\u2026")
         self.save_button.setObjectName("save_search")
@@ -467,6 +483,14 @@ class SearchPage(QWidget):
                 menu.setDefaultAction(open_file)
         menu.addSeparator()
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
+        for container in containers_for(self.session.schema, hit.type):  # Add to project…
+            noun = entity_label(self.session.schema.by_type_id(container).entity).lower()
+            put = menu.addAction(f"Add to {noun}\u2026")
+            put.triggered.connect(
+                lambda _=False, c=container: self._on_selection_or(
+                    hit, lambda ids: self.add_to_requested.emit(c, ids)
+                )
+            )
         if writes_back(self.session, hit.type):
             write = menu.addAction("Write to file\u2026")
             write.setToolTip(WRITE_BACK_TIP)

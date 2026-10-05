@@ -30,6 +30,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     ResourceStatus,
+    UserContains,
     UserOrder,
     UserRelation,
     utcnow,
@@ -154,6 +155,8 @@ class IngestSession:
         self._keyword_entities: set[int] = set()
         """Entities whose keywords changed: their file tags are recomputed at flush (#294)."""
         self._has_merges: bool | None = None
+        self._any_user_contains: bool | None = None
+        """Whether the keep has containment by hand (looked up once)."""
         """Whether the keep has merged items (see :meth:`_any_merges`)."""
         self._inserts: dict[str, Insert] = {}
         """Each theme table's insert, built once."""
@@ -500,8 +503,8 @@ class IngestSession:
 
     def contain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
-        if self._gone(parent, child):
-            return
+        if self._gone(parent, child) or self._contained_by_user(parent.id, child.id) is False:
+            return  # merged away, or the user took it out (#329)
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._removed_edges = [e for e in self._removed_edges if e != edge]
@@ -510,8 +513,8 @@ class IngestSession:
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
-        if self._gone(parent, child):
-            return
+        if self._gone(parent, child) or self._contained_by_user(parent.id, child.id):
+            return  # merged away, or the user put it there (#329)
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._added_edges = [e for e in self._added_edges if e != edge]
@@ -644,6 +647,22 @@ class IngestSession:
             for (parent, child), reason in result.rejected:
                 self.warn(None, f"containment {parent} -> {child} rejected: {reason}")
             self._added_edges, self._removed_edges = [], []
+
+    def _contained_by_user(self, parent_id: int, child_id: int) -> bool | None:
+        """Whether the user put ``child`` in ``parent`` (``True``) or took it out
+        (``False``) by hand, or ``None`` if they did neither."""
+        if self._any_user_contains is None:
+            self._any_user_contains = (
+                self.conn.scalar(select(UserContains.parent_id).limit(1)) is not None
+            )
+        if not self._any_user_contains:
+            return None
+        found: bool | None = self.conn.scalar(
+            select(UserContains.added).where(
+                UserContains.parent_id == parent_id, UserContains.child_id == child_id
+            )
+        )
+        return found
 
     def _by_user(self, name: str, a_id: int, b_id: int) -> bool | None:
         """Whether the user added (``True``) or removed (``False``) this relationship by

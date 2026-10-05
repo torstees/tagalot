@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.actions import actions_for
+from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
@@ -102,6 +103,8 @@ class DetailPage(QWidget):
     relate_requested = Signal(int, str, str)
     """Add to a related section by hand (#260): (entity id, relationship name)."""
     unrelate_requested = Signal(int, str, list, str)
+    uncontain_requested = Signal(int, list)
+    """Remove from project (#329): (this container's id, the items to take out)."""
     move_requested = Signal(int, str, list, int)
     """Reorder an ordered related list (#317): (this item's id, relationship, the items
     moved, -1 up or 1 down)."""
@@ -309,6 +312,11 @@ class DetailPage(QWidget):
             in_search.setToolTip("Open Search all with a Within chip for these contents")
             in_search.clicked.connect(lambda: self.show_in_search.emit(self.entity_id))
             self.contents.header_row.insertWidget(1, in_search)
+            if detail.type in hand_made_types(self.session.schema):  # a project (#329)
+                self.contents.add_menu_action(
+                    f"Remove from {detail.title}",
+                    lambda ids: self.uncontain_requested.emit(self.entity_id, ids),
+                )
             self._embed(self.contents, "Contents")
         return True
 

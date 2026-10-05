@@ -49,6 +49,7 @@ CORE_TABLES = {
     "dedupe_dismissal",
     "user_relation",
     "user_order",
+    "user_contains",
     "schema_version",
 }
 FTS_TABLES = {
