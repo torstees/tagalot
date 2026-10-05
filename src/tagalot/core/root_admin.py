@@ -14,6 +14,7 @@ session saves the result. The database side:
 """
 
 import copy
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +81,7 @@ def edit_root(
     name: str | None = None,
     path: str | None = None,
     exclude: list[str] | None = None,
+    exclude_notes: dict[str, str] | None = None,
     watched: bool | None = None,
     writable: bool | None = None,
 ) -> KeepConfig:
@@ -98,6 +100,9 @@ def edit_root(
         root.path = path.strip()
     if exclude is not None:
         root.exclude = [p.strip() for p in exclude if p.strip()]
+    if exclude_notes is not None:
+        root.exclude_notes = {p.strip(): n.strip() for p, n in exclude_notes.items() if n.strip()}
+    root.exclude_notes = {p: n for p, n in root.exclude_notes.items() if p in root.exclude}
     if watched is not None:
         root.watched = watched
     if writable is not None:
@@ -105,6 +110,47 @@ def edit_root(
     new = replace(config, roots=roots)
     _check(new, keep_dir, root)
     return new
+
+
+NOTE_MARK = " # "
+"""Between a Skip pattern and its note, in Keep configuration's Skip box (#334)."""
+
+
+def skip_lines(root: RootConfig) -> list[str]:
+    """A root's Skip patterns as the Skip box shows them: ``pattern  # note``."""
+    return [
+        f"{p}{NOTE_MARK}{root.exclude_notes[p]}" if root.exclude_notes.get(p) else p
+        for p in root.exclude
+    ]
+
+
+def parse_skip_lines(lines: Iterable[str]) -> tuple[list[str], dict[str, str]]:
+    """The Skip box's lines as patterns and their notes: a note follows `` # `` (a pattern
+    written by Tagalot brackets a ``#`` in a name, so it never contains one)."""
+    patterns: list[str] = []
+    notes: dict[str, str] = {}
+    for line in lines:
+        pattern, _, note = line.partition(NOTE_MARK)
+        pattern = pattern.strip()
+        if not pattern or pattern.startswith("#"):
+            continue
+        patterns.append(pattern)
+        if note.strip():
+            notes[pattern] = note.strip()
+    return patterns, notes
+
+
+def add_skipped(
+    config: KeepConfig, keep_dir: Path, root_id: str, patterns: Iterable[str], note: str
+) -> KeepConfig:
+    """``config`` with these patterns added to a root's Skip list, with ``note`` saying why
+    (a pattern already there keeps its note)."""
+    root = next((r for r in config.roots if r.id == root_id), None)
+    if root is None:
+        raise KeepError(f"This keep has no root {root_id!r}.")
+    new = [p for p in dict.fromkeys(patterns) if p not in root.exclude]
+    notes = dict(root.exclude_notes) | {p: note for p in new}
+    return edit_root(config, keep_dir, root_id, exclude=[*root.exclude, *new], exclude_notes=notes)
 
 
 def without_root(config: KeepConfig, root_id: str) -> KeepConfig:

@@ -71,6 +71,18 @@ def test_renaming_and_excludes_are_saved_at_once(
     assert "Scan it to update its files" in blocker.args[0]
     assert load_keep_config(session.keep.toml_path).roots[0].exclude == ["**/Untagged/**"]
 
+    # A note after " # " says why a pattern is there (#334), and comes back in the box.
+    config.exclude.setPlainText("**/Untagged/** # not sorted yet\n")
+    with qtbot.waitSignal(config.changed, timeout=5000):
+        QApplication.sendEvent(config.exclude, QFocusEvent(QEvent.Type.FocusOut))
+    root = load_keep_config(session.keep.toml_path).roots[0]
+    assert (root.exclude, root.exclude_notes) == (
+        ["**/Untagged/**"],
+        {"**/Untagged/**": "not sorted yet"},
+    )
+    config.reload()
+    assert config.exclude.toPlainText() == "**/Untagged/** # not sorted yet"
+
 
 def test_a_bad_folder_is_explained_and_not_saved(
     session: KeepSession, config: KeepConfigWindow

@@ -176,8 +176,9 @@ def count_unlinked(conn: Connection) -> int:
 
 
 def exact_pattern(relpath: str) -> str:
-    """An exclude pattern (§4) matching just this path: glob characters are bracketed."""
-    return "".join(f"[{c}]" if c in "*?[" else c for c in relpath)
+    """An exclude pattern (§4) matching just this path: glob characters are bracketed,
+    and so is ``#``, which starts a note in the Skip box (#334)."""
+    return "".join(f"[{c}]" if c in "*?[#" else c for c in relpath)
 
 
 # --- dismissing ---

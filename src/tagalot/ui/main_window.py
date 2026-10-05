@@ -47,7 +47,7 @@ from tagalot.core.keywords import (
 )
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
-from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
+from tagalot.core.root_admin import RootStatus, add_skipped, root_statuses
 from tagalot.core.roots import place_in_roots
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
 from tagalot.core.scanjob import ScanReport
@@ -756,11 +756,11 @@ class MainWindow(QMainWindow):
             elif kind == "url":
                 open_web_address(value)
             elif kind == "save" and len(output) == 3:
-                self.save_export(value, output[2])
+                self.save_export(value, output[2], result.change.label)
 
     # --- saving an action's export (#322) ---
 
-    def save_export(self, name: str, text: str) -> None:
+    def save_export(self, name: str, text: str, by: str = "an action") -> None:
         """Ask where to save an action's export, then write it (in the background). A place
         inside a watched folder is allowed after a warning, and the file is then skipped by
         scans (an exact pattern on that folder's Skip list), so the keep doesn't read its
@@ -787,14 +787,14 @@ class MainWindow(QMainWindow):
 
         def job() -> str:
             if place is not None:  # skipped first, so no scan can read it in between
-                config = session.keep.config
-                root = next(r for r in config.roots if r.id == place[0])
-                pattern = exact_pattern(place[1])
-                if pattern not in root.exclude:
-                    config = edit_root(
-                        config, session.keep.dir, root.id, exclude=[*root.exclude, pattern]
-                    )
-                    session.save_config(config)
+                note = (
+                    f"Saved here by {by} on {datetime.now():%Y-%m-%d}; skipped so the keep "
+                    "doesn't read its own export back"
+                )
+                config = add_skipped(
+                    session.keep.config, session.keep.dir, place[0], [exact_pattern(place[1])], note
+                )
+                session.save_config(config)
             Path(path).write_text(text, encoding="utf-8")
             return path
 
@@ -1418,10 +1418,9 @@ class MainWindow(QMainWindow):
             by_root: dict[str, list[str]] = {}
             for file in files:
                 by_root.setdefault(file.root_id, []).append(exact_pattern(file.relpath))
+            note = f"Skipped from Triage on {datetime.now():%Y-%m-%d}"
             for root_id, patterns in by_root.items():
-                root = next(r for r in config.roots if r.id == root_id)
-                new = [p for p in patterns if p not in root.exclude]
-                config = edit_root(config, session.keep.dir, root_id, exclude=root.exclude + new)
+                config = add_skipped(config, session.keep.dir, root_id, patterns, note)
             session.save_config(config)
             return len(files)
 

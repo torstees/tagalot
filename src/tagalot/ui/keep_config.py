@@ -53,8 +53,10 @@ from tagalot.core.root_admin import (
     RootStatus,
     add_root,
     edit_root,
+    parse_skip_lines,
     removal_counts,
     root_statuses,
+    skip_lines,
 )
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import save_settings
@@ -144,10 +146,13 @@ class KeepConfigWindow(QWidget):
         local_row.addWidget(local_browse)
         local_row.addWidget(local_clear)
         self.exclude = QPlainTextEdit()
-        self.exclude.setPlaceholderText("One pattern per line, like **/cache/**")
+        self.exclude.setPlaceholderText(
+            "One pattern per line, like **/cache/**  # an optional note saying why"
+        )
         self.exclude.setToolTip(
-            "Files and folders matching these patterns are skipped when scanning. "
-            "Saved when you leave the box."
+            "Files and folders matching these patterns are skipped when scanning. After a "
+            "pattern, ' # ' starts a note saying why it is there (Tagalot writes one when it "
+            "skips a file itself). Saved when you leave the box."
         )
         self.exclude.installEventFilter(self)
         self.status = QLabel()
@@ -358,7 +363,7 @@ class KeepConfigWindow(QWidget):
         self.path.setText(root.path)
         override = self.session.settings.root_overrides.get(self.session.keep.config.id, {})
         self.local.setText(override.get(root.id, ""))
-        self.exclude.setPlainText("\n".join(root.exclude))
+        self.exclude.setPlainText("\n".join(skip_lines(root)))
         self.watch_button.setText("Stop watching" if root.watched else "Watch again")
         self.watch_button.setToolTip(
             "Stop scanning it; its items stay (shown offline) until you watch it again"
@@ -580,7 +585,8 @@ class KeepConfigWindow(QWidget):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Save the exclude patterns when the box loses the focus."""
         if watched is self.exclude and event.type() == QEvent.Type.FocusOut:
-            self._edit(exclude=self.exclude.toPlainText().splitlines())
+            patterns, notes = parse_skip_lines(self.exclude.toPlainText().splitlines())
+            self._edit(exclude=patterns, exclude_notes=notes)
         return super().eventFilter(watched, event)
 
     def _choose_new_root(self) -> None:

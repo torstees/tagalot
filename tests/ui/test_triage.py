@@ -85,9 +85,9 @@ def test_skipping_a_file_in_scans(qtbot: QtBot, window: MainWindow, session: Kee
         lambda: "left out from the next scan" in window.statusBar().currentMessage(),
         timeout=5000,
     )
-    assert load_keep_config(session.keep.toml_path).roots[0].exclude[-1] == (
-        "Miles Davis/Kind of Blue/cover.jpg"
-    )
+    root = load_keep_config(session.keep.toml_path).roots[0]
+    assert root.exclude[-1] == "Miles Davis/Kind of Blue/cover.jpg"
+    assert root.exclude_notes[root.exclude[-1]].startswith("Skipped from Triage on ")
     with qtbot.waitSignal(window.scans.finished, timeout=10_000):
         window.scan_now()
     qtbot.waitUntil(lambda: _tab_texts(page)[0] == "Unlinked files (0)", timeout=5000)
