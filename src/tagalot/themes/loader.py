@@ -29,6 +29,7 @@ from tagalot.themes.api import (
     API_VERSION,
     DetailView,
     Entity,
+    OnlineSource,
     RoleImage,
     SearchView,
     StatCard,
@@ -229,6 +230,13 @@ def validate_theme(theme: type[Theme]) -> list[str]:
     ordered = any(getattr(r, "ordered", False) for r in theme.relationships)
     if ordered and getattr(theme, "api_version", API_VERSION) < 4:
         problems.append("a theme with ordered relationships must set api_version = 4 (or later)")
+    sources = getattr(theme, "online_sources", ())
+    if not all(isinstance(o, OnlineSource) for o in sources):
+        problems.append("online_sources must be OnlineSource declarations")
+    elif len({o.host for o in sources}) != len(sources):
+        problems.append("online_sources names a host twice")
+    if sources and getattr(theme, "api_version", API_VERSION) < 5:
+        problems.append("a theme with online_sources must set api_version = 5 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]

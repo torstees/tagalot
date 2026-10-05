@@ -10,6 +10,8 @@ validates every theme) can import it freely.
 
 import enum
 import fnmatch
+import json
+import re
 import types
 import typing
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -17,14 +19,16 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 4
+API_VERSION = 5
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 ``"url"`` field display, and writing back to files (:attr:`Theme.write_back`,
 :meth:`Theme.front_matter`); version 4 added ordered relationships (:func:`related`'s
 ``ordered``, :meth:`IngestContext.relate`'s ``position``), :attr:`Theme.read_last`,
-:func:`read_bibliography`, and :attr:`Entity.made_by_hand`."""
+:func:`read_bibliography`, and :attr:`Entity.made_by_hand`; version 5 added online
+details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
+:meth:`Theme.online_details`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -963,6 +967,60 @@ def default_thumbnail_chain(entity: type[Entity]) -> list[ThumbnailProvider]:
     return chain
 
 
+# --- Online details (DESIGN.md §9 "Online details") ---
+
+_HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+
+
+@dataclass(frozen=True)
+class OnlineSource:
+    """An online service a theme looks items' details up in (API version 5), such as
+    ``OnlineSource("Crossref", "api.crossref.org", "DOIs")``.
+
+    ``name`` is how people know the service, ``host`` the only host Tagalot will fetch
+    from for it, and ``sends`` what it is sent, as a plural ("DOIs", "ISBNs"): the keep asks
+    the user once whether to look things up, naming each service and what it is sent.
+    ``interval`` is the fewest seconds between two requests to the host (arXiv asks for 3).
+    """
+
+    name: str
+    host: str
+    sends: str
+    interval: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not self.name.strip() or not self.sends.strip():
+            raise ThemeDeclarationError("an OnlineSource needs a name and what it is sent")
+        if not _HOST.fullmatch(self.host):
+            raise ThemeDeclarationError(
+                f"OnlineSource {self.name!r}: {self.host!r} must be a lowercase host name, "
+                "such as 'api.crossref.org' (no https://, path, or port)"
+            )
+        if self.interval < 0:
+            raise ThemeDeclarationError(f"OnlineSource {self.name!r}: interval can't be negative")
+
+
+@dataclass(frozen=True)
+class OnlineResponse:
+    """What a service answered for one address (:meth:`Theme.online_details`)."""
+
+    url: str
+    status: int
+    """The HTTP status: 200 for an answer; 404 when the service doesn't know the
+    identifier, and so on. Failures to reach a service never get here."""
+    text: str
+    """The body, decoded as UTF-8."""
+
+    @property
+    def ok(self) -> bool:
+        """The service answered with what was asked for (status 200 to 299)."""
+        return 200 <= self.status < 300
+
+    def json(self) -> Any:
+        """The body as JSON; ``ValueError`` if it isn't."""
+        return json.loads(self.text)
+
+
 # --- The theme ---
 
 DirRule = bool | Callable[[str], bool]
@@ -1113,6 +1171,12 @@ class Theme:
     changed, only by that command, and only their front matter; the core does the
     writing."""
 
+    online_sources: ClassVar[Sequence[OnlineSource]] = ()
+    """The online services this theme looks items up in (DESIGN.md §9 *Online details*;
+    API version 5). Only the core goes online, only with the user's consent for the keep,
+    and only to these hosts: :meth:`online_requests` says what to fetch and
+    :meth:`online_details` reads the answers."""
+
     def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
         """Read what :meth:`ingest` needs from the files, before it runs: image sizes, tags,
         font names. Returns ``{resource id: value}``; ``ingest`` gets each value with
@@ -1173,6 +1237,30 @@ class Theme:
         tags its keywords gave). The default sets nothing else.
         """
         return {}
+
+    def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
+        """The addresses to fetch to look up one item, built from its fields (a paper's
+        DOI): ``https`` addresses on the hosts of :attr:`online_sources`, any others being
+        refused. None (the default) when there is nothing to look up. It runs in a worker
+        for many items at a time, so it must be quick and must not go online itself.
+        API version 5."""
+        return ()
+
+    def online_details(
+        self,
+        entity: EntityRef,
+        responses: Mapping[str, OnlineResponse],
+        ctx: IngestContext,
+    ) -> None:
+        """Turn what the services answered for one item into its details, once every
+        address :meth:`online_requests` gave has an answer: ``responses`` maps each to its
+        :class:`OnlineResponse` (check :attr:`~OnlineResponse.ok`). Answers are kept in the
+        keep, so this also runs again from them, without going online.
+
+        It runs in the DB writer, like :meth:`ingest`: fields it sets are marked as
+        looked up (provenance ``fetched``), and never replace what the user edited. Looked-up
+        details should not replace what the item's files say either: fill in empty fields,
+        or rank the sources as the research theme does. API version 5."""
 
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
         """Cheap keys for finding near-duplicates (DESIGN.md §13): only items of a type
@@ -1280,6 +1368,8 @@ __all__ = [
     "ImageFile",
     "IngestContext",
     "Kind",
+    "OnlineResponse",
+    "OnlineSource",
     "ParentThumbnail",
     "Record",
     "Relationship",

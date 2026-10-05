@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 4              # the theme API it needs
+    api_version = 5              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -123,7 +123,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -245,6 +245,27 @@ class StoriesTheme(Theme):
 ```
 
 `edited` names the fields (and `"title"`) the user changed in Tagalot; `current` is the file's front matter now, so you can reuse a key it already has. A value of `None` removes the key. Tags are written by Tagalot under `tags`.
+
+## Online details
+
+A theme can look its items up online by an identifier they have (a DOI, an ISBN), with the user's consent: Tagalot asks once per keep, naming each service and what it would be sent. Tagalot does the fetching (only `https`, only on the hosts you declare, spaced out, kept in the keep so each address is fetched once); the theme says what to fetch and reads the answers (API version 5):
+
+```python
+class BooksTheme(Theme):
+    api_version = 5
+    online_sources = [OnlineSource("Open Library", "openlibrary.org", "ISBNs")]
+
+    def online_requests(self, entity_type, item):
+        isbn = item.fields.get("isbn")
+        return [f"https://openlibrary.org/isbn/{isbn}.json"] if isbn else []
+
+    def online_details(self, entity, responses, ctx):
+        [answer] = responses.values()
+        if answer.ok and not ctx.get(entity).fields["publisher"]:
+            ctx.update(entity, publisher=answer.json().get("publishers", [None])[0])
+```
+
+`online_requests` runs in a worker for many items, so it only builds addresses (never goes online). `online_details` runs in the DB writer, like `ingest`, once every address has an answer; check `answer.ok` (a service answers 404 for an identifier it doesn't know). Values it sets are marked as looked up, never replace the user's edits, and are replaced when the item's files are read again; fill in empty fields, as here, so a file's own details win. `interval=3` on an `OnlineSource` spaces its requests further apart, for services that ask for it.
 
 ## Near-duplicates
 

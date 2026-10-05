@@ -50,6 +50,7 @@ CORE_TABLES = {
     "user_relation",
     "user_order",
     "user_contains",
+    "online_response",
     "schema_version",
 }
 FTS_TABLES = {

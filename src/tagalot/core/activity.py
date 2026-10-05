@@ -20,6 +20,7 @@ MAX_PROBLEMS = 1000
 
 READ, INGEST, WARNING, THUMBNAIL, OFFLINE = "read", "ingest", "warning", "thumbnail", "offline"
 SCAN = "scan"
+ONLINE = "online"
 KIND_LABELS = {
     READ: "Can't read",
     INGEST: "Not added",
@@ -27,6 +28,7 @@ KIND_LABELS = {
     THUMBNAIL: "No thumbnail",
     OFFLINE: "Offline",
     SCAN: "Scan failed",
+    ONLINE: "Lookup",
 }
 """How each kind of problem is named in the panel."""
 
@@ -94,3 +96,9 @@ class ProblemLog:
     def __len__(self) -> int:
         with self._lock:
             return len(self._items)
+
+
+def online_problems(messages: Iterable[str]) -> list[Problem]:
+    """What an online lookup reported (a service that couldn't be reached, an item the
+    theme couldn't read the answers for), as problems."""
+    return [Problem(ONLINE, message) for message in messages]

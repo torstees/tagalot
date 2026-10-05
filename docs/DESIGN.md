@@ -158,7 +158,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 13                         # core schema version
+format_version = 14                         # core schema version
 
 [theme]
 id = "music"
@@ -179,6 +179,9 @@ exclude = [                                # new roots start with DEFAULT_EXCLUD
 [thumbnails]                               # optional
 max_size = 512                             # overrides the theme's thumbnail_max
 after_scan = false                         # don't make a scan's thumbnails in the background
+
+[online]                                   # once the user answered (§9 Online details)
+lookups = "allow"                          # or "never"; absent: not asked yet, nothing looked up
 ```
 
 ### Rules
@@ -272,6 +275,8 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **user_relation** (core format 9, #260) — `name` (the relationship), `a_id`, `b_id` (FKs to `entity`, cascade), `added` (true: the user related them; false: the user removed it), `at`. PK `(name, a_id, b_id)`. The user's hand edits to relationships, which scans respect (§9 ingest context). Whole-item snapshots carry an item's rows, so undo restores them, and a merge moves them to the kept item.
 
 **user_contains** (core format 13, #329) — `parent_id`, `child_id` (FKs to `entity`, cascade), `added` (true: the user put the child in the container; false: the user took it out), `at`. PK `(parent_id, child_id)`. Containment changed by hand (projects), which scans respect: a theme's `uncontain` leaves an edge the user added, and its `contain` doesn't restore one the user removed. Snapshots and merges carry it.
+
+**online_response** (core format 14, #339) — `url` (PK), `status` (the HTTP status; 404 and other answers that aren't details are kept too, so an unknown identifier isn't asked about again), `body` (text), `fetched_at`. What online services answered (§9 *Online details*); **Look up online** replaces an item's answers. Not part of snapshots: it is a cache of the services, not of the user's work.
 
 **user_order** (core format 12, #317) — `name` (an ordered relationship), `b_id` (FK to `entity`, cascade), `at`. PK `(name, b_id)`. The user put `b_id`'s items of that relationship in order by hand (Move up / Move down): scans then leave their positions alone, and items the files add go last. Snapshots and merges carry it.
 
@@ -672,7 +677,7 @@ Implementation (#106, `core/actions.py`, `core/entity_state.py`):
 - **Undo:** while an action runs, the ingest session tells a `ChangeRecorder` about every entity before its first write. That covers both ends of a containment edge or relationship, a deleted entity's neighbours, and a many=False relationship's previous partner. A created entity is recorded as not existing. Each is snapshotted whole: row, theme fields, provenance, file links, tags, parents and children, and relationships. Snapshots are taken again at the end. The run is one undo step (`ActionChange`, labelled with the action), recorded only if something changed. Undo and redo restore the snapshots exactly: created entities are deleted, deleted ones are recreated with their id, tags, and edges, and the closure and search index are brought up to date. `updated_at` and the thumbnail memo are not restored; they are set afresh.
 - **Where:** a result's right-click menu lists the actions for its type, after Re-read. A detail page shows them as buttons beside More ▾. Contents searches on a page get the same menus.
 
-### Online details (M22, #307; planned, designed in review)
+### Online details (M22, #307; designed in review, core in #339)
 
 Looking items' details up online by identifier: Research papers by DOI (Crossref) and arXiv ID (arXiv), Books by ISBN (Open Library). It is the first time Tagalot uses the network, so it is narrow on purpose (decided in review, 2026-10-05):
 
@@ -682,6 +687,7 @@ Looking items' details up online by identifier: Research papers by DOI (Crossref
 - **When** (chosen in review): automatically, in the background after a scan, for items the scan made or changed whose identifiers have no cached response; and on demand, **Look up online** on selected items (or a page's More menu), which refreshes. Progress shows in the status bar and the activity panel; problems (a service down, an identifier it doesn't know) are listed there.
 - **What wins** (chosen in review): looked-up details rank **below the files' own curated metadata** and above what Tagalot guesses from a file. In the research theme: a literature note, then a sidecar, then a library export, then online details, then the PDF, then the file name; the user's edits always win (fields written from online details have provenance `fetched`, §5). A theme without ranked sources fills in only fields that are empty.
 - **Privacy:** only the identifiers in the addresses are sent; no account, key, or telemetry. The addresses fetched are logged.
+- **As built** (#339): `OnlineSource(name, host, sends, interval=1.0)` checks the host is a bare lowercase host name; a theme with `online_sources` needs `api_version = 5`, and names each host once. Addresses must be plain `https` on a declared host (no other port, no user name); anything else is reported in the activity panel and never fetched. `online_details(entity, responses, ctx)` runs once every address `online_requests` gave has an answer: `responses` maps each address to an `OnlineResponse` (`url`, `status`, `text`, `ok`, `json()`); an item with a kept answer for every address is applied again from the keep, without going online. A service is waited for 20 s; a busy one (`429` or `5xx`) is tried twice more, after its `Retry-After` or 5 then 10 s (never more than a minute); one that can't be reached or stays busy is given up on for the rest of that run, and its items are left for next time (other services go ahead). The theme's `ctx` is an ingest context whose values are marked `fetched`; reading a file again (extraction) replaces `fetched` values like any extracted ones, so a file's own details win unless the theme ranks its sources. An item the theme fails on is rolled back alone and reported. Lookups aren't undo steps, like scans: the user's edits are never touched. `KeepSession.look_up` refuses unless `keep.toml` says `lookups = "allow"`; the Keep tab has **Look up details online**, shown for themes with services.
 - Movies (TMDb, which needs an API key) and music (MusicBrainz) can follow on the same hooks.
 
 ### Dashboard cards
@@ -1208,6 +1214,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | File keywords, the page (#295, §7, §12): TOOLS → File keywords with an unmatched count, Map to tag / Create tag / Ignore (each undoable), and a scan notice for new unmatched keywords. The music and movies themes report genres as file keywords (both theme version 3; asked in review), so existing keeps read their files again once. |
 | 2026-10 | Planned in review: after Books (M20) come **Research** (M21, #306), **Online details** (M22, #307, with per-keep consent before the first lookup), and **Search inside documents** (M23, #308, opt-in, Words or Substrings, switchable by rebuilding from stored text) (§14). Books' format readers become public `themes.api` helpers so Research and third-party themes share them (§9 books). |
 | 2026-10 | Online details designed in review (M22, #307, §9): only the core goes online, for services themes declare (theme API version 5); automatic after scans and on demand; looked-up details rank below files' curated metadata (note, sidecar, export) and above PDF guesses; per-keep consent naming each service and what it is sent; `urllib`, cached in the keep, rate-limited. |
+| 2026-10 | Online lookups in the core (#339, §9 *Online details*, §5): theme API version 5 (`OnlineSource`, `OnlineResponse`, `Theme.online_sources`, `online_requests`, `online_details`); core format 14 adds `online_response`, which keeps every answer, 404s included; `[online] lookups` in `keep.toml`; a service that can't be reached is given up on for the run; extraction replaces `fetched` values; lookups aren't undo steps. |
 | 2026-10 | Notes on Skip entries (#334, §4, §12): `[roots.exclude_notes]` beside a plain `exclude` list (chosen over turning `exclude` into tables, which older builds would refuse), edited after ` # ` in the Skip box, and written by Tagalot when it skips an export or a Triage file; `exact_pattern` brackets `#`. Themes ignoring files with a reason is left out. |
 | 2026-10 | Projects: containers made by hand (#329, §5, §9; chosen in review over a Project–Paper relationship): `Entity.made_by_hand` (API version 4) gives New …, Add to …, and Remove from …; containment by hand is recorded in a new core table, `user_contains` (core format 13), so scans keep it, and undo and merges carry it. Projects are ordinary containers: tags inherit, Within works. |
 | 2026-10 | Research actions and citations by hand (#322, §4, §9; decided in review): `ActionContext` gains `copy_text`, `open_url` (http/https), and `save_text` (API version 4); saving an export inside a watched folder is allowed after a warning, never over an existing file, and the file is added to that folder's Skip list so it isn't read back (why it was skipped is #334). A relationship of a type with itself has a direction (two sections: Cites, Cited by; `SearchSpec.related_side`), or none with `symmetric=True` (Related). |

@@ -228,6 +228,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("DROP TABLE user_relation")
         conn.exec_driver_sql("DROP TABLE user_order")
         conn.exec_driver_sql("DROP TABLE user_contains")
+        conn.exec_driver_sql("DROP TABLE online_response")
         conn.execute(update(SchemaVersion).values(version=1))
     engine.dispose()
     keep.config.format_version = 1
@@ -235,7 +236,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 13)
+    assert (info.value.stored, info.value.current) == (1, 14)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -255,6 +256,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "by_file" in {c["name"] for c in inspect(engine).get_columns("entity_tag")}
         assert "user_order" in inspect(engine).get_table_names()  # format 12 (#317)
         assert "user_contains" in inspect(engine).get_table_names()  # format 13 (#329)
+        assert "online_response" in inspect(engine).get_table_names()  # format 14 (#339)
         with engine.connect() as conn:
             rows = conn.execute(text("SELECT id, name, description, types FROM tag")).all()
             roots = conn.execute(text("SELECT id, name, ingest_options FROM root")).all()
@@ -262,5 +264,5 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 13
+    assert migrated.config.format_version == 14
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]

@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 13
+KEEP_FORMAT_VERSION = 14
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -36,6 +36,10 @@ NETWORK_WARNING = (
 
 class KeepError(Exception):
     """A keep cannot be created or opened. The message is suitable for showing to the user."""
+
+
+ONLINE_ANSWERS = ("allow", "never")
+"""What ``[online] lookups`` can say (§9 *Online details*)."""
 
 
 class KeepConfigError(KeepError):
@@ -114,6 +118,9 @@ class KeepConfig:
     """``[thumbnails] max_size``: overrides the theme's ``thumbnail_max`` for this keep."""
     thumbnails_after_scan: bool = True
     """``[thumbnails] after_scan``: make the thumbnails a scan affects in the background."""
+    online_lookups: str | None = None
+    """``[online] lookups``: ``"allow"`` or ``"never"`` once the user answered (§9 *Online
+    details*); ``None``, not asked yet, so nothing is looked up."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -159,6 +166,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         thumbnails.append("after_scan = false")
     if thumbnails:
         lines += ["", "[thumbnails]", *thumbnails]
+    if config.online_lookups is not None:
+        lines += ["", "[online]", f"lookups = {toml_str(config.online_lookups)}"]
     for root in config.roots:
         lines += [
             "",
@@ -183,7 +192,7 @@ def dump_keep_config(config: KeepConfig) -> str:
 
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
-    reader.warn_unknown(data, {"keep", "theme", "roots", "thumbnails"}, "top level")
+    reader.warn_unknown(data, {"keep", "theme", "roots", "thumbnails", "online"}, "top level")
 
     keep = reader.table(data, "keep")
     reader.warn_unknown(keep, {"id", "name", "format_version"}, "[keep]")
@@ -213,6 +222,14 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         after_scan = thumbnails.get("after_scan", True)
         if not isinstance(after_scan, bool):
             raise KeepConfigError(path, "[thumbnails] after_scan must be true or false")
+
+    online_lookups = None
+    if "online" in data:
+        online = reader.table(data, "online")
+        reader.warn_unknown(online, {"lookups"}, "[online]")
+        online_lookups = online.get("lookups")
+        if online_lookups not in (None, *ONLINE_ANSWERS):
+            raise KeepConfigError(path, '[online] lookups must be "allow" or "never"')
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -262,6 +279,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         theme_options=theme_options,
         thumbnail_max=thumbnail_max,
         thumbnails_after_scan=after_scan,
+        online_lookups=online_lookups,
     )
 
 
