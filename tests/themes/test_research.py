@@ -13,6 +13,9 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.research import (
+    BARE,
+    DOCUMENT,
+    NAMED,
     Author,
     Paper,
     ResearchTheme,
@@ -80,16 +83,22 @@ def test_paper_names(relpath: str, expected: tuple[Any, ...]) -> None:
 def test_details_prefer_the_pdf_but_not_its_junk() -> None:
     info = {"title": "Microsoft Word - draft3.docx", "authors": ["jsmith"], "keywords": []}
     details = paper_details("Smith et al. - 2020 - A Study.pdf", info, "arXiv:2001.00001")
-    assert (details["title"], details["authors"], details["year"]) == ("A Study", ["Smith"], 2020)
-    assert details["arxiv"] == "2001.00001"
+    # Each detail with how much its source is trusted: a named file's, here.
+    assert (details["title"], details["authors"], details["year"]) == (
+        (NAMED, "A Study"),
+        (NAMED, ["Smith"]),
+        (NAMED, 2020),
+    )
+    assert details["arxiv"] == (DOCUMENT, "2001.00001")
     good = {"title": "A Real Title", "authors": ["Ann Lee", "Bo Chen"], "keywords": ["NLP"]}
     details = paper_details("x.pdf", good, "")
     assert (details["title"], details["authors"], details["keywords"]) == (
-        "A Real Title",
-        ["Ann Lee", "Bo Chen"],
+        (DOCUMENT, "A Real Title"),
+        (DOCUMENT, ["Ann Lee", "Bo Chen"]),
         ["NLP"],
     )
-    assert paper_details("1706.03762v7.pdf", None, "")["year"] == 2017  # from the arXiv ID
+    assert paper_details("x.pdf", None, "")["title"] == (BARE, "x")
+    assert paper_details("1706.03762v7.pdf", None, "")["year"] == (NAMED, 2017)  # from the ID
 
 
 @dataclass

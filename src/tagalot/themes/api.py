@@ -23,7 +23,8 @@ added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resourc
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 ``"url"`` field display, and writing back to files (:attr:`Theme.write_back`,
 :meth:`Theme.front_matter`); version 4 added ordered relationships (:func:`related`'s
-``ordered``, :meth:`IngestContext.relate`'s ``position``)."""
+``ordered``, :meth:`IngestContext.relate`'s ``position``), :attr:`Theme.read_last`, and
+:func:`read_bibliography`."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1062,6 +1063,11 @@ class Theme:
     near-duplicates."""
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
+    read_last: ClassVar[frozenset[str] | set[str]] = frozenset()
+    """Extensions (lowercase, with the dot) of files that describe other files, such as a
+    library's bibliography export (API version 4): a scan reads them after its other
+    files, and reads them again in any scan that read other files of their folder, so
+    they meet files added later whichever came first."""
     write_back: ClassVar[Sequence[type[Entity]]] = ()
     """Entity types whose Markdown files **Write to file…** may update (DESIGN.md §4
     *Writing back to files*; API version 3): their tags, and the keys
