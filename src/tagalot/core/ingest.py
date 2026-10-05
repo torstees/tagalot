@@ -111,6 +111,9 @@ class FlushReport:
 class IngestSession:
     """``ctx`` for ``Theme.ingest``, actions, and ``migrate`` on one connection."""
 
+    source = FieldSource.EXTRACTED
+    """What the values it writes are marked as (``fetched`` for online details)."""
+
     def __init__(
         self,
         conn: Connection,
@@ -820,7 +823,7 @@ class IngestSession:
     def _mark_extracted(self, entity_id: int, names: Iterable[str]) -> None:
         now = utcnow()
         rows = [
-            {"entity_id": entity_id, "field": n, "source": FieldSource.EXTRACTED, "updated_at": now}
+            {"entity_id": entity_id, "field": n, "source": self.source, "updated_at": now}
             for n in names
         ]
         if rows:

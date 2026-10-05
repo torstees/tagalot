@@ -187,6 +187,11 @@ def _v12_user_contains(conn: Connection) -> None:
     Base.metadata.tables["user_contains"].create(conn)
 
 
+def _v13_online_responses(conn: Connection) -> None:
+    """Format 14: responses from online services (#339)."""
+    Base.metadata.tables["online_response"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -200,6 +205,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     10: _v10_file_keywords,
     11: _v11_user_order,
     12: _v12_user_contains,
+    13: _v13_online_responses,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

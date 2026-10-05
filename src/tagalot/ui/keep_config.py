@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
 from tagalot.core.keep_settings import MIN_THUMBNAIL_SIZE, with_name, with_option
+from tagalot.core.online import consent_text
 from tagalot.core.root_admin import (
     RemovalCounts,
     RootStatus,
@@ -303,10 +304,20 @@ class KeepConfigWindow(QWidget):
         )
         self.keep_options_form = QFormLayout(self.keep_options)
         self.keep_options.setVisible(bool(theme.options))
+        self.online = QGroupBox("Online details")
+        self.online_lookups = QCheckBox("Look up details online")
+        self.online_lookups.toggled.connect(self._set_online_lookups)
+        sends = QLabel(consent_text(theme.online_sources))
+        sends.setWordWrap(True)
+        online_column = QVBoxLayout(self.online)
+        online_column.addWidget(self.online_lookups)
+        online_column.addWidget(sends)
+        self.online.setVisible(bool(theme.online_sources))
         tab = QWidget()
         column = QVBoxLayout(tab)
         column.addLayout(form)
         column.addWidget(self.keep_options)
+        column.addWidget(self.online)
         column.addStretch(1)
         return tab
 
@@ -398,6 +409,9 @@ class KeepConfigWindow(QWidget):
         self.after_scan.setChecked(config.thumbnails_after_scan)
         self.after_scan.blockSignals(False)
         self.max_size.setEnabled(config.thumbnail_max is not None)
+        self.online_lookups.blockSignals(True)
+        self.online_lookups.setChecked(config.online_lookups == "allow")
+        self.online_lookups.blockSignals(False)
         _clear_form(self.keep_options_form)
         for spec in self.session.theme.options:
             value = config.theme_options.get(spec.name, spec.default)
@@ -511,6 +525,13 @@ class KeepConfigWindow(QWidget):
             "Scans now make thumbnails in the background."
             if on
             else "Thumbnails are now made only as pages show them.",
+        )
+
+    def _set_online_lookups(self, on: bool) -> None:
+        session = self.session
+        self._run(
+            lambda: session.set_online_lookups("allow" if on else "never"),
+            "Details are now looked up online." if on else "Nothing is looked up online now.",
         )
 
     def _set_option(self, name: str, value: object, root_id: str | None = None) -> None:

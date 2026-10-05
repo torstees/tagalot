@@ -11,7 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from tagalot.core.keep import KeepConfig, KeepError, validate_keep_config
+from tagalot.core.keep import ONLINE_ANSWERS, KeepConfig, KeepError, validate_keep_config
 from tagalot.themes.api import Theme, ThemeOption
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 
@@ -39,6 +39,14 @@ def with_thumbnail_max(config: KeepConfig, size: int | None) -> KeepConfig:
 def with_thumbnails_after_scan(config: KeepConfig, on: bool) -> KeepConfig:
     """``config`` making (or not) a scan's thumbnails in the background."""
     return replace(config, thumbnails_after_scan=on, roots=copy.deepcopy(config.roots))
+
+
+def with_online_lookups(config: KeepConfig, answer: str | None) -> KeepConfig:
+    """``config`` allowing (``"allow"``) or refusing (``"never"``) online lookups, or not
+    yet asked (``None``)."""
+    if answer not in (None, *ONLINE_ANSWERS):
+        raise KeepError(f"Online lookups can be allowed or never, not {answer!r}.")
+    return replace(config, online_lookups=answer, roots=copy.deepcopy(config.roots))
 
 
 def with_option(

@@ -17,7 +17,12 @@ from typing import Any
 from sqlalchemy import Connection, Engine, update
 
 from tagalot.core.actions import ActionResult, delete_items, run_action
-from tagalot.core.activity import ProblemLog, problems_from_report, thumbnail_problems
+from tagalot.core.activity import (
+    ProblemLog,
+    online_problems,
+    problems_from_report,
+    thumbnail_problems,
+)
 from tagalot.core.containers import contain_by_hand, new_container, uncontain_by_hand
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
@@ -25,6 +30,7 @@ from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_name,
+    with_online_lookups,
     with_option,
     with_thumbnail_max,
     with_thumbnails_after_scan,
@@ -34,6 +40,8 @@ from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
+from tagalot.core.online import Fetcher, LookupReport, NotAllowedError, look_up
+from tagalot.core.online import Progress as OnlineProgress
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.relations import add_related, move_related, remove_related
 from tagalot.core.root_admin import (
@@ -232,6 +240,35 @@ class KeepSession:
         if change.before != change.after:
             self.tags.record(change)
         self.thumbnails.forget_failures()  # files may be readable again
+        return report
+
+    def look_up(
+        self,
+        entity_ids: Iterable[int],
+        *,
+        refresh: bool = False,
+        progress: OnlineProgress | None = None,
+        stopped: Callable[[], bool] = lambda: False,
+        fetcher: Fetcher | None = None,
+    ) -> LookupReport:
+        """Look these items' details up online (§9 *Online details*): only when the keep
+        allows it (else :class:`~tagalot.core.online.NotAllowedError`), and only what has
+        no kept answer unless ``refresh``. Problems go to the activity panel. Runs in a
+        worker."""
+        if self.keep.config.online_lookups != "allow":
+            raise NotAllowedError("Online lookups aren't allowed for this keep.")
+        report = look_up(
+            self.writer,
+            self.reader,
+            self.schema,
+            self.theme(),
+            entity_ids,
+            refresh=refresh,
+            fetcher=fetcher,
+            progress=progress,
+            stopped=stopped,
+        )
+        self.problems.add(online_problems(report.problems))
         return report
 
     def run_action(self, method: str, entity_ids: Iterable[int]) -> ActionResult:
@@ -445,6 +482,11 @@ class KeepSession:
         self.save_config(with_thumbnails_after_scan(self.keep.config, on))
         if not on and self._queue is not None:
             self._queue.stop()
+
+    def set_online_lookups(self, answer: str | None) -> None:
+        """Allow (``"allow"``) or refuse (``"never"``) online lookups for this keep, or
+        forget the answer (``None``: ask again). Runs in a worker."""
+        self.save_config(with_online_lookups(self.keep.config, answer))
 
     def rename_keep(self, name: str) -> None:
         """Rename the keep. Runs in a worker."""

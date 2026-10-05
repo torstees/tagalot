@@ -431,6 +431,19 @@ class UserContains(Base):
     at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class CachedResponse(Base):
+    """A response from an online service, by address (§9 *Online details*, #339): an
+    identifier is looked up once, and again only when the user asks. ``status`` is the HTTP
+    status (a service that doesn't know the identifier answers 404, which is kept too)."""
+
+    __tablename__ = "online_response"
+
+    url: Mapped[str] = mapped_column(primary_key=True)
+    status: Mapped[int]
+    body: Mapped[str]
+    fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.
