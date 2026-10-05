@@ -26,6 +26,10 @@ Venue ⊃ Paper        Author ↔ Paper (authors, in order)
   else by DOI, arXiv ID, or PubMed ID. Entries matching no paper are ignored. They are
   read last in a scan (``read_last``), and again when other files of their folder are
   read, so they meet PDFs added later.
+- **Literature notes:** a Markdown file whose front matter names a ``citekey``, ``doi``,
+  ``arxiv``, or ``pmid`` is linked to that paper as its notes; what it says outranks every
+  file but the user's edits, and its ``tags`` are the paper's file keywords. Notes are read
+  last too, after the bibliographies whose citation keys they use.
 - **Authors** are related in order (an ordered relationship), so the first and last author
   stay first and last; the user can reorder them by hand.
 """
@@ -36,7 +40,7 @@ import logging
 import posixpath
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any
+from typing import Any, ClassVar
 
 from tagalot.themes.api import (
     BIBLIOGRAPHY_EXTENSIONS,
@@ -59,6 +63,7 @@ from tagalot.themes.api import (
     find_identifiers,
     pdf_text,
     read_bibliography,
+    read_front_matter,
     read_pdf_info,
     related,
     role,
@@ -69,11 +74,12 @@ from tagalot.themes.api import (
 logger = logging.getLogger(__name__)
 
 PAPER_EXTENSIONS = frozenset({".pdf"})
+NOTE_EXTENSIONS = frozenset({".md", ".markdown"})
 
-SIDECAR, EXPORT, DOCUMENT, NAMED, BARE = 40, 30, 20, 10, 0
+NOTE, SIDECAR, EXPORT, DOCUMENT, NAMED, BARE = 50, 40, 30, 20, 10, 0
 """How much a source of a paper's details is trusted (the best giving a value wins): a
-sidecar bibliography, a library export, a PDF's document info (and text), a named file
-(Zotero's pattern), a bare file name. A literature note (#321) will rank above them."""
+literature note, a sidecar bibliography, a library export, a PDF's document info (and
+text), a named file (Zotero's pattern), a bare file name."""
 MERGED = (
     "title", "authors", "year", "kind", "venue", "volume", "issue", "pages", "doi", "arxiv",
     "pmid", "citekey", "abstract", "url",
@@ -148,8 +154,10 @@ class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
     id, name, version, api_version = "research", "Research", 1, 4
-    extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS
-    read_last = BIBLIOGRAPHY_EXTENSIONS  # exports meet the PDFs read in the same scan
+    extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
+    # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
+    # citation key comes from a bibliography).
+    read_last: ClassVar[Sequence[str]] = (".bib", ".ris", ".json", ".md", ".markdown")
     entities = [Author, Venue, Paper]
     containment = [contains(Venue, Paper)]
     relationships = [
@@ -228,6 +236,14 @@ class ResearchTheme(Theme):
                 except Exception as e:  # reported; the papers keep what it said before
                     found[resource.id] = {"error": f"{type(e).__name__}: {e}"}
                 continue
+            if resource.ext in NOTE_EXTENSIONS:
+                try:
+                    note = note_details(read_front_matter(resource.path))
+                except Exception as e:  # front matter that doesn't parse: no note
+                    logger.info("Not a literature note: %s (%s)", resource.relpath, e)
+                    note = None
+                found[resource.id] = {"note": note}
+                continue
             if resource.ext not in PAPER_EXTENSIONS:
                 continue
             try:
@@ -242,14 +258,40 @@ class ResearchTheme(Theme):
     # --- ingest (DB writer) ---
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
+        notes: PaperIndex | None = None  # shared by a batch's notes; papers change otherwise
         for resource in batch:
             details = ctx.prepared(resource)
             if not details:
                 continue
+            if resource.ext in NOTE_EXTENSIONS:
+                notes = notes or PaperIndex(ctx)
+                self._ingest_note(resource, details.get("note"), notes, ctx)
+                continue
+            notes = None
             if resource.ext in BIBLIOGRAPHY_EXTENSIONS:
                 self._ingest_bibliography(resource, dict(details), ctx)
             else:
                 self._ingest_paper(resource, dict(details), ctx)
+
+    def _ingest_note(
+        self,
+        resource: ResourceInfo,
+        note: Mapping[str, Any] | None,
+        index: "PaperIndex",
+        ctx: IngestContext,
+    ) -> None:
+        """Link a literature note to the paper it names, as one of the paper's sources (or
+        let go of the paper it no longer names)."""
+        paper = index.by_ids(note["ids"]) if note else None
+        for old in ctx.entities_of(resource, "notes"):
+            if paper is None or old.id != paper.id:
+                ctx.unlink(old, resource, "notes")
+                apply_source(old, resource.id, None, ctx)
+        if paper is None or note is None:
+            return
+        ctx.link(paper, resource, "notes")
+        apply_source(paper, resource.id, note["values"], ctx)
+        ctx.keywords(paper, resource, note["keywords"])
 
     def _ingest_paper(
         self, resource: ResourceInfo, details: dict[str, Any], ctx: IngestContext
@@ -341,6 +383,43 @@ def paper_details(relpath: str, info: Mapping[str, Any] | None, text: str) -> di
         "pmid": (DOCUMENT, ids.get("pmid")),
         "keywords": list(meta.get("keywords") or []),
     }
+
+
+def note_details(front: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What a literature note's front matter (:func:`read_front_matter`) says, or ``None``
+    when it names no paper: its identifiers (``citekey``, ``doi``, ``arxiv``, ``pmid``),
+    the paper's details it gives (``title`` only from front matter, not a heading, which
+    titles the note), ranked as a note, and its ``tags`` as keywords."""
+    fields = {str(k).casefold(): v for k, v in (front.get("fields") or {}).items()}
+
+    def text(*names: str) -> str | None:
+        for name in names:
+            value = fields.get(name)
+            if value not in (None, "", []) and not isinstance(value, dict | list):
+                return str(value).strip()
+        return None
+
+    citekey = (text("citekey", "citationkey", "citation-key") or "").lstrip("@") or None
+    doi = text("doi")
+    arxiv = text("arxiv", "arxiv_id", "arxivid")
+    pmid = text("pmid")
+    ids = {
+        "citekey": citekey,
+        "doi": find_identifiers(doi)["doi"] if doi else None,
+        "arxiv": find_identifiers(f"arXiv:{arxiv}")["arxiv"] or arxiv if arxiv else None,
+        "pmid": pmid if pmid and pmid.isdigit() else None,
+    }
+    if not any(ids.values()):
+        return None
+    values: dict[str, Any] = {
+        "title": (NOTE, text("title")),
+        "authors": (NOTE, front.get("authors") or []),
+        "year": (NOTE, front.get("year")),
+        "venue": (NOTE, text("journal", "venue", "booktitle")),
+        "url": (NOTE, front.get("link")),
+        **{key: (NOTE, value) for key, value in ids.items()},
+    }
+    return {"ids": ids, "values": values, "keywords": list(front.get("keywords") or [])}
 
 
 def paper_name(relpath: str) -> dict[str, Any]:
@@ -461,7 +540,7 @@ class PaperIndex:
         self.by: dict[tuple[str, str], EntityRef] = {}
         for paper in ctx.find(Paper):
             fields = ctx.get(paper).fields
-            for key in ("doi", "arxiv", "pmid"):
+            for key in ("citekey", "doi", "arxiv", "pmid"):
                 if fields.get(key):
                     self.by.setdefault((key, str(fields[key]).lower()), paper)
 
@@ -476,8 +555,13 @@ class PaperIndex:
                     papers = self.ctx.entities_of(found, "paper")
                     if papers:
                         return papers[0]
-        for key in ("doi", "arxiv", "pmid"):
-            value = entry.get(key)
+        return self.by_ids(entry)
+
+    def by_ids(self, ids: Mapping[str, Any]) -> EntityRef | None:
+        """The paper with one of these identifiers: DOI, arXiv ID, PubMed ID, or citation
+        key, in that order."""
+        for key in ("doi", "arxiv", "pmid", "citekey"):
+            value = ids.get(key)
             if value and (key, str(value).lower()) in self.by:
                 return self.by[(key, str(value).lower())]
         return None

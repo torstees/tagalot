@@ -220,7 +220,7 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             problems.append(f"write_back names {target!r}, which isn't a declared entity type")
     if theme.write_back and getattr(theme, "api_version", API_VERSION) < 3:
         problems.append("a theme with write_back must set api_version = 3 (or later)")
-    read_last: frozenset[str] | set[str] = getattr(theme, "read_last", frozenset())
+    read_last: Sequence[str] | frozenset[str] | set[str] = getattr(theme, "read_last", frozenset())
     for ext in sorted(read_last):
         if not isinstance(ext, str) or ext != ext.lower() or not ext.startswith("."):
             problems.append(f"read_last extension {ext!r} must be lowercase and start with '.'")

@@ -48,7 +48,8 @@ built-in research theme: small PDFs with a text layer holding DOIs and arXiv IDs
 is two downloads (one paper, two versions), a preprint and its published version are one
 paper, one PDF's title is an editor's leftover ("Microsoft Word - …", ignored), and one has
 no metadata (a sidecar ``.bib`` beside it names it). A Zotero-style library export gives the
-papers their venues, matched by arXiv ID and DOI; one of its entries has no PDF.
+papers their venues, matched by arXiv ID and DOI; one of its entries has no PDF. A literature
+note in ``Notes/Literature`` names its paper by citation key.
 """
 
 import argparse
@@ -953,6 +954,21 @@ RESEARCH_BIBLIOGRAPHIES = {
 }
 """Bibliography files for the research demo: a Zotero-style export and a sidecar."""
 
+RESEARCH_NOTES = {
+    # A literature note naming its paper by citation key (from the export), as Obsidian's
+    # Zotero integration writes one.
+    "Notes/Literature/@vaswani_attention_2017.md": (
+        "---\n"
+        "citekey: vaswani_attention_2017\n"
+        "tags: [to-read, Transformers]\n"
+        "---\n"
+        "# Reading notes: Attention Is All You Need\n\n"
+        "- Self-attention replaces recurrence.\n"
+    ),
+    "Notes/Ideas.md": "# Ideas\n\nNot about any one paper.\n",  # not a literature note
+}
+"""Markdown notes for the research demo."""
+
 RESEARCH_TAGS = {
     ("Topic", "Transformers"): ["Attention Is All You Need"],
     ("Topic", "Vision"): [],  # given by a file's keywords
@@ -1003,7 +1019,7 @@ def make_research_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
     for relpath, (lines, info) in RESEARCH_PDFS.items():
         _text_pdf(files / relpath, lines, info)
-    for relpath, text in RESEARCH_BIBLIOGRAPHIES.items():
+    for relpath, text in (RESEARCH_BIBLIOGRAPHIES | RESEARCH_NOTES).items():
         (files / relpath).parent.mkdir(parents=True, exist_ok=True)
         (files / relpath).write_text(text, encoding="utf-8")
     root = RootConfig("papers", "Papers", str(files), list(DEFAULT_EXCLUDES))

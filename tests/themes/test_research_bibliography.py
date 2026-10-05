@@ -95,11 +95,11 @@ def _venue_of(env: Env, title: str) -> list[str]:
 
 
 def test_the_theme_reads_bibliographies_last() -> None:
-    assert ResearchTheme.read_last == {".bib", ".ris", ".json"}
+    assert ResearchTheme.read_last == (".bib", ".ris", ".json", ".md", ".markdown")
     assert validate_theme(ResearchTheme) == []
 
     class Bad(ResearchTheme):
-        read_last = frozenset({".BIB"})
+        read_last = (".BIB",)
 
     assert "read_last extension '.BIB' must be lowercase and start with '.'" in validate_theme(Bad)
 

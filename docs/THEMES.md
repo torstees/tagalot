@@ -123,7 +123,7 @@ class MusicTheme(Theme):
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
 - **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
-- **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later.
+- **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
 
 ## Reading files: `prepare` and `ingest`
