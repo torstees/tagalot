@@ -112,6 +112,8 @@ def test_export_outside_and_inside_a_watched_folder(
     assert asked == ["Exports/my papers.bib"]
     root = load_keep_config(session.keep.toml_path).roots[0]
     assert "Exports/my papers.bib" in root.exclude  # skipped: never read back as a source
+    note = root.exclude_notes["Exports/my papers.bib"]  # and why (#334)
+    assert note.startswith("Saved here by Export BibTeX… on ")
     qtbot.waitUntil(lambda: any("scans skip it" in m for m in messages), timeout=5000)
 
     warned: list[str] = []

@@ -85,6 +85,10 @@ class RootConfig:
     name: str
     path: str
     exclude: list[str] = field(default_factory=list)
+    exclude_notes: dict[str, str] = field(default_factory=dict)
+    """Why a Skip pattern is there (#334): ``{pattern: note}``, written by the user, or by
+    Tagalot when it skips a file itself (an export saved here, Triage's Skip). Saved as
+    ``[roots.exclude_notes]``, so ``exclude`` stays a plain list an older build reads."""
     options: dict[str, Any] = field(default_factory=dict)
     """Theme options for this root only (``options = { … }``), over the keep's."""
     watched: bool = True
@@ -170,6 +174,10 @@ def dump_keep_config(config: KeepConfig) -> str:
             lines.append("watched = false")
         if root.writable:
             lines.append("writable = true")
+        notes = {p: n for p, n in root.exclude_notes.items() if p in root.exclude and n}
+        if notes:
+            lines += ["", "[roots.exclude_notes]"]
+            lines += [f"{toml_key(p)} = {toml_str(n)}" for p, n in notes.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -212,7 +220,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     roots: list[RootConfig] = []
     for i, raw in enumerate(raw_roots, start=1):
         where = f"[[roots]] #{i}"
-        known = {"id", "name", "path", "exclude", "options", "watched", "writable"}
+        known = {"id", "name", "path", "exclude", "exclude_notes", "options", "watched", "writable"}
         reader.warn_unknown(raw, known, where)
         watched, writable = raw.get("watched", True), raw.get("writable", False)
         if not isinstance(watched, bool):
@@ -222,12 +230,18 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         exclude = raw.get("exclude", [])
         if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
             raise KeepConfigError(path, f"{where} exclude must be a list of strings")
+        notes = raw.get("exclude_notes", {})
+        if not isinstance(notes, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in notes.items()
+        ):
+            raise KeepConfigError(path, f"{where} exclude_notes must map patterns to notes")
         roots.append(
             RootConfig(
                 id=reader.string(raw, "id", where),
                 name=reader.string(raw, "name", where),
                 path=reader.string(raw, "path", where),
                 exclude=list(exclude),
+                exclude_notes=dict(notes),
                 options=reader.options(raw, f"{where} options"),
                 watched=watched,
                 writable=writable,
