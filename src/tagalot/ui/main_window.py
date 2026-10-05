@@ -496,6 +496,7 @@ class MainWindow(QMainWindow):
             detail.file_tag_restore_requested.connect(self.restore_file_tag)
             detail.relate_requested.connect(self.add_related)
             detail.unrelate_requested.connect(self.tag_actions.remove_related)
+            detail.move_requested.connect(self.tag_actions.move_related)
             detail.action_requested.connect(self.run_action)
             detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))

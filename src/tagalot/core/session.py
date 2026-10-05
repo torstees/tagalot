@@ -34,7 +34,7 @@ from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
 from tagalot.core.reextract import ReextractReport, reextract
-from tagalot.core.relations import add_related, remove_related
+from tagalot.core.relations import add_related, move_related, remove_related
 from tagalot.core.root_admin import (
     RemovalCounts,
     delete_root,
@@ -322,6 +322,15 @@ class KeepSession:
         change = self.writer.run(
             lambda conn: remove_related(conn, schema, name, entity_id, other_ids)
         )
+        self.tags.record(change)
+        return change.label
+
+    def move_related(self, b_id: int, name: str, a_ids: Sequence[int], by: int) -> str:
+        """Move items up (``by`` < 0) or down among ``b_id``'s items of an ordered
+        relationship (a paper's authors, #317); remembered, so scans keep the order. One
+        undo step. Returns its label. Raises ``RelationError``. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: move_related(conn, schema, name, b_id, a_ids, by))
         self.tags.record(change)
         return change.label
 

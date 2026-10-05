@@ -183,11 +183,13 @@ def build_theme_schema(theme: type[Theme]) -> ThemeSchema:
         constraints: list[Any] = [Index(f"ix_{table_name}_b_id", "b_id")]
         if not rel.many:
             constraints.append(UniqueConstraint("b_id", name=f"uq_{table_name}_b_id"))
+        ordered = [Column("position", Integer, nullable=True)] if rel.ordered else []
         table = Table(
             table_name,
             metadata,
             entity_key_column("a_id"),
             entity_key_column("b_id"),
+            *ordered,  # each b's a items in order (#317)
             *constraints,
         )
         relationships[rel.name] = RelationshipTable(rel, table)

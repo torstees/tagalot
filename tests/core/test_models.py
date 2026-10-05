@@ -48,6 +48,7 @@ CORE_TABLES = {
     "entity_merge_resource",
     "dedupe_dismissal",
     "user_relation",
+    "user_order",
     "schema_version",
 }
 FTS_TABLES = {

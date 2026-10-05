@@ -55,8 +55,9 @@ from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
 from tagalot.core.models import ResourceStatus
+from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order
-from tagalot.core.search_spec import SearchSpec
+from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
@@ -92,6 +93,9 @@ class DetailPage(QWidget):
     relate_requested = Signal(int, str)
     """Add to a related section by hand (#260): (entity id, relationship name)."""
     unrelate_requested = Signal(int, str, list)
+    move_requested = Signal(int, str, list, int)
+    """Reorder an ordered related list (#317): (this item's id, relationship, the items
+    moved, -1 up or 1 down)."""
     """Remove related items by hand: (entity id, relationship name, their ids)."""
     action_requested = Signal(str, list)
     """Run a theme action on the page's item: (method name, [entity id])."""
@@ -307,7 +311,11 @@ class DetailPage(QWidget):
         if self._make_contents is None or name is None or section.other_type is None:
             return False
         if name not in self.related:
-            spec = SearchSpec(types=(section.other_type,), related=(name, self.requested_id))
+            ordered = self._orders(name)
+            sort = (SortKey(POSITION),) if ordered else (SortKey("title"),)
+            spec = SearchSpec(
+                types=(section.other_type,), related=(name, self.requested_id), sort=sort
+            )
             page = self._make_contents(f"related:{section.other_type}", spec, section.title)
             page.selection_changed.connect(self.selection_changed)
             add = QPushButton("Add\u2026")
@@ -321,9 +329,25 @@ class DetailPage(QWidget):
                 f"Remove from {section.title.lower()}",
                 lambda ids: self.unrelate_requested.emit(self.entity_id, name, ids),
             )
+            if ordered:  # a paper's authors: their order can change (#317)
+                page.add_menu_action(
+                    "Move up", lambda ids: self.move_requested.emit(self.entity_id, name, ids, -1)
+                )
+                page.add_menu_action(
+                    "Move down",
+                    lambda ids: self.move_requested.emit(self.entity_id, name, ids, 1),
+                )
             self.related[name] = page
             self._embed(page, section.title)
         return True
+
+    def _orders(self, name: str) -> bool:
+        """Whether this page's item has its own order of relationship ``name``'s items (it
+        is the ``b`` side of an ordered relationship: a paper, for its authors)."""
+        link = self.session.schema.relationships.get(name)
+        if link is None or not link.relationship.ordered or self.detail is None:
+            return False
+        return self.session.schema.theme.type_id_of(link.relationship.b) == self.detail.type
 
     def _embed(self, page: SearchPage, label: str) -> None:
         """Put an embedded search below the sections; with more than one, as tabs."""

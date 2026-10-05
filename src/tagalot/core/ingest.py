@@ -20,6 +20,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from tagalot.core import closure, fts
 from tagalot.core.keywords import apply_file_tags, set_keywords
 from tagalot.core.models import (
+    LAST_POSITION,
     Entity,
     EntityContains,
     EntityMerge,
@@ -29,6 +30,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     ResourceStatus,
+    UserOrder,
     UserRelation,
     utcnow,
 )
@@ -518,10 +520,13 @@ class IngestSession:
 
     # --- relationships ---
 
-    def relate(self, name: str, a: EntityRef, b: EntityRef) -> None:
+    def relate(self, name: str, a: EntityRef, b: EntityRef, position: int | None = None) -> None:
         """Link ``a`` and ``b``; for a ``many=False`` relationship this replaces ``b``'s
-        previous partner."""
+        previous partner. In an ordered one, ``position`` places ``a`` among ``b``'s items,
+        unless the user ordered them by hand."""
         table, rel = self._relationship(name, a, b)
+        if position is not None and not rel.ordered:
+            raise IngestError(f"{name!r} isn't ordered: relate it without a position")
         if self._gone(a, b) or self._by_user(name, a.id, b.id) is False:
             return  # merged away, or the user removed it (#260)
         if not rel.many:
@@ -533,7 +538,35 @@ class IngestSession:
             if self.recorder is not None:  # b's previous partner loses it
                 self._touch(*self.conn.scalars(select(table.c.a_id).where(table.c.b_id == b.id)))
             self.conn.execute(delete(table).where(table.c.b_id == b.id, table.c.a_id != a.id))
+        if rel.ordered:
+            self._place(name, table, a.id, b.id, position)
+            return
         self.conn.execute(insert(table).values(a_id=a.id, b_id=b.id).prefix_with("OR IGNORE"))
+
+    def _place(self, name: str, table: Table, a_id: int, b_id: int, position: int | None) -> None:
+        """Relate ``a`` to ``b`` in an ordered relationship: at ``position``, else (or once
+        the user ordered ``b``'s items) where it is, or last."""
+        current = self.conn.execute(
+            select(table.c.position).where(table.c.a_id == a_id, table.c.b_id == b_id)
+        ).first()
+        by_hand = (
+            self.conn.scalar(
+                select(UserOrder.b_id).where(UserOrder.name == name, UserOrder.b_id == b_id)
+            )
+            is not None
+        )
+        if current is not None and (position is None or by_hand or current[0] == position):
+            return
+        if position is None or by_hand:
+            position = next_position(self.conn, table, b_id)
+        if current is None:
+            self.conn.execute(insert(table).values(a_id=a_id, b_id=b_id, position=position))
+        else:
+            self.conn.execute(
+                update(table)
+                .where(table.c.a_id == a_id, table.c.b_id == b_id)
+                .values(position=position)
+            )
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None:
         table, _ = self._relationship(name, a, b)
@@ -558,11 +591,14 @@ class IngestSession:
             mine, other = t.c.b_id, t.c.a_id
         else:
             raise IngestError(f"{type_id!r} isn't part of the {name!r} relationship")
+        order: list[Any] = [Entity.id]
+        if rel.ordered and mine is t.c.b_id:  # a b's items, in their order
+            order = [func.coalesce(t.c.position, LAST_POSITION), Entity.id]
         rows = self.conn.execute(
             select(Entity.id, Entity.type)
             .join(t, other == Entity.id)
             .where(mine == entity.id)
-            .order_by(Entity.id)
+            .order_by(*order)
         )
         return [EntityRef(i, t_) for i, t_ in rows]
 
@@ -774,6 +810,12 @@ class IngestSession:
 
 _UNSET = object()
 """Not written this session (``None`` is a value that can be written)."""
+
+
+def next_position(conn: Connection, table: Table, b_id: int) -> int:
+    """The position after ``b_id``'s last item in an ordered relationship's table."""
+    found = conn.scalar(select(func.max(table.c.position)).where(table.c.b_id == b_id))
+    return 0 if found is None else int(found) + 1
 
 
 def next_entity_id(conn: Connection) -> int:

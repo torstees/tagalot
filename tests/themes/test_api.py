@@ -84,7 +84,7 @@ class MoviesTheme(Theme):
 
 def test_design_example_declares_cleanly() -> None:
     assert MoviesTheme.id == "movies"
-    assert MoviesTheme.api_version == API_VERSION == 3
+    assert MoviesTheme.api_version == API_VERSION == 4
     assert [e.__name__ for e in MoviesTheme.entities] == ["Actor", "Collection", "Movie"]
     assert MoviesTheme.containment[0] == contains(Collection, Movie)
     assert MoviesTheme.relationships[0].name == "cast"

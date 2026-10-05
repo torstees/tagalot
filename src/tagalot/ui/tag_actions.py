@@ -297,6 +297,13 @@ class TagActions(QObject):
             lambda label: f"{label}. Edit \u2192 Undo brings it back.",
         )
 
+    def move_related(self, b_id: int, name: str, a_ids: list[int], by: int) -> None:
+        """Move items up or down in an ordered related list (#317); one undo step."""
+        self._run(
+            lambda: self.session.move_related(b_id, name, a_ids, by),
+            lambda label: f"{label}. Edit \u2192 Undo puts it back.",
+        )
+
     def save_search(self, name: str, definition: SavedDefinition, replace: int | None) -> None:
         """Save a search (over ``replace``, if given); one undo step."""
         self._run(

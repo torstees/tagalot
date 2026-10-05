@@ -220,6 +220,9 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             problems.append(f"write_back names {target!r}, which isn't a declared entity type")
     if theme.write_back and getattr(theme, "api_version", API_VERSION) < 3:
         problems.append("a theme with write_back must set api_version = 3 (or later)")
+    ordered = any(getattr(r, "ordered", False) for r in theme.relationships)
+    if ordered and getattr(theme, "api_version", API_VERSION) < 4:
+        problems.append("a theme with ordered relationships must set api_version = 4 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]

@@ -16,6 +16,7 @@ from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.keywords import ItemKeyword, item_keywords
 from tagalot.core.models import (
+    LAST_POSITION,
     Entity,
     EntityContains,
     EntityResource,
@@ -364,11 +365,14 @@ def _related(
         default, other_type = entity_plural(rel.a), schema.theme.type_id_of(rel.a)
     else:
         return None
+    order: list[Any] = [Entity.title, Entity.id]
+    if rel.ordered and rel.b is entity:  # a paper's authors, in their order (#317)
+        order.insert(0, func.coalesce(link.table.c.position, LAST_POSITION))
     rows = conn.execute(
         select(Entity.id, Entity.type, Entity.title)
         .join(link.table, other == Entity.id)
         .where(mine == entity_id)
-        .order_by(Entity.title, Entity.id)
+        .order_by(*order)
         .limit(MAX_ROWS)
     ).all()
     return DetailSection(
