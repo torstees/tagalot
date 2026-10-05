@@ -36,6 +36,7 @@ def add_related(
     other_id: int | None = None,
     *,
     new_title: str | None = None,
+    side: str | None = None,
 ) -> ActionChange:
     """Relate ``entity_id`` and ``other_id`` through relationship ``name`` (either may be
     the ``a`` side), or, with ``new_title``, a new item of the other side's type made for
@@ -44,7 +45,9 @@ def add_related(
     rel = link.relationship
     entity_type, title = _item(conn, entity_id)
     a_type, b_type = (schema.theme.type_id_of(rel.a), schema.theme.type_id_of(rel.b))
-    if entity_type == a_type:
+    if a_type == b_type and side in ("a", "b"):  # a type with itself: cites, cited by
+        other_type, this_is_a = a_type, side == "a"
+    elif entity_type == a_type:
         other_type, this_is_a = b_type, True
     elif entity_type == b_type:
         other_type, this_is_a = a_type, False
@@ -63,7 +66,7 @@ def add_related(
         if other_id is None:
             raise RelationError("Choose an item to add.")
         found_type, other_title = _item(conn, other_id)
-        if found_type != other_type:
+        if found_type != other_type or other_id == entity_id:
             raise RelationError(f"{other_title} can't be added there.")
         recorder.touch([other_id])
     a_id, b_id = (entity_id, other_id) if this_is_a else (other_id, entity_id)
@@ -85,7 +88,12 @@ def add_related(
 
 
 def remove_related(
-    conn: Connection, schema: ThemeSchema, name: str, entity_id: int, other_ids: Sequence[int]
+    conn: Connection,
+    schema: ThemeSchema,
+    name: str,
+    entity_id: int,
+    other_ids: Sequence[int],
+    side: str | None = None,
 ) -> ActionChange:
     """Unrelate these items from ``entity_id`` (on either side), remembering it, so a
     theme reading its files again doesn't relate them anew. One undo step for all."""
@@ -99,10 +107,14 @@ def remove_related(
     titles: list[str] = []
     for other_id in others:
         _, other_title = _item(conn, other_id)
+        pairs = {
+            "a": ((entity_id, other_id),),  # the items this one relates to (it cites)
+            "b": ((other_id, entity_id),),  # those relating to it (citing it)
+        }.get(side or "", ((entity_id, other_id), (other_id, entity_id)))
         pair = next(
             (
                 (a, b)
-                for a, b in ((entity_id, other_id), (other_id, entity_id))
+                for a, b in pairs
                 if conn.scalar(select(t.c.a_id).where(t.c.a_id == a, t.c.b_id == b)) is not None
             ),
             None,

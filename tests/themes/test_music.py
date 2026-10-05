@@ -420,7 +420,7 @@ def test_play_album_writes_a_playlist_in_track_order(env: Env, tmp_path: Path) -
     env.scan()
     result = _play(env, tmp_path, "Kind of Blue")
     assert not result.changed  # nothing to undo
-    [(_, path)] = [o for o in result.outputs if o[0] == "open"]
+    [path] = [o[1] for o in result.outputs if o[0] == "open"]
     assert Path(path) == tmp_path / "temp" / "Kind of Blue.m3u8"
     lines = Path(path).read_text(encoding="utf-8").splitlines()
     assert lines[0] == "#EXTM3U"

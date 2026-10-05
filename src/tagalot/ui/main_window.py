@@ -6,8 +6,10 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 """
 
 import logging
+import os
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import shiboken6
@@ -46,6 +48,7 @@ from tagalot.core.keywords import (
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
 from tagalot.core.root_admin import RootStatus, edit_root, root_statuses
+from tagalot.core.roots import place_in_roots
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import type_plurals, view_spec
@@ -71,7 +74,9 @@ from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
+from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.folder_picker import choose_save_file
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
@@ -739,9 +744,93 @@ class MainWindow(QMainWindow):
         self.tag_actions.run_action(method, entity_ids, self._action_outputs)
 
     def _action_outputs(self, result: ActionResult) -> None:
-        for kind, value in result.outputs:
+        for output in result.outputs:
+            kind, value = output[0], output[1]
             if kind in ("open", "reveal"):
                 self.files.act(FileToOpen(0, value, False), OPEN if kind == "open" else REVEAL)
+            elif kind == "copy":
+                QApplication.clipboard().setText(value)
+            elif kind == "url":
+                open_web_address(value)
+            elif kind == "save" and len(output) == 3:
+                self.save_export(value, output[2])
+
+    # --- saving an action's export (#322) ---
+
+    def save_export(self, name: str, text: str) -> None:
+        """Ask where to save an action's export, then write it (in the background). A place
+        inside a watched folder is allowed after a warning, and the file is then skipped by
+        scans (an exact pattern on that folder's Skip list), so the keep doesn't read its
+        own export back; an existing file there is never replaced."""
+        session = self.session
+        assert session is not None
+        path = self.choose_export_path(name)
+        if not path:
+            return
+        roots = {r.id: session.root_path(r.id) for r in session.keep.config.roots}
+        place = place_in_roots(path, roots)
+        if place is not None:
+            root = next(r for r in session.keep.config.roots if r.id == place[0])
+            if os.path.exists(path):
+                QMessageBox.warning(
+                    self,
+                    "Not saved",
+                    f"{place[1]} is already in {root.name}, a folder this keep watches. "
+                    "Tagalot never replaces files there: choose a new name.",
+                )
+                return
+            if not self.confirm_export_in_root(root.name, place[1]):
+                return
+
+        def job() -> str:
+            if place is not None:  # skipped first, so no scan can read it in between
+                config = session.keep.config
+                root = next(r for r in config.roots if r.id == place[0])
+                pattern = exact_pattern(place[1])
+                if pattern not in root.exclude:
+                    config = edit_root(
+                        config, session.keep.dir, root.id, exclude=[*root.exclude, pattern]
+                    )
+                    session.save_config(config)
+            Path(path).write_text(text, encoding="utf-8")
+            return path
+
+        def done(saved: str) -> None:
+            if not shiboken6.isValid(self):
+                return
+            note = (
+                " It is in a watched folder, so scans skip it (Keep configuration \u2192 "
+                "Folders \u2192 Skip)."
+                if place is not None
+                else ""
+            )
+            self.statusBar().showMessage(f"Saved {Path(saved).name}.{note}")
+            if place is not None and self.keep_config is not None:
+                self.keep_config.reload()
+
+        run_in_pool(
+            job,
+            on_done=done,
+            on_error=lambda e: self.statusBar().showMessage(f"Couldn't save {name}: {e}"),
+        )
+
+    def choose_export_path(self, name: str) -> str:
+        """Ask where to save an export (tests replace this)."""
+        assert self.session is not None
+        return choose_save_file(self, "Save", name, self.session.settings)
+
+    def confirm_export_in_root(self, root_name: str, relpath: str) -> bool:
+        """Ask before saving inside a watched folder (tests replace this)."""
+        answer = QMessageBox.question(
+            self,
+            "Save in a watched folder?",
+            f"{relpath} is in {root_name}, a folder this keep watches.\n\n"
+            "Tagalot will leave it out of scans (it is added to the folder's Skip list in "
+            "Keep configuration), so the keep doesn't read its own export back. Save here?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Save
 
     def confirm_replace_edits(self, count: int) -> bool:
         """Ask before the files' values replace what the user edited (tests replace this)."""
@@ -1230,15 +1319,17 @@ class MainWindow(QMainWindow):
             return None
         return dialog.keep_id, dialog.other_ids, dict(dialog.choices)
 
-    def add_related(self, entity_id: int, name: str) -> None:
-        """Ask which item to add to a related section (or a new one's name), then add it."""
+    def add_related(self, entity_id: int, name: str, side: str = "") -> None:
+        """Ask which item to add to a related section (or a new one's name), then add it.
+        ``side`` picks the section of a relationship of a type with itself (Cites, or
+        Cited by)."""
         page = self.stack.currentWidget()
         detail = page.detail if isinstance(page, DetailPage) else None
         section = next(
             (
                 s
                 for s in (detail.sections if detail is not None else ())
-                if s.kind == "related" and s.relationship == name
+                if s.kind == "related" and s.relationship == name and (s.side or "") == side
             ),
             None,
         )
@@ -1248,11 +1339,12 @@ class MainWindow(QMainWindow):
             detail.title,
             section.other_type,
             section.title,
-            {e.id for e in section.entities},
+            {e.id for e in section.entities}
+            | ({entity_id} if section.other_type == detail.type else set()),  # not itself
         )
         if chosen is not None:
             other_id, new_title = chosen
-            self.tag_actions.add_related(entity_id, name, other_id, new_title)
+            self.tag_actions.add_related(entity_id, name, other_id, new_title, side or None)
 
     def choose_related(
         self, title: str, other_type: str, section: str, already: set[int]

@@ -32,6 +32,10 @@ Venue ⊃ Paper        Author ↔ Paper (authors, in order)
   last too, after the bibliographies whose citation keys they use.
 - **Authors** are related in order (an ordered relationship), so the first and last author
   stay first and last; the user can reorder them by hand.
+- **Citations by hand:** a paper's page has **Cites** and **Cited by** (one relationship of
+  Paper with itself, with a direction) and **Related** (symmetric).
+- **Actions:** **Copy citation** (one plain style), **Export BibTeX…** (the user saves it),
+  and **Open DOI page** (doi.org, else arXiv), for the selected papers.
 """
 
 import difflib
@@ -44,6 +48,7 @@ from typing import Any, ClassVar
 
 from tagalot.themes.api import (
     BIBLIOGRAPHY_EXTENSIONS,
+    ActionContext,
     DetailView,
     Entity,
     EntityRef,
@@ -58,6 +63,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    action,
     contains,
     field,
     find_identifiers,
@@ -161,7 +167,9 @@ class ResearchTheme(Theme):
     entities = [Author, Venue, Paper]
     containment = [contains(Venue, Paper)]
     relationships = [
-        related("authors", Author, Paper, label="Papers", reverse_label="Authors", ordered=True)
+        related("authors", Author, Paper, label="Papers", reverse_label="Authors", ordered=True),
+        related("cites", Paper, Paper, label="Cites", reverse_label="Cited by"),
+        related("related", Paper, Paper, label="Related", symmetric=True),
     ]
     near_duplicate_threshold = 0.9
     dashboard = [
@@ -182,6 +190,8 @@ class ResearchTheme(Theme):
             [
                 Section.fields(),
                 Section.related("authors"),
+                Section.related("cites"),
+                Section.related("related"),
                 Section.role("paper"),
                 Section.role("bibliography"),
                 Section.role("supplement"),
@@ -192,6 +202,38 @@ class ResearchTheme(Theme):
         ),
         DetailView(Author, [Section.fields(), Section.related("authors")]),
     ]
+
+    # --- actions ---
+
+    @action("Copy citation", [Paper])
+    def copy_citation(self, papers: Sequence[EntityRef], ctx: ActionContext) -> None:
+        """Put the papers' citations on the clipboard, one per paragraph."""
+        text = "\n\n".join(citation(ctx.get(p), authors_of(p, ctx)) for p in papers)
+        ctx.copy_text(text)
+        count = "1 citation" if len(papers) == 1 else f"{len(papers)} citations"
+        ctx.message(f"Copied {count}.")
+
+    @action("Export BibTeX\u2026", [Paper])
+    def export_bibtex(self, papers: Sequence[EntityRef], ctx: ActionContext) -> None:
+        """Offer to save the papers as a BibTeX file."""
+        keys: set[str] = set()
+        entries = [bibtex_entry(ctx.get(p), authors_of(p, ctx), keys) for p in papers]
+        name = "papers.bib" if len(papers) > 1 else f"{next(iter(keys), 'paper')}.bib"
+        ctx.save_text(name, "\n".join(entries))
+
+    @action("Open DOI page", [Paper])
+    def open_doi_page(self, papers: Sequence[EntityRef], ctx: ActionContext) -> None:
+        """Open each paper's page: its DOI at doi.org, else its arXiv page, else its link."""
+        opened = 0
+        for paper in papers[:MAX_PAGES]:
+            url = paper_url(ctx.get(paper).fields)
+            if url:
+                ctx.open_url(url)
+                opened += 1
+        if not opened:
+            ctx.message("No DOI, arXiv ID, or link to open.")
+        elif len(papers) > MAX_PAGES:
+            ctx.message(f"Opened the first {MAX_PAGES} papers' pages.")
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Paper:
@@ -486,6 +528,129 @@ def paper_kind(doi: str | None, arxiv: str | None) -> str | None:
     if doi:
         return "article"
     return "preprint" if arxiv else None
+
+
+# --- citations and BibTeX ---
+
+MAX_PAGES = 10
+"""Open DOI page opens at most this many pages at once."""
+BIBTEX_TYPES = {
+    "article": "article",
+    "preprint": "misc",
+    "conference paper": "inproceedings",
+    "chapter": "incollection",
+    "book": "book",
+    "thesis": "phdthesis",
+    "report": "techreport",
+    "web page": "online",
+}
+"""A paper's kind as a BibTeX entry type (others: ``misc``)."""
+
+
+def authors_of(paper: EntityRef, ctx: IngestContext) -> list[str]:
+    """The paper's authors' names, in order."""
+    return [ctx.get(person).title for person in ctx.related("authors", paper)]
+
+
+def initials(name: str) -> str:
+    """``Ashish Vaswani`` → ``Vaswani, A.``; ``Vaswani, Ashish`` likewise."""
+    if "," in name:
+        last, _, first = name.partition(",")
+    else:
+        first, _, last = name.strip().rpartition(" ")
+    letters = " ".join(f"{part[0]}." for part in first.replace("-", " ").split() if part)
+    return f"{last.strip()}, {letters}" if letters else last.strip()
+
+
+def citation(record: Record, authors: Sequence[str]) -> str:
+    """One plain citation: ``Vaswani, A., Shazeer, N. (2017). Title. Venue, 30(2), 1-11.
+    https://doi.org/…``."""
+    fields = record.fields
+    names = [initials(a) for a in authors]
+    who = ", ".join(names[:-1]) + (", & " if len(names) > 1 else "") + names[-1] if names else ""
+    parts = [
+        f"{who} ({fields.get('year') or 'n.d.'})." if who else f"({fields.get('year') or 'n.d.'})."
+    ]
+    parts.append(f"{record.title.rstrip('.')}.")
+    venue = fields.get("venue")
+    if venue:
+        where = venue
+        if fields.get("volume"):
+            where += f", {fields['volume']}"
+            if fields.get("issue"):
+                where += f"({fields['issue']})"
+        if fields.get("pages"):
+            where += f", {fields['pages']}"
+        parts.append(f"{where}.")
+    url = paper_url(fields)
+    if url:
+        parts.append(url)
+    return " ".join(parts)
+
+
+def paper_url(fields: Mapping[str, Any]) -> str | None:
+    """The paper's page: its DOI at doi.org, else its arXiv page, else its link."""
+    if fields.get("doi"):
+        return f"https://doi.org/{fields['doi']}"
+    if fields.get("arxiv"):
+        return f"https://arxiv.org/abs/{fields['arxiv']}"
+    url = fields.get("url")
+    return url if isinstance(url, str) and re.match(r"https?://", url, re.IGNORECASE) else None
+
+
+def bibtex_value(text: str) -> str:
+    """A value for a BibTeX field: braces balanced, LaTeX's special characters escaped."""
+    text = re.sub(r"([&%$#_])", r"\\\1", str(text))
+    if text.count("{") != text.count("}"):
+        text = text.replace("{", "").replace("}", "")
+    return text
+
+
+def bibtex_entry(record: Record, authors: Sequence[str], keys: set[str]) -> str:
+    """The paper as a BibTeX entry; its citation key, else one made from the first
+    author's surname, the year, and the title's first word, unique among ``keys``."""
+    fields = record.fields
+    key = (
+        fields.get("citekey")
+        or "".join(
+            normalize(part).replace(" ", "")
+            for part in (
+                surname(authors[0]) if authors else "",
+                str(fields.get("year") or ""),
+                (normalize(record.title).split() or ["paper"])[0],
+            )
+        )
+        or "paper"
+    )
+    unique, n = key, 1
+    while unique in keys:
+        n += 1
+        unique = f"{key}{chr(ord('a') + n - 2)}" if n <= 27 else f"{key}{n}"
+    keys.add(unique)
+    kind = BIBTEX_TYPES.get(fields.get("kind") or "", "misc")
+    venue_field = {"article": "journal", "inproceedings": "booktitle", "incollection": "booktitle"}
+    values: list[tuple[str, Any]] = [
+        ("title", f"{{{bibtex_value(record.title)}}}"),
+        ("author", " and ".join(bibtex_value(a) for a in authors)),
+        ("year", fields.get("year")),
+        (venue_field.get(kind, "howpublished"), fields.get("venue")),
+        ("volume", fields.get("volume")),
+        ("number", fields.get("issue")),
+        ("pages", (fields.get("pages") or "").replace("-", "--") or None),
+        ("doi", fields.get("doi")),
+        ("eprint", fields.get("arxiv")),
+        ("archiveprefix", "arXiv" if fields.get("arxiv") else None),
+        ("pmid", fields.get("pmid")),
+        ("url", fields.get("url")),
+        ("abstract", fields.get("abstract")),
+    ]
+    lines = [f"@{kind}{{{unique},"]
+    for name, value in values:
+        if value not in (None, "", "{}"):
+            text = value if name == "title" else bibtex_value(str(value))
+            lines.append(f"  {name} = {{{text}}},")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
 
 
 # --- a paper's sources ---

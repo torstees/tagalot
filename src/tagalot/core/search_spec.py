@@ -96,6 +96,10 @@ class SearchSpec:
     fields: tuple[FieldFilter, ...] = ()
     within: int | None = None
     """Restrict to descendants of this entity (drill-down, container pages)."""
+    related_side: str | None = None
+    """With :attr:`related`: ``"a"`` lists the items the entity relates to as the ``a``
+    side (the papers a paper cites), ``"b"`` those relating to it (the papers citing it);
+    ``None``, either way. It matters for a relationship of a type with itself (#322)."""
     related: tuple[str, int] | None = None
     """Restrict to the items related to this entity through the named relationship (an
     actor's movies: ``("cast", actor id)``), from either side (#125)."""
@@ -143,6 +147,12 @@ class SearchSpec:
             raise SearchSpecError(
                 f"related must be a relationship name and an entity id, not {related!r}"
             )
+        if self.related_side not in (None, "a", "b") or (
+            self.related_side is not None and related is None
+        ):
+            raise SearchSpecError(
+                f"related_side must be 'a' or 'b' with a related search, not {self.related_side!r}"
+            )
 
     # --- JSON ---
 
@@ -156,7 +166,10 @@ class SearchSpec:
             "fields": [_filter_to_json(f) for f in self.fields],
             "within": self.within,
             "related": (
-                {"name": self.related[0], "entity": self.related[1]} if self.related else None
+                {"name": self.related[0], "entity": self.related[1]}
+                | ({"side": self.related_side} if self.related_side else {})
+                if self.related
+                else None
             ),
             "text": self.text,
             "inherit_tags": self.inherit_tags,
@@ -187,6 +200,9 @@ class SearchSpec:
                 fields=tuple(_filter_from_json(f) for f in _list(data.get("fields", []), "fields")),
                 within=data.get("within"),
                 related=_related_from_json(data.get("related")),
+                related_side=(data.get("related") or {}).get("side")
+                if isinstance(data.get("related"), Mapping)
+                else None,
                 text=_optional_str(data.get("text"), "text"),
                 inherit_tags=_bool(data, "inherit_tags", defaults.inherit_tags),
                 show_contained=_bool(data, "show_contained", defaults.show_contained),

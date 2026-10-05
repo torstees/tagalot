@@ -304,23 +304,32 @@ class KeepSession:
         return change.label
 
     def add_related(
-        self, entity_id: int, name: str, other_id: int | None, new_title: str | None = None
+        self,
+        entity_id: int,
+        name: str,
+        other_id: int | None,
+        new_title: str | None = None,
+        side: str | None = None,
     ) -> str:
         """Relate an item (or a new one named ``new_title``) by hand; one undo step.
         Returns its label. Raises ``RelationError``. Runs in a worker."""
         schema = self.schema
         change = self.writer.run(
-            lambda conn: add_related(conn, schema, name, entity_id, other_id, new_title=new_title)
+            lambda conn: add_related(
+                conn, schema, name, entity_id, other_id, new_title=new_title, side=side
+            )
         )
         self.tags.record(change)
         return change.label
 
-    def remove_related(self, entity_id: int, name: str, other_ids: Sequence[int]) -> str:
+    def remove_related(
+        self, entity_id: int, name: str, other_ids: Sequence[int], side: str | None = None
+    ) -> str:
         """Unrelate items by hand (remembered, so scans don't relate them again); one undo
         step. Returns its label. Runs in a worker."""
         schema = self.schema
         change = self.writer.run(
-            lambda conn: remove_related(conn, schema, name, entity_id, other_ids)
+            lambda conn: remove_related(conn, schema, name, entity_id, other_ids, side)
         )
         self.tags.record(change)
         return change.label

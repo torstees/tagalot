@@ -335,6 +335,9 @@ class Relationship:
     """``False`` limits each ``b`` to at most one ``a``."""
     ordered: bool = False
     """Each ``b``'s ``a`` items are in an order (a paper's authors): see :func:`related`."""
+    symmetric: bool = False
+    """A relationship of a type with itself that has no direction ("related"): see
+    :func:`related`."""
 
 
 def related(
@@ -346,6 +349,7 @@ def related(
     reverse_label: str | None = None,
     many: bool = True,
     ordered: bool = False,
+    symmetric: bool = False,
 ) -> Relationship:
     """Declare a relationship between ``a`` and ``b`` items, such as
     ``related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")``.
@@ -359,6 +363,12 @@ def related(
     :meth:`IngestContext.related` gives a ``b``'s ``a`` items in that order, and a ``b``'s
     page lists them in it. The user can reorder them by hand; scans then leave that ``b``'s
     order alone. It needs ``many=True``.
+
+    A relationship of a type with itself (``related("cites", Paper, Paper, label="Cites",
+    reverse_label="Cited by")``) has a direction: an item's page shows both sides as
+    separate sections, its ``a`` side under ``label`` and its ``b`` side under
+    ``reverse_label`` (API version 4). ``symmetric=True`` (which needs ``a`` and ``b`` to be
+    the same type) has none: one section lists the items related either way ("Related").
     """
     if not name.isidentifier():
         raise ThemeDeclarationError(f"relationship name {name!r} must be an identifier")
@@ -366,7 +376,11 @@ def related(
         raise ThemeDeclarationError(
             f"relationship {name!r}: ordered=True needs many=True (one item has no order)"
         )
-    return Relationship(name, a, b, label, reverse_label, many, ordered)
+    if symmetric and a is not b:
+        raise ThemeDeclarationError(
+            f"relationship {name!r}: symmetric=True relates a type with itself"
+        )
+    return Relationship(name, a, b, label, reverse_label, many, ordered, symmetric)
 
 
 # --- Views ---
@@ -656,6 +670,24 @@ class ActionContext(IngestContext, Protocol):
 
     def message(self, text: str) -> None:
         """Say something in the status bar when the action is done."""
+        ...
+
+    def copy_text(self, text: str) -> None:
+        """Put ``text`` on the clipboard when the action is done (a citation). API
+        version 4."""
+        ...
+
+    def open_url(self, url: str) -> None:
+        """Open a web address (``http`` or ``https`` only; anything else is an error) in the
+        browser when the action is done. Tagalot itself never fetches it. API version 4."""
+        ...
+
+    def save_text(self, name: str, text: str) -> None:
+        """Offer to save ``text`` as a file (an export) when the action is done: the user
+        picks where, starting from ``name`` (a file name, no folders). A place inside a
+        watched folder is allowed after a warning; the file is then skipped by scans (so the
+        keep doesn't read its own export back), and an existing file there is never
+        replaced. API version 4."""
         ...
 
 
