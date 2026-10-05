@@ -1,0 +1,30 @@
+[
+  {
+    "id": "http://zotero.org/users/1/items/ABCD1234",
+    "type": "article-journal",
+    "citation-key": "harris2020array",
+    "title": "Array programming with NumPy",
+    "container-title": "Nature",
+    "volume": "585",
+    "issue": "7825",
+    "page": "357-362",
+    "DOI": "10.1038/s41586-020-2649-2",
+    "PMID": "32939066",
+    "keyword": "numpy, Software",
+    "author": [
+      {"family": "Harris", "given": "Charles R."},
+      {"family": "Walt", "given": "Stéfan J.", "non-dropping-particle": "van der"},
+      {"literal": "The NumPy Developers"}
+    ],
+    "issued": {"date-parts": [[2020, 9, 17]]}
+  },
+  {
+    "id": "ouyang2022",
+    "type": "article",
+    "title": "Training language models to follow instructions with human feedback",
+    "number": "arXiv:2203.02155",
+    "archive": "arXiv",
+    "author": [{"family": "Ouyang", "given": "Long"}],
+    "issued": {"date-parts": [["2022"]]}
+  }
+]

@@ -272,10 +272,12 @@ def test_api_imports_only_the_standard_library() -> None:
     # readers (#296), which import only the standard library when loaded.
     imported = _imports(Path(api.__file__).read_text(encoding="utf-8"))
     others = {m for m in imported if m.split(".")[0] not in sys.stdlib_module_names}
-    assert others == {"tagalot.themes.readers"}
-    readers = Path(api.__file__).with_name("readers.py").read_text(encoding="utf-8")
-    loaded = {m.split(".")[0] for m in _imports(readers, top_level_only=True)}
-    assert loaded <= set(sys.stdlib_module_names), loaded - set(sys.stdlib_module_names)
+    assert others == {"tagalot.themes.readers", "tagalot.themes.bibliography"}
+    for name in ("readers.py", "bibliography.py"):
+        source = Path(api.__file__).with_name(name).read_text(encoding="utf-8")
+        loaded = {m for m in _imports(source, top_level_only=True)}
+        outside = {m for m in loaded if m.split(".")[0] not in sys.stdlib_module_names}
+        assert outside <= {"tagalot.themes.readers"}, outside
 
 
 @pytest.mark.parametrize(
