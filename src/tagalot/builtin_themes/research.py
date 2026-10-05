@@ -108,6 +108,14 @@ class Venue(Entity):
     contents_sort = (SortBy("year", descending=True), SortBy("title"))
 
 
+class Project(Entity):
+    """A reading list the user makes by hand, holding papers (tag it, and its papers
+    inherit the tag)."""
+
+    made_by_hand = True
+    contents_sort = (SortBy("year", descending=True), SortBy("title"))
+
+
 class Paper(Entity):
     """A paper; its files (a preprint, the published version, a duplicate download) are its
     versions."""
@@ -164,8 +172,8 @@ class ResearchTheme(Theme):
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
     # citation key comes from a bibliography).
     read_last: ClassVar[Sequence[str]] = (".bib", ".ris", ".json", ".md", ".markdown")
-    entities = [Author, Venue, Paper]
-    containment = [contains(Venue, Paper)]
+    entities = [Author, Venue, Project, Paper]
+    containment = [contains(Venue, Paper), contains(Project, Paper)]
     relationships = [
         related("authors", Author, Paper, label="Papers", reverse_label="Authors", ordered=True),
         related("cites", Paper, Paper, label="Cites", reverse_label="Cited by"),
@@ -185,6 +193,7 @@ class ResearchTheme(Theme):
         ),
         SearchView("Authors", [Author], default_sort=[SortBy("sort_name"), SortBy("title")]),
         SearchView("Venues", [Venue], inherit_tags=True),
+        SearchView("Projects", [Project], inherit_tags=True),
         DetailView(
             Paper,
             [
@@ -238,7 +247,7 @@ class ResearchTheme(Theme):
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Paper:
             return [ImageFile(), Icon("file")]  # its first page
-        if entity_type is Venue:
+        if entity_type in (Venue, Project):
             return [ContentsThumbnail(), Icon("entity")]
         return super().thumbnail_chain(entity_type)
 

@@ -41,6 +41,7 @@ from tagalot.core.models import (
     FieldSource,
     Resource,
     Root,
+    UserContains,
     UserOrder,
     UserRelation,
     utcnow,
@@ -188,6 +189,13 @@ def merge_items(
         )
     )
     their_orders = set(conn.scalars(select(UserOrder.name).where(UserOrder.b_id.in_(ids))))
+    their_contains = list(
+        conn.execute(
+            select(UserContains.parent_id, UserContains.child_id, UserContains.added).where(
+                or_(UserContains.parent_id.in_(ids), UserContains.child_id.in_(ids))
+            )
+        )
+    )
     recorder = ChangeRecorder(conn, schema)
     recorder.touch([keep_id, *ids, *parents, *children, *_partners(conn, schema, ids)])
 
@@ -243,6 +251,17 @@ def merge_items(
             conn.execute(
                 insert(link.table).prefix_with("OR IGNORE").values(a_id=a, b_id=b, position=at)
             )
+    merged_ids = set(ids)
+    by_hand = {
+        (keep_id if p in merged_ids else p, keep_id if c in merged_ids else c, added)
+        for p, c, added in their_contains
+    }
+    by_hand = {h for h in by_hand if h[0] != h[1]}
+    if by_hand:  # containment the user made or undid by hand comes along (#329)
+        conn.execute(
+            insert(UserContains).prefix_with("OR IGNORE"),
+            [{"parent_id": p, "child_id": c, "added": added} for p, c, added in by_hand],
+        )
     if their_orders:  # the user's hand-made orders come along
         conn.execute(
             insert(UserOrder).prefix_with("OR IGNORE"),

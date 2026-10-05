@@ -23,8 +23,8 @@ added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resourc
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 ``"url"`` field display, and writing back to files (:attr:`Theme.write_back`,
 :meth:`Theme.front_matter`); version 4 added ordered relationships (:func:`related`'s
-``ordered``, :meth:`IngestContext.relate`'s ``position``), :attr:`Theme.read_last`, and
-:func:`read_bibliography`."""
+``ordered``, :meth:`IngestContext.relate`'s ``position``), :attr:`Theme.read_last`,
+:func:`read_bibliography`, and :attr:`Entity.made_by_hand`."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -233,6 +233,10 @@ class Entity:
       a field sort first on it. Default: by title.
     - ``table_name`` / ``type_id``: override the defaults ``<theme id>_<class name>`` and
       ``<theme id>.<class name>`` (lowercased).
+    - ``made_by_hand``: the user makes items of this type (a reading list, a playlist) and
+      puts items in them (API version 4): Tagalot offers **New …** in its views, **Add to
+      …** on the items it can contain (its containment), and **Remove from …** on its
+      page. Scans never undo what the user put in or took out.
     """
 
     label: ClassVar[str | None] = None
@@ -244,6 +248,7 @@ class Entity:
     contents_sort: ClassVar[Sequence["SortBy"]] = ()
     table_name: ClassVar[str | None] = None
     type_id: ClassVar[str | None] = None
+    made_by_hand: ClassVar[bool] = False
 
 
 def entity_label(entity: type[Entity]) -> str:

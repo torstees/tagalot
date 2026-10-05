@@ -414,6 +414,23 @@ class UserOrder(Base):
     at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class UserContains(Base):
+    """Containment the user added or removed by hand (#329): ``added`` true for an item
+    they put in a container (a theme's ``uncontain`` leaves it), false for one they took
+    out (a theme's ``contain`` doesn't bring it back)."""
+
+    __tablename__ = "user_contains"
+
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    child_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True, index=True
+    )
+    added: Mapped[bool]
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

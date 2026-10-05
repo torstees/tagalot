@@ -15,6 +15,7 @@ from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.links import LinkError
 from tagalot.core.reextract import ReextractReport
+from tagalot.core.relations import RelationError
 from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.session import KeepSession
@@ -304,6 +305,33 @@ class TagActions(QObject):
             lambda label: f"{label}. Edit \u2192 Undo brings it back.",
         )
 
+    def new_container(
+        self, type_id: str, title: str, then: Callable[[int], None] | None = None
+    ) -> None:
+        """Make a project (an item of a hand-made type, #329); one undo step. ``then``
+        gets its id."""
+
+        def describe(result: tuple[str, int]) -> str:
+            if then is not None:
+                then(result[1])
+            return f"{result[0]}."
+
+        self._run(lambda: self.session.new_container(type_id, title), describe)
+
+    def contain(self, parent_id: int, child_ids: list[int]) -> None:
+        """Put items in a project by hand; one undo step."""
+        self._run(
+            lambda: self.session.contain_by_hand(parent_id, child_ids),
+            lambda label: f"{label}.",
+        )
+
+    def uncontain(self, parent_id: int, child_ids: list[int]) -> None:
+        """Take items out of a project by hand; one undo step."""
+        self._run(
+            lambda: self.session.uncontain_by_hand(parent_id, child_ids),
+            lambda label: f"{label}. Edit \u2192 Undo puts them back.",
+        )
+
     def move_related(self, b_id: int, name: str, a_ids: list[int], by: int) -> None:
         """Move items up or down in an ordered related list (#317); one undo step."""
         self._run(
@@ -367,7 +395,9 @@ class TagActions(QObject):
             if not shiboken6.isValid(self):
                 return
             self.busy -= 1
-            if isinstance(error, TagError | FieldEditError | ActionError | LinkError):
+            if isinstance(
+                error, TagError | FieldEditError | ActionError | LinkError | RelationError
+            ):
                 self.message.emit(str(error))
             else:
                 logger.error("Tagging failed", exc_info=error)

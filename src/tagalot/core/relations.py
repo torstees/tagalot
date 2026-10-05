@@ -59,7 +59,7 @@ def add_related(
         new_title = " ".join(new_title.split())
         if not new_title:
             raise RelationError("Type a name for the new item.")
-        other_id = _new_item(conn, schema, other_type, new_title)
+        other_id = make_item(conn, schema, other_type, new_title)
         recorder.created(other_id)
         other_title = new_title
     else:
@@ -210,7 +210,8 @@ def _record(conn: Connection, name: str, a_id: int, b_id: int, *, added: bool) -
     )
 
 
-def _new_item(conn: Connection, schema: ThemeSchema, type_id: str, title: str) -> int:
+def make_item(conn: Connection, schema: ThemeSchema, type_id: str, title: str) -> int:
+    """A new item the user made: no ingest key, so scans never delete it."""
     table = schema.by_type_id(type_id)
     entity_id = int(
         conn.execute(

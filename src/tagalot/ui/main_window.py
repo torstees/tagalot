@@ -69,7 +69,7 @@ from tagalot.core.thumbnails.queue import QueueResult
 from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write_back, write_files
-from tagalot.themes.api import Kind, SearchView
+from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
@@ -502,6 +502,7 @@ class MainWindow(QMainWindow):
             detail.relate_requested.connect(self.add_related)
             detail.unrelate_requested.connect(self.tag_actions.remove_related)
             detail.move_requested.connect(self.tag_actions.move_related)
+            detail.uncontain_requested.connect(self.tag_actions.uncontain)
             detail.action_requested.connect(self.run_action)
             detail.file_opener = self.files
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
@@ -610,6 +611,8 @@ class MainWindow(QMainWindow):
         search.save_requested.connect(lambda: self.save_search(as_new=False, page=search))
         search.reread_requested.connect(self.reread)
         search.write_back_requested.connect(self.write_back)
+        search.new_item_requested.connect(self.new_container)
+        search.add_to_requested.connect(self.add_to_container)
         search.action_requested.connect(self.run_action)
         search.file_opener = self.files
         search.zoom_requested.connect(self.zoom)
@@ -1345,6 +1348,48 @@ class MainWindow(QMainWindow):
         if chosen is not None:
             other_id, new_title = chosen
             self.tag_actions.add_related(entity_id, name, other_id, new_title, side or None)
+
+    # --- projects: containers made by hand (#329) ---
+
+    def new_container(self, type_id: str) -> None:
+        """New project…: ask its name, make it, and open its page."""
+        assert self.session is not None
+        noun = entity_label(self.session.schema.by_type_id(type_id).entity).lower()
+        name = self.ask_new_name(noun)
+        if name:
+            self.tag_actions.new_container(type_id, name, then=self.open_entity)
+
+    def add_to_container(self, type_id: str, entity_ids: list[int]) -> None:
+        """Add to project…: choose one (or name a new one), then put the items in it."""
+        chosen = self.choose_container(type_id, len(entity_ids))
+        if chosen is None:
+            return
+        container_id, new_name = chosen
+        if container_id is not None:
+            self.tag_actions.contain(container_id, entity_ids)
+        elif new_name:
+            self.tag_actions.new_container(
+                type_id, new_name, then=lambda new: self.tag_actions.contain(new, entity_ids)
+            )
+
+    def ask_new_name(self, noun: str) -> str:
+        """Ask a new item's name (tests replace this)."""
+        name, ok = QInputDialog.getText(self, f"New {noun}", f"Name of the new {noun}:")
+        return name.strip() if ok else ""
+
+    def choose_container(self, type_id: str, count: int) -> tuple[int | None, str | None] | None:
+        """The Add to … dialog: (an existing item's id, None), (None, a new one's name), or
+        ``None`` (tests replace this)."""
+        assert self.session is not None
+        noun = entity_label(self.session.schema.by_type_id(type_id).entity).lower()
+        what = "this item" if count == 1 else f"these {count:,} items"
+        dialog = RelateDialog(
+            self.session, what, type_id, noun, set(), self, prompt=f"Add {what} to a {noun}:"
+        )
+        dialog.setWindowTitle(f"Add to {noun}")
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return dialog.chosen()
 
     def choose_related(
         self, title: str, other_type: str, section: str, already: set[int]

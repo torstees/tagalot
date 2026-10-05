@@ -18,6 +18,7 @@ from sqlalchemy import Connection, Engine, update
 
 from tagalot.core.actions import ActionResult, delete_items, run_action
 from tagalot.core.activity import ProblemLog, problems_from_report, thumbnail_problems
+from tagalot.core.containers import contain_by_hand, new_container, uncontain_by_hand
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.ingest import IngestSession
@@ -331,6 +332,30 @@ class KeepSession:
         change = self.writer.run(
             lambda conn: remove_related(conn, schema, name, entity_id, other_ids, side)
         )
+        self.tags.record(change)
+        return change.label
+
+    def new_container(self, type_id: str, title: str) -> tuple[str, int]:
+        """Make an item of a hand-made type (a project, #329); one undo step. Returns its
+        label and the new item's id. Raises ``ContainerError``. Runs in a worker."""
+        schema = self.schema
+        change, entity_id = self.writer.run(
+            lambda conn: new_container(conn, schema, type_id, title)
+        )
+        self.tags.record(change)
+        return change.label, entity_id
+
+    def contain_by_hand(self, parent_id: int, child_ids: Sequence[int]) -> str:
+        """Put items in a hand-made container; one undo step. Returns its label."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: contain_by_hand(conn, schema, parent_id, child_ids))
+        self.tags.record(change)
+        return change.label
+
+    def uncontain_by_hand(self, parent_id: int, child_ids: Sequence[int]) -> str:
+        """Take items out of a container by hand; one undo step. Returns its label."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: uncontain_by_hand(conn, schema, parent_id, child_ids))
         self.tags.record(change)
         return change.label
 
