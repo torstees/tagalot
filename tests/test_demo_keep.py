@@ -218,7 +218,11 @@ def test_creates_a_research_keep(tmp_path: Path) -> None:
             everything = count_by_type(conn, SearchSpec(), tree)
             # Vision comes from a PDF's keywords (file keywords).
             vision = count_by_type(conn, SearchSpec(include=_ids(tree, "Vision")), tree)
-    assert everything == {"research.author": 11, "research.paper": 4}
+    assert everything == {
+        "research.author": 12,  # with Jane Doe, from the sidecar
+        "research.paper": 4,  # the export's entry without a PDF makes none
+        "research.venue": 3,
+    }
     assert vision == {"research.paper": 1}
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_research_demo(tmp_path)

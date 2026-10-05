@@ -329,6 +329,7 @@ def _ingest_pending(
         ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
         for rid, rel, kind, ext, size, mtime in rows
     ]
+    pending = _read_last(reader, root, path, theme, pending)
     ingester = theme()
     reads = type(ingester).prepare is not Theme.prepare
     batches = [pending[i : i + INGEST_BATCH] for i in range(0, len(pending), INGEST_BATCH)]
@@ -358,6 +359,53 @@ def _ingest_pending(
     finally:
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _read_last(
+    reader: Engine,
+    root: RootConfig,
+    path: str,
+    theme: type[Theme],
+    pending: list[ResourceInfo],
+) -> list[ResourceInfo]:
+    """``pending`` with the theme's ``read_last`` files after the others; when there are
+    others, with every one of the root's ``read_last`` files, read again, so a library
+    export meets the files added since (DESIGN.md §6, #320)."""
+    late_extensions = frozenset(theme.read_last)
+    if not late_extensions:
+        return pending
+    first = [r for r in pending if r.ext not in late_extensions]
+    late = [r for r in pending if r.ext in late_extensions]
+    if not first:
+        return late
+    seen = {r.id for r in late}
+    with reader.connect() as conn:
+        rows = conn.execute(
+            select(
+                Resource.id,
+                Resource.relpath,
+                Resource.kind,
+                Resource.ext,
+                Resource.size,
+                Resource.mtime_ns,
+            )
+            .where(
+                Resource.root_id == root.id,
+                Resource.status == ResourceStatus.OK,
+                Resource.skipped.is_(False),
+                Resource.parent_resource_id.is_(None),
+                Resource.ext.in_(sorted(late_extensions)),
+                Resource.ingested_at.is_not(None),
+            )
+            .order_by(Resource.relpath)
+        ).all()
+    late += [
+        ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
+        for rid, rel, kind, ext, size, mtime in rows
+        if rid not in seen
+    ]
+    late.sort(key=lambda r: r.relpath)
+    return first + late
 
 
 def _ingest_batch(

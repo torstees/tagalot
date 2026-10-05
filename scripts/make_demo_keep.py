@@ -47,7 +47,8 @@ match no tag.
 built-in research theme: small PDFs with a text layer holding DOIs and arXiv IDs. One paper
 is two downloads (one paper, two versions), a preprint and its published version are one
 paper, one PDF's title is an editor's leftover ("Microsoft Word - …", ignored), and one has
-no metadata at all (named from its file name).
+no metadata (a sidecar ``.bib`` beside it names it). A Zotero-style library export gives the
+papers their venues, matched by arXiv ID and DOI; one of its entries has no PDF.
 """
 
 import argparse
@@ -904,6 +905,54 @@ RESEARCH_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
 }
 """PDFs for the research demo, with a text layer: (first page's lines, document info)."""
 
+RESEARCH_BIBLIOGRAPHIES = {
+    # A library export (as Zotero writes one), matched to the PDFs by arXiv ID and DOI.
+    "Zotero/My Library.bib": """@inproceedings{vaswani_attention_2017,
+	title = {Attention {Is} {All} {You} {Need}},
+	booktitle = {Advances in {Neural} {Information} {Processing} {Systems}},
+	volume = {30},
+	author = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob},
+	year = {2017},
+	eprint = {1706.03762},
+	archivePrefix = {arXiv},
+	keywords = {Transformers},
+}
+
+@inproceedings{he_deep_2016,
+	title = {Deep {Residual} {Learning} for {Image} {Recognition}},
+	booktitle = {{IEEE} {Conference} on {Computer} {Vision} and {Pattern} {Recognition}},
+	pages = {770--778},
+	doi = {10.1109/CVPR.2016.90},
+	author = {He, Kaiming and Zhang, Xiangyu and Ren, Shaoqing and Sun, Jian},
+	year = {2016},
+}
+
+@inproceedings{ouyang_training_2022,
+	title = {Training language models to follow instructions with human feedback},
+	booktitle = {Advances in {Neural} {Information} {Processing} {Systems}},
+	volume = {35},
+	doi = {10.5555/3600270.3602281},
+	author = {Ouyang, Long and Wu, Jeff and Jiang, Xu},
+	year = {2022},
+}
+
+@article{not_downloaded_2019,
+	title = {A Paper In the Library But Not Downloaded},
+	doi = {10.1000/nowhere},
+	year = {2019},
+}
+""",
+    # A sidecar: named like the PDF beside it, it describes that paper.
+    "Notes/A Paper Without Metadata.bib": """@article{doe_notes_2021,
+  title = {Notes Toward a Theory of Everything},
+  author = {Doe, Jane},
+  journal = {Journal of Speculation},
+  year = {2021},
+}
+""",
+}
+"""Bibliography files for the research demo: a Zotero-style export and a sidecar."""
+
 RESEARCH_TAGS = {
     ("Topic", "Transformers"): ["Attention Is All You Need"],
     ("Topic", "Vision"): [],  # given by a file's keywords
@@ -954,6 +1003,9 @@ def make_research_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
     for relpath, (lines, info) in RESEARCH_PDFS.items():
         _text_pdf(files / relpath, lines, info)
+    for relpath, text in RESEARCH_BIBLIOGRAPHIES.items():
+        (files / relpath).parent.mkdir(parents=True, exist_ok=True)
+        (files / relpath).write_text(text, encoding="utf-8")
     root = RootConfig("papers", "Papers", str(files), list(DEFAULT_EXCLUDES))
     create_keep(keep_dir, "Research", ThemeRef("research", ResearchTheme.version), [root])
     with KeepSession.open(keep_dir, Settings()) as session:
