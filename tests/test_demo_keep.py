@@ -208,6 +208,22 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
         script.make_books_demo(tmp_path)
 
 
+def test_creates_a_research_keep(tmp_path: Path) -> None:
+    script = _script()
+    keep_dir = script.make_research_demo(tmp_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        assert session.theme.id == "research"
+        tree = session.tag_cache.get()
+        with session.reader.connect() as conn:
+            everything = count_by_type(conn, SearchSpec(), tree)
+            # Vision comes from a PDF's keywords (file keywords).
+            vision = count_by_type(conn, SearchSpec(include=_ids(tree, "Vision")), tree)
+    assert everything == {"research.author": 11, "research.paper": 4}
+    assert vision == {"research.paper": 1}
+    with pytest.raises(FileExistsError, match="--reset"):
+        script.make_research_demo(tmp_path)
+
+
 def test_creates_a_music_keep(tmp_path: Path) -> None:
     script = _script()
     keep_dir = script.make_music_demo(tmp_path)

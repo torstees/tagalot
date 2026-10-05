@@ -2,7 +2,7 @@
 
 import io
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -186,4 +186,43 @@ def write_link(path: Path, url: str, name: str | None = None, kind: str = "Link"
         if name:
             lines.append(f"Name={name}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def text_pdf(lines: Sequence[str], info: Mapping[str, str] | None = None) -> bytes:
+    """A one-page PDF whose text layer holds ``lines`` (Helvetica), with document info
+    such as ``{"Title": …, "Author": …}``: real text, as a paper's first page has."""
+
+    def literal(text: str) -> str:
+        escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        return f"({escaped})"
+
+    shown = " ".join(f"{literal(line)} Tj T*" for line in lines)
+    stream = f"BT /F1 11 Tf 72 740 Td 14 TL {shown} ET".encode("latin-1")
+    entries = " ".join(f"/{k} {literal(v)}" for k, v in (info or {}).items())
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        f"<< {entries} >>".encode("latin-1"),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R /Info 6 0 R >>\n" % (len(objects) + 1)
+    out += b"startxref\n%d\n%%%%EOF\n" % xref
+    return bytes(out)
+
+
+def write_text_pdf(path: Path, lines: Sequence[str], **info: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(text_pdf(lines, info))
     return path
