@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from sqlalchemy import Connection, func, select
+from sqlalchemy import Connection, func, select, union
 
 from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
@@ -99,6 +99,9 @@ class DetailSection:
     """Related: the relationship's name, for adding and removing by hand (#260)."""
     other_type: str | None = None
     """Related: the type of the items on the other side."""
+    side: str | None = None
+    """Related: ``"a"`` when this item is the relationship's ``a`` side, ``"b"`` its ``b``
+    side, ``None`` for both (a symmetric relationship of a type with itself, #322)."""
 
 
 @dataclass(frozen=True)
@@ -179,6 +182,9 @@ def load_detail(
     edited = user_fields(conn, entity_id)
     sections: list[DetailSection] = []
     for section in detail_view_for(schema, entity).sections:
+        if section.kind == "related":  # one section per side it is on
+            sections += _related_sections(conn, schema, entity, entity_id, section.name or "")
+            continue
         loaded = _load_section(conn, schema, entity, entity_id, section, root_path, edited)
         if loaded is not None:
             sections.append(loaded)
@@ -253,8 +259,6 @@ def _load_section(
             title = role.label or (section.name or "").replace("_", " ").capitalize()
             files = role_files(conn, entity_id, role.name, root_path)
             return DetailSection(section.kind, title, files=files)
-        case "related":
-            return _related(conn, schema, entity, entity_id, section.name or "")
         case "contents":
             count = (
                 conn.scalar(select(func.count()).where(EntityContains.parent_id == entity_id)) or 0
@@ -346,41 +350,67 @@ def role_files(
     return tuple(found)
 
 
-def _related(
+def _related_sections(
     conn: Connection,
     schema: ThemeSchema,
     entity: type[ThemeEntity],
     entity_id: int,
     name: str,
-) -> DetailSection | None:
+) -> list[DetailSection]:
+    """The related sections of one relationship: the side the item is on; both sides,
+    separately, for a relationship of a type with itself (Cites, Cited by); or one section
+    of both sides for a symmetric one (Related)."""
     link = schema.relationships.get(name)
     if link is None:
-        return None
+        return []
     rel = link.relationship
+    if rel.a is entity and rel.b is entity:
+        if rel.symmetric:
+            return [_related(conn, schema, link, entity_id, None)]
+        return [
+            _related(conn, schema, link, entity_id, "a"),
+            _related(conn, schema, link, entity_id, "b"),
+        ]
     if rel.a is entity:
-        mine, other, title = link.table.c.a_id, link.table.c.b_id, rel.label
-        default, other_type = entity_plural(rel.b), schema.theme.type_id_of(rel.b)
-    elif rel.b is entity:
-        mine, other, title = link.table.c.b_id, link.table.c.a_id, rel.reverse_label
-        default, other_type = entity_plural(rel.a), schema.theme.type_id_of(rel.a)
-    else:
-        return None
+        return [_related(conn, schema, link, entity_id, "a")]
+    if rel.b is entity:
+        return [_related(conn, schema, link, entity_id, "b")]
+    return []
+
+
+def _related(
+    conn: Connection, schema: ThemeSchema, link: Any, entity_id: int, side: str | None
+) -> DetailSection:
+    rel = link.relationship
+    t = link.table
+    if side == "a":
+        title, default = rel.label, entity_plural(rel.b)
+        other_type = schema.theme.type_id_of(rel.b)
+        others: Any = select(t.c.b_id.label("other")).where(t.c.a_id == entity_id)
+    elif side == "b":
+        title, default = rel.reverse_label, entity_plural(rel.a)
+        other_type = schema.theme.type_id_of(rel.a)
+        others = select(t.c.a_id.label("other")).where(t.c.b_id == entity_id)
+    else:  # symmetric: either way
+        title, default = rel.label, entity_plural(rel.a)
+        other_type = schema.theme.type_id_of(rel.a)
+        others = union(
+            select(t.c.b_id.label("other")).where(t.c.a_id == entity_id),
+            select(t.c.a_id.label("other")).where(t.c.b_id == entity_id),
+        )
     order: list[Any] = [Entity.title, Entity.id]
-    if rel.ordered and rel.b is entity:  # a paper's authors, in their order (#317)
-        order.insert(0, func.coalesce(link.table.c.position, LAST_POSITION))
-    rows = conn.execute(
-        select(Entity.id, Entity.type, Entity.title)
-        .join(link.table, other == Entity.id)
-        .where(mine == entity_id)
-        .order_by(*order)
-        .limit(MAX_ROWS)
-    ).all()
+    query = select(Entity.id, Entity.type, Entity.title).where(Entity.id.in_(others))
+    if rel.ordered and side == "b":  # a paper's authors, in their order (#317)
+        query = query.join(t, (t.c.a_id == Entity.id) & (t.c.b_id == entity_id))
+        order.insert(0, func.coalesce(t.c.position, LAST_POSITION))
+    rows = conn.execute(query.order_by(*order).limit(MAX_ROWS)).all()
     return DetailSection(
         "related",
         title or default,
         entities=tuple(EntityRow(*r) for r in rows),
-        relationship=name,
+        relationship=rel.name,
         other_type=other_type,
+        side=side,
     )
 
 

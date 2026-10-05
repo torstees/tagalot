@@ -99,6 +99,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 
 - **Containment** makes a hierarchy: `containment = [contains(Artist, Album), contains(Album, Song)]`. An item can be in several containers. Searches can list what matching containers hold, and tags on a container can count for its contents ("inherit tags").
 - **Relationships** link two types without nesting: `relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]`. `label` titles the section on the first type's page (an actor's Filmography), and `reverse_label` the one on the second's (a movie's Cast). People can also add and remove related items by hand on those pages; your `ingest` won't undo what they did.
+- **A type with itself** (`api_version = 4`): `related("cites", Paper, Paper, label="Cites", reverse_label="Cited by")` shows both directions on a page, separately; `related("related", Paper, Paper, label="Related", symmetric=True)` has no direction.
 - **Ordered relationships** (`api_version = 4`) keep each second-type item's first-type items in order, as a paper's authors: `related("authors", Author, Paper, ordered=True)`, then `ctx.relate("authors", author, paper, position=n)` with `n` counting from 0. `ctx.related("authors", paper)` gives them in order, and the paper's page lists them so. Once someone reorders them by hand (Move up / Move down), your positions are ignored for that paper, and new authors go last.
 
 ## The theme class
@@ -221,7 +222,7 @@ def play_album(self, albums, ctx):
     ctx.open(path)
 ```
 
-It runs in the writer, in one transaction: what it changes is one Edit → Undo step, and an exception undoes it all. Besides everything `ctx` above can do, an action's `ActionContext` can list files (`ctx.resources(item, role)`), write only to its own temporary folder (`ctx.temp_path(name)`), and, after it finishes, `ctx.open(path)`, `ctx.reveal(path)`, or say something in the status bar with `ctx.message(text)`.
+It runs in the writer, in one transaction: what it changes is one Edit → Undo step, and an exception undoes it all. Besides everything `ctx` above can do, an action's `ActionContext` can list files (`ctx.resources(item, role)`), write only to its own temporary folder (`ctx.temp_path(name)`), and, after it finishes, `ctx.open(path)`, `ctx.reveal(path)`, or say something in the status bar with `ctx.message(text)`. With `api_version = 4` it can also `ctx.copy_text(text)` (the clipboard), `ctx.open_url(url)` (a web address, in the browser), and `ctx.save_text(name, text)` (the user picks where to save it).
 
 ## The dashboard
 

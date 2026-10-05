@@ -282,18 +282,25 @@ class TagActions(QObject):
         )
 
     def add_related(
-        self, entity_id: int, name: str, other_id: int | None, new_title: str | None
+        self,
+        entity_id: int,
+        name: str,
+        other_id: int | None,
+        new_title: str | None,
+        side: str | None = None,
     ) -> None:
         """Add an item (or a new one) to a related section by hand; one undo step."""
         self._run(
-            lambda: self.session.add_related(entity_id, name, other_id, new_title),
+            lambda: self.session.add_related(entity_id, name, other_id, new_title, side),
             lambda label: f"{label}.",
         )
 
-    def remove_related(self, entity_id: int, name: str, other_ids: list[int]) -> None:
+    def remove_related(
+        self, entity_id: int, name: str, other_ids: list[int], side: str = ""
+    ) -> None:
         """Remove items from a related section by hand; one undo step."""
         self._run(
-            lambda: self.session.remove_related(entity_id, name, other_ids),
+            lambda: self.session.remove_related(entity_id, name, other_ids, side or None),
             lambda label: f"{label}. Edit \u2192 Undo brings it back.",
         )
 

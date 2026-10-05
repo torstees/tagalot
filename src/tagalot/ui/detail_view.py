@@ -75,6 +75,15 @@ CRUMB = "\u203a"
 """Between breadcrumbs."""
 
 
+def related_key(session: KeepSession, name: str, side: str) -> str:
+    """Which of a page's related searches a section is: by relationship, and for a
+    relationship of a type with itself, by side too (Cites, and Cited by as ``cites:b``)."""
+    link = session.schema.relationships.get(name)
+    if link is not None and link.relationship.a is link.relationship.b and side == "b":
+        return f"{name}:b"
+    return name
+
+
 class DetailPage(QWidget):
     """The detail page of one entity. Emits :attr:`open_entity` with an entity id when a
     related entity's link is clicked."""
@@ -90,9 +99,9 @@ class DetailPage(QWidget):
     """Write to file… on this item (#299)."""
     unlink_requested = Signal(int, int, str)
     """Remove a link made by hand: (entity id, resource id, role)."""
-    relate_requested = Signal(int, str)
+    relate_requested = Signal(int, str, str)
     """Add to a related section by hand (#260): (entity id, relationship name)."""
-    unrelate_requested = Signal(int, str, list)
+    unrelate_requested = Signal(int, str, list, str)
     move_requested = Signal(int, str, list, int)
     """Reorder an ordered related list (#317): (this item's id, relationship, the items
     moved, -1 up or 1 down)."""
@@ -310,11 +319,16 @@ class DetailPage(QWidget):
         name = section.relationship
         if self._make_contents is None or name is None or section.other_type is None:
             return False
-        if name not in self.related:
+        side = section.side or ""
+        key = related_key(self.session, name, side)
+        if key not in self.related:
             ordered = self._orders(name)
             sort = (SortKey(POSITION),) if ordered else (SortKey("title"),)
             spec = SearchSpec(
-                types=(section.other_type,), related=(name, self.requested_id), sort=sort
+                types=(section.other_type,),
+                related=(name, self.requested_id),
+                related_side=section.side,
+                sort=sort,
             )
             page = self._make_contents(f"related:{section.other_type}", spec, section.title)
             page.selection_changed.connect(self.selection_changed)
@@ -323,11 +337,11 @@ class DetailPage(QWidget):
             add.setFlat(True)
             add.setCursor(Qt.CursorShape.PointingHandCursor)
             add.setToolTip(f"Add to {section.title.lower()} by hand; scans won't remove it")
-            add.clicked.connect(lambda: self.relate_requested.emit(self.entity_id, name))
+            add.clicked.connect(lambda: self.relate_requested.emit(self.entity_id, name, side))
             page.header_row.insertWidget(1, add)
             page.add_menu_action(
                 f"Remove from {section.title.lower()}",
-                lambda ids: self.unrelate_requested.emit(self.entity_id, name, ids),
+                lambda ids: self.unrelate_requested.emit(self.entity_id, name, ids, side),
             )
             if ordered:  # a paper's authors: their order can change (#317)
                 page.add_menu_action(
@@ -337,7 +351,7 @@ class DetailPage(QWidget):
                     "Move down",
                     lambda ids: self.move_requested.emit(self.entity_id, name, ids, 1),
                 )
-            self.related[name] = page
+            self.related[key] = page
             self._embed(page, section.title)
         return True
 
@@ -722,7 +736,7 @@ class DetailPage(QWidget):
         label.setObjectName(f"related_{name}")
         label.setWordWrap(True)
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.linkActivated.connect(lambda href: self._related_link(name, href))
+        label.linkActivated.connect(lambda href: self._related_link(name, href, section.side or ""))
         label.linkHovered.connect(
             lambda href: label.setToolTip(
                 f"Remove from {section.title.lower()} (Edit \u2192 Undo brings it back)"
@@ -738,7 +752,9 @@ class DetailPage(QWidget):
         add.setFlat(True)
         add.setCursor(Qt.CursorShape.PointingHandCursor)
         add.setToolTip(f"Add to {section.title.lower()} by hand; scans won't remove it")
-        add.clicked.connect(lambda: self.relate_requested.emit(self.entity_id, name))
+        add.clicked.connect(
+            lambda: self.relate_requested.emit(self.entity_id, name, section.side or "")
+        )
         body = QWidget()
         row = QHBoxLayout(body)
         row.setContentsMargins(12, 0, 0, 0)
@@ -746,10 +762,10 @@ class DetailPage(QWidget):
         row.addWidget(add, 0, Qt.AlignmentFlag.AlignTop)
         return body
 
-    def _related_link(self, name: str | None, href: str) -> None:
+    def _related_link(self, name: str | None, href: str, side: str = "") -> None:
         if href.startswith("x:"):
             if name:
-                self.unrelate_requested.emit(self.entity_id, name, int(href[2:]))
+                self.unrelate_requested.emit(self.entity_id, name, [int(href[2:])], side)
         else:
             self.open_entity.emit(int(href))
 

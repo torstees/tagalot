@@ -222,10 +222,16 @@ class _Filter:
             a, b = self.fields.get(f"@{name}.a"), self.fields.get(f"@{name}.b")
             if a is None or b is None:
                 raise SearchError(f"No relationship {name!r} for this search.")
-            # From either side: the b items of an a, and the a items of a b.
-            where.append(
-                Entity.id.in_(union(select(b).where(a == other), select(a).where(b == other)))
-            )
+            # From either side: the b items of an a, and the a items of a b; or one side
+            # (a relationship of a type with itself: cites, cited by).
+            if spec.related_side == "a":
+                where.append(Entity.id.in_(select(b).where(a == other)))
+            elif spec.related_side == "b":
+                where.append(Entity.id.in_(select(a).where(b == other)))
+            else:
+                where.append(
+                    Entity.id.in_(union(select(b).where(a == other), select(a).where(b == other)))
+                )
         where.append(self._not_excluded(Entity.id))
         if spec.triage is not None:
             where.append(triage_condition(spec.triage, spec.inherit_tags, self.tree))

@@ -8,7 +8,7 @@ Nothing here ever deletes a resource or entity (AGENTS.md rule 7).
 import logging
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import ModuleType
 
@@ -89,6 +89,25 @@ def local_path(root_path: str, relpath: str, pathmod: ModuleType = os.path) -> s
     ``posixpath``).
     """
     return str(pathmod.join(root_path, *relpath.split("/")))
+
+
+def place_in_roots(path: str, roots: Mapping[str, str | None]) -> tuple[str, str] | None:
+    """Which watched root ``path`` (this computer's path) is inside, and its relative POSIX
+    path there; ``None`` if it is in none of ``roots`` (root id -> this computer's path).
+    Case is ignored where the file system ignores it (``os.path.normcase``)."""
+    target = os.path.normcase(os.path.abspath(path))
+    for root_id, root_path in roots.items():
+        if not root_path:
+            continue
+        base = os.path.normcase(os.path.abspath(root_path))
+        try:
+            inside = os.path.commonpath([base, target]) == base
+        except ValueError:  # different drives
+            continue
+        if inside and target != base:
+            relative = os.path.relpath(os.path.abspath(path), os.path.abspath(root_path))
+            return root_id, relative.replace(os.sep, "/")
+    return None
 
 
 def sync_roots(conn: Connection, roots: list[RootConfig]) -> None:

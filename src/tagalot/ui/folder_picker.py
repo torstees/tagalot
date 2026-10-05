@@ -21,6 +21,17 @@ def start_folder(settings: Settings | None) -> str:
     return str(Path.home())
 
 
+def choose_save_file(
+    parent: QWidget | None, title: str, name: str, settings: Settings | None
+) -> str:
+    """Ask where to save a file named ``name`` at first, starting in the last folder chosen
+    (not remembered: saving an export isn't choosing a folder to work in). Returns the
+    path, or ``""`` if cancelled."""
+    start = str(Path(start_folder(settings)) / name)
+    path, _ = QFileDialog.getSaveFileName(parent, title, start)
+    return path
+
+
 def choose_folder(
     parent: QWidget | None,
     title: str,

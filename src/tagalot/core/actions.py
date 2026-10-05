@@ -9,6 +9,7 @@ saved.
 """
 
 import logging
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,9 @@ from tagalot.themes.api import ActionSpec, EntityRef, ResourceInfo, Theme
 
 logger = logging.getLogger(__name__)
 
-OutputKind = Literal["open", "reveal", "message"]
+OutputKind = Literal["open", "reveal", "message", "copy", "url", "save"]
+Output = tuple[OutputKind, str] | tuple[OutputKind, str, str]
+"""``(kind, value)``, or ``("save", suggested name, text)``."""
 
 
 @dataclass(frozen=True)
@@ -48,8 +51,10 @@ class ActionChange:
 @dataclass
 class ActionResult:
     change: ActionChange
-    outputs: list[tuple[OutputKind, str]] = field(default_factory=list)
-    """What to do now, in order: ``("open", path)``, ``("reveal", path)``, ``("message", text)``."""
+    outputs: list[Output] = field(default_factory=list)
+    """What to do now, in order: ``("open", path)``, ``("reveal", path)``,
+    ``("message", text)``, ``("copy", text)``, ``("url", address)``, and
+    ``("save", suggested name, text)``."""
 
     @property
     def changed(self) -> bool:
@@ -62,7 +67,7 @@ class ActionResult:
     @property
     def text(self) -> str:
         """For the status bar: the action's last message, else that it was done."""
-        messages = [value for kind, value in self.outputs if kind == "message"]
+        messages = [output[1] for output in self.outputs if output[0] == "message"]
         return messages[-1] if messages else f"{self.change.label}: done."
 
 
@@ -101,7 +106,7 @@ class ActionSession(IngestSession):
         super().__init__(conn, schema)
         self._root_path = root_path
         self._temp_dir = temp_dir
-        self.outputs: list[tuple[OutputKind, str]] = []
+        self.outputs: list[Output] = []
 
     def contents(self, entity: EntityRef) -> list[EntityRef]:
         children = super().contents(entity)
@@ -160,6 +165,19 @@ class ActionSession(IngestSession):
 
     def message(self, text: str) -> None:
         self.outputs.append(("message", str(text)))
+
+    def copy_text(self, text: str) -> None:
+        self.outputs.append(("copy", str(text)))
+
+    def open_url(self, url: str) -> None:
+        if not re.match(r"^https?://\S+$", str(url).strip(), re.IGNORECASE):
+            raise ActionError(f"Only web addresses (http, https) can be opened: {url!r}")
+        self.outputs.append(("url", str(url).strip()))
+
+    def save_text(self, name: str, text: str) -> None:
+        if not name or "/" in name or "\\" in name:
+            raise ActionError(f"A file name, without folders, is needed: {name!r}")
+        self.outputs.append(("save", str(name), str(text)))
 
 
 def run_action(
