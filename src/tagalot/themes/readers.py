@@ -292,14 +292,16 @@ def split_people(value: Any) -> list[str]:
     return [" ".join(p.split()) for p in parts]
 
 
-def split_keywords(value: Any) -> list[str]:
-    """Keywords in one value: a list, or text split on commas and semicolons (else on
-    spaces, as Obsidian's ``tags: fantasy reading``); a leading ``#`` is dropped, and a
+def split_keywords(value: Any, spaces: bool = True) -> list[str]:
+    """Keywords in one value: a list, or text split on commas and semicolons (else, with
+    ``spaces``, on spaces, as Obsidian's ``tags: fantasy reading``; without, a phrase such
+    as a PDF's ``Language models`` is one keyword); a leading ``#`` is dropped, and a
     nested tag keeps its path (``Genre/Fantasy``)."""
     if isinstance(value, list | tuple):
-        words = [w for v in value for w in split_keywords(v)]
+        words = [w for v in value for w in split_keywords(v, spaces)]
     elif isinstance(value, str):
-        pieces = re.split(r"[,;]", value) if re.search(r"[,;]", value) else value.split()
+        listed = re.search(r"[,;]", value) or not spaces
+        pieces = re.split(r"[,;]", value) if listed else value.split()
         words = [" ".join(p.strip().lstrip("#").split()) for p in pieces]
     elif isinstance(value, int | float) and not isinstance(value, bool):
         words = [str(value)]
@@ -346,10 +348,82 @@ def read_pdf_info(path: str) -> dict[str, Any]:
         "title": text("Title"),
         "authors": split_people(text("Author")),
         "subject": text("Subject"),
-        "keywords": split_keywords(text("Keywords")),
+        "keywords": split_keywords(text("Keywords"), spaces=False),
         "year": _pdf_date(text("CreationDate")),
         "pages": pages,
     }
+
+
+MAX_PDF_TEXT = 20_000
+"""How much of a PDF's text :func:`pdf_text` returns."""
+
+
+def pdf_text(path: str, pages: int = 1, limit: int = MAX_PDF_TEXT) -> str:
+    """The text of a PDF's first ``pages`` pages (PDFium's reading of it; a scanned PDF
+    without a text layer has none), at most ``limit`` characters. Raises ``ValueError`` as
+    :func:`read_pdf_info`."""
+    import pypdfium2
+
+    found: list[str] = []
+    with PDFIUM:
+        try:
+            pdf = pypdfium2.PdfDocument(path)
+        except pypdfium2.PdfiumError as e:
+            raise ValueError(f"not a PDF PDFium can open: {e}") from e
+        try:
+            for index in range(min(pages, len(pdf))):
+                page = pdf[index]
+                try:
+                    text = page.get_textpage()
+                    try:
+                        found.append(text.get_text_range())
+                    finally:
+                        text.close()
+                finally:
+                    page.close()
+                if sum(len(t) for t in found) >= limit:
+                    break
+        finally:
+            pdf.close()
+    return "\n".join(found).replace("\r\n", "\n")[:limit]
+
+
+_DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.IGNORECASE)
+_ARXIV_DOI = re.compile(r"^10\.48550/arxiv\.(.+)$", re.IGNORECASE)
+_ARXIV = re.compile(
+    r"(?:arxiv\s*:\s*|arxiv\.org/(?:abs|pdf)/)"
+    r"(\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z]{2})?/\d{7})(v\d+)?",
+    re.IGNORECASE,
+)
+_ARXIV_NAME = re.compile(r"^(\d{4}\.\d{4,5})(v\d+)?$")
+_PMID = re.compile(r"\bPMID\s*:?\s*(\d{5,9})\b", re.IGNORECASE)
+
+
+def find_identifiers(text: str) -> dict[str, str | None]:
+    """The first DOI, arXiv ID, and PubMed ID in ``text`` (a paper's first page): ``doi``
+    (lowercase, without ``https://doi.org/``, trailing punctuation dropped), ``arxiv``
+    (``2101.01234`` or ``hep-th/9901001``, without its version), ``arxiv_version``
+    (``"v2"``), and ``pmid``; ``None`` for each one not found. An arXiv DOI
+    (``10.48550/arXiv.2101.01234``) gives the arXiv ID, not a DOI. A bare arXiv file name
+    (``2101.01234v2``) counts too."""
+    found: dict[str, str | None] = {"doi": None, "arxiv": None, "arxiv_version": None}
+    found["pmid"] = None
+    for match in _DOI.finditer(text):
+        doi = match.group(1).rstrip(".,;:)]}'\"").lower()
+        arxiv = _ARXIV_DOI.match(doi)
+        if arxiv:
+            found["arxiv"] = found["arxiv"] or arxiv.group(1)
+            continue
+        found["doi"] = doi
+        break
+    arxiv_id = _ARXIV.search(text) or _ARXIV_NAME.match(text.strip())
+    if arxiv_id:
+        found["arxiv"] = found["arxiv"] or arxiv_id.group(1).lower()
+        found["arxiv_version"] = arxiv_id.group(2)
+    pmid = _PMID.search(text)
+    if pmid:
+        found["pmid"] = pmid.group(1)
+    return found
 
 
 def pdf_cover(path: str, size: int = 512) -> bytes | None:
@@ -546,7 +620,7 @@ def read_office_info(path: str) -> dict[str, Any]:
             title=_text(root.find(f"{_DC}title")),
             authors=split_people(_text(root.find(f"{_DC}creator"))),
             subject=_text(root.find(f"{_DC}subject")),
-            keywords=split_keywords(_text(root.find(f"{_CP}keywords"))),
+            keywords=split_keywords(_text(root.find(f"{_CP}keywords")), spaces=False),
             description=_text(root.find(f"{_DC}description")),
             year=_year(_text(root.find(f"{_DCTERMS}created"))),
             language=_text(root.find(f"{_DC}language")),
@@ -564,7 +638,7 @@ def read_office_info(path: str) -> dict[str, Any]:
             title=_text(office.find(f"{_DC}title")),
             authors=split_people(author),
             subject=_text(office.find(f"{_DC}subject")),
-            keywords=split_keywords(words),
+            keywords=split_keywords(words, spaces=False),
             description=_text(office.find(f"{_DC}description")),
             year=_year(_text(office.find(f"{_ODF_META}creation-date"))),
             language=_text(office.find(f"{_DC}language")),

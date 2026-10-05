@@ -260,6 +260,11 @@ def test_split_keywords(value: object, expected: list[str]) -> None:
     assert split_keywords(value) == expected
 
 
+def test_phrases_stay_whole_without_spaces() -> None:
+    assert split_keywords("Language models", spaces=False) == ["Language models"]
+    assert split_keywords("Deep learning; NLP", spaces=False) == ["Deep learning", "NLP"]
+
+
 # --- Markdown front matter ---
 
 

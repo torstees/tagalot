@@ -9,6 +9,7 @@ Usage (from the repository folder):
     uv run python scripts/make_demo_keep.py --reset --assets  # the 2D assets keep instead
     uv run python scripts/make_demo_keep.py --reset --music   # the music keep instead
     uv run python scripts/make_demo_keep.py --reset --books   # the books keep instead
+    uv run python scripts/make_demo_keep.py --reset --research  # the research keep instead
 
 ``scratch/`` is gitignored. It holds ``Demo.keep`` (the keep) and ``demo-files/`` (the folder
 it watches): a few real images, documents, nested folders, and names with accents and spaces,
@@ -41,6 +42,12 @@ PDF has a cover drawn from its first page, a Markdown story has front matter, so
 no metadata (named from their file names or headings), and one book is a near-duplicate of
 another. Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy"
 match no tag.
+
+``--research`` creates ``scratch/Research.keep`` watching ``scratch/research-files`` with the
+built-in research theme: small PDFs with a text layer holding DOIs and arXiv IDs. One paper
+is two downloads (one paper, two versions), a preprint and its published version are one
+paper, one PDF's title is an editor's leftover ("Microsoft Word - …", ignored), and one has
+no metadata at all (named from its file name).
 """
 
 import argparse
@@ -66,6 +73,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.builtin_themes.books import BooksTheme
 from tagalot.builtin_themes.movies import MoviesTheme
+from tagalot.builtin_themes.research import ResearchTheme
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import DEFAULT_EXCLUDES, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import Entity, EntityTag
@@ -859,6 +867,101 @@ def _office_and_links(files: Path) -> None:
     )
 
 
+RESEARCH_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
+    "Library/Vaswani et al. - 2017 - Attention Is All You Need.pdf": (
+        ["Attention Is All You Need", "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017"],
+        {"Author": "Ashish Vaswani; Noam Shazeer; Niki Parmar; Jakob Uszkoreit"},
+    ),
+    "Downloads/1706.03762v7.pdf": (  # a second download: the same paper
+        ["Attention Is All You Need", "arXiv:1706.03762v7 [cs.CL] 2 Aug 2023"],
+        {},
+    ),
+    "Library/He et al. - 2016 - Deep Residual Learning for Image Recognition.pdf": (
+        ["Deep Residual Learning for Image Recognition", "doi:10.1109/CVPR.2016.90"],
+        {
+            "Title": "Deep Residual Learning for Image Recognition",
+            "Author": "Kaiming He; Xiangyu Zhang; Shaoqing Ren; Jian Sun",
+            "Keywords": "Vision; Deep learning",
+        },
+    ),
+    "Preprints/2203.02155v1.pdf": (  # a preprint...
+        ["Training language models to follow instructions", "arXiv:2203.02155v1 [cs.CL]"],
+        {
+            "Title": "Training language models to follow instructions with human feedback",
+            "Author": "Long Ouyang; Jeff Wu; Xu Jiang",
+            "Keywords": "Language models",
+        },
+    ),
+    "Library/Ouyang et al. - 2022 - Training language models.pdf": (  # ...and its paper
+        [
+            "Training language models to follow instructions",
+            "https://doi.org/10.5555/3600270.3602281",
+            "arXiv:2203.02155",
+        ],
+        {"Title": "Microsoft Word - final_v3.docx"},  # junk: ignored
+    ),
+    "Notes/A Paper Without Metadata.pdf": (["Some notes, no identifiers."], {}),
+}
+"""PDFs for the research demo, with a text layer: (first page's lines, document info)."""
+
+RESEARCH_TAGS = {
+    ("Topic", "Transformers"): ["Attention Is All You Need"],
+    ("Topic", "Vision"): [],  # given by a file's keywords
+    ("Read",): ["Deep Residual Learning for Image Recognition"],
+}
+
+
+def _text_pdf(path: Path, lines: list[str], info: dict[str, str]) -> None:
+    """A one-page PDF with a text layer (as ``tests/core/book_files.text_pdf``)."""
+
+    def literal(text: str) -> str:
+        escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        return f"({escaped})"
+
+    shown = " ".join(f"{literal(line)} Tj T*" for line in lines)
+    stream = f"BT /F1 11 Tf 72 740 Td 14 TL {shown} ET".encode("latin-1")
+    entries = " ".join(f"/{k} {literal(v)}" for k, v in info.items())
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        f"<< {entries} >>".encode("latin-1"),
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R /Info 6 0 R >>\n" % (len(objects) + 1)
+    out += b"startxref\n%d\n%%%%EOF\n" % xref
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(out))
+
+
+def make_research_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+    """Create ``scratch/research-files`` and ``scratch/Research.keep`` (the research theme),
+    scanned and tagged; returns the keep folder."""
+    files, keep_dir = scratch / "research-files", scratch / "Research.keep"
+    if reset:
+        _remove([keep_dir, files])
+    elif keep_dir.exists():
+        raise FileExistsError(f"{keep_dir} already exists; use --reset to recreate it")
+    for relpath, (lines, info) in RESEARCH_PDFS.items():
+        _text_pdf(files / relpath, lines, info)
+    root = RootConfig("papers", "Papers", str(files), list(DEFAULT_EXCLUDES))
+    create_keep(keep_dir, "Research", ThemeRef("research", ResearchTheme.version), [root])
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        _tag(session, RESEARCH_TAGS, {}, {})
+    return keep_dir
+
+
 def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/book-files`` and ``scratch/Books.keep`` (the books theme), scanned
     and tagged; returns the keep folder. The first folder names where a file came from
@@ -987,6 +1090,11 @@ def main(argv: list[str] | None = None) -> int:
         help="create scratch/Movies.keep (the movies theme) instead",
     )
     parser.add_argument(
+        "--research",
+        action="store_true",
+        help="create scratch/Research.keep (the research theme) instead",
+    )
+    parser.add_argument(
         "--books",
         action="store_true",
         help="create scratch/Books.keep (the books theme) instead",
@@ -999,7 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     scratch = SCRATCH  # read here, so tests can point it elsewhere
     try:
-        if args.books:
+        if args.research:
+            keep_dir = make_research_demo(scratch, reset=args.reset)
+        elif args.books:
             keep_dir = make_books_demo(scratch, reset=args.reset)
         elif args.movies:
             keep_dir = make_movies_demo(scratch, reset=args.reset)
@@ -1014,7 +1124,10 @@ def main(argv: list[str] | None = None) -> int:
     except (FileExistsError, DemoInUseError) as e:
         print(e)
         return 1
-    if args.books:
+    if args.research:
+        print(f"Created {keep_dir} watching research-files (scanned and tagged).")
+        print("Open it with:  uv run tagalot scratch/Research.keep")
+    elif args.books:
         print(f"Created {keep_dir} watching book-files (scanned and tagged).")
         print("Open it with:  uv run tagalot scratch/Books.keep")
     elif args.movies:
