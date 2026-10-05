@@ -1063,11 +1063,12 @@ class Theme:
     near-duplicates."""
     thumbnail_max: ClassVar[int] = 256
     thumbnail_default: ClassVar[int] = 128
-    read_last: ClassVar[frozenset[str] | set[str]] = frozenset()
+    read_last: ClassVar[Sequence[str] | frozenset[str] | set[str]] = frozenset()
     """Extensions (lowercase, with the dot) of files that describe other files, such as a
     library's bibliography export (API version 4): a scan reads them after its other
     files, and reads them again in any scan that read other files of their folder, so
-    they meet files added later whichever came first."""
+    they meet files added later whichever came first. A tuple reads its earlier extensions
+    first (bibliographies, then the notes that cite them); a set reads them by path."""
     write_back: ClassVar[Sequence[type[Entity]]] = ()
     """Entity types whose Markdown files **Write to file…** may update (DESIGN.md §4
     *Writing back to files*; API version 3): their tags, and the keys

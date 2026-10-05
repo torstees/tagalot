@@ -374,10 +374,18 @@ def _read_last(
     late_extensions = frozenset(theme.read_last)
     if not late_extensions:
         return pending
+    # A tuple or list reads its earlier extensions first (bibliographies before the notes
+    # that cite them); a set, by path only.
+    ordered = isinstance(theme.read_last, list | tuple)
+    rank = {ext: n for n, ext in enumerate(theme.read_last)} if ordered else {}
+
+    def order(resource: ResourceInfo) -> tuple[int, str]:
+        return rank.get(resource.ext, 0), resource.relpath
+
     first = [r for r in pending if r.ext not in late_extensions]
     late = [r for r in pending if r.ext in late_extensions]
     if not first:
-        return late
+        return sorted(late, key=order)
     seen = {r.id for r in late}
     with reader.connect() as conn:
         rows = conn.execute(
@@ -404,7 +412,7 @@ def _read_last(
         for rid, rel, kind, ext, size, mtime in rows
         if rid not in seen
     ]
-    late.sort(key=lambda r: r.relpath)
+    late.sort(key=order)
     return first + late
 
 
