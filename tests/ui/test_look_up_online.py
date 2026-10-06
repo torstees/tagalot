@@ -11,10 +11,11 @@ from sqlalchemy import select
 
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep, load_keep_config
 from tagalot.core.models import Entity
-from tagalot.core.online import Reply
+from tagalot.core.online import LookupReport, Reply
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.ui.detail_view import DetailPage
+from tagalot.ui.lookups import lookup_summary
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.online import ALLOW, NEVER
@@ -261,3 +262,16 @@ def test_the_menus_offer_look_up_online(
     [action] = [a for a in detail._more_menu.actions() if a.objectName() == "look_up"]
     action.trigger()
     assert requested == [[hit.id]]
+
+
+def test_summaries() -> None:
+    assert lookup_summary(LookupReport(), by_user=True) == (
+        "Nothing to look up online for these items."
+    )
+    assert lookup_summary(LookupReport(), by_user=False) == ""
+    assert lookup_summary(LookupReport(items=2, not_found=1), by_user=False) == (
+        "Looked up 2 items online, 1 not found."
+    )
+    assert lookup_summary(LookupReport(skipped=1), by_user=True) == (
+        "Looked up 0 items online, 1 left for later (a service couldn't be reached)."
+    )

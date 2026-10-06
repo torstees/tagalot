@@ -208,6 +208,9 @@ class OnlineLookups(QObject):
 
 def lookup_summary(report: LookupReport, by_user: bool) -> str:
     """One status-bar line for a finished lookup; empty for a quiet automatic one."""
+    nothing = not (report.items or report.not_found or report.skipped or report.problems)
+    if nothing:
+        return "Nothing to look up online for these items." if by_user else ""
     parts = []
     if report.items or by_user:
         noun = "item" if report.items == 1 else "items"
