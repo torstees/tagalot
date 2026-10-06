@@ -36,15 +36,22 @@ Venue ⊃ Paper        Author ↔ Paper (authors, in order)
   Paper with itself, with a direction) and **Related** (symmetric).
 - **Actions:** **Copy citation** (one plain style), **Export BibTeX…** (the user saves it),
   and **Open DOI page** (doi.org, else arXiv), for the selected papers.
+- **Online details** (with the keep's consent): a paper with a DOI is looked up in
+  Crossref, one with only an arXiv ID in arXiv. What they say ranks between a library
+  export and the PDF: it fills in what the files don't say (an abstract, pages), and
+  corrects what Tagalot guessed from a PDF, but never what a note, sidecar, or export says.
 """
 
 import difflib
+import html
 import json
 import logging
 import posixpath
 import re
+import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from tagalot.themes.api import (
     BIBLIOGRAPHY_EXTENSIONS,
@@ -55,6 +62,8 @@ from tagalot.themes.api import (
     Icon,
     ImageFile,
     IngestContext,
+    OnlineResponse,
+    OnlineSource,
     Record,
     ResourceInfo,
     SearchView,
@@ -82,10 +91,15 @@ logger = logging.getLogger(__name__)
 PAPER_EXTENSIONS = frozenset({".pdf"})
 NOTE_EXTENSIONS = frozenset({".md", ".markdown"})
 
-NOTE, SIDECAR, EXPORT, DOCUMENT, NAMED, BARE = 50, 40, 30, 20, 10, 0
+NOTE, SIDECAR, EXPORT, ONLINE, DOCUMENT, NAMED, BARE = 50, 40, 30, 25, 20, 10, 0
 """How much a source of a paper's details is trusted (the best giving a value wins): a
-literature note, a sidecar bibliography, a library export, a PDF's document info (and
-text), a named file (Zotero's pattern), a bare file name."""
+literature note, a sidecar bibliography, a library export, an online service (Crossref,
+arXiv), a PDF's document info (and text), a named file (Zotero's pattern), a bare file
+name."""
+CROSSREF = OnlineSource("Crossref", "api.crossref.org", "DOIs")
+ARXIV = OnlineSource("arXiv", "export.arxiv.org", "arXiv IDs", interval=3)  # as arXiv asks
+ONLINE_SOURCES = {CROSSREF.host: "online:crossref", ARXIV.host: "online:arxiv"}
+"""Each service's key among a paper's ``origins`` (files are keyed by resource id)."""
 MERGED = (
     "title", "authors", "year", "kind", "venue", "volume", "issue", "pages", "doi", "arxiv",
     "pmid", "citekey", "abstract", "url",
@@ -167,7 +181,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
-    id, name, version, api_version = "research", "Research", 1, 4
+    id, name, version, api_version = "research", "Research", 1, 5
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
     # citation key comes from a bibliography).
@@ -180,6 +194,7 @@ class ResearchTheme(Theme):
         related("related", Paper, Paper, label="Related", symmetric=True),
     ]
     near_duplicate_threshold = 0.9
+    online_sources = [CROSSREF, ARXIV]
     dashboard = [
         top_values("Papers by year", Paper, "year"),
         top_values("Top venues", Paper, "venue"),
@@ -273,6 +288,39 @@ class ResearchTheme(Theme):
         if a.fields.get("doi") and b.fields.get("doi"):
             return 0.0
         return difflib.SequenceMatcher(None, normalize(a.title), normalize(b.title)).ratio()
+
+    # --- online details ---
+
+    def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
+        """A paper with a DOI: Crossref; with only an arXiv ID: arXiv (a preprint's
+        published version is the better record, and arXiv asks for few requests)."""
+        if entity_type is not Paper:
+            return ()
+        doi, arxiv = item.fields.get("doi"), item.fields.get("arxiv")
+        if doi:
+            return [f"https://{CROSSREF.host}/works/{quote(doi, safe='')}"]
+        if arxiv:
+            return [f"https://{ARXIV.host}/api/query?id_list={quote(arxiv, safe='/.')}"]
+        return ()
+
+    def online_details(
+        self, entity: EntityRef, responses: Mapping[str, OnlineResponse], ctx: IngestContext
+    ) -> None:
+        """What each service says becomes one of the paper's sources (ranked ``ONLINE``);
+        one that doesn't know the paper says nothing (any earlier answer is let go)."""
+        for url, answer in responses.items():
+            host = url.split("/")[2]
+            values = None
+            if answer.ok:
+                try:
+                    if host == CROSSREF.host:
+                        values = crossref_values(answer.json())
+                    else:
+                        values = arxiv_values(answer.text)
+                except (ValueError, KeyError, TypeError, ET.ParseError) as e:
+                    ctx.warn(None, f"couldn't read {url}: {e}")
+                    continue
+            apply_source(entity, ONLINE_SOURCES[host], values, ctx)
 
     # --- reading files (scan worker) ---
 
@@ -666,18 +714,23 @@ def bibtex_entry(record: Record, authors: Sequence[str], keys: set[str]) -> str:
 
 
 def apply_source(
-    paper: EntityRef, source: int, values: Mapping[str, Any] | None, ctx: IngestContext
+    paper: EntityRef, source: int | str, values: Mapping[str, Any] | None, ctx: IngestContext
 ) -> None:
-    """Record what file ``source`` says about the paper (``{field: (rank, value)}``;
-    ``None``: nothing any more), and set the paper's details from its sources: each field
-    the best-ranked source's (sources no longer linked to it are dropped)."""
+    """Record what ``source`` says about the paper (``{field: (rank, value)}``; ``None``:
+    nothing any more), and set the paper's details from its sources: each field the
+    best-ranked source's. A source is a file (its resource id; files no longer linked to
+    the paper are dropped) or an online service (:data:`ONLINE_SOURCES`)."""
     record = ctx.get(paper)
     try:
         origins: dict[str, dict[str, list[Any]]] = json.loads(record.fields.get("origins") or "{}")
     except ValueError:
         origins = {}
     linked = {str(r) for r in ctx.linked(paper)}
-    origins = {k: v for k, v in origins.items() if k in linked and k != str(source)}
+    origins = {
+        k: v
+        for k, v in origins.items()
+        if (k in linked or k.startswith("online:")) and k != str(source)
+    }
     if values is not None:
         said = {
             name: [rank, value]
@@ -704,6 +757,89 @@ def apply_source(
     )
     set_authors(paper, authors, ctx)
     set_venue(paper, best.get("venue"), before, ctx)
+
+
+# --- what online services say ---
+
+CROSSREF_KINDS = {
+    "journal-article": "article",
+    "proceedings-article": "conference paper",
+    "book-chapter": "chapter",
+    "book": "book",
+    "monograph": "book",
+    "edited-book": "book",
+    "dissertation": "thesis",
+    "report": "report",
+    "posted-content": "preprint",
+}
+"""Crossref's work types as a paper's kind."""
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def crossref_values(found: Mapping[str, Any]) -> dict[str, Any]:
+    """A Crossref work (``/works/{doi}``) as a source of a paper's details."""
+    work = found["message"]
+    authors = []
+    for person in work.get("author") or []:
+        name = " ".join(p for p in (person.get("given"), person.get("family")) if p)
+        if name or person.get("name"):
+            authors.append(name or person["name"])
+    year = None
+    for key in ("issued", "published-print", "published-online", "published"):
+        parts = (work.get(key) or {}).get("date-parts") or [[None]]
+        if parts[0] and parts[0][0]:
+            year = int(parts[0][0])
+            break
+    values = {
+        "title": first_text(work.get("title")),
+        "authors": authors,
+        "year": year,
+        "kind": CROSSREF_KINDS.get(work.get("type") or ""),
+        "venue": first_text(work.get("container-title")),
+        "volume": work.get("volume"),
+        "issue": work.get("issue"),
+        "pages": work.get("page"),
+        "abstract": jats_text(work.get("abstract")),
+    }
+    return {name: (ONLINE, value) for name, value in values.items()}
+
+
+def arxiv_values(feed: str) -> dict[str, Any] | None:
+    """arXiv's answer (an Atom feed) as a source of a paper's details; ``None`` when it
+    doesn't know the paper (no entry, or an error entry)."""
+    entry = ET.fromstring(feed).find(f"{ATOM}entry")
+    if entry is None or "/api/errors" in (entry.findtext(f"{ATOM}id") or ""):
+        return None
+    published = entry.findtext(f"{ATOM}published") or ""
+    authors = [one_line(a.findtext(f"{ATOM}name")) for a in entry.findall(f"{ATOM}author")]
+    values = {
+        "title": one_line(entry.findtext(f"{ATOM}title")),
+        "authors": [a for a in authors if a],
+        "year": int(published[:4]) if published[:4].isdigit() else None,
+        "kind": "preprint",
+        "abstract": one_line(entry.findtext(f"{ATOM}summary")),
+    }
+    return {name: (ONLINE, value) for name, value in values.items()}
+
+
+def first_text(values: Any) -> str | None:
+    """The first of Crossref's list of texts (titles come as lists)."""
+    if isinstance(values, list) and values and isinstance(values[0], str):
+        return one_line(values[0])
+    return None
+
+
+def one_line(text: str | None) -> str:
+    """``text`` with its runs of whitespace (line breaks included) as single spaces."""
+    return " ".join((text or "").split())
+
+
+def jats_text(abstract: str | None) -> str | None:
+    """A Crossref abstract (JATS XML) as plain text, without its "Abstract" heading."""
+    if not abstract:
+        return None
+    text = re.sub(r"<jats:title>.*?</jats:title>", " ", abstract, flags=re.DOTALL)
+    return one_line(html.unescape(re.sub(r"<[^>]+>", " ", text))) or None
 
 
 class PaperIndex:
