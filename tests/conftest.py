@@ -1,6 +1,7 @@
 """Shared pytest configuration."""
 
 import os
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -20,3 +21,14 @@ def private_user_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     monkeypatch.setattr(settings, "default_settings_path", lambda: user / "settings.toml")
     monkeypatch.setattr(loader, "default_user_themes_dir", lambda: user / "themes")
     return user
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Online lookups (#339) never go online in tests: they answer from a table."""
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a test tried to go online")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", refuse)

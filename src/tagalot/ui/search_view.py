@@ -61,6 +61,7 @@ from tagalot.ui.file_actions import (
 )
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
+from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import ResultColumn, ResultsModel
 from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
@@ -150,6 +151,8 @@ class SearchPage(QWidget):
     add_to_requested = Signal(str, list)
     """Add to project… (#329): (the container type, the items to put in one)."""
     write_back_requested = Signal(list)
+    look_up_requested = Signal(list)
+    """Look up online (#340): the selected items' ids."""
     """Write to file… on these items (#299)."""
     action_requested = Signal(str, list)
     """Run a theme action: (method name, entity ids)."""
@@ -496,6 +499,12 @@ class SearchPage(QWidget):
             write.setToolTip(WRITE_BACK_TIP)
             write.triggered.connect(
                 lambda: self._on_selection_or(hit, self.write_back_requested.emit)
+            )
+        if self.session.theme.online_sources:
+            look_up = menu.addAction("Look up online")
+            look_up.setToolTip(LOOK_UP_TIP)
+            look_up.triggered.connect(
+                lambda: self._on_selection_or(hit, self.look_up_requested.emit)
             )
         theme_actions = actions_for(self.session.schema, hit.type)
         if theme_actions:

@@ -2,9 +2,13 @@
 hosts, rate-limited fetching that backs off, answers kept in the keep, the theme applying
 them with provenance ``fetched``, and nothing at all without the keep's consent."""
 
+import io
+import urllib.error
+import urllib.request
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dc_field
+from http.client import HTTPMessage
 from pathlib import Path
 
 import pytest
@@ -22,6 +26,7 @@ from tagalot.core.online import (
     OnlineError,
     Reply,
     UnavailableError,
+    _SameHostRedirects,
     consent_text,
     look_up,
     source_for,
@@ -370,3 +375,24 @@ def test_consent_is_saved_in_keep_toml(tmp_path: Path) -> None:
     keep.toml_path.write_text(text.replace("'never'", "'sometimes'"), encoding="utf-8")
     with pytest.raises(KeepConfigError, match='lookups must be "allow" or "never"'):
         load_keep_config(keep.toml_path)
+
+
+def test_redirects_are_followed_only_on_the_same_host() -> None:
+    """Open Library sends /isbn/… to /books/…; a redirect anywhere else is refused, so
+    nothing goes to a host the theme didn't declare."""
+    redirects = _SameHostRedirects()
+    request = urllib.request.Request("https://openlibrary.org/isbn/1.json")
+    followed = redirects.redirect_request(
+        request, io.BytesIO(), 302, "Found", HTTPMessage(), "https://openlibrary.org/books/1"
+    )
+    assert followed is not None
+    assert followed.full_url == "https://openlibrary.org/books/1"
+    for elsewhere in [
+        "https://evil.example/x",
+        "http://openlibrary.org/x",
+        "https://openlibrary.org:8443/x",
+    ]:
+        with pytest.raises(urllib.error.HTTPError):
+            redirects.redirect_request(
+                request, io.BytesIO(), 302, "Found", HTTPMessage(), elsewhere
+            )

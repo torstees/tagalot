@@ -40,7 +40,16 @@ from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
-from tagalot.core.online import Fetcher, LookupReport, NotAllowedError, look_up
+from tagalot.core.online import (
+    Fetcher,
+    LookupReport,
+    NotAllowedError,
+    Opener,
+    changed_since,
+    look_up,
+    to_fetch,
+    urlopen_reply,
+)
 from tagalot.core.online import Progress as OnlineProgress
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.relations import add_related, move_related, remove_related
@@ -112,6 +121,11 @@ class KeepSession:
     Read at open; the window updates it when it recounts keywords."""
     """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    online_opener: Opener = field(default=urlopen_reply, init=False, repr=False)
+    """How lookups fetch an address (tests answer from a table instead)."""
+    _closing_lookups: threading.Event = field(
+        default_factory=threading.Event, init=False, repr=False
+    )
 
     @classmethod
     def open(
@@ -257,19 +271,39 @@ class KeepSession:
         worker."""
         if self.keep.config.online_lookups != "allow":
             raise NotAllowedError("Online lookups aren't allowed for this keep.")
+        closing = self._closing_lookups
+
+        def stop() -> bool:
+            return closing.is_set() or stopped()
+
+        theme = self.theme()
+        fetcher = fetcher or Fetcher(theme.online_sources, opener=self.online_opener, stopped=stop)
         report = look_up(
             self.writer,
             self.reader,
             self.schema,
-            self.theme(),
+            theme,
             entity_ids,
             refresh=refresh,
             fetcher=fetcher,
             progress=progress,
-            stopped=stopped,
+            stopped=stop,
         )
         self.problems.add(online_problems(report.problems))
         return report
+
+    def lookup_candidates(self, since: datetime | None) -> list[int]:
+        """Items to look up after a scan that began at ``since`` (those it made or
+        changed), or every item (``None``). Runs in a worker."""
+        if not self.theme.online_sources:
+            return []
+        with self.reader.connect() as conn:
+            return changed_since(conn, since)
+
+    def to_fetch(self, entity_ids: Iterable[int], *, refresh: bool = False) -> int:
+        """How many of these items a lookup would fetch something for. Runs in a worker."""
+        with self.reader.connect() as conn:
+            return to_fetch(conn, self.schema, self.theme(), entity_ids, refresh=refresh)
 
     def run_action(self, method: str, entity_ids: Iterable[int]) -> ActionResult:
         """Run a theme action on these entities in the DB writer; one undo step if it
@@ -545,6 +579,7 @@ class KeepSession:
         with self._closing:
             if self.closed:
                 return
+            self._closing_lookups.set()  # a lookup stops before its next request
             self.thumbnail_queue.close()  # before the database it reads goes
             self.writer.close()
             if self._temp is not None:

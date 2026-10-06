@@ -19,11 +19,13 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.message import Message
-from typing import Protocol
+from http.client import HTTPMessage
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from sqlalchemy import Connection, Engine, select
+from sqlalchemy import Connection, Engine, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot import __version__
@@ -97,15 +99,39 @@ class Opener(Protocol):
     def __call__(self, url: str, headers: Mapping[str, str], timeout: float) -> Reply: ...
 
 
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only to ``https`` on the same host (Open Library sends
+    ``/isbn/…`` to ``/books/…``); one anywhere else is an answer, not a request, so nothing
+    is ever sent to a host the theme didn't declare."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        old, new = urlsplit(req.full_url), urlsplit(newurl)
+        if new.scheme != "https" or new.hostname != old.hostname or new.port not in (None, 443):
+            raise urllib.error.HTTPError(
+                newurl, code, f"redirected off {old.hostname}", headers, fp
+            )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def urlopen_reply(url: str, headers: Mapping[str, str], timeout: float) -> Reply:
-    """The real :data:`Opener`: ``urllib``, with HTTP errors as replies, not exceptions."""
+    """The real :data:`Opener`: ``urllib``, with HTTP errors as replies, not exceptions,
+    following redirects only on the same host."""
     request = urllib.request.Request(url, headers=dict(headers))
+    opener = urllib.request.build_opener(_SameHostRedirects())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # https only: source_for
+        with opener.open(request, timeout=timeout) as response:  # https only: source_for
             return Reply(response.status, response.read(MAX_BODY + 1))
     except urllib.error.HTTPError as e:
         with e:
-            body = e.read(MAX_BODY + 1)
+            body = e.read(MAX_BODY + 1) if e.fp is not None else b""
         return Reply(e.code, body, _retry_after(e.headers))
 
 
@@ -259,6 +285,30 @@ def _fill_cached(conn: Connection, lookups: Sequence[Lookup]) -> None:
         found.update({url: OnlineResponse(url, status, body) for url, status, body in rows})
     for lookup in lookups:
         lookup.cached = {u: found[u] for u in lookup.urls if u in found}
+
+
+def to_fetch(
+    conn: Connection,
+    schema: ThemeSchema,
+    theme: Theme,
+    entity_ids: Iterable[int],
+    *,
+    refresh: bool = False,
+) -> int:
+    """How many of these items would go online (read-only): those with an address that
+    has no kept answer (any address, to ``refresh``). Asking for consent waits on this, so
+    the question only comes when something would be sent."""
+    plan = plan_lookups(conn, schema, theme, entity_ids)
+    return sum(1 for lookup in plan.lookups if lookup.missing(refresh))
+
+
+def changed_since(conn: Connection, since: datetime | None) -> list[int]:
+    """Items made or changed at or after ``since`` (a scan's start), newest first; every
+    item for ``None``."""
+    query = select(Entity.id).order_by(Entity.id.desc())
+    if since is not None:
+        query = query.where(or_(Entity.created_at >= since, Entity.updated_at >= since))
+    return list(conn.scalars(query))
 
 
 # --- applying the answers ---
