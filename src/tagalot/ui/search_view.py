@@ -98,6 +98,11 @@ WRITE_BACK_TIP = (
 )
 
 
+def searches_contents(session: KeepSession) -> bool:
+    """The keep searches inside documents (§8): the filter bar offers Contents."""
+    return session.keep.config.contents_index is not None and session.has_documents
+
+
 def writes_back(session: KeepSession, type_id: str) -> bool:
     """Whether items of ``type_id`` offer Write to file… (the theme's ``write_back``)."""
     theme = session.schema.theme
@@ -250,8 +255,10 @@ class SearchPage(QWidget):
             "show_contained": bool(chosen.get("show_contained", spec.show_contained)),
             "inherit_tags": bool(chosen.get("inherit_tags", spec.inherit_tags)),
             "aggregate_up": bool(chosen.get("aggregate_up", spec.aggregate_up)),
+            "contents": bool(chosen.get("contents", spec.contents)),
         }
         self.filter_bar.set_toggles(**self._toggles)
+        self.filter_bar.set_contents_available(searches_contents(session))
         self.filter_bar.changed.connect(self._filters_changed)
 
         self.table = make_result_table()
@@ -352,6 +359,7 @@ class SearchPage(QWidget):
             inherit_tags=f.inherit_tags,
             show_contained=f.show_contained,
             aggregate_up=f.aggregate_up,
+            contents=f.contents,
         )
         return SavedDefinition(
             base=replace(self._base, sort=self._sort),
@@ -369,6 +377,7 @@ class SearchPage(QWidget):
             show_contained=f.show_contained,
             inherit_tags=f.inherit_tags,
             aggregate_up=f.aggregate_up,
+            contents=f.contents,
         )
         if f.within is not None:
             bar.set_within(f.within, saved.within_title, saved.within_type)
@@ -414,6 +423,7 @@ class SearchPage(QWidget):
             within=within,
             inherit_tags=filters.inherit_tags,
             aggregate_up=filters.aggregate_up,
+            contents=filters.contents and searches_contents(self.session),
             fields=base.fields + fields,
             # In the tree, containers expand to show what they hold instead.
             show_contained=filters.show_contained and not self._tree_layout(),
@@ -439,7 +449,9 @@ class SearchPage(QWidget):
         def job() -> ChoiceCounts:
             fields = search_fields(session.schema, spec.types)
             with session.reader.connect() as conn:
-                return choice_counts(conn, spec, session.tag_cache.get(), name, fields)
+                contents = session.contents_scope(conn, spec)
+                tree = session.tag_cache.get()
+                return choice_counts(conn, spec, tree, name, fields, contents=contents)
 
         def failed(error: BaseException) -> None:
             logger.warning("Couldn't list the values of %s: %s", name, error)
@@ -903,6 +915,7 @@ class SearchPage(QWidget):
             "show_contained": filters.show_contained,
             "inherit_tags": filters.inherit_tags,
             "aggregate_up": filters.aggregate_up,
+            "contents": filters.contents,
         }
         if toggles != self._toggles:
             self._toggles = toggles

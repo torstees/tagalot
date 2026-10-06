@@ -88,7 +88,7 @@ from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.result_table import DEFAULT_HIDDEN
-from tagalot.ui.search_view import SearchPage
+from tagalot.ui.search_view import SearchPage, searches_contents
 from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
@@ -1860,8 +1860,13 @@ class MainWindow(QMainWindow):
         session = self.session
         if session is None:
             return
+        available = searches_contents(session)
+        for page in self.search_pages():
+            page.filter_bar.set_contents_available(available)
         if session.keep.config.contents_index is None:
             self.contents_status.setVisible(False)
+            for page in self.search_pages():
+                page.refresh()
             return
         self.contents_status.setText("Building the contents index\u2026")
         self.contents_status.setToolTip(
@@ -1875,6 +1880,8 @@ class MainWindow(QMainWindow):
             self.contents_status.setVisible(False)
             if self.keep_config is not None:
                 self.keep_config.show_contents_stats()
+            for page in self.search_pages():
+                page.refresh()  # searches use the new index
             self.read_contents()
 
         def failed(error: BaseException) -> None:
@@ -1918,6 +1925,10 @@ class MainWindow(QMainWindow):
         self._check_problems()
         if self.keep_config is not None:
             self.keep_config.show_contents_stats()
+        if result.read:  # searches inside documents may find more now
+            for page in self.search_pages():
+                if page.current_spec().contents:
+                    page.refresh()
         logger.info("Read %d documents' text (%d pages)", result.read, result.pages)
 
     # --- online lookups (#340; ui.lookups) ---

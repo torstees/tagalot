@@ -113,9 +113,10 @@ INDEXES: dict[str, tuple[str, str]] = {
 """Each index type: its FTS5 table and tokenizer."""
 
 
-def index_table(name: str) -> Table:
+def index_table(name: str, schema: str | None = None) -> Table:
     """A query handle for an index's FTS5 table (``rowid`` is ``contents_page.id``; the
-    column named like the table takes FTS5's commands)."""
+    column named like the table takes FTS5's commands), in ``schema`` (``ATTACHED``, from
+    the keep's connection) or ``fulltext.db`` itself."""
     table_name = INDEXES[name][0]
     return Table(
         table_name,
@@ -123,7 +124,31 @@ def index_table(name: str) -> Table:
         Column("rowid", Integer, primary_key=True),
         Column("text", Text),
         Column(table_name, Text),
+        schema=schema,
     )
+
+
+ATTACHED = "contents"
+"""The schema name ``fulltext.db`` is attached as on the keep's read connections, so a
+search can match documents' text and items in one query."""
+attached_page = contents_page.to_metadata(MetaData(), schema=ATTACHED)
+"""``contents_page`` as the keep's read connections see it."""
+attached_meta = contents_meta.to_metadata(MetaData(), schema=ATTACHED)
+
+
+def attach_on_connect(engine: Any, path: Path) -> None:
+    """Attach ``fulltext.db`` (when there is one) to each new connection of ``engine``,
+    the keep's read-only engine, as :data:`ATTACHED`."""
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _attach(dbapi_connection: Any, _record: Any) -> None:
+        if path.exists():  # ATTACH would make the file
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(f"ATTACH DATABASE ? AS {ATTACHED}", (str(path),))
+            finally:
+                cursor.close()
 
 
 class ContentsStore:

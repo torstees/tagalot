@@ -78,7 +78,12 @@ def test_contained_lists_what_the_matches_hold_and_is_remembered(
     assert "forest.png" in _titles(artists)
     state = load_ui_state(session.keep.ui_state_path)
     assert state["toggles"] == {
-        "view:Artists": {"show_contained": True, "inherit_tags": False, "aggregate_up": False}
+        "view:Artists": {
+            "show_contained": True,
+            "inherit_tags": False,
+            "aggregate_up": False,
+            "contents": False,
+        }
     }
 
     again = MainWindow(session, scans=ScanController(QThreadPool()))

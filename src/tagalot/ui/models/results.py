@@ -335,8 +335,11 @@ class ResultsModel(QAbstractTableModel):
         def fetch(conn: Connection, *, count: bool, offset: int) -> tuple[int, list[Row]]:
             tree: TagTree = session.tag_cache.get()
             fields: dict[str, ColumnElement[Any]] = search_fields(session.schema, spec.types)
-            total = count_matches(conn, spec, tree, fields) if count else -1
-            hits = run_search(conn, spec, tree, offset=offset, limit=limit, fields=fields)
+            contents = session.contents_scope(conn, spec)
+            total = count_matches(conn, spec, tree, fields, contents) if count else -1
+            hits = run_search(
+                conn, spec, tree, offset=offset, limit=limit, fields=fields, contents=contents
+            )
             values = row_values(conn, session.schema, tree, hits, columns)
             return total, [(h, values.get(h.id, {})) for h in hits]
 
@@ -467,7 +470,13 @@ class ResultsModel(QAbstractTableModel):
             fields = search_fields(session.schema, spec.types)
             with session.reader.connect() as conn:
                 hits = run_search(
-                    conn, spec, tree, offset=first, limit=last - first + 1, fields=fields
+                    conn,
+                    spec,
+                    tree,
+                    offset=first,
+                    limit=last - first + 1,
+                    fields=fields,
+                    contents=session.contents_scope(conn, spec),
                 )
             return [h.id for h in hits]
 
