@@ -71,7 +71,7 @@ src/tagalot/
   __main__.py            # entry point
   selfcheck.py           # `tagalot --check`: what a build can do
   theme_tools.py         # `--new-theme` and `--check-theme` for theme authors
-  resources/             # the icon: tagalot.svg and its PNGs (scripts/make_icons.py)
+  resources/             # icon and artwork SVGs, the icon's PNGs (scripts/make_icons.py)
   core/                  # no Qt imports allowed here
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)

@@ -1,15 +1,21 @@
-"""Render Tagalot's icon (src/tagalot/resources/tagalot.svg) to the files that use it (#269).
+"""Render Tagalot's artwork (the SVGs in src/tagalot/resources) to the files that use
+it (#269, #327).
 
     uv run python scripts/make_icons.py
 
-writes, from the SVG:
+writes, from ``tagalot-shield-hash.svg`` (the app icon: it reads at 16 px):
 
 - ``src/tagalot/resources/tagalot-<size>.png``: the window and taskbar icon (``ui.app``);
 - ``packaging/tagalot.ico``: the Windows .exe and installer;
 - ``packaging/tagalot.icns``: the macOS .app;
-- ``packaging/tagalot.png``: the Linux AppImage (256 px).
+- ``packaging/tagalot.png``: the Linux AppImage (256 px);
+- ``docs/images/favicon.ico`` and ``favicon.png``: the docs site's tab icon;
 
-Run it after changing the SVG, and commit the results: builds use them as they are.
+and copies the larger pictures to ``docs/images`` as SVGs with 256 px PNGs, for the docs
+site and the README: the tower (``logo``), the knight with his visor up (``knight``, the
+mascot), and the flag (``flag``).
+
+Run it after changing an SVG, and commit the results: builds use them as they are.
 """
 
 import io
@@ -26,8 +32,18 @@ from tagalot.resources import ICON_SIZES
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / "src" / "tagalot" / "resources"
 PACKAGING = ROOT / "packaging"
-SVG = RESOURCES / "tagalot.svg"
+DOCS_IMAGES = ROOT / "docs" / "images"
+SVG = RESOURCES / "tagalot-shield-hash.svg"
+"""The app icon."""
 ICNS_SIZE = 1024
+FAVICON_SIZES = (16, 32, 48)
+PICTURES = {
+    "logo": "tagalot-tower.svg",
+    "knight": "tagalot-knight-visor-up.svg",
+    "flag": "tagalot-flag.svg",
+}
+"""The docs site's and README's pictures: name in ``docs/images`` -> source SVG."""
+PICTURE_SIZE = 256
 
 
 def render(renderer: QSvgRenderer, size: int) -> Image.Image:
@@ -60,6 +76,22 @@ def main() -> int:
     big.save(PACKAGING / "tagalot.ico", sizes=[(s, s) for s in ICON_SIZES], append_images=smaller)
     render(renderer, ICNS_SIZE).save(PACKAGING / "tagalot.icns")
     print(f"Wrote {len(ICON_SIZES)} PNGs, tagalot.png, tagalot.ico, and tagalot.icns")
+    DOCS_IMAGES.mkdir(parents=True, exist_ok=True)
+    favicons = [render(renderer, s) for s in FAVICON_SIZES]
+    favicons[-1].save(
+        DOCS_IMAGES / "favicon.ico",
+        sizes=[(s, s) for s in FAVICON_SIZES],
+        append_images=favicons[:-1],
+    )
+    favicons[1].save(DOCS_IMAGES / "favicon.png", optimize=True)
+    for name, source in PICTURES.items():
+        picture = QSvgRenderer(str(RESOURCES / source))
+        if not picture.isValid():
+            print(f"Can't read {source}")
+            return 1
+        render(picture, PICTURE_SIZE).save(DOCS_IMAGES / f"{name}.png", optimize=True)
+        (DOCS_IMAGES / f"{name}.svg").write_bytes((RESOURCES / source).read_bytes())
+    print(f"Wrote the favicon and {', '.join(PICTURES)} to docs/images")
     return 0
 
 
