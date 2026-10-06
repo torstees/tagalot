@@ -15,6 +15,7 @@ Tagalot is a Python desktop app: a tag-based file browser organized into **keeps
 3. Implement with tests. Run the full check suite (below) before finishing.
 4. Close completed issues from the commit or PR (`Closes #<n>`). File newly discovered work as a new issue and add it as a sub-issue of the right milestone. Close a milestone issue when all its sub-issues are closed.
 5. If you deviate from the design or make a decision it doesn't cover, update `docs/DESIGN.md` (the relevant section and the Decisions log) in the same change. Don't let code and design drift apart.
+   When a change alters what people see or do, update the user docs (the docsify site in `docs/`: `getting-started/`, `guide/`, `themes/`, `reference/`) in the same change too, and run `just screenshots` if the window looks different.
 6. Keep changes focused: one milestone item (or a coherent part of one) per change.
 7. Land every change through a branch and pull request, never a direct commit to `main` (see Pull requests below).
 
@@ -40,7 +41,7 @@ uv run mypy src                  # type-check
 uv run tagalot --check           # what this install can do (themes, readers)
 ```
 
-The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, `just demo` resets and opens the demo keep, and `just package` builds the app with PyInstaller (`packaging/tagalot.spec`) and checks it, and `just installer` then makes this OS's installer (`packaging/installer.sh`). just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
+The `justfile` wraps these for people who use [just](https://just.systems) (`uv tool install rust-just`): `just` lists the recipes, `just check` runs every check below (plus `mypy tests`), `just fix` lints and formats, `just test-fast` skips GUI tests and benchmarks, `just demo` resets and opens the demo keep, and `just package` builds the app with PyInstaller (`packaging/tagalot.spec`) and checks it, and `just installer` then makes this OS's installer (`packaging/installer.sh`). `just docs` serves the documentation site at http://localhost:3000, and `just screenshots` retakes its screenshots from the demo keeps. just is optional; every recipe is a plain `uv run` command. Keep the justfile in step when commands change.
 
 GUI tests use pytest-qt and must run headless: `QT_QPA_PLATFORM=offscreen` is set in the pytest config. All four checks (pytest, ruff check, ruff format --check, mypy) must pass before a task is done.
 
@@ -118,13 +119,17 @@ src/tagalot/
     opening.py           # opening a keep in the background, with prompts
 scripts/
   make_demo_keep.py      # scratch/Demo.keep for manual testing
-  make_icons.py          # render the icon SVG to PNGs, .ico, .icns (just icons)
+  make_icons.py          # render the icon SVG to PNGs, .ico, .icns, and the docs pictures (just icons)
+  make_screenshots.py    # the docs site's screenshots, from the demo keeps (just screenshots)
   profile_scan.py        # time scanning and thumbnails on a real folder or share (just profile)
 tests/
   fixtures/              # tiny sample files (images, zips, audio)
   core/, themes/, ui/
-docs/DESIGN.md
-docs/THEMES.md           # the guide for theme authors
+docs/                    # the documentation site (docsify: index.html, _sidebar.md; just docs)
+  DESIGN.md
+  THEMES.md              # the guide for theme authors
+  getting-started/, guide/, themes/, reference/   # the user docs
+  images/                # pictures (just icons) and screenshots (just screenshots)
 ```
 
 ## Architecture rules (do not break these)

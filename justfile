@@ -90,6 +90,14 @@ installer: package
 icons:
     uv run python scripts/make_icons.py
 
+# Serve the documentation site (docs/, docsify) at http://localhost:3000
+docs:
+    uv run python -m http.server 3000 --directory docs
+
+# Retake the documentation site's screenshots (docs/images/screens) from the demo keeps
+screenshots:
+    uv run python scripts/make_screenshots.py
+
 # Time scanning and thumbnailing a folder or share: just profile PATH [--theme generic] [--cprofile]
 profile path *args:
     uv run python scripts/profile_scan.py "{{path}}" {{args}}

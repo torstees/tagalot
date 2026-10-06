@@ -88,7 +88,7 @@ from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.result_table import DEFAULT_HIDDEN
-from tagalot.ui.search_view import SearchPage, searches_contents
+from tagalot.ui.search_view import SearchPage
 from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
 from tagalot.ui.tag_manager import TagManagerPage
@@ -1860,9 +1860,8 @@ class MainWindow(QMainWindow):
         session = self.session
         if session is None:
             return
-        available = searches_contents(session)
         for page in self.search_pages():
-            page.filter_bar.set_contents_available(available)
+            page.filter_bar.set_contents_available(page.offers_contents())
         if session.keep.config.contents_index is None:
             self.contents_status.setVisible(False)
             for page in self.search_pages():
