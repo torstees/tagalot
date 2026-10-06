@@ -52,3 +52,47 @@ def test_nothing_is_read_while_off(qtbot: QtBot, session: KeepSession) -> None:
         window.scan_now()
     qtbot.wait(300)
     assert not (session.keep.dir / "fulltext.db").exists()
+
+
+def test_keep_configuration_turns_contents_search_on_and_off(
+    qtbot: QtBot, session: KeepSession, tmp_path: Path
+) -> None:
+    window = MainWindow(session, scans=ScanController(QThreadPool()))
+    qtbot.addWidget(window)
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+    dialog = window.configure_keep()
+    assert not dialog.contents.isHidden()  # the theme has document types
+    assert dialog.contents_index.currentText() == "Off"
+    qtbot.waitUntil(lambda: dialog.contents_stats.text() == "Nothing read yet", timeout=5000)
+
+    with qtbot.waitSignal(window._contents_done, timeout=10_000):
+        dialog.contents_index.setCurrentIndex(dialog.contents_index.findText("Words"))
+        dialog.contents_index.activated.emit(dialog.contents_index.currentIndex())
+    assert session.keep.config.contents_index == "words"
+    qtbot.waitUntil(
+        lambda: dialog.contents_stats.text().startswith("Text of 1 document (2 pages, "),
+        timeout=5000,
+    )
+
+    dialog.contents_index.setCurrentIndex(dialog.contents_index.findText("Off"))
+    dialog.contents_index.activated.emit(dialog.contents_index.currentIndex())
+    qtbot.waitUntil(lambda: session.keep.config.contents_index is None, timeout=5000)
+    qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
+    assert dialog.clear_contents.isEnabled()  # Off kept the text
+
+    asked: list[bool] = []
+    dialog.confirm_clear_contents = lambda: not asked.append(True)  # type: ignore[method-assign, func-returns-value]
+    dialog.clear_contents.click()
+    qtbot.waitUntil(lambda: dialog.contents_stats.text() == "Nothing read yet", timeout=5000)
+    assert asked == [True]
+    qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
+
+
+def test_describing_what_is_stored() -> None:
+    from tagalot.core.contents import ContentsStats
+    from tagalot.ui.keep_config import describe_contents
+
+    assert describe_contents(None) == "Nothing read yet"
+    stats = ContentsStats(files=3, pages=40, failed=1, index="words", size=2_500_000)
+    assert describe_contents(stats) == "Text of 2 documents (40 pages, 2.4 MB); 1 couldn't be read"

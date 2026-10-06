@@ -29,10 +29,16 @@ from tagalot.core.contents import (
     FULLTEXT_DB,
     ContentsQueue,
     ContentsResult,
+    ContentsStats,
     ContentsStore,
+    build_index,
+    clear_contents,
+    contents_stats,
+    drop_indexes,
     files_to_read,
     forget_deleted,
     full_text_types,
+    ready_index,
 )
 from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
@@ -355,10 +361,48 @@ class KeepSession:
 
     def set_contents_index(self, index: str | None) -> None:
         """Search inside documents with a Words or Substrings index, or not (``None``).
-        Turning it off stops reading. Runs in a worker."""
+        Turning it off stops reading and drops the index (the text stays). Turning it on
+        or switching only saves the choice: :meth:`ensure_contents_index` builds the index.
+        Runs in a worker."""
         self.save_config(with_contents_index(self.keep.config, index))
-        if index is None and self._contents_queue is not None:
-            self._contents_queue.stop()
+        if index is None:
+            if self._contents_queue is not None:
+                self._contents_queue.stop()
+            if self._contents is not None or (self.keep.dir / FULLTEXT_DB).exists():
+                self.contents.writer.run(drop_indexes)
+
+    @property
+    def has_documents(self) -> bool:
+        """The theme has document types (``full_text``): contents search applies."""
+        return bool(full_text_types(self.schema))
+
+    def ensure_contents_index(self) -> bool:
+        """Build the index the keep asks for, from the stored text, if it isn't the one
+        built (turned on, switched, or ``keep.toml`` edited); returns whether it built one.
+        Searches use the old index until the new one is ready. Runs in a worker."""
+        wanted = self.keep.config.contents_index
+        if wanted is None or not self.has_documents:
+            return False
+        store = self.contents
+        with store.reader.connect() as conn:
+            if ready_index(conn) == wanted:
+                return False
+        store.writer.run(lambda conn: build_index(conn, wanted))
+        return True
+
+    def clear_contents(self) -> None:
+        """**Clear contents text…**: turn contents search off and delete every document's
+        text and the index. Runs in a worker."""
+        self.set_contents_index(None)
+        self.contents.writer.run(clear_contents)
+
+    def contents_stats(self) -> ContentsStats | None:
+        """What ``fulltext.db`` holds (``None``: there is none). Runs in a worker."""
+        if self._contents is None and not (self.keep.dir / FULLTEXT_DB).exists():
+            return None
+        store = self.contents
+        with store.reader.connect() as conn:
+            return contents_stats(conn, store.path)
 
     def lookup_candidates(self, since: datetime | None) -> list[int]:
         """Items to look up after a scan that began at ``since`` (those it made or

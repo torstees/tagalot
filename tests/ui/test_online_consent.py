@@ -52,7 +52,8 @@ def test_keep_configuration_turns_lookups_on_and_off(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     dialog = window.configure_keep()
-    assert not dialog.online.isVisibleTo(dialog)  # the music theme looks nothing up
+    assert dialog.online.isHidden()  # the music theme looks nothing up
+    assert dialog.contents.isHidden()  # nor has it documents
     assert not dialog.online_lookups.isChecked()  # not asked yet
     dialog.online_lookups.setChecked(True)
     qtbot.waitUntil(lambda: session.keep.config.online_lookups == "allow", timeout=5000)

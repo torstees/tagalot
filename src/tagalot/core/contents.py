@@ -13,6 +13,13 @@ the one-writer rule is per database.
   it changes. Nothing is read while the keep's contents search is Off.
 - A file whose resource is deleted loses its text (:func:`forget_deleted`); one that is
   missing or offline keeps it (AGENTS.md rule 7).
+- **The index** (#349): an FTS5 table over ``contents_page`` (external content, so the
+  text is stored once), ``contents_words`` (``unicode61``, diacritics removed) or
+  ``contents_substrings`` (``trigram``). :func:`build_index` builds one from the stored text
+  (FTS5's ``rebuild``: no file is read again) and drops the other, in one write: searches
+  use the old index until it commits. ``contents_meta`` names the index that is ready.
+  Whatever changes ``contents_page`` keeps every index there is in step, in the same
+  transaction (an external-content index has no triggers).
 """
 
 import logging
@@ -22,17 +29,21 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import (
     Column,
     Connection,
+    Index,
     Integer,
     MetaData,
+    String,
     Table,
     Text,
     delete,
     func,
     insert,
+    literal,
     select,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -55,7 +66,7 @@ from tagalot.themes.api import ResourceInfo, Theme, read_document_text
 logger = logging.getLogger(__name__)
 
 FULLTEXT_DB = "fulltext.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """``PRAGMA user_version`` of ``fulltext.db``; a file with another version is rebuilt (it
 holds nothing that can't be read again)."""
 THREADS = 2
@@ -79,11 +90,40 @@ read again), how many pages it gave, and why it couldn't be read, if it couldn't
 contents_page = Table(
     "contents_page",
     metadata,
-    Column("resource_id", Integer, primary_key=True),
-    Column("page", Integer, primary_key=True),
+    Column("id", Integer, primary_key=True),
+    Column("resource_id", Integer, nullable=False),
+    Column("page", Integer, nullable=False),
     Column("text", Text, nullable=False),
+    Index(None, "resource_id", "page", unique=True),
 )
-"""A file's text, a row per page (counting from 1): a PDF's page, an EPUB's chapter."""
+"""A file's text, a row per page (counting from 1): a PDF's page, an EPUB's chapter.
+``id`` is the index's rowid (an explicit key, so a ``VACUUM`` never renumbers it)."""
+contents_meta = Table(
+    "contents_meta",
+    metadata,
+    Column("key", String, primary_key=True),
+    Column("value", Text),
+)
+"""Settings of the store: ``index``, the name of the index that is built (§8)."""
+
+INDEXES: dict[str, tuple[str, str]] = {
+    "words": ("contents_words", "unicode61 remove_diacritics 2"),
+    "substrings": ("contents_substrings", "trigram remove_diacritics 1"),
+}
+"""Each index type: its FTS5 table and tokenizer."""
+
+
+def index_table(name: str) -> Table:
+    """A query handle for an index's FTS5 table (``rowid`` is ``contents_page.id``; the
+    column named like the table takes FTS5's commands)."""
+    table_name = INDEXES[name][0]
+    return Table(
+        table_name,
+        MetaData(),
+        Column("rowid", Integer, primary_key=True),
+        Column("text", Text),
+        Column(table_name, Text),
+    )
 
 
 class ContentsStore:
@@ -182,6 +222,7 @@ def forget_deleted(keep: Connection, store_writer: DbWriter) -> int:
         gone = sorted(stored - existing)
         for start in range(0, len(gone), 500):
             batch = gone[start : start + 500]
+            _unindex(conn, contents_page.c.resource_id.in_(batch))
             conn.execute(delete(contents_page).where(contents_page.c.resource_id.in_(batch)))
             conn.execute(delete(contents_file).where(contents_file.c.resource_id.in_(batch)))
         return len(gone)
@@ -202,6 +243,7 @@ def save_texts(conn: Connection, texts: Iterable[FileText]) -> None:
     """Replace these files' text (in the contents writer)."""
     for found in texts:
         rid = found.file.resource_id
+        _unindex(conn, contents_page.c.resource_id == rid)
         conn.execute(delete(contents_page).where(contents_page.c.resource_id == rid))
         rows = [
             {"resource_id": rid, "page": n, "text": text}
@@ -209,6 +251,7 @@ def save_texts(conn: Connection, texts: Iterable[FileText]) -> None:
         ]
         if rows:
             conn.execute(insert(contents_page), rows)
+            _index(conn, contents_page.c.resource_id == rid)
         upsert = sqlite_insert(contents_file).values(
             resource_id=rid,
             size=found.file.size,
@@ -229,6 +272,104 @@ def save_texts(conn: Connection, texts: Iterable[FileText]) -> None:
                 },
             )
         )
+
+
+# --- the index ---
+
+
+def built_indexes(conn: Connection) -> list[str]:
+    """The index types whose FTS5 tables exist (normally none or one)."""
+    names: set[str] = set(
+        conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table'").scalars()
+    )
+    return [name for name, (table, _) in INDEXES.items() if table in names]
+
+
+def ready_index(conn: Connection) -> str | None:
+    """The index type searches use: the one built last (``None``: none)."""
+    found = conn.scalar(select(contents_meta.c.value).where(contents_meta.c.key == "index"))
+    return found if found in INDEXES else None
+
+
+def _set_ready(conn: Connection, name: str | None) -> None:
+    upsert = sqlite_insert(contents_meta).values(key="index", value=name)
+    conn.execute(upsert.on_conflict_do_update(index_elements=["key"], set_={"value": name}))
+
+
+def _index(conn: Connection, which: Any) -> None:
+    """Add the pages ``which`` selects to every index there is."""
+    for name in built_indexes(conn):
+        table = index_table(name)
+        pages = select(contents_page.c.id, contents_page.c.text).where(which)
+        conn.execute(insert(table).from_select(["rowid", "text"], pages))
+
+
+def _unindex(conn: Connection, which: Any) -> None:
+    """Take the pages ``which`` selects out of every index there is (before they go: an
+    external-content index needs the text it is removing)."""
+    for name in built_indexes(conn):
+        table = index_table(name)
+        command = table.c[table.name]
+        pages = select(literal("delete"), contents_page.c.id, contents_page.c.text).where(which)
+        conn.execute(insert(table).from_select([command.name, "rowid", "text"], pages))
+
+
+def build_index(conn: Connection, name: str) -> int:
+    """Build the ``name`` index from the stored text (no file is read) and drop the other
+    one; returns how many pages it holds. In one transaction: searches use the old index
+    until it commits."""
+    table_name, tokenizer = INDEXES[name]
+    conn.exec_driver_sql(
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING fts5(text, "
+        f"content='contents_page', content_rowid='id', tokenize='{tokenizer}')"
+    )
+    table = index_table(name)
+    conn.execute(insert(table).values({table.name: "rebuild"}))
+    for other in built_indexes(conn):
+        if other != name:
+            conn.exec_driver_sql(f"DROP TABLE {INDEXES[other][0]}")
+    _set_ready(conn, name)
+    return int(conn.scalar(select(func.count()).select_from(contents_page)) or 0)
+
+
+def drop_indexes(conn: Connection) -> None:
+    """Contents search is Off: drop the index, keep the text (turning it on is quick)."""
+    for name in built_indexes(conn):
+        conn.exec_driver_sql(f"DROP TABLE {INDEXES[name][0]}")
+    _set_ready(conn, None)
+
+
+def clear_contents(conn: Connection) -> None:
+    """Delete every document's text and the index (**Clear contents text…**)."""
+    drop_indexes(conn)
+    conn.execute(delete(contents_page))
+    conn.execute(delete(contents_file))
+
+
+@dataclass(frozen=True)
+class ContentsStats:
+    """What ``fulltext.db`` holds, for Keep configuration."""
+
+    files: int
+    pages: int
+    failed: int
+    index: str | None
+    size: int
+    """Bytes on disk (the database and its write-ahead log)."""
+
+
+def contents_stats(conn: Connection, path: Path) -> ContentsStats:
+    files = int(conn.scalar(select(func.count()).select_from(contents_file)) or 0)
+    failed = int(
+        conn.scalar(
+            select(func.count())
+            .select_from(contents_file)
+            .where(contents_file.c.error.is_not(None))
+        )
+        or 0
+    )
+    size = sum(p.stat().st_size for p in (path, path.with_name(path.name + "-wal")) if p.exists())
+    return ContentsStats(files, page_count(conn), failed, ready_index(conn), size)
 
 
 def read_file(theme: Theme, file: DocumentFile, path: str) -> FileText:
