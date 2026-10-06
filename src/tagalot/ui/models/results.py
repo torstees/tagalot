@@ -114,6 +114,7 @@ def match_value(snippet: Snippet) -> MatchValue:
     plain = snippet.text.replace(MATCH_START, "").replace(MATCH_END, "")
     html_text = html.escape(snippet.text).replace(MATCH_START, "<b>").replace(MATCH_END, "</b>")
     at = snippet.text.find(MATCH_START)
+    at = snippet.text.rfind(" ", 0, at) + 1 if at > 0 else at  # the start of its word
     brief = plain
     if at > 0:
         brief = "\u2026" + snippet.text[at:].replace(MATCH_START, "").replace(MATCH_END, "")

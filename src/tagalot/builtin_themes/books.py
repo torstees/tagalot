@@ -31,6 +31,9 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 - **Online details** (with the keep's consent): a book with an ISBN is looked up in Open
   Library, which fills in its year, publisher, language, and description where its files
   say nothing; what a file says always wins.
+- **Searching inside books:** a book is a document (``full_text``): when the keep searches
+  inside documents, the text of its EPUBs, PDFs, Markdown, and office files is read after
+  scans, and **In documents** finds books by what they say.
 """
 
 import difflib
@@ -142,6 +145,7 @@ class Book(Entity):
         role("cover", kinds={"image"}, thumbnail=True),
     ]
     card_lines = ("authors", "series")
+    full_text = True  # its files' text can be searched (DESIGN.md §8); comics' can't
 
 
 class Comic(Entity):
@@ -207,7 +211,7 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 1
-    api_version = 5  # online details (3: ctx.resource_at, write_back)
+    api_version = 6  # full_text (5: online details; 3: ctx.resource_at, write_back)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS

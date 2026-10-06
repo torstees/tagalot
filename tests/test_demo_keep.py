@@ -204,6 +204,9 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
     }
     assert funny == {"books.book": 3}
     assert fantasy == {"books.book": 7}  # from EPUBs, a PDF, Markdown, and a Word document
+    # It opens ready to search inside documents: the text is read and indexed.
+    assert _inside(keep_dir, "luggage") == ["The Colour of Magic"]  # an EPUB's chapter
+    assert _inside(keep_dir, "explode") == ["Notes on Dragons"]  # an ODT's text
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_books_demo(tmp_path)
 
@@ -224,6 +227,7 @@ def test_creates_a_research_keep(tmp_path: Path) -> None:
         "research.venue": 3,
     }
     assert vision == {"research.paper": 1}
+    assert _inside(keep_dir, "recurrence") == ["Attention Is All You Need"]  # the PDF's text
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_research_demo(tmp_path)
 
@@ -242,3 +246,17 @@ def test_creates_a_music_keep(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_music_demo(tmp_path)
     assert script.make_music_demo(tmp_path, reset=True) == keep_dir
+
+
+def _inside(keep_dir: Path, text: str) -> list[str]:
+    """Titles of the items whose documents contain ``text`` (In documents)."""
+    with KeepSession.open(keep_dir, Settings()) as session:
+        stats = session.contents_stats()
+        assert stats is not None
+        assert stats.failed == 0  # every demo document has text to read
+        spec = SearchSpec(text=text, contents=True)
+        with session.reader.connect() as conn:
+            scope = session.contents_scope(conn, spec)
+            assert scope is not None
+            hits = run_search(conn, spec, session.tag_cache.get(), contents=scope)
+    return [h.title for h in hits]

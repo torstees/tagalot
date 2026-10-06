@@ -60,6 +60,7 @@ import re
 import shutil
 import struct
 import sys
+import threading
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -657,6 +658,11 @@ def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
 BOOK_EPUBS: dict[str, dict[str, Any]] = {
     "Kobo/The Colour of Magic.epub": {
         "title": "The Colour of Magic",
+        "chapters": [  # demo text, to find with In documents
+            "A tourist arrives in a city of thieves with a chest of gold and no sense.",
+            "A failed wizard is hired as his guide, and the Luggage follows on its legs.",
+            "On the edge of the world, the turtle swims on through the dark.",
+        ],
         "isbn": "0-552-12475-3",  # Corgi, 1990 (Open Library knows it)
         "creators": [("Terry Pratchett", "aut")],
         "series": ("Discworld", 1),
@@ -679,6 +685,10 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
     },
     "Kobo/The Final Empire.epub": {
         "title": "The Final Empire",
+        "chapters": [
+            "Ash falls on the city every day, and the skaa work under the mists.",
+            "A street thief learns that she can burn metals, and the mists are hers.",
+        ],
         "isbn": "978-0-7653-1178-8",  # Tor, 2006, with a description
         "creators": [("Brandon Sanderson", "aut")],
         "epub3_series": ("Mistborn", 1),
@@ -787,7 +797,11 @@ def _epub(path: Path, details: dict[str, Any]) -> None:
     for n, name in enumerate(details.get("sets", [])):
         lines.append(f'<meta property="belongs-to-collection" id="c{n}">{escape(name)}</meta>')
         lines.append(f'<meta refines="#c{n}" property="collection-type">set</meta>')
-    items = '<item id="text" href="text.xhtml" media-type="application/xhtml+xml"/>'
+    chapters = details.get("chapters") or ["Once upon a time."]
+    items = "".join(
+        f'<item id="ch{n}" href="ch{n}.xhtml" media-type="application/xhtml+xml"/>'
+        for n in range(len(chapters))
+    )
     if "cover" in details:
         items += (
             '<item id="cover" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>'
@@ -797,7 +811,8 @@ def _epub(path: Path, details: dict[str, Any]) -> None:
         '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"'
         ' xmlns:opf="http://www.idpf.org/2007/opf">'
         f"{''.join(lines)}</metadata><manifest>{items}</manifest>"
-        '<spine><itemref idref="text"/></spine></package>'
+        f"<spine>{''.join(f'<itemref idref="ch{n}"/>' for n in range(len(chapters)))}</spine>"
+        "</package>"
     )
     container = (
         '<?xml version="1.0"?><container version="1.0"'
@@ -810,7 +825,10 @@ def _epub(path: Path, details: dict[str, Any]) -> None:
         book.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         book.writestr("META-INF/container.xml", container)
         book.writestr("OEBPS/content.opf", opf)
-        book.writestr("OEBPS/text.xhtml", "<html><body><p>Once upon a time.</p></body></html>")
+        for n, chapter in enumerate(chapters):
+            book.writestr(
+                f"OEBPS/ch{n}.xhtml", f"<html><body><p>{escape(chapter)}</p></body></html>"
+            )
         if "cover" in details:
             color, text = details["cover"]
             book.writestr("OEBPS/cover.jpg", _cover(color, text))
@@ -843,7 +861,12 @@ def _office_and_links(files: Path) -> None:
     (files / "Loose").mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(files / "Loose/hedge-knight.docx", "w") as doc:
         doc.writestr("[Content_Types].xml", "<Types/>")
-        doc.writestr("word/document.xml", "<document/>")
+        doc.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>A hedge knight rides to a tourney with an old horse and a "
+            "squire who asks too many questions.</w:t></w:r></w:p></w:body></w:document>",
+        )
         doc.writestr("docProps/core.xml", core)
         doc.writestr("docProps/thumbnail.jpeg", _cover((90, 70, 30), "The Hedge Knight"))
     meta = (
@@ -858,6 +881,14 @@ def _office_and_links(files: Path) -> None:
     with zipfile.ZipFile(files / "Loose/dragons.odt", "w") as doc:
         doc.writestr("mimetype", "application/vnd.oasis.opendocument.text")
         doc.writestr("meta.xml", meta)
+        doc.writestr(
+            "content.xml",
+            '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:'
+            'office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+            "<office:body><office:text><text:h>Notes on Dragons</text:h><text:p>Swamp dragons "
+            "are small, smelly, and apt to explode when excited.</text:p></office:text>"
+            "</office:body></office:document-content>",
+        )
         doc.writestr("Thumbnails/thumbnail.png", _cover((40, 120, 40), "Notes on Dragons"))
     with zipfile.ZipFile(files / "Loose/My Novel Draft.pages", "w") as doc:
         doc.writestr("Index/Document.iwa", b"\x00")
@@ -877,7 +908,11 @@ def _office_and_links(files: Path) -> None:
 
 RESEARCH_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
     "Library/Vaswani et al. - 2017 - Attention Is All You Need.pdf": (
-        ["Attention Is All You Need", "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017"],
+        [
+            "Attention Is All You Need",
+            "arXiv:1706.03762v5 [cs.CL] 6 Dec 2017",
+            "The Transformer drops recurrence and convolutions entirely.",
+        ],
         {"Author": "Ashish Vaswani; Noam Shazeer; Niki Parmar; Jakob Uszkoreit"},
     ),
     "Downloads/1706.03762v7.pdf": (  # a second download: the same paper
@@ -885,7 +920,11 @@ RESEARCH_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
         {},
     ),
     "Library/He et al. - 2016 - Deep Residual Learning for Image Recognition.pdf": (
-        ["Deep Residual Learning for Image Recognition", "doi:10.1109/CVPR.2016.90"],
+        [
+            "Deep Residual Learning for Image Recognition",
+            "doi:10.1109/CVPR.2016.90",
+            "Shortcut connections let networks of 152 layers train well.",
+        ],
         {
             "Title": "Deep Residual Learning for Image Recognition",
             "Author": "Kaiming He; Xiangyu Zhang; Shaoqing Ren; Jian Sun",
@@ -1029,11 +1068,27 @@ def make_research_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         (files / relpath).parent.mkdir(parents=True, exist_ok=True)
         (files / relpath).write_text(text, encoding="utf-8")
     root = RootConfig("papers", "Papers", str(files), list(DEFAULT_EXCLUDES))
-    create_keep(keep_dir, "Research", ThemeRef("research", ResearchTheme.version), [root])
+    create_keep(
+        keep_dir,
+        "Research",
+        ThemeRef("research", ResearchTheme.version),
+        [root],
+        contents_index="words",  # searching inside documents (§8)
+    )
     with KeepSession.open(keep_dir, Settings()) as session:
         session.scan_all()
         _tag(session, RESEARCH_TAGS, {}, {})
+        _read_contents(session)
     return keep_dir
+
+
+def _read_contents(session: KeepSession) -> None:
+    """Build the contents index and read the documents' text now, as the app does after a
+    scan, so the demo opens ready to search inside documents."""
+    session.ensure_contents_index()
+    done = threading.Event()
+    if session.queue_contents(done=lambda _result: done.set()):
+        done.wait(120)
 
 
 def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
@@ -1071,10 +1126,17 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}
     )
-    create_keep(keep_dir, "Books", ThemeRef("books", BooksTheme.version), [root])
+    create_keep(
+        keep_dir,
+        "Books",
+        ThemeRef("books", BooksTheme.version),
+        [root],
+        contents_index="words",  # searching inside documents (§8)
+    )
     with KeepSession.open(keep_dir, Settings()) as session:
         session.scan_all()
         _tag(session, BOOK_TAGS, {}, {})
+        _read_contents(session)
     return keep_dir
 
 

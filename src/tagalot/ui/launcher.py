@@ -41,6 +41,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, save_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
 from tagalot.ui.folder_picker import choose_folder, start_folder
+from tagalot.ui.keep_config import CONTENTS_CHOICES
 from tagalot.ui.opening import open_keep_async
 from tagalot.ui.workers import run_in_pool
 
@@ -220,18 +221,19 @@ class LauncherDialog(QDialog):
             self._create(dialog)
 
     def _create(self, dialog: "NewKeepDialog") -> None:
-        keep_dir, name, theme, root = (
+        keep_dir, name, theme, root, contents = (
             dialog.keep_dir(),
             dialog.name(),
             dialog.theme(),
             dialog.root(),
+            dialog.contents_index(),
         )
         self._set_busy(f"Creating {name}…")
 
         def work() -> Path:
             rid = root_id_for(root)
             new_root = RootConfig(rid, folder_name(root) or rid, root, list(DEFAULT_EXCLUDES))
-            create_keep(keep_dir, name, theme, [new_root])
+            create_keep(keep_dir, name, theme, [new_root], contents_index=contents)
             return keep_dir
 
         def failed(error: BaseException) -> None:
@@ -324,11 +326,28 @@ class NewKeepDialog(QDialog):
                 self.theme_combo.setCurrentIndex(i)
         self.preview = QLabel()
         self.preview.setWordWrap(True)
+        self._documents = {
+            loaded.theme.id
+            for loaded in catalog.themes.values()
+            if any(getattr(e, "full_text", False) for e in loaded.theme.entities)
+        }
+        """Themes with document types: a new keep of theirs can search inside documents."""
+        self.contents_combo = QComboBox()
+        for label, value in CONTENTS_CHOICES:
+            self.contents_combo.addItem(label, value)
+        self.contents_combo.setCurrentIndex(self.contents_combo.findData("words"))
+        self.contents_combo.setToolTip(
+            "Find documents by what they say. Words finds whole words and word starts; "
+            "Substrings also finds text inside words, and takes 3 to 5 times the space. "
+            "You can change it later in Keep configuration."
+        )
 
         form = QFormLayout()
+        self._form = form
         form.addRow("Name", self.name_edit)
         form.addRow("Location", self._with_browse(self.location_edit, "Where to put the keep"))
         form.addRow("Theme", self.theme_combo)
+        form.addRow("Search inside documents", self.contents_combo)
         form.addRow("Folder to watch", self._with_browse(self.root_edit, "Folder to watch"))
         form.addRow("", self.preview)
         self.buttons = QDialogButtonBox(
@@ -343,6 +362,8 @@ class NewKeepDialog(QDialog):
 
         for edit in (self.name_edit, self.location_edit, self.root_edit):
             edit.textChanged.connect(self._validate)
+        self.theme_combo.currentIndexChanged.connect(lambda _: self._show_contents())
+        self._show_contents()
         self._validate()
 
     def name(self) -> str:
@@ -355,6 +376,21 @@ class NewKeepDialog(QDialog):
         ref = self.theme_combo.currentData()
         assert isinstance(ref, ThemeRef)
         return ref
+
+    def has_documents(self) -> bool:
+        """The chosen theme has document types (``full_text``)."""
+        ref = self.theme_combo.currentData()
+        return isinstance(ref, ThemeRef) and ref.id in self._documents
+
+    def contents_index(self) -> str | None:
+        """How the new keep searches inside documents (``None``: it doesn't)."""
+        if not self.has_documents():
+            return None
+        value = self.contents_combo.currentData()
+        return value if isinstance(value, str) else None
+
+    def _show_contents(self) -> None:
+        self._form.setRowVisible(self.contents_combo, self.has_documents())
 
     def root(self) -> str:
         """The folder to watch, exactly as typed (a UNC share keeps its form)."""
