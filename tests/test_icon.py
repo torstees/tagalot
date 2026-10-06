@@ -61,3 +61,19 @@ def test_the_window_icon_has_every_size(qtbot: QtBot) -> None:
 
     sizes = {s.width() for s in app_icon().availableSizes()}
     assert sizes == set(ICON_SIZES)
+
+
+def test_the_docs_pictures() -> None:
+    """The docs site's favicon and pictures (#327), rendered from the resources' SVGs."""
+    images = ROOT / "docs" / "images"
+    with Image.open(images / "favicon.ico") as ico:
+        assert {(16, 16), (32, 32), (48, 48)} <= set(ico.info["sizes"])
+    for name, source in (
+        ("logo", "tagalot-tower.svg"),
+        ("knight", "tagalot-knight-visor-up.svg"),
+        ("flag", "tagalot-flag.svg"),
+    ):
+        with Image.open(images / f"{name}.png") as png:
+            assert png.size == (256, 256)
+        resources = ROOT / "src" / "tagalot" / "resources"
+        assert (images / f"{name}.svg").read_bytes() == (resources / source).read_bytes()

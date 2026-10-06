@@ -81,13 +81,14 @@ All three found the built-in themes, MediaInfo, and the other readers once set u
   - **Linux:** `Tagalot-<version>-Linux-<arch>.AppImage`, made with appimagetool (downloaded at build time).
     - It holds the folder build, `AppRun`, `packaging/tagalot.desktop`, and the icon.
     - It needs a glibc at least as new as the build runner's (Ubuntu's latest LTS).
-- **The icon** (#269): a tag on a folder, drawn as `src/tagalot/resources/tagalot.svg`. `scripts/make_icons.py` (`just icons`) renders it with Qt's SVG renderer to:
+- **The icon** (#269; the owner's artwork since #327): a shield with a `#`, drawn as `src/tagalot/resources/tagalot-shield-hash.svg` (it reads at 16 px). `scripts/make_icons.py` (`just icons`) renders it with Qt's SVG renderer to:
   - `resources/tagalot-<size>.png` (16 to 256 px): the window and taskbar icon, set in `ui/app.py`, with the taskbar grouping set when run from source on Windows (`SetCurrentProcessExplicitAppUserModelID`), and `setDesktopFileName("tagalot")` on Linux;
   - `packaging/tagalot.ico`: the `.exe` and the setup;
   - `packaging/tagalot.icns`: the `.app`;
-  - `packaging/tagalot.png`: the AppImage.
+  - `packaging/tagalot.png`: the AppImage;
+  - `docs/images/favicon.ico` and `favicon.png`: the docs site's tab icon.
 
-  The rendered files are committed, so builds don't need to render them.
+  It also copies the larger pictures to `docs/images`, as SVGs with 256 px PNGs, for the docs site (#324) and README (#325): the tower (`logo`), the knight with his visor up (`knight`, the mascot), and the flag (`flag`). The owner's intended uses, beyond those: the tower in an About dialog and the installer, the knight on a splash screen and empty pages (#359, #360, #361). The resources also keep two spares, the shield with a tag and the knight with his visor down. The rendered files are committed, so builds don't need to render them.
 - **Not yet:** code signing and notarization (#279). Until then Windows SmartScreen and macOS Gatekeeper warn on first run; the README and release notes say how to proceed.
 
 ### Why Python, not Rust

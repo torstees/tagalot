@@ -1,7 +1,11 @@
-"""Files Tagalot ships with: its icon (#269).
+"""Files Tagalot ships with: its icon and artwork (#269, #327).
 
-``tagalot.svg`` is the source; ``scripts/make_icons.py`` renders it to ``tagalot-<size>.png``
-here (the window and taskbar icon) and to the .ico, .icns, and .png in ``packaging/``.
+The SVGs are the sources: ``tagalot-shield-hash.svg`` is the app icon, which
+``scripts/make_icons.py`` renders to ``tagalot-<size>.png`` here (the window and taskbar
+icon) and to the .ico, .icns, and .png in ``packaging/``. The others are larger pictures:
+the tower (the About dialog, installer, and README), the knight with his visor up (the
+mascot: splash screen, empty pages, docs), and the flag (docs); the shield with a tag and
+the knight with his visor down are spares.
 """
 
 from importlib import resources

@@ -85,7 +85,8 @@ package:
 installer: package
     bash packaging/installer.sh
 
-# Render the icon (src/tagalot/resources/tagalot.svg) to its PNGs, .ico, and .icns
+# Render the icon (src/tagalot/resources/tagalot-shield-hash.svg) to its PNGs, .ico, and
+# .icns, and the docs site's favicon and pictures to docs/images
 icons:
     uv run python scripts/make_icons.py
 
