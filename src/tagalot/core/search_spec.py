@@ -105,6 +105,9 @@ class SearchSpec:
     actor's movies: ``("cast", actor id)``), from either side (#125)."""
     text: str | None = None
     """Matches titles, text-search fields, and ``extra`` values."""
+    contents: bool = False
+    """The text also matches inside documents: an item matches when a page of one of its
+    files contains it (§8 *Search inside documents*)."""
     inherit_tags: bool = False
     """Tags on ancestors count as the entity's own, for include and exclude."""
     show_contained: bool = False
@@ -172,6 +175,7 @@ class SearchSpec:
                 else None
             ),
             "text": self.text,
+            **({"contents": True} if self.contents else {}),
             "inherit_tags": self.inherit_tags,
             "show_contained": self.show_contained,
             "aggregate_up": self.aggregate_up,
@@ -204,6 +208,7 @@ class SearchSpec:
                 if isinstance(data.get("related"), Mapping)
                 else None,
                 text=_optional_str(data.get("text"), "text"),
+                contents=_bool(data, "contents", defaults.contents),
                 inherit_tags=_bool(data, "inherit_tags", defaults.inherit_tags),
                 show_contained=_bool(data, "show_contained", defaults.show_contained),
                 aggregate_up=_bool(data, "aggregate_up", defaults.aggregate_up),

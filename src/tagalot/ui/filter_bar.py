@@ -83,6 +83,8 @@ class Filters:
     """Tags on containers count as their contents' own."""
     aggregate_up: bool = False
     """A container matches when anything inside it matches (DESIGN.md §8)."""
+    contents: bool = False
+    """The text also matches inside documents (§8 *Search inside documents*)."""
     fields: tuple[FieldFilter, ...] = ()
     """Field filters on fields every listed type has (chips for others aren't applied)."""
 
@@ -434,7 +436,12 @@ class FilterBar(QWidget):
             "Match by contents: an item matches when anything inside it does (an album "
             "with a song tagged Live)"
         )
-        for box in (self.contained_box, self.inherit_box, self.aggregate_box):
+        self.contents_box = QCheckBox("Contents")
+        self.contents_box.setToolTip(
+            "Search inside documents: the text also finds items whose files contain it"
+        )
+        self.contents_box.setVisible(False)  # until the keep searches inside documents
+        for box in (self.contained_box, self.inherit_box, self.aggregate_box, self.contents_box):
             box.toggled.connect(lambda _on: self._changed())
 
         self.field_button = QToolButton()
@@ -452,6 +459,7 @@ class FilterBar(QWidget):
         top.addWidget(self.contained_box)
         top.addWidget(self.inherit_box)
         top.addWidget(self.aggregate_box)
+        top.addWidget(self.contents_box)
 
         self.chip_area = QWidget()
         self.chip_layout = FlowLayout(self.chip_area)
@@ -488,6 +496,7 @@ class FilterBar(QWidget):
             self.contained_box.isChecked(),
             self.inherit_box.isChecked(),
             self.aggregate_box.isChecked(),
+            self.contents_box.isChecked() and self.contents_box.isVisibleTo(self),
             tuple(chip.filter for chip in self._field_chips.values() if chip.available),
         )
 
@@ -549,7 +558,12 @@ class FilterBar(QWidget):
         return int(self._within is not None) + int(self._only is not None)
 
     def set_toggles(
-        self, *, show_contained: bool, inherit_tags: bool, aggregate_up: bool = False
+        self,
+        *,
+        show_contained: bool,
+        inherit_tags: bool,
+        aggregate_up: bool = False,
+        contents: bool = False,
     ) -> None:
         """Set the toggles (a view's defaults, or what the user chose before) without
         reporting a change."""
@@ -557,10 +571,15 @@ class FilterBar(QWidget):
             (self.contained_box, show_contained),
             (self.inherit_box, inherit_tags),
             (self.aggregate_box, aggregate_up),
+            (self.contents_box, contents),
         ):
             blocked = box.blockSignals(True)
             box.setChecked(on)
             box.blockSignals(blocked)
+
+    def set_contents_available(self, available: bool) -> None:
+        """Offer the Contents toggle (the keep searches inside documents) or not."""
+        self.contents_box.setVisible(available)
 
     def set_within(self, entity_id: int | None, title: str = "", type_id: str = "") -> None:
         """Show a "Within: <title>" chip (first), listing only that entity's contents, or

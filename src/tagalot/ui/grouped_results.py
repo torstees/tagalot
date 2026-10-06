@@ -63,7 +63,8 @@ def load_groups(
     tree = session.tag_cache.get()
     groups = []
     with session.reader.connect() as conn:  # one read transaction: counts and rows agree
-        counts = count_by_type(conn, spec, tree, search_fields(schema, spec.types))
+        contents = session.contents_scope(conn, spec)
+        counts = count_by_type(conn, spec, tree, search_fields(schema, spec.types), contents)
         for table in scoped_tables(schema, spec.types):
             count = counts.get(table.type_id, 0)
             if not count:
@@ -76,6 +77,7 @@ def load_groups(
                 tree,
                 limit=limit,
                 fields=search_fields(schema, types),
+                contents=contents,
             )
             values = row_values(conn, schema, tree, hits, columns)
             rows = tuple((h, values.get(h.id, {})) for h in hits)

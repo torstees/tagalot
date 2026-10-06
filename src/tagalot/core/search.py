@@ -30,6 +30,7 @@ from tagalot.core.models import (
     EntityAncestor,
     EntityContains,
     EntityMerge,
+    EntityResource,
     EntityTag,
     entity_fts,
 )
@@ -66,6 +67,18 @@ class SearchError(ValueError):
 
 
 @dataclass(frozen=True)
+class ContentsScope:
+    """What a search needs to match inside documents (§8 *Search inside documents*): the
+    index that is built, and which of an item's linked files are its document files (each
+    document type's primary role). The keep's connection has ``fulltext.db`` attached."""
+
+    index: str
+    """``"words"`` or ``"substrings"``."""
+    files: ColumnElement[bool]
+    """True for the ``entity_resource`` rows (joined to ``entity``) of documents' files."""
+
+
+@dataclass(frozen=True)
 class SearchHit:
     id: int
     type: str
@@ -76,10 +89,52 @@ def build_query(
     spec: SearchSpec,
     tree: TagTree,
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+    contents: ContentsScope | None = None,
 ) -> Select[int, str, str]:
     """Return a ``SELECT id, type, title`` for ``spec``, sorted, without paging."""
-    query = select(Entity.id, Entity.type, Entity.title).where(_Filter(spec, tree, fields).result())
+    found = _Filter(spec, tree, fields, contents).result()
+    query = select(Entity.id, Entity.type, Entity.title).where(found)
     return query.order_by(*_order_by(spec, fields))
+
+
+def contents_terms(text: str, index: str) -> tuple[str | None, list[str]]:
+    """The ``MATCH`` query for documents' text, and the terms it can't take (§8).
+
+    Words: every word, quoted, the last one as a word start (``"photo"*``). Substrings:
+    every term of three characters or more, quoted; shorter ones are returned to match
+    with ``LIKE``. Quotes, ``AND``, and ``*`` in the input are ordinary characters."""
+    terms = [t for t in _WHITESPACE.split(text.strip()) if t]
+
+    def quoted(term: str) -> str:
+        return '"' + term.replace('"', '""') + '"'
+
+    if index == "words":
+        query = " ".join(quoted(t) for t in terms)
+        return (query + "*" if query else None), []
+    long_terms = [quoted(t) for t in terms if len(t) >= MIN_TRIGRAM]
+    return (" ".join(long_terms) or None), [t for t in terms if len(t) < MIN_TRIGRAM]
+
+
+def contents_ids(text: str, scope: ContentsScope) -> Select[int]:
+    """Ids of items one of whose documents' pages contains every term of ``text``."""
+    from tagalot.core.contents import ATTACHED, attached_page, index_table
+
+    page = attached_page
+    query, short = contents_terms(text, scope.index)
+    pages = select(page.c.resource_id)
+    if query is not None:
+        table = index_table(scope.index, schema=ATTACHED)
+        # FTS5 names its table unqualified in MATCH (``contents_words MATCH ?``).
+        pages = pages.join(table, table.c.rowid == page.c.id).where(
+            literal_column(table.name).match(query)
+        )
+    for term in short:
+        pages = pages.where(page.c.text.icontains(term, autoescape=True))
+    return (
+        select(EntityResource.entity_id)
+        .join(Entity, Entity.id == EntityResource.entity_id)
+        .where(scope.files, EntityResource.resource_id.in_(pages))
+    )
 
 
 def text_ids(text: str) -> Select[int]:
@@ -115,9 +170,10 @@ def run_search(
     offset: int = 0,
     limit: int | None = 100,
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+    contents: ContentsScope | None = None,
 ) -> list[SearchHit]:
     """One page of results, in sort order."""
-    query = build_query(spec, tree, fields).offset(offset).limit(limit)
+    query = build_query(spec, tree, fields, contents).offset(offset).limit(limit)
     return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]
 
 
@@ -126,9 +182,11 @@ def count_matches(
     spec: SearchSpec,
     tree: TagTree,
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+    contents: ContentsScope | None = None,
 ) -> int:
     """How many entities the search lists (for "123 results")."""
-    query = select(func.count()).select_from(Entity).where(_Filter(spec, tree, fields).result())
+    found = _Filter(spec, tree, fields, contents).result()
+    query = select(func.count()).select_from(Entity).where(found)
     return int(conn.scalar(query) or 0)
 
 
@@ -137,6 +195,7 @@ def count_by_type(
     spec: SearchSpec,
     tree: TagTree,
     fields: Mapping[str, ColumnElement[Any]] = CORE_FIELDS,
+    contents: ContentsScope | None = None,
 ) -> dict[str, int]:
     """How many entities of each type the search lists (the global search's sections, §8).
 
@@ -144,7 +203,7 @@ def count_by_type(
     """
     query = (
         select(Entity.type, func.count())
-        .where(_Filter(spec, tree, fields).result())
+        .where(_Filter(spec, tree, fields, contents).result())
         .group_by(Entity.type)
     )
     return {type_: int(n) for type_, n in conn.execute(query)}
@@ -164,11 +223,16 @@ class _Filter:
     """
 
     def __init__(
-        self, spec: SearchSpec, tree: TagTree, fields: Mapping[str, ColumnElement[Any]]
+        self,
+        spec: SearchSpec,
+        tree: TagTree,
+        fields: Mapping[str, ColumnElement[Any]],
+        contents: ContentsScope | None = None,
     ) -> None:
         self.spec = spec
         self.tree = tree
         self.fields = fields
+        self.contents = contents if spec.contents else None
         self._sets: dict[object, Select[int]] = {}
         excluded = frozenset().union(*(_subtree(tree, t) for t in spec.exclude))
         self._excluded = excluded
@@ -260,7 +324,13 @@ class _Filter:
         ]
         if self.spec.text:
             text = self.spec.text
-            conditions.append(entity_id.in_(self._materialize(("text", text), text_ids(text))))
+            matched: ColumnElement[bool] = entity_id.in_(
+                self._materialize(("text", text), text_ids(text))
+            )
+            if self.contents is not None:  # or inside one of its documents
+                inside = self._materialize(("contents", text), contents_ids(text, self.contents))
+                matched = or_(matched, entity_id.in_(inside))
+            conditions.append(matched)
         return conditions
 
     def _not_excluded(self, entity_id: IdColumn) -> ColumnElement[bool]:
@@ -404,6 +474,7 @@ def choice_counts(
     fields: Mapping[str, ColumnElement[Any]],
     *,
     limit: int = MAX_CHOICES,
+    contents: ContentsScope | None = None,
 ) -> list[tuple[Any, int]]:
     """The values of field ``name`` among the search's results, with how many results have
     each, most common first. The search's own filter on ``name`` is left out, so the counts
@@ -416,7 +487,7 @@ def choice_counts(
     query = (
         select(column.label("value"), count)
         .select_from(Entity)
-        .where(_Filter(others, tree, fields).result(), column.is_not(None))
+        .where(_Filter(others, tree, fields, contents).result(), column.is_not(None))
         .group_by(column)
         .order_by(count.desc(), column)
         .limit(limit)

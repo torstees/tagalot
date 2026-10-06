@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, Engine, update
+from sqlalchemy import Connection, Engine, and_, or_, select, update
+from sqlalchemy.exc import OperationalError
 
 from tagalot.core.actions import ActionResult, delete_items, run_action
 from tagalot.core.activity import (
@@ -27,10 +28,13 @@ from tagalot.core.activity import (
 from tagalot.core.containers import contain_by_hand, new_container, uncontain_by_hand
 from tagalot.core.contents import (
     FULLTEXT_DB,
+    INDEXES,
     ContentsQueue,
     ContentsResult,
     ContentsStats,
     ContentsStore,
+    attach_on_connect,
+    attached_meta,
     build_index,
     clear_contents,
     contents_stats,
@@ -56,7 +60,7 @@ from tagalot.core.keep_settings import (
 from tagalot.core.keywords import any_keywords
 from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
-from tagalot.core.models import Root
+from tagalot.core.models import Entity, EntityResource, Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
 from tagalot.core.online import (
     Fetcher,
@@ -86,6 +90,8 @@ from tagalot.core.saved_searches import (
     save_search,
 )
 from tagalot.core.scanjob import Progress, ScanReport, scan_root
+from tagalot.core.search import ContentsScope
+from tagalot.core.search_spec import SearchSpec
 from tagalot.core.settings import Settings
 from tagalot.core.tag_service import TagService
 from tagalot.core.tags import TagTreeCache
@@ -180,6 +186,7 @@ class KeepSession:
             raise
         writer = DbWriter(engine)
         reader = create_keep_engine(opened.keep.db_path, network=keep.on_network, read_only=True)
+        attach_on_connect(reader, opened.keep.dir / FULLTEXT_DB)  # searching inside documents
         cache = TagTreeCache(reader)
         thumbnail_max = opened.keep.config.thumbnail_max or theme.thumbnail_max
         root_paths = {
@@ -389,6 +396,29 @@ class KeepSession:
                 return False
         store.writer.run(lambda conn: build_index(conn, wanted))
         return True
+
+    def contents_scope(self, conn: Connection, spec: SearchSpec) -> ContentsScope | None:
+        """What ``spec`` needs to match inside documents, on a connection of :attr:`reader`
+        (which has ``fulltext.db`` attached): ``None`` unless the spec asks for it, the keep
+        searches contents, and an index is built."""
+        types = full_text_types(self.schema)
+        if not spec.contents or self.keep.config.contents_index is None or not types:
+            return None
+        if not (self.keep.dir / FULLTEXT_DB).exists():
+            return None
+        try:
+            index = conn.scalar(select(attached_meta.c.value).where(attached_meta.c.key == "index"))
+        except OperationalError:  # attached before fulltext.db was made: not this time
+            return None
+        if index not in INDEXES:
+            return None
+        files = or_(
+            *(
+                and_(Entity.type == type_id, EntityResource.role == role)
+                for type_id, role in types.items()
+            )
+        )
+        return ContentsScope(index, files)
 
     def clear_contents(self) -> None:
         """**Clear contents text…**: turn contents search off and delete every document's
