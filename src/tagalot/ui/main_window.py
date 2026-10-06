@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.actions import ActionResult
 from tagalot.core.activity import SCAN, Problem
+from tagalot.core.contents import ContentsResult
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.keywords import (
@@ -133,6 +134,8 @@ class MainWindow(QMainWindow):
     _queue_progress = Signal(int, int)
     """From the background thumbnail thread: (done, total)."""
     _queue_done = Signal(object)
+    _contents_progress = Signal(int, int)
+    _contents_done = Signal(object)
     """From the background thumbnail thread: its ``QueueResult``."""
 
     closed = Signal()
@@ -353,6 +356,12 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.thumbnail_status)
         self._queue_progress.connect(self._show_queue)
         self._queue_done.connect(self._queue_finished)
+        self.contents_status = QLabel()
+        self.contents_status.setObjectName("contents_status")
+        self.contents_status.setVisible(False)
+        self.statusBar().addPermanentWidget(self.contents_status)
+        self._contents_progress.connect(self._show_contents)
+        self._contents_done.connect(self._contents_finished)
         self.lookup_status = QLabel()
         self.lookup_status.setObjectName("lookup_status")
         self.lookup_status.setVisible(False)
@@ -1793,6 +1802,7 @@ class MainWindow(QMainWindow):
         self._refresh_triage()
         self.refresh_keywords(after_scan=True)
         self._queue_thumbnails()
+        self.read_contents()
         if self.lookups is not None and self.session is not None:
             self.lookups.after_scan(self.session.last_scan_started)
         for detail in self._pages.values():
@@ -1835,6 +1845,41 @@ class MainWindow(QMainWindow):
         for page in self.search_pages():
             page.grid.viewport().update()
         logger.info("Made %d background thumbnails (%d pictures)", result.done, result.pictures)
+
+    # --- reading documents' text (#348; core.contents) ---
+
+    def read_contents(self) -> None:
+        """Read the text of new and changed documents in the background (when the keep
+        searches inside documents)."""
+        session = self.session
+        if session is None or session.keep.config.contents_index is None:
+            return
+
+        def queued(count: int) -> None:
+            if count and shiboken6.isValid(self):
+                self._show_contents(0, count)
+
+        run_in_pool(
+            lambda: session.queue_contents(
+                progress=self._contents_progress.emit, done=self._contents_done.emit
+            ),
+            on_done=queued,
+            on_error=lambda e: logger.error("Reading documents' text failed", exc_info=e),
+        )
+
+    def _show_contents(self, done: int, total: int) -> None:
+        left = total - done
+        self.contents_status.setText(f"Reading contents: {left:,} left")
+        self.contents_status.setToolTip(
+            f"The text of new and changed documents, for searching inside them: {done:,} of "
+            f"{total:,} read"
+        )
+        self.contents_status.setVisible(left > 0)
+
+    def _contents_finished(self, result: ContentsResult) -> None:
+        self.contents_status.setVisible(False)
+        self._check_problems()
+        logger.info("Read %d documents' text (%d pages)", result.read, result.pages)
 
     # --- online lookups (#340; ui.lookups) ---
 

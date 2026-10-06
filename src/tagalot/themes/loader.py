@@ -237,6 +237,12 @@ def validate_theme(theme: type[Theme]) -> list[str]:
         problems.append("online_sources names a host twice")
     if sources and getattr(theme, "api_version", API_VERSION) < 5:
         problems.append("a theme with online_sources must set api_version = 5 (or later)")
+    for entity in entities:
+        if getattr(entity, "full_text", False):
+            if not any(getattr(r, "primary", False) for r in entity.roles):
+                problems.append(f"{names[entity]} has full_text = True but no primary role")
+            if getattr(theme, "api_version", API_VERSION) < 6:
+                problems.append("a theme with full_text types must set api_version = 6 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]

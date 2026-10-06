@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 5              # the theme API it needs
+    api_version = 6              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -123,7 +123,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -245,6 +245,27 @@ class StoriesTheme(Theme):
 ```
 
 `edited` names the fields (and `"title"`) the user changed in Tagalot; `current` is the file's front matter now, so you can reuse a key it already has. A value of `None` removes the key. Tags are written by Tagalot under `tags`.
+
+## Searching inside documents
+
+Mark a type whose files are documents (a paper, a book) with `full_text = True` (API version 6), and when a keep searches inside documents, Tagalot reads the text of the files in its primary role in the background after scans, as pages: a PDF's pages, an EPUB's chapters, one page for Markdown, plain text, DOCX, and ODT (`read_document_text`, which you can call too). For a format it doesn't read, or to read one your own way, override `document_text`:
+
+```python
+class Paper(Entity):
+    roles = [role("paper", kinds={"any"}, primary=True)]
+    full_text = True
+
+
+class PapersTheme(Theme):
+    api_version = 6
+
+    def document_text(self, resource):
+        if resource.ext != ".djvu":
+            return None  # Tagalot reads the rest
+        return read_djvu_pages(resource.path)  # a list of pages' text
+```
+
+It runs on a background thread, like `prepare`: read only that file, and raise `OSError` or `ValueError` for one that can't be read (it is reported, and not tried again until it changes).
 
 ## Online details
 

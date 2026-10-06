@@ -11,7 +11,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from tagalot.core.keep import ONLINE_ANSWERS, KeepConfig, KeepError, validate_keep_config
+from tagalot.core.keep import (
+    CONTENTS_INDEXES,
+    ONLINE_ANSWERS,
+    KeepConfig,
+    KeepError,
+    validate_keep_config,
+)
 from tagalot.themes.api import Theme, ThemeOption
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 
@@ -47,6 +53,14 @@ def with_online_lookups(config: KeepConfig, answer: str | None) -> KeepConfig:
     if answer not in (None, *ONLINE_ANSWERS):
         raise KeepError(f"Online lookups can be allowed or never, not {answer!r}.")
     return replace(config, online_lookups=answer, roots=copy.deepcopy(config.roots))
+
+
+def with_contents_index(config: KeepConfig, index: str | None) -> KeepConfig:
+    """``config`` searching inside documents with a Words (``"words"``) or Substrings
+    (``"substrings"``) index, or not at all (``None``)."""
+    if index not in (None, *CONTENTS_INDEXES):
+        raise KeepError(f"Contents search can be words or substrings, not {index!r}.")
+    return replace(config, contents_index=index, roots=copy.deepcopy(config.roots))
 
 
 def with_option(

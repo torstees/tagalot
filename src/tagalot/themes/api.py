@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 5
+API_VERSION = 6
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -28,7 +28,8 @@ the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 ``ordered``, :meth:`IngestContext.relate`'s ``position``), :attr:`Theme.read_last`,
 :func:`read_bibliography`, and :attr:`Entity.made_by_hand`; version 5 added online
 details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
-:meth:`Theme.online_details`)."""
+:meth:`Theme.online_details`); version 6 added searching inside documents
+(:attr:`Entity.full_text`, :meth:`Theme.document_text`, :func:`read_document_text`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -241,6 +242,11 @@ class Entity:
       puts items in them (API version 4): Tagalot offers **New …** in its views, **Add to
       …** on the items it can contain (its containment), and **Remove from …** on its
       page. Scans never undo what the user put in or took out.
+    - ``full_text``: items of this type are documents (a paper, a book): when the keep
+      searches inside documents, the text of the files in the type's primary role is read
+      in the background after scans and can be searched (DESIGN.md §8 *Search inside
+      documents*; API version 6). The core reads them with :func:`read_document_text`, or
+      :meth:`Theme.document_text`. It needs a primary role.
     """
 
     label: ClassVar[str | None] = None
@@ -253,6 +259,7 @@ class Entity:
     table_name: ClassVar[str | None] = None
     type_id: ClassVar[str | None] = None
     made_by_hand: ClassVar[bool] = False
+    full_text: ClassVar[bool] = False
 
 
 def entity_label(entity: type[Entity]) -> str:
@@ -1262,6 +1269,16 @@ class Theme:
         details should not replace what the item's files say either: fill in empty fields,
         or rank the sources as the research theme does. API version 5."""
 
+    def document_text(self, resource: ResourceInfo) -> Sequence[str] | None:
+        """The text of a :attr:`Entity.full_text` type's file, as pages, for searching
+        inside documents; ``None`` (the default) for the core's reading of it,
+        :func:`read_document_text`. Override it for a format the core doesn't read, or to
+        read one differently. It runs on a background reading thread, like
+        :meth:`prepare`: read only this file, keep nothing in ``self``, and raise
+        ``OSError`` or ``ValueError`` for a file that can't be read (it is reported, and
+        not tried again until it changes). API version 6."""
+        return None
+
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
         """Cheap keys for finding near-duplicates (DESIGN.md §13): only items of a type
         that share a key are compared with :meth:`similarity`, never all pairs. Build them
@@ -1322,6 +1339,7 @@ class Theme:
 # --- Reading files (DESIGN.md §9 books, "Reading files") ---
 
 from tagalot.themes.bibliography import BIBLIOGRAPHY_EXTENSIONS, read_bibliography  # noqa: E402
+from tagalot.themes.document_text import DOCUMENT_EXTENSIONS, read_document_text  # noqa: E402
 from tagalot.themes.readers import (  # noqa: E402
     PDFIUM,
     epub_cover,
@@ -1343,6 +1361,7 @@ __all__ = [
     "API_VERSION",
     "BIBLIOGRAPHY_EXTENSIONS",
     "DISPLAY_FORMATS",
+    "DOCUMENT_EXTENSIONS",
     "FIELD_TYPES",
     "FOLDER_IMAGE_EXTENSIONS",
     "FOLDER_IMAGE_NAMES",
@@ -1406,6 +1425,7 @@ __all__ = [
     "plural_of",
     "read_bibliography",
     "read_comic_info",
+    "read_document_text",
     "read_epub",
     "read_front_matter",
     "read_link_file",
