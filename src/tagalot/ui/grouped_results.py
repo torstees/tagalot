@@ -34,7 +34,13 @@ from tagalot.core.search_fields import scoped_tables, search_fields, type_plural
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.ui.file_actions import add_open_keys
-from tagalot.ui.models.results import PreviewModel, ResultColumn, Row, row_values
+from tagalot.ui.models.results import (
+    PreviewModel,
+    ResultColumn,
+    Row,
+    add_snippets,
+    row_values,
+)
 from tagalot.ui.result_table import list_columns, make_result_table, set_column_widths
 
 PREVIEW_ROWS = 8
@@ -70,7 +76,9 @@ def load_groups(
             if not count:
                 continue
             types = (table.type_id,)
-            columns = list_columns(schema, types, session.has_keywords)
+            columns = list_columns(
+                schema, types, session.has_keywords, contents=contents is not None
+            )
             hits = run_search(
                 conn,
                 replace(spec, types=types),
@@ -80,6 +88,7 @@ def load_groups(
                 contents=contents,
             )
             values = row_values(conn, schema, tree, hits, columns)
+            add_snippets(conn, spec, contents, hits, values)
             rows = tuple((h, values.get(h.id, {})) for h in hits)
             groups.append(
                 TypeGroup(table.type_id, labels[table.type_id], count, tuple(columns), rows)

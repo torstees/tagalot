@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import (
     ColumnElement,
     Connection,
+    FromClause,
     Select,
     and_,
     func,
@@ -113,6 +114,95 @@ def contents_terms(text: str, index: str) -> tuple[str | None, list[str]]:
         return (query + "*" if query else None), []
     long_terms = [quoted(t) for t in terms if len(t) >= MIN_TRIGRAM]
     return (" ".join(long_terms) or None), [t for t in terms if len(t) < MIN_TRIGRAM]
+
+
+MATCH_START, MATCH_END = "\x02", "\x03"
+"""Around the matched words in a :class:`Snippet`'s text (control characters, which a
+document's text never holds: whitespace is collapsed and the rest is printable)."""
+SNIPPET_WORDS = 12
+"""About how many words a snippet shows."""
+ELLIPSIS = "\u2026"
+
+
+@dataclass(frozen=True)
+class Snippet:
+    """Where an item's documents matched a search (§8): the first matching page."""
+
+    relpath: str
+    """The file, relative to its root."""
+    page: int
+    """Its page (a PDF's page, an EPUB's chapter), counting from 1."""
+    pages: int
+    """How many pages the file has (a one-page file names no page)."""
+    text: str
+    """Words around the match, the matched ones between :data:`MATCH_START` and
+    :data:`MATCH_END`."""
+
+
+def contents_snippets(
+    conn: Connection, text: str, scope: ContentsScope, entity_ids: Sequence[int]
+) -> dict[int, Snippet]:
+    """For these items, where their documents match ``text``: the first matching page of
+    their files (in reading order), with a snippet around the match."""
+    from tagalot.core.contents import ATTACHED, attached_file, attached_page, index_table
+    from tagalot.core.models import Resource
+
+    if not entity_ids:
+        return {}
+    page, file = attached_page, attached_file
+    query, short = contents_terms(text, scope.index)
+    shown: ColumnElement[Any] = page.c.text
+    matching: FromClause = page
+    where: list[ColumnElement[bool]] = []
+    if query is not None:
+        table = index_table(scope.index, schema=ATTACHED)
+        name: ColumnElement[Any] = literal_column(table.name)
+        shown = func.snippet(name, 0, MATCH_START, MATCH_END, ELLIPSIS, SNIPPET_WORDS)
+        matching = page.join(table, table.c.rowid == page.c.id)
+        where.append(name.match(query))
+    where += [page.c.text.icontains(term, autoescape=True) for term in short]
+    rows = conn.execute(
+        select(
+            EntityResource.entity_id,
+            Resource.relpath,
+            page.c.page,
+            file.c.pages,
+            shown,
+        )
+        .select_from(matching)
+        .join(file, file.c.resource_id == page.c.resource_id)
+        .join(EntityResource, EntityResource.resource_id == page.c.resource_id)
+        .join(Entity, Entity.id == EntityResource.entity_id)
+        .join(Resource, Resource.id == page.c.resource_id)
+        .where(scope.files, EntityResource.entity_id.in_(entity_ids), *where)
+        .order_by(EntityResource.entity_id, Resource.relpath, page.c.page)
+    )
+    found: dict[int, Snippet] = {}
+    for entity_id, relpath, number, pages, excerpt in rows:
+        if entity_id not in found:
+            if query is None:  # only short terms: no index to cut a snippet with
+                excerpt = _excerpt(excerpt, short)
+            found[entity_id] = Snippet(relpath, number, pages, excerpt)
+    return found
+
+
+def _excerpt(text: str, terms: Sequence[str]) -> str:
+    """Words around the first of ``terms`` in ``text``, marked as a snippet's are."""
+    lowered = text.casefold()
+    at = min((i for t in terms if (i := lowered.find(t.casefold())) >= 0), default=-1)
+    if at < 0:
+        return text[:80]
+    term = next(t for t in terms if lowered.find(t.casefold()) == at)
+    start = max(0, at - 40)
+    end = min(len(text), at + len(term) + 40)
+    marked = (
+        text[start:at]
+        + MATCH_START
+        + text[at : at + len(term)]
+        + MATCH_END
+        + text[at + len(term) : end]
+    )
+    return (ELLIPSIS if start else "") + marked + (ELLIPSIS if end < len(text) else "")
 
 
 def contents_ids(text: str, scope: ContentsScope) -> Select[int]:

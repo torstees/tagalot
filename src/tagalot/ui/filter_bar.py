@@ -436,9 +436,10 @@ class FilterBar(QWidget):
             "Match by contents: an item matches when anything inside it does (an album "
             "with a song tagged Live)"
         )
-        self.contents_box = QCheckBox("Contents")
+        self.contents_box = QCheckBox("In documents")
         self.contents_box.setToolTip(
-            "Search inside documents: the text also finds items whose files contain it"
+            "Search inside documents: the text also finds items whose files contain it, "
+            "and shows where"
         )
         self.contents_box.setVisible(False)  # until the keep searches inside documents
         for box in (self.contained_box, self.inherit_box, self.aggregate_box, self.contents_box):

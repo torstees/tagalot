@@ -1,17 +1,20 @@
-"""The Contents toggle in the filter bar (#350): offered when the keep searches inside
-documents, it makes the search box find items by what their files say."""
+"""The In documents toggle in the filter bar (#350): offered when the keep searches inside
+documents, it makes the search box find items by what their files say, and shows where
+(#351)."""
 
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import Qt, QThreadPool
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
+from tagalot.core.search import Snippet
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.models.results import MATCH, MATCH_HTML_ROLE, match_value
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController
 from tests.core.book_files import paged_pdf
@@ -55,6 +58,7 @@ def test_contents_is_offered_only_when_the_keep_searches_documents(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _page(window)
+    assert page.filter_bar.contents_box.text() == "In documents"
     assert page.filter_bar.contents_box.isHidden()
     session.set_contents_index("words")
     with qtbot.waitSignal(window._contents_done, timeout=10_000):
@@ -73,9 +77,42 @@ def test_the_toggle_finds_items_by_their_contents(
         window.update_contents()
     page = _page(window)
     page.filter_bar.set_text("photosynth")
-    qtbot.waitUntil(lambda: page.status.text() == "Nothing found", timeout=5000)
+    qtbot.waitUntil(lambda: page.status.text() == "Nothing found", timeout=10_000)
     page.filter_bar.contents_box.setChecked(True)
     qtbot.waitUntil(lambda: page.status.text() == "1 item", timeout=5000)
     assert page.current_spec().contents is True
     saved = page.saved_definition()
     assert saved.filters.contents is True  # kept with a saved search
+
+
+def test_where_each_item_matched(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    session.set_contents_index("words")
+    with qtbot.waitSignal(window._contents_done, timeout=10_000):
+        window.update_contents()
+    page = _page(window)
+    page.filter_bar.contents_box.setChecked(True)
+    page.filter_bar.set_text("photosynth")
+    qtbot.waitUntil(lambda: page.status.text() == "1 item", timeout=5000)
+    keys = [c.key for c in page.model.columns]
+    assert keys[:2] == ["title", MATCH]  # beside the title
+    cell = page.model.index(0, keys.index(MATCH))
+    qtbot.waitUntil(lambda: bool(cell.data()), timeout=5000)
+    assert cell.data() == "Photosynthesis needs light"
+    assert cell.data(MATCH_HTML_ROLE) == "<b>Photosynthesis</b> needs light"
+    assert cell.data(Qt.ItemDataRole.ToolTipRole).endswith("botany.pdf, p. 2")
+    assert page.grid.show_match  # cards end with it too
+
+    page.filter_bar.contents_box.setChecked(False)  # no longer inside documents
+    page.filter_bar.set_text("botany")  # by its title
+    qtbot.waitUntil(lambda: MATCH not in [c.key for c in page.model.columns], timeout=5000)
+    assert not page.grid.show_match
+
+
+def test_naming_the_page() -> None:
+    assert match_value(Snippet("Books/Guards.epub", 3, 30, "a")).where == "Guards.epub, ch. 3"
+    assert match_value(Snippet("p.pdf", 8, 12, "a")).where == "p.pdf, p. 8"
+    assert match_value(Snippet("notes.txt", 1, 1, "a")).where == "notes.txt"
+    value = match_value(Snippet("p.pdf", 1, 2, "a < \x02b\x03"))
+    assert (value.text, value.html) == ("a < b", "a &lt; <b>b</b>")
+    assert value.brief == "\u2026b"  # a card's line starts at the match
+    assert match_value(Snippet("p.pdf", 1, 2, "\x02a\x03 b")).brief == "a b"
