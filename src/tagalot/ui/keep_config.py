@@ -93,6 +93,8 @@ class KeepConfigWindow(QWidget):
     thumbnail_max_changed = Signal()
     """The largest thumbnail size changed (the main window's size menu follows)."""
     clear_thumbnails_requested = Signal()
+    online_allowed = Signal()
+    """Online lookups were just turned on: the window looks up what it hasn't yet."""
     """Clear the thumbnail cache (the main window asks and does it)."""
 
     def __init__(
@@ -532,6 +534,7 @@ class KeepConfigWindow(QWidget):
         self._run(
             lambda: session.set_online_lookups("allow" if on else "never"),
             "Details are now looked up online." if on else "Nothing is looked up online now.",
+            self.online_allowed.emit if on else None,
         )
 
     def _set_option(self, name: str, value: object, root_id: str | None = None) -> None:

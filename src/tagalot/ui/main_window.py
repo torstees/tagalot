@@ -47,6 +47,7 @@ from tagalot.core.keywords import (
 )
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
+from tagalot.core.online import LookupReport
 from tagalot.core.root_admin import RootStatus, add_skipped, root_statuses
 from tagalot.core.roots import place_in_roots
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
@@ -80,6 +81,7 @@ from tagalot.ui.folder_picker import choose_save_file
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
+from tagalot.ui.lookups import OnlineLookups, lookup_summary
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
@@ -351,6 +353,17 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.thumbnail_status)
         self._queue_progress.connect(self._show_queue)
         self._queue_done.connect(self._queue_finished)
+        self.lookup_status = QLabel()
+        self.lookup_status.setObjectName("lookup_status")
+        self.lookup_status.setVisible(False)
+        self.statusBar().addPermanentWidget(self.lookup_status)
+        self.lookups: OnlineLookups | None = None
+        if session is not None:
+            self.lookups = OnlineLookups(session, self)
+            self.lookups.progressed.connect(self._show_lookups)
+            self.lookups.finished.connect(self._lookups_finished)
+            self.lookups.message.connect(self.statusBar().showMessage)
+            self.lookups.consent_changed.connect(self._online_consent_changed)
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)
         self.busy.setMaximumWidth(120)
@@ -495,6 +508,7 @@ class MainWindow(QMainWindow):
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.reread_requested.connect(self.reread)
             detail.write_back_requested.connect(self.write_back)
+            detail.look_up_requested.connect(self.look_up_online)
             detail.unlink_requested.connect(self.tag_actions.unlink_file)
             detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
             detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
@@ -611,6 +625,7 @@ class MainWindow(QMainWindow):
         search.save_requested.connect(lambda: self.save_search(as_new=False, page=search))
         search.reread_requested.connect(self.reread)
         search.write_back_requested.connect(self.write_back)
+        search.look_up_requested.connect(self.look_up_online)
         search.new_item_requested.connect(self.new_container)
         search.add_to_requested.connect(self.add_to_container)
         search.action_requested.connect(self.run_action)
@@ -1695,6 +1710,8 @@ class MainWindow(QMainWindow):
             window.scan_requested.connect(self._scan_roots)
             window.thumbnail_max_changed.connect(self.thumbnail_max_changed)
             window.clear_thumbnails_requested.connect(self.clear_thumbnails_action.trigger)
+            if self.lookups is not None:
+                window.online_allowed.connect(self.lookups.everything)
             self.keep_config = window
         self.keep_config.show()
         self.keep_config.raise_()
@@ -1776,6 +1793,8 @@ class MainWindow(QMainWindow):
         self._refresh_triage()
         self.refresh_keywords(after_scan=True)
         self._queue_thumbnails()
+        if self.lookups is not None and self.session is not None:
+            self.lookups.after_scan(self.session.last_scan_started)
         for detail in self._pages.values():
             if isinstance(detail, DetailPage):
                 detail.refresh()
@@ -1816,6 +1835,35 @@ class MainWindow(QMainWindow):
         for page in self.search_pages():
             page.grid.viewport().update()
         logger.info("Made %d background thumbnails (%d pictures)", result.done, result.pictures)
+
+    # --- online lookups (#340; ui.lookups) ---
+
+    def look_up_online(self, entity_ids: list[int]) -> None:
+        """Look up online: these items' details, fetched again (asking first, once)."""
+        if self.lookups is not None:
+            self.lookups.look_up(entity_ids)
+
+    def _show_lookups(self, done: int, total: int) -> None:
+        left = total - done
+        self.lookup_status.setText(f"Looking up online: {left:,} left")
+        self.lookup_status.setToolTip(f"Items' details from online services, {done:,} of {total:,}")
+        self.lookup_status.setVisible(left > 0)
+
+    def _lookups_finished(self, report: LookupReport, by_user: bool) -> None:
+        self.lookup_status.setVisible(False)
+        summary = lookup_summary(report, by_user)
+        if summary:
+            self.statusBar().showMessage(summary)
+            self.activity.set_now(f"Online, {datetime.now():%H:%M}: {summary}")
+        self._check_problems()
+        if report.items:
+            self._refresh_details()
+            for page in self.search_pages():
+                page.refresh()
+
+    def _online_consent_changed(self) -> None:
+        if self.keep_config is not None:
+            self.keep_config.reload()
 
     def _scan_failed(self, error: BaseException) -> None:
         self.scan_action.setEnabled(True)
