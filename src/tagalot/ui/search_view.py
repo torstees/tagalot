@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.actions import actions_for
 from tagalot.core.containers import containers_for, hand_made_types
+from tagalot.core.contents import full_text_types
 from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
 from tagalot.core.search_fields import (
@@ -258,7 +259,7 @@ class SearchPage(QWidget):
             "contents": bool(chosen.get("contents", spec.contents)),
         }
         self.filter_bar.set_toggles(**self._toggles)
-        self.filter_bar.set_contents_available(searches_contents(session))
+        self.filter_bar.set_contents_available(self.offers_contents())
         self.filter_bar.changed.connect(self._filters_changed)
 
         self.table = make_result_table()
@@ -423,13 +424,22 @@ class SearchPage(QWidget):
             within=within,
             inherit_tags=filters.inherit_tags,
             aggregate_up=filters.aggregate_up,
-            contents=filters.contents and searches_contents(self.session),
+            contents=filters.contents and self.offers_contents(),
             fields=base.fields + fields,
             # In the tree, containers expand to show what they hold instead.
             show_contained=filters.show_contained and not self._tree_layout(),
             # ...and what a listed container holds isn't listed again at the top.
             nest=self._tree_layout(),
         )
+
+    def offers_contents(self) -> bool:
+        """The filter bar offers In documents: the keep searches inside documents, and
+        this page can list documents (Search all, or a page whose types include one; not an
+        author's or an artist's)."""
+        if not searches_contents(self.session):
+            return False
+        types = self._base.types
+        return not types or bool(set(types) & set(full_text_types(self.session.schema)))
 
     def _tree_layout(self) -> bool:
         return self.layout_mode == "tree" and not self.grouped

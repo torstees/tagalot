@@ -118,3 +118,26 @@ def test_naming_the_page() -> None:
     assert match_value(Snippet("p.pdf", 1, 2, "\x02a\x03 b")).brief == "a b"
     inside = match_value(Snippet("p.pdf", 1, 2, "drops r\x02ecurr\x03ence now"))
     assert inside.brief == "\u2026recurrence now"  # from the start of the matched word
+
+
+def test_offered_only_where_documents_can_be_listed(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """Not on a page of authors or artists (a related section, a view of them): only on
+    Search all and pages whose types include a document type."""
+    from tagalot.core.search_spec import SearchSpec
+
+    session.set_contents_index("words")
+    pages = {
+        types: SearchPage(session, "Page", SearchSpec(types=types))
+        for types in [(), ("docs.doc",), ("docs.note",), ("docs.doc", "docs.note")]
+    }
+    for search in pages.values():
+        qtbot.addWidget(search)
+    assert {types: p.offers_contents() for types, p in pages.items()} == {
+        (): True,
+        ("docs.doc",): True,
+        ("docs.note",): False,
+        ("docs.doc", "docs.note"): True,
+    }
+    assert pages[("docs.note",)].filter_bar.contents_box.isHidden()
