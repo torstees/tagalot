@@ -116,3 +116,5 @@ def test_naming_the_page() -> None:
     assert (value.text, value.html) == ("a < b", "a &lt; <b>b</b>")
     assert value.brief == "\u2026b"  # a card's line starts at the match
     assert match_value(Snippet("p.pdf", 1, 2, "\x02a\x03 b")).brief == "a b"
+    inside = match_value(Snippet("p.pdf", 1, 2, "drops r\x02ecurr\x03ence now"))
+    assert inside.brief == "\u2026recurrence now"  # from the start of the matched word

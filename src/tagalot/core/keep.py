@@ -370,7 +370,12 @@ class Keep:
 
 
 def create_keep(
-    keep_dir: Path, name: str, theme: ThemeRef, roots: list[RootConfig] | None = None
+    keep_dir: Path,
+    name: str,
+    theme: ThemeRef,
+    roots: list[RootConfig] | None = None,
+    *,
+    contents_index: str | None = None,
 ) -> Keep:
     """Create a new keep in ``keep_dir``, which must be missing or empty.
 
@@ -386,7 +391,13 @@ def create_keep(
             raise KeepError(f"{keep_dir} exists and is not a folder.")
         if any(keep_dir.iterdir()):
             raise KeepError(f"{keep_dir} is not empty. Choose a new or empty folder.")
-    config = KeepConfig(id=uuid.uuid4(), name=name, theme=theme, roots=list(roots or []))
+    config = KeepConfig(
+        id=uuid.uuid4(),
+        name=name,
+        theme=theme,
+        roots=list(roots or []),
+        contents_index=contents_index,
+    )
     _validate(config, keep_dir / KEEP_TOML)
     for root in config.roots:
         if _nested(keep_dir, Path(root.path)):

@@ -80,6 +80,7 @@ def test_long_pages_are_cut_around_the_match(session: KeepSession, tmp_path: Pat
 def test_substrings_and_short_terms(session: KeepSession) -> None:
     found = _snippets(session, "substrings", "ynth")
     assert _marked(found["botany.pdf"].text).count("[ynth]") == 1
+    assert "needs light and water" in found["botany.pdf"].text  # words around it, too
     short = _snippets(session, "substrings", "ox")["kitchen.txt"]
     assert _marked(short.text) == "sugar in the [ox] cart cafe"  # an excerpt, by LIKE
     assert short.pages == 1

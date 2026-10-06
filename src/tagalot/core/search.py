@@ -119,8 +119,9 @@ def contents_terms(text: str, index: str) -> tuple[str | None, list[str]]:
 MATCH_START, MATCH_END = "\x02", "\x03"
 """Around the matched words in a :class:`Snippet`'s text (control characters, which a
 document's text never holds: whitespace is collapsed and the rest is printable)."""
-SNIPPET_WORDS = 12
-"""About how many words a snippet shows."""
+SNIPPET_TOKENS = {"words": 12, "substrings": 64}
+"""How many index tokens a snippet shows: about 12 words with Words; a trigram index's
+tokens are about a character each, so Substrings asks for FTS5's most, about 10 words."""
 ELLIPSIS = "\u2026"
 
 
@@ -157,7 +158,8 @@ def contents_snippets(
     if query is not None:
         table = index_table(scope.index, schema=ATTACHED)
         name: ColumnElement[Any] = literal_column(table.name)
-        shown = func.snippet(name, 0, MATCH_START, MATCH_END, ELLIPSIS, SNIPPET_WORDS)
+        tokens = SNIPPET_TOKENS[scope.index]
+        shown = func.snippet(name, 0, MATCH_START, MATCH_END, ELLIPSIS, tokens)
         matching = page.join(table, table.c.rowid == page.c.id)
         where.append(name.match(query))
     where += [page.c.text.icontains(term, autoescape=True) for term in short]

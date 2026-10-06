@@ -40,6 +40,9 @@ Venue ⊃ Paper        Author ↔ Paper (authors, in order)
   Crossref, one with only an arXiv ID in arXiv. What they say ranks between a library
   export and the PDF: it fills in what the files don't say (an abstract, pages), and
   corrects what Tagalot guessed from a PDF, but never what a note, sidecar, or export says.
+- **Searching inside papers:** a paper is a document (``full_text``): when the keep searches
+  inside documents, its files' text is read after scans, and **In documents** finds papers
+  by what they say.
 """
 
 import difflib
@@ -163,6 +166,7 @@ class Paper(Entity):
         role("notes", kinds={"any"}, many=True, label="Notes"),
     ]
     card_lines = ("authors", "year")
+    full_text = True  # its files' text can be searched (DESIGN.md §8)
 
 
 class ContentsThumbnail(ThumbnailProvider):
@@ -181,7 +185,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
-    id, name, version, api_version = "research", "Research", 1, 5
+    id, name, version, api_version = "research", "Research", 1, 6
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
     # citation key comes from a bibliography).

@@ -204,6 +204,50 @@ def test_creating_a_keep_opens_it(
     assert load_settings(tmp_path / "settings.toml").recent_keeps == [tmp_path / "Photos.keep"]
 
 
+def test_a_document_theme_asks_how_to_search_inside_documents(
+    qtbot: QtBot, catalog: ThemeCatalog
+) -> None:
+    dialog = NewKeepDialog(catalog)
+    qtbot.addWidget(dialog)
+    assert dialog.theme().id == "generic"
+    assert not dialog._form.isRowVisible(dialog.contents_combo)  # plain files: no documents
+    assert dialog.contents_index() is None
+    dialog.theme_combo.setCurrentIndex(dialog.theme_combo.findText("Research"))
+    assert dialog._form.isRowVisible(dialog.contents_combo)
+    assert dialog.contents_combo.currentText() == "Words"  # the default
+    assert dialog.contents_index() == "words"
+    dialog.contents_combo.setCurrentIndex(dialog.contents_combo.findText("Substrings"))
+    assert dialog.contents_index() == "substrings"
+    dialog.contents_combo.setCurrentIndex(dialog.contents_combo.findText("Off"))
+    assert dialog.contents_index() is None
+    dialog.theme_combo.setCurrentIndex(dialog.theme_combo.findText("Books"))
+    assert dialog._form.isRowVisible(dialog.contents_combo)
+
+
+def test_a_new_research_keep_searches_inside_documents(
+    qtbot: QtBot,
+    tmp_path: Path,
+    catalog: ThemeCatalog,
+    opened: list[KeepSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = tmp_path / "Papers"
+    files.mkdir()
+
+    def fill_and_accept(self: NewKeepDialog) -> QDialog.DialogCode:
+        _fill(self, "Papers", tmp_path, files)
+        self.theme_combo.setCurrentIndex(self.theme_combo.findText("Research"))
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(NewKeepDialog, "exec", fill_and_accept)
+    dialog = _launcher(qtbot, Settings(), tmp_path, catalog)
+    dialog.opened.connect(opened.append)
+    with qtbot.waitSignal(dialog.opened, timeout=10_000):
+        dialog.new_button.click()
+    config = load_keep_config(tmp_path / "Papers.keep" / "keep.toml")
+    assert (config.theme.id, config.contents_index) == ("research", "words")
+
+
 @pytest.mark.parametrize(
     ("folder", "name", "root_id"),
     [
