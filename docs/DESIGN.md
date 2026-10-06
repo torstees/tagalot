@@ -149,6 +149,7 @@ MyMusic.keep/
   keep.toml        # identity, theme, roots (shared, portable)
   keep.db          # SQLite: resources, entities, tags, theme tables
   thumbs.db        # SQLite: thumbnail blobs (disposable cache)
+  fulltext.db      # SQLite: documents' text, when searching inside them (§8)
   ui_state.json    # view toggles, column widths, saved layout (optional)
 ```
 
@@ -182,6 +183,9 @@ after_scan = false                         # don't make a scan's thumbnails in t
 
 [online]                                   # once the user answered (§9 Online details)
 lookups = "allow"                          # or "never"; absent: not asked yet, nothing looked up
+
+[contents]                                 # searching inside documents (§8)
+index = "words"                            # or "substrings"; absent: Off, nothing read
 ```
 
 ### Rules
@@ -522,6 +526,7 @@ Finding documents (papers, books) by what they say, not only by their details. I
 - **Limits:** a file's text stops at 5 MB and a PDF at 2,000 pages (the rest isn't searchable; the file isn't refused). A file that can't be read is listed in the activity panel and isn't tried again until it changes. Rough costs per 1,000 papers: about 50 MB of text; reading, once, 1 to 3 minutes; an index rebuild, seconds to a couple of minutes.
 - **Searching** (chosen: a toggle and snippets, over a separate page): a **Contents** toggle in the filter bar (shown when the keep's contents search is on) makes the search box look inside documents too: an item matches if its title or fields match, as now, **or** a page of one of its files contains every word (Words: each word, its last one as a word start; Substrings: each term, as now, with `LIKE` for terms under 3 characters). A paper matches when any of its versions does. The toggle is part of the search (`SearchSpec.contents`), so it is saved with views and saved searches. Ordering is unchanged (the view's sort), not by relevance.
 - **Where it matched** (chosen: the item and page, over the item alone): matches name the file and page. List layout gets a **Match** column (on when Contents is on): a snippet around the first match, with the matched words in bold, and the file and page in its tooltip (`1706.03762v7.pdf, p. 8`; an EPUB's chapter as `ch. 3`). Grid cards show the snippet as a line under the title. Snippets come from FTS5's `snippet()` for the page that matched, fetched with each page of results. Opening a file at that page is for later.
+- **As built: the text** (#348, `core/contents.py`, `themes/document_text.py`): `read_document_text` collapses whitespace, keeps empty pages (so page numbers hold), drops an EPUB's `head`, `script`, and `style`, and Markdown's front matter; a PDF is read a page at a time under the PDFium lock, so a long one doesn't hold up thumbnails. `fulltext.db` is versioned with `PRAGMA user_version` and rebuilt from scratch for another version (it holds nothing that can't be read again); it is opened when first needed, so a keep that never searches inside documents has none. After each scan (when contents search is on), the window reads what's new or changed (`KeepSession.queue_contents`), first dropping the text of resources deleted since; a file that can't be read is recorded with its error and listed in the activity panel as **Text not read**. A `full_text` type needs a primary role and `api_version = 6`.
 - Built in M23's tasks, #348 to #352.
 
 ### Global vs. scoped searches
@@ -1231,6 +1236,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Research online details (#341, §9 research): Crossref by DOI, arXiv only for papers without one; each service a source in `origins` ranked 25 (between export and PDF), kept through scans; descriptive details only, never identifiers. |
 | 2026-10 | Books online details (#342, §9 books): Open Library by ISBN fills only empty fields (year, publisher, language, description), never title, authors, series, or identifiers. |
 | 2026-10 | Search inside documents designed in review (M23, #308, §8): the theme marks document types (`full_text`, API version 6) and the core reads their primary files by format, as pages; read in the background after scans; text in `fulltext.db` (its own writer), indexed as Words or Substrings and switchable without re-reading; a Contents toggle in the filter bar (`SearchSpec.contents`) and snippets naming file and page. |
+| 2026-10 | Documents' text (#348, §8): theme API version 6 (`Entity.full_text`, `Theme.document_text`, `read_document_text`); `fulltext.db` with `contents_file` and `contents_page`, its own writer, rebuilt on a format change; read after scans on two threads, only new or changed files; `[contents] index` in `keep.toml`. |
 | 2026-10 | Notes on Skip entries (#334, §4, §12): `[roots.exclude_notes]` beside a plain `exclude` list (chosen over turning `exclude` into tables, which older builds would refuse), edited after ` # ` in the Skip box, and written by Tagalot when it skips an export or a Triage file; `exact_pattern` brackets `#`. Themes ignoring files with a reason is left out. |
 | 2026-10 | Projects: containers made by hand (#329, §5, §9; chosen in review over a Project–Paper relationship): `Entity.made_by_hand` (API version 4) gives New …, Add to …, and Remove from …; containment by hand is recorded in a new core table, `user_contains` (core format 13), so scans keep it, and undo and merges carry it. Projects are ordinary containers: tags inherit, Within works. |
 | 2026-10 | Research actions and citations by hand (#322, §4, §9; decided in review): `ActionContext` gains `copy_text`, `open_url` (http/https), and `save_text` (API version 4); saving an export inside a watched folder is allowed after a warning, never over an existing file, and the file is added to that folder's Skip list so it isn't read back (why it was skipped is #334). A relationship of a type with itself has a direction (two sections: Cites, Cited by; `SearchSpec.related_side`), or none with `symmetric=True` (Related). |

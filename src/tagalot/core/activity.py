@@ -21,6 +21,7 @@ MAX_PROBLEMS = 1000
 READ, INGEST, WARNING, THUMBNAIL, OFFLINE = "read", "ingest", "warning", "thumbnail", "offline"
 SCAN = "scan"
 ONLINE = "online"
+CONTENTS = "contents"
 KIND_LABELS = {
     READ: "Can't read",
     INGEST: "Not added",
@@ -29,6 +30,7 @@ KIND_LABELS = {
     OFFLINE: "Offline",
     SCAN: "Scan failed",
     ONLINE: "Lookup",
+    CONTENTS: "Text not read",
 }
 """How each kind of problem is named in the panel."""
 
@@ -102,3 +104,8 @@ def online_problems(messages: Iterable[str]) -> list[Problem]:
     """What an online lookup reported (a service that couldn't be reached, an item the
     theme couldn't read the answers for), as problems."""
     return [Problem(ONLINE, message) for message in messages]
+
+
+def contents_problems(failed: Iterable[tuple[str, str, str]]) -> list[Problem]:
+    """Document files whose text couldn't be read, as problems."""
+    return [Problem(CONTENTS, message, root, relpath) for root, relpath, message in failed]

@@ -84,7 +84,7 @@ class MoviesTheme(Theme):
 
 def test_design_example_declares_cleanly() -> None:
     assert MoviesTheme.id == "movies"
-    assert MoviesTheme.api_version == API_VERSION == 5
+    assert MoviesTheme.api_version == API_VERSION == 6
     assert [e.__name__ for e in MoviesTheme.entities] == ["Actor", "Collection", "Movie"]
     assert MoviesTheme.containment[0] == contains(Collection, Movie)
     assert MoviesTheme.relationships[0].name == "cast"
@@ -272,8 +272,12 @@ def test_api_imports_only_the_standard_library() -> None:
     # readers (#296), which import only the standard library when loaded.
     imported = _imports(Path(api.__file__).read_text(encoding="utf-8"))
     others = {m for m in imported if m.split(".")[0] not in sys.stdlib_module_names}
-    assert others == {"tagalot.themes.readers", "tagalot.themes.bibliography"}
-    for name in ("readers.py", "bibliography.py"):
+    assert others == {
+        "tagalot.themes.readers",
+        "tagalot.themes.bibliography",
+        "tagalot.themes.document_text",
+    }
+    for name in ("readers.py", "bibliography.py", "document_text.py"):
         source = Path(api.__file__).with_name(name).read_text(encoding="utf-8")
         loaded = {m for m in _imports(source, top_level_only=True)}
         outside = {m for m in loaded if m.split(".")[0] not in sys.stdlib_module_names}

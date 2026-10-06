@@ -38,6 +38,8 @@ class KeepError(Exception):
     """A keep cannot be created or opened. The message is suitable for showing to the user."""
 
 
+CONTENTS_INDEXES = ("words", "substrings")
+"""What ``[contents] index`` can say (§8 *Search inside documents*); absent is Off."""
 ONLINE_ANSWERS = ("allow", "never")
 """What ``[online] lookups`` can say (§9 *Online details*)."""
 
@@ -119,6 +121,9 @@ class KeepConfig:
     thumbnails_after_scan: bool = True
     """``[thumbnails] after_scan``: make the thumbnails a scan affects in the background."""
     online_lookups: str | None = None
+    contents_index: str | None = None
+    """``[contents] index``: ``"words"`` or ``"substrings"`` to search inside documents;
+    ``None``, Off (nothing is read)."""
     """``[online] lookups``: ``"allow"`` or ``"never"`` once the user answered (§9 *Online
     details*); ``None``, not asked yet, so nothing is looked up."""
 
@@ -168,6 +173,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[thumbnails]", *thumbnails]
     if config.online_lookups is not None:
         lines += ["", "[online]", f"lookups = {toml_str(config.online_lookups)}"]
+    if config.contents_index is not None:
+        lines += ["", "[contents]", f"index = {toml_str(config.contents_index)}"]
     for root in config.roots:
         lines += [
             "",
@@ -192,7 +199,9 @@ def dump_keep_config(config: KeepConfig) -> str:
 
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
-    reader.warn_unknown(data, {"keep", "theme", "roots", "thumbnails", "online"}, "top level")
+    reader.warn_unknown(
+        data, {"keep", "theme", "roots", "thumbnails", "online", "contents"}, "top level"
+    )
 
     keep = reader.table(data, "keep")
     reader.warn_unknown(keep, {"id", "name", "format_version"}, "[keep]")
@@ -230,6 +239,14 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         online_lookups = online.get("lookups")
         if online_lookups not in (None, *ONLINE_ANSWERS):
             raise KeepConfigError(path, '[online] lookups must be "allow" or "never"')
+
+    contents_index = None
+    if "contents" in data:
+        contents = reader.table(data, "contents")
+        reader.warn_unknown(contents, {"index"}, "[contents]")
+        contents_index = contents.get("index")
+        if contents_index not in (None, *CONTENTS_INDEXES):
+            raise KeepConfigError(path, '[contents] index must be "words" or "substrings"')
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -280,6 +297,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         thumbnail_max=thumbnail_max,
         thumbnails_after_scan=after_scan,
         online_lookups=online_lookups,
+        contents_index=contents_index,
     )
 
 

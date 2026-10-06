@@ -19,16 +19,28 @@ from sqlalchemy import Connection, Engine, update
 from tagalot.core.actions import ActionResult, delete_items, run_action
 from tagalot.core.activity import (
     ProblemLog,
+    contents_problems,
     online_problems,
     problems_from_report,
     thumbnail_problems,
 )
 from tagalot.core.containers import contain_by_hand, new_container, uncontain_by_hand
+from tagalot.core.contents import (
+    FULLTEXT_DB,
+    ContentsQueue,
+    ContentsResult,
+    ContentsStore,
+    files_to_read,
+    forget_deleted,
+    full_text_types,
+)
+from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
+    with_contents_index,
     with_name,
     with_online_lookups,
     with_option,
@@ -123,6 +135,8 @@ class KeepSession:
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     online_opener: Opener = field(default_factory=lambda: urlopen_reply, init=False, repr=False)
     """How lookups fetch an address (tests answer from a table instead)."""
+    _contents: ContentsStore | None = field(default=None, init=False, repr=False)
+    _contents_queue: ContentsQueue | None = field(default=None, init=False, repr=False)
     _closing_lookups: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False
     )
@@ -291,6 +305,60 @@ class KeepSession:
         )
         self.problems.add(online_problems(report.problems))
         return report
+
+    # --- searching inside documents (core.contents) ---
+
+    @property
+    def contents(self) -> ContentsStore:
+        """``fulltext.db``, opened when first needed."""
+        with self._temp_lock:
+            if self._contents is None:
+                self._contents = ContentsStore(
+                    self.keep.dir / FULLTEXT_DB, network=self.keep.on_network
+                )
+            return self._contents
+
+    @property
+    def contents_queue(self) -> ContentsQueue:
+        store = self.contents
+        with self._temp_lock:
+            if self._contents_queue is None:
+                self._contents_queue = ContentsQueue(store, self.theme(), self._known_root_path)
+            return self._contents_queue
+
+    def queue_contents(
+        self,
+        progress: ContentsProgress | None = None,
+        done: Callable[[ContentsResult], None] | None = None,
+    ) -> int:
+        """Read the document files that are new or changed since they were last read, in
+        the background (when the keep searches inside documents); returns how many. Files
+        that can't be read go to the activity panel. Runs in a worker."""
+        if self.keep.config.contents_index is None or not full_text_types(self.schema):
+            return 0
+        store = self.contents
+        with self.reader.connect() as keep:
+            forget_deleted(keep, store.writer)
+            with store.reader.connect() as conn:
+                files = files_to_read(keep, conn, self.schema)
+        if not files:
+            return 0
+        problems = self.problems
+
+        def finished(result: ContentsResult) -> None:
+            problems.add(contents_problems(result.failed))
+            if done is not None:
+                done(result)
+
+        self.contents_queue.start(files, progress, finished)
+        return len(files)
+
+    def set_contents_index(self, index: str | None) -> None:
+        """Search inside documents with a Words or Substrings index, or not (``None``).
+        Turning it off stops reading. Runs in a worker."""
+        self.save_config(with_contents_index(self.keep.config, index))
+        if index is None and self._contents_queue is not None:
+            self._contents_queue.stop()
 
     def lookup_candidates(self, since: datetime | None) -> list[int]:
         """Items to look up after a scan that began at ``since`` (those it made or
@@ -581,6 +649,10 @@ class KeepSession:
                 return
             self._closing_lookups.set()  # a lookup stops before its next request
             self.thumbnail_queue.close()  # before the database it reads goes
+            if self._contents_queue is not None:
+                self._contents_queue.close()
+            if self._contents is not None:
+                self._contents.close()
             self.writer.close()
             if self._temp is not None:
                 shutil.rmtree(self._temp, ignore_errors=True)
