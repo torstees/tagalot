@@ -121,7 +121,7 @@ class KeepSession:
     Read at open; the window updates it when it recounts keywords."""
     """When the latest :meth:`scan_all` began (its thumbnails are queued after it)."""
     _temp_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
-    online_opener: Opener = field(default=urlopen_reply, init=False, repr=False)
+    online_opener: Opener = field(default_factory=lambda: urlopen_reply, init=False, repr=False)
     """How lookups fetch an address (tests answer from a table instead)."""
     _closing_lookups: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False

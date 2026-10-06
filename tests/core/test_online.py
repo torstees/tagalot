@@ -30,6 +30,7 @@ from tagalot.core.online import (
     consent_text,
     look_up,
     source_for,
+    urlopen_reply,
 )
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
@@ -396,3 +397,12 @@ def test_redirects_are_followed_only_on_the_same_host() -> None:
             redirects.redirect_request(
                 request, io.BytesIO(), 302, "Found", HTTPMessage(), elsewhere
             )
+
+
+def test_a_session_fetches_with_urllib_by_default(tmp_path: Path) -> None:
+    """The real opener, called as a plain function (the tests' guard refuses to go online)."""
+    keep = create_keep(tmp_path / "k", "K", ThemeRef("generic", 1))
+    with KeepSession.open(keep.dir, Settings()) as session:
+        assert session.online_opener is urlopen_reply
+        with pytest.raises(AssertionError, match="a test tried to go online"):
+            session.online_opener("https://openlibrary.org/isbn/1.json", {}, 1.0)

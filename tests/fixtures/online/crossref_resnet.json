@@ -1,0 +1,64 @@
+{
+ "status": "ok",
+ "message-type": "work",
+ "message": {
+  "publisher": "IEEE",
+  "published-print": {
+   "date-parts": [
+    [
+     2016,
+     6
+    ]
+   ]
+  },
+  "DOI": "10.1109/cvpr.2016.90",
+  "type": "proceedings-article",
+  "page": "770-778",
+  "title": [
+   "Deep Residual Learning for Image Recognition"
+  ],
+  "author": [
+   {
+    "given": "Kaiming",
+    "family": "He",
+    "sequence": "first"
+   },
+   {
+    "given": "Xiangyu",
+    "family": "Zhang",
+    "sequence": "additional"
+   },
+   {
+    "given": "Shaoqing",
+    "family": "Ren",
+    "sequence": "additional"
+   },
+   {
+    "given": "Jian",
+    "family": "Sun",
+    "sequence": "additional"
+   }
+  ],
+  "container-title": [
+   "2016 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)"
+  ],
+  "issued": {
+   "date-parts": [
+    [
+     2016,
+     6
+    ]
+   ]
+  },
+  "URL": "https://doi.org/10.1109/cvpr.2016.90",
+  "published": {
+   "date-parts": [
+    [
+     2016,
+     6
+    ]
+   ]
+  },
+  "abstract": "<jats:title>Abstract</jats:title><jats:p>Deeper neural networks are more difficult to train. We present a residual learning framework &amp; more.</jats:p>"
+ }
+}
