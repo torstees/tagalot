@@ -28,6 +28,9 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 - **Thumbnails:** a work shows its cover (a picture front matter names, an EPUB's named
   cover, a PDF's first page, an office document's preview, a comic's first page); a series,
   universe, or collection one of its first works'.
+- **Online details** (with the keep's consent): a book with an ISBN is looked up in Open
+  Library, which fills in its year, publisher, language, and description where its files
+  say nothing; what a file says always wins.
 """
 
 import difflib
@@ -45,6 +48,8 @@ from tagalot.themes.api import (
     Icon,
     ImageFile,
     IngestContext,
+    OnlineResponse,
+    OnlineSource,
     Record,
     ResourceInfo,
     RoleImage,
@@ -77,6 +82,7 @@ BOOK_EXTENSIONS = (
     | LINK_EXTENSIONS
 )
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
+OPEN_LIBRARY = OnlineSource("Open Library", "openlibrary.org", "ISBNs")
 COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 """Pictures scanned so a Markdown book's front matter can name one as its cover."""
 
@@ -201,8 +207,9 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 1
-    api_version = 3  # ctx.resource_at for Markdown covers; write_back
+    api_version = 5  # online details (3: ctx.resource_at, write_back)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
+    online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
     entities = [Author, Universe, Series, Collection, Book, Comic]
     containment = [
@@ -370,6 +377,34 @@ class BooksTheme(Theme):
         return found
 
     # --- ingest (DB writer) ---
+
+    # --- online details ---
+
+    def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
+        """A book with an ISBN: its edition in Open Library."""
+        isbn = isbn_digits(item.fields.get("isbn")) if entity_type is Book else None
+        return [f"https://{OPEN_LIBRARY.host}/isbn/{isbn}.json"] if isbn else ()
+
+    def online_details(
+        self, entity: EntityRef, responses: Mapping[str, OnlineResponse], ctx: IngestContext
+    ) -> None:
+        """Fill in what the book's files don't say (they always win)."""
+        for url, answer in responses.items():
+            if not answer.ok:
+                continue  # an ISBN Open Library doesn't know
+            try:
+                found = open_library_values(answer.json())
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
+                ctx.warn(None, f"couldn't read {url}: {e}")
+                continue
+            current = ctx.get(entity).fields
+            empty = {
+                name: value
+                for name, value in found.items()
+                if value not in (None, "") and current.get(name) in (None, "")
+            }
+            if empty:
+                ctx.update(entity, **empty)
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
         for resource in batch:
@@ -793,6 +828,42 @@ def set_cover(
     picture = ctx.resource_at(resource, target)
     if picture is not None:
         ctx.link(book, picture, "cover")
+
+
+# --- what Open Library says ---
+
+OPEN_LIBRARY_LANGUAGES = {
+    "eng": "en", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de", "spa": "es", "ita": "it",
+    "por": "pt", "dut": "nl", "nld": "nl", "rus": "ru", "jpn": "ja", "chi": "zh", "zho": "zh",
+    "kor": "ko", "pol": "pl", "swe": "sv", "dan": "da", "nor": "no", "fin": "fi",
+}  # fmt: skip
+"""Open Library's (MARC) language codes as the two-letter codes EPUBs use."""
+
+
+def isbn_digits(isbn: str | None) -> str | None:
+    """An ISBN as its digits (and ``X``): ``978-0-7653-1178-8`` → ``9780765311788``;
+    ``None`` unless it has 10 or 13."""
+    digits = re.sub(r"[^0-9Xx]", "", isbn or "").upper()
+    return digits if len(digits) in (10, 13) else None
+
+
+def open_library_values(edition: Mapping[str, Any]) -> dict[str, Any]:
+    """An Open Library edition (``/isbn/{isbn}.json``) as a book's details."""
+    publishers = edition.get("publishers") or []
+    year = re.search(r"\b(\d{4})\b", str(edition.get("publish_date") or ""))
+    languages = [
+        OPEN_LIBRARY_LANGUAGES.get(str(lang.get("key", "")).rpartition("/")[2])
+        for lang in edition.get("languages") or []
+    ]
+    description = edition.get("description")
+    if isinstance(description, Mapping):  # {"type": "/type/text", "value": "…"}
+        description = description.get("value")
+    return {
+        "year": int(year.group(1)) if year else None,
+        "publisher": publishers[0] if publishers and isinstance(publishers[0], str) else None,
+        "language": next((lang for lang in languages if lang), None),
+        "description": " ".join(description.split()) if isinstance(description, str) else None,
+    }
 
 
 def delete_if_empty(entity: EntityRef, ctx: IngestContext) -> None:

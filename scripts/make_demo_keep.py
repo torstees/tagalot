@@ -657,6 +657,7 @@ def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
 BOOK_EPUBS: dict[str, dict[str, Any]] = {
     "Kobo/The Colour of Magic.epub": {
         "title": "The Colour of Magic",
+        "isbn": "0-552-12475-3",  # Corgi, 1990 (Open Library knows it)
         "creators": [("Terry Pratchett", "aut")],
         "series": ("Discworld", 1),
         "subjects": ["Fantasy", "Humor"],
@@ -670,6 +671,7 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
     },
     "Kobo/Equal Rites.epub": {
         "title": "Equal Rites",
+        "isbn": "0000000000",  # an ISBN Open Library doesn't know
         "creators": [("Terry Pratchett", "aut")],
         "series": ("Discworld", 3),
         "subjects": ["Fantasy", "Humor"],
@@ -677,6 +679,7 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
     },
     "Kobo/The Final Empire.epub": {
         "title": "The Final Empire",
+        "isbn": "978-0-7653-1178-8",  # Tor, 2006, with a description
         "creators": [("Brandon Sanderson", "aut")],
         "epub3_series": ("Mistborn", 1),
         "sets": ["The Mistborn Trilogy"],
@@ -685,6 +688,7 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
     },
     "Humble Bundle/The Well of Ascension.epub": {
         "title": "The Well of Ascension",
+        "isbn": "9780765316882",  # Tor, 2007
         "creators": [("Brandon Sanderson", "aut")],
         "epub3_series": ("Mistborn", 2),
         "sets": ["The Mistborn Trilogy"],
@@ -769,6 +773,8 @@ def _epub(path: Path, details: dict[str, Any]) -> None:
     for name, code in details.get("creators", []):
         lines.append(f'<dc:creator opf:role="{code}">{escape(name)}</dc:creator>')
     lines += [f"<dc:subject>{escape(s)}</dc:subject>" for s in details.get("subjects", [])]
+    if "isbn" in details:
+        lines.append(f'<dc:identifier opf:scheme="ISBN">{escape(details["isbn"])}</dc:identifier>')
     if "series" in details:
         name, index = details["series"]
         lines.append(f'<meta name="calibre:series" content="{escape(name)}"/>')
