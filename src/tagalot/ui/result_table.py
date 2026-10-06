@@ -2,13 +2,25 @@
 
 from collections.abc import Iterable, Sequence
 
-from PySide6.QtCore import QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRect, Qt, Signal
+from PySide6.QtGui import (
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QPainter,
+    QPalette,
+    QTextDocument,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHeaderView,
     QMenu,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableView,
     QWidget,
 )
@@ -16,7 +28,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.dnd import dragged_tags
-from tagalot.ui.models.results import KEYWORDS, TAGS, ResultColumn
+from tagalot.ui.models.results import KEYWORDS, MATCH, MATCH_HTML_ROLE, TAGS, ResultColumn
 
 TITLE_MIN_WIDTH = 200
 TAGS_WIDTH = 220
@@ -25,11 +37,12 @@ DEFAULT_HIDDEN = frozenset({TAGS, KEYWORDS})
 OUTLINE_COLOR = "#f0a020"
 """The drop target's dashed outline: amber, distinct from the selection color."""
 COLUMN_WIDTH = 140
+MATCH_WIDTH = 360
 NUMERIC_WIDTH = 100
 
 
 def list_columns(
-    schema: ThemeSchema, types: Sequence[str], keywords: bool = False
+    schema: ThemeSchema, types: Sequence[str], keywords: bool = False, *, contents: bool = False
 ) -> list[ResultColumn]:
     """The list layout's columns for a scope: the title (named as the types call it), the
     type when several types are in scope, the item's tags (hidden unless the user shows
@@ -41,6 +54,8 @@ def list_columns(
     columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
     if len(tables) != 1:
         columns.append(ResultColumn("type", "Type", sortable=False))
+    if contents:  # the search looks inside documents: where each matched (#351)
+        columns.append(ResultColumn(MATCH, "Match", sortable=False))
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     if keywords:  # only in keeps whose files give keywords (§7)
         columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
@@ -231,4 +246,48 @@ def set_column_widths(table: QTableView, columns: Sequence[ResultColumn]) -> Non
         else:
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             width = TAGS_WIDTH if column.key in (TAGS, KEYWORDS) else COLUMN_WIDTH
+            if column.key == MATCH:
+                width = MATCH_WIDTH
             table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else width)
+        table.setItemDelegateForColumn(i, match_delegate(table) if column.key == MATCH else None)  # type: ignore[arg-type]
+
+
+class MatchDelegate(QStyledItemDelegate):
+    """Draws the Match column's snippet on one line, the matched words in bold."""
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        rich = index.data(MATCH_HTML_ROLE)
+        if not rich:
+            super().paint(painter, option, index)
+            return
+        panel = QStyleOptionViewItem(option)
+        self.initStyleOption(panel, index)
+        panel.text = ""
+        widget = panel.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, panel, painter, widget)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
+        document = QTextDocument()
+        document.setDefaultFont(option.font)
+        document.setDocumentMargin(0)
+        color = option.palette.color(role).name()
+        document.setHtml(f'<span style="color: {color}; white-space: pre;">{rich}</span>')
+        rect = option.rect.adjusted(4, 0, -4, 0)
+        painter.save()
+        painter.setClipRect(rect)
+        top = rect.top() + (rect.height() - document.size().height()) / 2
+        painter.translate(rect.left(), top)
+        document.drawContents(painter)
+        painter.restore()
+
+
+def match_delegate(table: QTableView) -> MatchDelegate:
+    """The table's Match column delegate (one per table, made when first needed)."""
+    found = table.findChild(MatchDelegate)
+    return found if found is not None else MatchDelegate(table)

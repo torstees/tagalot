@@ -52,7 +52,13 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.ui.dnd import dragged_tags
-from tagalot.ui.models.results import PLACEHOLDER, ResultsModel, display_value
+from tagalot.ui.models.results import (
+    MATCH,
+    PLACEHOLDER,
+    MatchValue,
+    ResultsModel,
+    display_value,
+)
 from tagalot.ui.result_table import OUTLINE_COLOR
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 
@@ -72,7 +78,7 @@ class CardDelegate(QStyledItemDelegate):
 
     def card_size(self) -> QSize:
         metrics = self.grid.fontMetrics()
-        lines = 1 + self.grid.max_card_lines()
+        lines = 1 + self.grid.max_card_lines() + int(self.grid.show_match)
         side = self.grid.thumbnail_size
         return QSize(side + 2 * PADDING, side + 2 * PADDING + 4 + lines * metrics.height())
 
@@ -148,9 +154,16 @@ class CardDelegate(QStyledItemDelegate):
         if found is not None:
             muted = palette.color(text_role if selected else QPalette.ColorRole.PlaceholderText)
             painter.setPen(muted)
-            for key, _label in grid.card_lines.get(found[0].type, ()):
+            keys = [key for key, _label in grid.card_lines.get(found[0].type, ())]
+            if grid.show_match:
+                keys.append(MATCH)  # where its documents matched, last
+            for key in keys:
                 line.translate(0, metrics.height())
-                text = display_value(found[1].get(key), grid.displays.get(key))
+                value = found[1].get(key)
+                if isinstance(value, MatchValue):
+                    text = value.brief  # from the match on, so the card shows it
+                else:
+                    text = display_value(value, grid.displays.get(key))
                 painter.drawText(
                     line,
                     Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
@@ -183,6 +196,9 @@ class CardDelegate(QStyledItemDelegate):
             value = display_value(found[1].get(key), self.grid.displays.get(key))
             if value:
                 lines.append(f"{label}: {value}")
+        match = found[1].get(MATCH)
+        if self.grid.show_match and isinstance(match, MatchValue):
+            lines.append(f"{match.text} ({match.where})")
         QToolTip.showText(event.globalPos(), "\n".join(lines), view)
         return True
 
@@ -210,6 +226,8 @@ class ResultGrid(QListView):
         self.loader = loader
         self.thumbnail_size = thumbnail_size
         self.card_lines: dict[str, list[tuple[str, str]]] = {}
+        self.show_match = False
+        """Cards end with where their documents matched (a search inside documents)."""
         self.displays: dict[str, str] = {}
         """Display formats of the card lines' fields, by field name."""
         self.drop_rows: set[int] = set()

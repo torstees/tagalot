@@ -9,6 +9,7 @@ Every search gets a new generation number, and results from an older generation 
 dropped, so a slow query never overwrites a newer one.
 """
 
+import html
 import logging
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -30,7 +31,17 @@ from sqlalchemy import ColumnElement, Connection
 
 from tagalot.core.formats import format_value
 from tagalot.core.keywords import keyword_index, keyword_key, keywords_of
-from tagalot.core.search import SearchError, SearchHit, count_matches, run_search
+from tagalot.core.search import (
+    MATCH_END,
+    MATCH_START,
+    ContentsScope,
+    SearchError,
+    SearchHit,
+    Snippet,
+    contents_snippets,
+    count_matches,
+    run_search,
+)
 from tagalot.core.search_fields import field_values, search_fields
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
@@ -70,6 +81,59 @@ TAGS = "tags"
 """The key of the Tags column: an item's own tags, not a theme field."""
 KEYWORDS = "keywords"
 """The key of the Keywords column: what an item's files say it is about (#295)."""
+MATCH = "match"
+"""The key of the Match column: where an item's documents matched (#351)."""
+MATCH_HTML_ROLE = Qt.ItemDataRole.UserRole + 40
+"""The Match column's snippet as rich text, the matched words in bold."""
+
+
+@dataclass(frozen=True)
+class MatchValue:
+    """The Match column's cell (and a grid card's last line): a snippet of the page that
+    matched, and which file and page it is on."""
+
+    text: str
+    """The snippet, plain."""
+    html: str
+    """The snippet with the matched words in bold."""
+    where: str
+    """``1706.03762v7.pdf, p. 8``, ``Guards! Guards!.epub, ch. 3``, or a file's name."""
+    brief: str = ""
+    """The snippet from its first matched word on (an ellipsis before it), for a grid
+    card's one short line, which would otherwise cut the match off."""
+
+
+def match_value(snippet: Snippet) -> MatchValue:
+    """A :class:`~tagalot.core.search.Snippet` as a cell: the file's name, and its page
+    (``p.``) or chapter (``ch.``, an EPUB's) when it has more than one."""
+    name = snippet.relpath.rpartition("/")[2]
+    where = name
+    if snippet.pages > 1:
+        unit = "ch." if name.lower().endswith(".epub") else "p."
+        where = f"{name}, {unit} {snippet.page}"
+    plain = snippet.text.replace(MATCH_START, "").replace(MATCH_END, "")
+    html_text = html.escape(snippet.text).replace(MATCH_START, "<b>").replace(MATCH_END, "</b>")
+    at = snippet.text.find(MATCH_START)
+    brief = plain
+    if at > 0:
+        brief = "\u2026" + snippet.text[at:].replace(MATCH_START, "").replace(MATCH_END, "")
+    return MatchValue(plain, html_text, where, brief)
+
+
+def add_snippets(
+    conn: Connection,
+    spec: SearchSpec,
+    contents: ContentsScope | None,
+    hits: Sequence[SearchHit],
+    values: dict[int, dict[str, Any]],
+) -> None:
+    """Put where each hit's documents matched into its row (the Match column), when the
+    search looks inside documents. Runs in a worker."""
+    if contents is None or not spec.text or not hits:
+        return
+    found = contents_snippets(conn, spec.text, contents, [h.id for h in hits])
+    for entity_id, snippet in found.items():
+        values.setdefault(entity_id, {})[MATCH] = match_value(snippet)
 
 
 @dataclass(frozen=True)
@@ -139,6 +203,8 @@ def display_value(value: object, display: str | None = None) -> str:
             return ""
         case TagsValue():
             return value.text
+        case MatchValue():
+            return value.text
         case bool():
             return "Yes" if value else "No"
         case datetime():
@@ -154,6 +220,8 @@ def display_value(value: object, display: str | None = None) -> str:
 def cell_tooltip(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
     """The tooltip of one cell: the full tag paths for Tags, else the cell's text."""
     value = row[1].get(column.key)
+    if isinstance(value, MatchValue):
+        return f"{value.text}\n\n{value.where}"
     return value.tooltip if isinstance(value, TagsValue) else cell_text(column, row, type_labels)
 
 
@@ -213,6 +281,9 @@ class PreviewModel(QAbstractTableModel):
             return cell_text(column, self.rows[index.row()], self.type_labels)
         if role == Qt.ItemDataRole.ToolTipRole:
             return cell_tooltip(column, self.rows[index.row()], self.type_labels)
+        if role == MATCH_HTML_ROLE:
+            value = self.rows[index.row()][1].get(column.key)
+            return value.html if isinstance(value, MatchValue) else None
         return None
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
@@ -341,6 +412,7 @@ class ResultsModel(QAbstractTableModel):
                 conn, spec, tree, offset=offset, limit=limit, fields=fields, contents=contents
             )
             values = row_values(conn, session.schema, tree, hits, columns)
+            add_snippets(conn, spec, contents, hits, values)
             return total, [(h, values.get(h.id, {})) for h in hits]
 
         return fetch
@@ -548,6 +620,10 @@ class ResultsModel(QAbstractTableModel):
             if column.numeric:
                 return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             return None
+        if role == MATCH_HTML_ROLE:
+            found = self.row(index.row(), load=False)
+            value = found[1].get(column.key) if found is not None else None
+            return value.html if isinstance(value, MatchValue) else None
         if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return None
         found = self.row(index.row())

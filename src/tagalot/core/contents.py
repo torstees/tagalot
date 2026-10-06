@@ -134,6 +134,7 @@ search can match documents' text and items in one query."""
 attached_page = contents_page.to_metadata(MetaData(), schema=ATTACHED)
 """``contents_page`` as the keep's read connections see it."""
 attached_meta = contents_meta.to_metadata(MetaData(), schema=ATTACHED)
+attached_file = contents_file.to_metadata(MetaData(), schema=ATTACHED)
 
 
 def attach_on_connect(engine: Any, path: Path) -> None:
