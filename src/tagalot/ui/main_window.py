@@ -373,6 +373,10 @@ class MainWindow(QMainWindow):
             self.lookups.finished.connect(self._lookups_finished)
             self.lookups.message.connect(self.statusBar().showMessage)
             self.lookups.consent_changed.connect(self._online_consent_changed)
+            if session.keep.config.contents_index is not None:
+                # keep.toml may ask for another index than the one built (edited by hand,
+                # or the keep closed while switching).
+                QTimer.singleShot(0, self.update_contents)
         self.busy = QProgressBar()
         self.busy.setRange(0, 0)
         self.busy.setMaximumWidth(120)
@@ -1721,6 +1725,7 @@ class MainWindow(QMainWindow):
             window.clear_thumbnails_requested.connect(self.clear_thumbnails_action.trigger)
             if self.lookups is not None:
                 window.online_allowed.connect(self.lookups.everything)
+            window.contents_changed.connect(self.update_contents)
             self.keep_config = window
         self.keep_config.show()
         self.keep_config.raise_()
@@ -1848,6 +1853,38 @@ class MainWindow(QMainWindow):
 
     # --- reading documents' text (#348; core.contents) ---
 
+    def update_contents(self) -> None:
+        """Contents search was turned on, off, or switched: build the index the keep asks
+        for from the text already read (searches use the old one meanwhile), then read the
+        documents not read yet."""
+        session = self.session
+        if session is None:
+            return
+        if session.keep.config.contents_index is None:
+            self.contents_status.setVisible(False)
+            return
+        self.contents_status.setText("Building the contents index\u2026")
+        self.contents_status.setToolTip(
+            "From the documents' text already read; searches use the old index meanwhile"
+        )
+        self.contents_status.setVisible(True)
+
+        def built(_: bool) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.contents_status.setVisible(False)
+            if self.keep_config is not None:
+                self.keep_config.show_contents_stats()
+            self.read_contents()
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                self.contents_status.setVisible(False)
+                self.statusBar().showMessage(f"Building the contents index failed: {error}")
+            logger.error("Building the contents index failed", exc_info=error)
+
+        run_in_pool(session.ensure_contents_index, on_done=built, on_error=failed)
+
     def read_contents(self) -> None:
         """Read the text of new and changed documents in the background (when the keep
         searches inside documents)."""
@@ -1879,6 +1916,8 @@ class MainWindow(QMainWindow):
     def _contents_finished(self, result: ContentsResult) -> None:
         self.contents_status.setVisible(False)
         self._check_problems()
+        if self.keep_config is not None:
+            self.keep_config.show_contents_stats()
         logger.info("Read %d documents' text (%d pages)", result.read, result.pages)
 
     # --- online lookups (#340; ui.lookups) ---

@@ -25,6 +25,7 @@ from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -45,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.contents import ContentsStats
 from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
 from tagalot.core.keep_settings import MIN_THUMBNAIL_SIZE, with_name, with_option
@@ -94,6 +96,9 @@ class KeepConfigWindow(QWidget):
     """The largest thumbnail size changed (the main window's size menu follows)."""
     clear_thumbnails_requested = Signal()
     online_allowed = Signal()
+    contents_changed = Signal()
+    """Contents search was turned on, off, or switched: the window builds the index and
+    reads what it hasn't."""
     """Online lookups were just turned on: the window looks up what it hasn't yet."""
     """Clear the thumbnail cache (the main window asks and does it)."""
 
@@ -315,11 +320,38 @@ class KeepConfigWindow(QWidget):
         online_column.addWidget(self.online_lookups)
         online_column.addWidget(sends)
         self.online.setVisible(bool(theme.online_sources))
+        self.contents = QGroupBox("Search inside documents")
+        self.contents_index = QComboBox()
+        for label, value in CONTENTS_CHOICES:
+            self.contents_index.addItem(label, value)
+        self.contents_index.activated.connect(
+            lambda _: self._set_contents_index(self.contents_index.currentData())
+        )
+        about_index = QLabel(
+            "Words finds whole words and the starts of words; Substrings also finds text "
+            "inside words, and takes 3 to 5 times the space. Switching rebuilds the index "
+            "from the text already read."
+        )
+        about_index.setWordWrap(True)
+        self.contents_stats = QLabel()
+        self.contents_stats.setObjectName("contents_stats")
+        self.clear_contents = QPushButton("Clear contents text\u2026")
+        self.clear_contents.setToolTip("Turn this off and delete the documents' text and the index")
+        self.clear_contents.clicked.connect(self._clear_contents)
+        stats_row = QHBoxLayout()
+        stats_row.addWidget(self.contents_stats, 1)
+        stats_row.addWidget(self.clear_contents)
+        contents_form = QFormLayout(self.contents)
+        contents_form.addRow("Index:", self.contents_index)
+        contents_form.addRow("", about_index)
+        contents_form.addRow("Stored:", stats_row)
+        self.contents.setVisible(session.has_documents)
         tab = QWidget()
         column = QVBoxLayout(tab)
         column.addLayout(form)
         column.addWidget(self.keep_options)
         column.addWidget(self.online)
+        column.addWidget(self.contents)
         column.addStretch(1)
         return tab
 
@@ -414,6 +446,8 @@ class KeepConfigWindow(QWidget):
         self.online_lookups.blockSignals(True)
         self.online_lookups.setChecked(config.online_lookups == "allow")
         self.online_lookups.blockSignals(False)
+        self.contents_index.setCurrentIndex(self.contents_index.findData(config.contents_index))
+        self.show_contents_stats()
         _clear_form(self.keep_options_form)
         for spec in self.session.theme.options:
             value = config.theme_options.get(spec.name, spec.default)
@@ -536,6 +570,52 @@ class KeepConfigWindow(QWidget):
             "Details are now looked up online." if on else "Nothing is looked up online now.",
             self.online_allowed.emit if on else None,
         )
+
+    def show_contents_stats(self) -> None:
+        """What ``fulltext.db`` holds, read in a worker."""
+        session = self.session
+        if not session.has_documents:
+            return
+
+        def done(stats: ContentsStats | None) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.contents_stats.setText(describe_contents(stats))
+            self.clear_contents.setEnabled(stats is not None and stats.files > 0)
+
+        run_in_pool(session.contents_stats, on_done=done, pool=self._pool)
+
+    def _set_contents_index(self, index: str | None) -> None:
+        session = self.session
+        if index == session.keep.config.contents_index:
+            return
+        message = {
+            None: "Documents' contents aren't searched now; their text is kept.",
+            "words": "Documents' contents are searched by words.",
+            "substrings": "Documents' contents are searched by substrings.",
+        }[index]
+        self._run(lambda: session.set_contents_index(index), message, self.contents_changed.emit)
+
+    def _clear_contents(self) -> None:
+        if not self.confirm_clear_contents():
+            return
+        session = self.session
+        self._run(
+            session.clear_contents,
+            "Deleted the documents' text; their contents aren't searched now.",
+            self.contents_changed.emit,
+        )
+
+    def confirm_clear_contents(self) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Clear contents text",
+            "Stop searching inside documents, and delete their text and its index? "
+            "Turning it on again reads every document again.\n\nNo files on disk are changed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _set_option(self, name: str, value: object, root_id: str | None = None) -> None:
         session = self.session
@@ -765,6 +845,23 @@ class KeepConfigWindow(QWidget):
             QMessageBox.StandardButton.Cancel,
         )
         return answer == QMessageBox.StandardButton.Yes
+
+
+CONTENTS_CHOICES = (("Off", None), ("Words", "words"), ("Substrings", "substrings"))
+"""Keep configuration's choices for searching inside documents (§8)."""
+
+
+def describe_contents(stats: ContentsStats | None) -> str:
+    """One line on what the keep holds of its documents' text."""
+    if stats is None or not stats.files:
+        return "Nothing read yet"
+    read = stats.files - stats.failed
+    text = f"Text of {read:,} {'document' if read == 1 else 'documents'}"
+    text += f" ({stats.pages:,} {'page' if stats.pages == 1 else 'pages'}, "
+    text += f"{format_bytes(stats.size)})"
+    if stats.failed:
+        text += f"; {stats.failed:,} couldn't be read"
+    return text
 
 
 class RemoveRootDialog(QDialog):
