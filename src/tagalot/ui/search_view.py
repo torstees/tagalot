@@ -51,7 +51,8 @@ from tagalot.core.search_fields import (
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
-from tagalot.themes.api import entity_label
+from tagalot.themes.api import entity_label, entity_plural
+from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
 from tagalot.ui.file_actions import (
     FileOpener,
@@ -97,6 +98,14 @@ WRITE_BACK_TIP = (
     "Write its tags, and the fields you edited, into the front matter of its Markdown files "
     "(in folders that allow it), after showing you the change"
 )
+
+
+TRIAGE_DONE = {
+    "untagged": "Every item has a tag of its own.",
+    "missing": "No item's files are missing.",
+    "keywords": "Every file keyword matches a tag, or is ignored.",
+}
+"""What an empty Triage list means (#360)."""
 
 
 def searches_contents(session: KeepSession) -> bool:
@@ -310,11 +319,14 @@ class SearchPage(QWidget):
         self.groups.selection_changed.connect(self.selection_changed)
         self.groups.hit_activated.connect(self.activate)
         self.groups.item_menu_requested.connect(lambda hit, at: self.item_menu(hit).exec(at))
+        self.empty = EmptyState()
+        """Shown instead of the results when there are none (#360)."""
         self.results = QStackedWidget()
         self.results.addWidget(self.table)
         self.results.addWidget(self.grid)
         self.results.addWidget(self.tree)
         self.results.addWidget(self.groups)
+        self.results.addWidget(self.empty)
         self._show_layout_buttons()
 
         layout = QVBoxLayout(self)
@@ -625,6 +637,8 @@ class SearchPage(QWidget):
         self._show_layout_buttons()
         total = sum(g.count for g in groups)
         self.status.setText(count_text(total) if total else "Nothing found")
+        if not total:
+            self._show_empty()
 
     def _show_list(self, spec: SearchSpec) -> None:
         self._apply_card_lines(spec.types)
@@ -711,7 +725,7 @@ class SearchPage(QWidget):
         self.layout_mode = mode
         if was_tree != self._tree_layout():
             self._run()  # the tree's columns and contained items differ from the list's
-        elif not self.showing_groups():
+        elif not self.showing_groups() and not self.showing_empty():
             self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
         self.selection_changed.emit()
@@ -940,6 +954,47 @@ class SearchPage(QWidget):
 
     def _counted(self, total: int) -> None:
         self.status.setText(count_text(total) if total else "Nothing found")
+        if not total:
+            self._show_empty()
+        elif self.showing_empty():
+            self.results.setCurrentWidget(self._layout_widget())
+
+    def showing_empty(self) -> bool:
+        return self.results.currentWidget() is self.empty
+
+    def _show_empty(self) -> None:
+        """Nothing to list: the knight, and what to do about it (#360)."""
+        self.empty.show_text(*self.empty_text())
+        self.results.setCurrentWidget(self.empty)
+
+    def empty_text(self) -> tuple[str, str]:
+        """The heading and hint for a page with nothing to list: what's filtering it out,
+        or why there's nothing yet."""
+        f = self.filter_bar.filters()
+        if f.include or f.exclude or f.text or f.fields or f.within is not None:
+            chips = f.include or f.exclude or f.fields or f.within is not None
+            hint = (
+                "No item matches these filters. Remove a chip, or Clear all."
+                if chips
+                else "No item matches. Try other words, or fewer."
+            )
+            if f.text and not f.contents and self.offers_contents():
+                hint += " Tick In documents to look inside documents too."
+            return "Nothing found", hint
+        triage = self._base.triage
+        if triage is not None:
+            return "Nothing to tidy here", TRIAGE_DONE.get(triage, "")
+        made = [t for t in hand_made_types(self.session.schema) if t in self._base.types]
+        if made:
+            entity = self.session.schema.by_type_id(made[0]).entity
+            noun, plural = entity_label(entity).lower(), entity_plural(entity).lower()
+            return f"No {plural} yet", f"Make one with New {noun}\u2026 above."
+        if self._base.within is not None or self._base.related is not None:
+            return "Nothing here", ""
+        return (
+            "Nothing here yet",
+            "Add a folder to this keep (Keep \u2192 Configure keep\u2026), then scan it (F5).",
+        )
 
     def _failed(self, message: str) -> None:
         self.status.setText(message)

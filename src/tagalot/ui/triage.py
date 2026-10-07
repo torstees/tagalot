@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QStackedWidget,
     QTableView,
     QTabWidget,
     QVBoxLayout,
@@ -48,6 +49,7 @@ from tagalot.core.triage import (
     count_unlinked,
     unlinked_files,
 )
+from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import run_in_pool
@@ -169,8 +171,14 @@ class TriagePage(QWidget):
         dismiss_files = QPushButton("Dismiss")
         dismiss_files.setToolTip("Hide the selected files here until they change")
         dismiss_files.clicked.connect(self._dismiss_files)
+        self.files_empty = EmptyState("Nothing to tidy here", "Every file is used by an item.")
+        self.files_stack = QStackedWidget()
+        self.files_stack.addWidget(self.table)
+        self.files_stack.addWidget(self.files_empty)
         files_tab = _tab(
-            self.table, [open_file, reveal, link, self.skip_button, dismiss_files], self.files_note
+            self.files_stack,
+            [open_file, reveal, link, self.skip_button, dismiss_files],
+            self.files_note,
         )
 
         self.untagged = make_search(
@@ -243,6 +251,7 @@ class TriagePage(QWidget):
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
         self.files.set_files(files)
+        self.files_stack.setCurrentWidget(self.table if files else self.files_empty)
         if counts.unlinked > len(files):
             self.files_note.setText(f"Showing the first {len(files):,} of {counts.unlinked:,}.")
         elif not files:

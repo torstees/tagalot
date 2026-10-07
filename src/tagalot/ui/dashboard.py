@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.dashboard import CardRow, Dashboard, TagUse, load_dashboard
 from tagalot.core.search_spec import FieldFilter
 from tagalot.core.session import KeepSession
+from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -58,6 +59,8 @@ class DashboardPage(QWidget):
     search_tag = Signal(int)
     search_value = Signal(str, object)
     """(type id, field filter): items of that type with a theme card's value."""
+    configure_requested = Signal()
+    scan_requested = Signal()
 
     def __init__(
         self, session: KeepSession, thumbnails: ThumbnailLoader, parent: QWidget | None = None
@@ -111,11 +114,23 @@ class DashboardPage(QWidget):
         for n in range(3):
             self.theme_grid.setColumnStretch(n, 1)
         self._values: list[tuple[str, FieldFilter]] = []
+        self.cards = QWidget()
+        cards = QVBoxLayout(self.cards)
+        cards.setContentsMargins(0, 0, 0, 0)
+        cards.addLayout(grid)
+        cards.addLayout(self.theme_grid)
+        self.empty = EmptyState(
+            "This keep is empty",
+            "Add a folder for it to watch, then scan it: its files become items here.",
+        )
+        self.empty.add_button("Configure keep\u2026", self.configure_requested.emit)
+        self.empty.add_button("Scan now", self.scan_requested.emit)
+        self.empty.setVisible(False)
         body = QWidget()
         column = QVBoxLayout(body)
         column.addLayout(header)
-        column.addLayout(grid)
-        column.addLayout(self.theme_grid)
+        column.addWidget(self.cards)
+        column.addWidget(self.empty, 1)
         column.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -152,6 +167,8 @@ class DashboardPage(QWidget):
     def _show(self, data: Dashboard) -> None:
         self.data = data
         self.title.setText(html.escape(self.session.keep.config.name))
+        self.cards.setVisible(data.total > 0)
+        self.empty.setVisible(data.total == 0)  # nothing yet: the knight says how (#360)
         rows = [
             f'<a href="type:{t.type_id}">{html.escape(t.plural)}</a>: {t.count:,}'
             for t in data.types

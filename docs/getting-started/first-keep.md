@@ -22,7 +22,7 @@ After a scan, Tagalot makes the new items' thumbnails in the background ("Making
 
 ## Look around
 
-A keep opens on its [dashboard](../guide/dashboard.md): how many items of each kind, how many have no tags yet, your folders, what was added recently. The navigation on the left has:
+A keep opens on its [dashboard](../guide/dashboard.md) (an empty keep shows the knight, with **Configure keep…** and **Scan now**): how many items of each kind, how many have no tags yet, your folders, what was added recently. The navigation on the left has:
 
 - **Search all**, every item, grouped by kind;
 - the theme's **searches** (Albums, Songs; Books, Authors…);

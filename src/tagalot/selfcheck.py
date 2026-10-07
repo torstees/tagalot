@@ -64,12 +64,13 @@ def run_check(out: Callable[[str], None] = print) -> int:
     except Exception as e:
         line("Template", f"{type(e).__name__}: {e}", ok=False)
 
-    from tagalot.resources import icon_files, tower_file
+    from tagalot.resources import icon_files, knight_file, tower_file
 
     found = [size for size, path in icon_files().items() if path.is_file()]
     line("Icon", f"{len(found)} of {len(icon_files())} sizes", ok=len(found) == len(icon_files()))
-    tower = tower_file().is_file()
-    line("About picture", "the tower" if tower else "tagalot-tower.png isn't there", ok=tower)
+    missing = [f.name for f in (tower_file(), knight_file()) if not f.is_file()]
+    shown = "the tower and the knight" if not missing else f"{', '.join(missing)} missing"
+    line("Pictures", shown, ok=not missing)
 
     for name, probe, needed in READERS:
         try:

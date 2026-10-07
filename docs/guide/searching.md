@@ -43,6 +43,10 @@ Each search remembers its toggles. The theme's searches start with sensible ones
 
 Right-click an item that holds others (an artist, an album, a series) and choose **Show contents in search**: a grey **Within: …** chip limits the search to what it holds, keeping your other filters. A container's page has **Show in search** for the same thing.
 
+## When nothing matches
+
+The knight says what's in the way: your chips and text (remove a chip, try other words, or tick **In documents**), or, on an empty list, why there's nothing yet.
+
 ## Search all
 
 **Search all** lists every match grouped by kind, a section each (`▾ Albums (40)`), with the first few of each; **Show all** narrows to that kind with an **Only:** chip. When only one kind matches, its full list shows directly.

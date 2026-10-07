@@ -28,3 +28,9 @@ TOWER_SIZE = 256
 def tower_file() -> Traversable:
     """The tower, rendered from ``tagalot-tower.svg`` (the About dialog, #359)."""
     return resources.files(__name__) / "tagalot-tower.png"
+
+
+def knight_file() -> Traversable:
+    """The knight with his visor up, rendered from ``tagalot-knight-visor-up.svg`` at
+    :data:`TOWER_SIZE` (empty pages and the splash screen, #360)."""
+    return resources.files(__name__) / "tagalot-knight.png"

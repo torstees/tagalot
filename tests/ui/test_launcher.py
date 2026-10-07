@@ -129,7 +129,10 @@ def test_theme_problems_are_shown(qtbot: QtBot, tmp_path: Path) -> None:
 
 def test_empty_recent_list(qtbot: QtBot, tmp_path: Path, catalog: ThemeCatalog) -> None:
     dialog = _launcher(qtbot, Settings(), tmp_path, catalog)
-    qtbot.waitUntil(lambda: "No recent keeps" in dialog.status.text(), timeout=5000)
+    # The knight says what to do (#360).
+    qtbot.waitUntil(lambda: dialog.recent_stack.currentWidget() is dialog.no_keeps, timeout=5000)
+    assert dialog.no_keeps.title.text() == "No keeps yet"
+    assert "New keep" in dialog.no_keeps.hint.text()
     assert not dialog.open_button.isEnabled()
     assert dialog.new_button.isEnabled()
 
