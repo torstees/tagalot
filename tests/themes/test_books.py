@@ -28,6 +28,7 @@ from tagalot.builtin_themes.books import (
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.keywords import keywords_of
+from tagalot.core.merge import merge_items
 from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
@@ -550,6 +551,40 @@ def test_kindle_books(env: Env) -> None:
     fields = env.fields(Book, "Python for DevOps")
     assert (fields["isbn"], fields["publisher"]) == ("9781492057697", "O'Reilly")
     assert env.keywords("Python for DevOps") == ["DevOps"]
+
+
+def test_a_format_joins_the_book_its_siblings_were_merged_into(env: Env) -> None:
+    """Two formats were two books, merged in Dedupe (the EPUB's into the PDF's: the EPUB's
+    link is then the user's, and its old book is gone); a third format joins the book that
+    is left, not the merged-away one (where it would be dropped, unlinked)."""
+    write_epub(
+        env.files / "Bundle/devops.epub",
+        title="Effective DevOps",
+        creators=[("Jennifer Davis and Ryn Daniels", None)],
+    )
+    write_pdf(env.files / "Elsewhere/devops.pdf", title="Effective DevOps", author="Someone")
+    env.scan()
+    with env.reader.connect() as conn:
+        epub_book, pdf_book = (
+            conn.scalar(
+                select(EntityResource.entity_id)
+                .join(Resource, Resource.id == EntityResource.resource_id)
+                .where(Resource.relpath == relpath)
+            )
+            for relpath in ("Bundle/devops.epub", "Elsewhere/devops.pdf")
+        )
+    assert epub_book is not None
+    assert pdf_book is not None
+    assert epub_book != pdf_book
+    env.writer.run(lambda conn: merge_items(conn, env.schema, pdf_book, [epub_book]))
+    (env.files / "Elsewhere/devops.pdf").rename(env.files / "Bundle/devops.pdf")  # moved
+    write_mobi(env.files / "Bundle/devops.mobi", full_title="Effective DevOps")
+    env.scan(T0 + timedelta(hours=1))
+    assert env.files_of("Effective DevOps") == [
+        "Bundle/devops.epub",
+        "Bundle/devops.mobi",
+        "Bundle/devops.pdf",
+    ]
 
 
 def test_files_named_alike_elsewhere_are_not_joined(env: Env) -> None:

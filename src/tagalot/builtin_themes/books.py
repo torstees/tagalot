@@ -976,14 +976,16 @@ def sibling_work(
     type_id: str, resource: ResourceInfo, beside: Sequence[str], ctx: IngestContext
 ) -> EntityRef | None:
     """The work (of type ``type_id``) that a same-named file beside ``resource`` is already
-    a file of; ``None`` while those files aren't read yet (the first one read makes it)."""
+    a file of; ``None`` while those files aren't read yet (the first one read makes it).
+    A work the user merged away doesn't count (``entities_of`` gives it for a file that was
+    its, and it has no files now): a sibling still the theme's leads to the work that's left."""
     for relpath in beside:
         other = ctx.resource_at(resource, relpath)
         if other is None:
             continue
-        works = [w for w in ctx.entities_of(other, "file") if w.type == type_id]
-        if works:
-            return works[0]
+        for work in ctx.entities_of(other, "file"):
+            if work.type == type_id and other.id in ctx.linked(work, "file"):
+                return work
     return None
 
 
