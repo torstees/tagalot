@@ -34,7 +34,7 @@ reports what this copy of Tagalot can do, without opening a window, one line eac
 
 - the version, Python, Qt, and SQLite's text search (FTS5);
 - the themes it found (and any theme file that failed to load, with why), and the template for new themes;
-- the icon, and the About dialog's picture;
+- the icon, and the pictures (the tower and the knight);
 - the libraries for reading files: Pillow (pictures), mutagen (music tags), MediaInfo (video details), PDFium (PDFs), PyYAML and ruamel.yaml (Markdown front matter), py7zr (7z archives), and RAR (and whether a tool to read RAR archives is installed).
 
 ```

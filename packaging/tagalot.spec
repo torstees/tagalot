@@ -27,7 +27,7 @@ a = Analysis(  # noqa: F821
     # The theme template is copied as source by `tagalot --new-theme`.
     datas=[
         (str(SRC / "tagalot" / "themes" / "template.py"), "tagalot/themes"),
-        # The window icon (ui.app), at each size, and the About dialog's tower.
+        # The window icon (ui.app), at each size, the About dialog's tower, and the knight.
         (str(SRC / "tagalot" / "resources" / "tagalot-*.png"), "tagalot/resources"),
     ],
     excludes=["tkinter"],

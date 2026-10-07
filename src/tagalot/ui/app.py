@@ -14,6 +14,7 @@ from tagalot.core.db import check_sqlite_support
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.resources import icon_files
+from tagalot.ui.empty_state import splash_screen
 from tagalot.ui.launcher import LauncherDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.opening import open_keep_async
@@ -65,14 +66,21 @@ def run(argv: Sequence[str]) -> int:
     tagalot_app = TagalotApp(load_settings())
     keep_args = [a for a in argv[1:] if not a.startswith("-")]
     if keep_args:
-        # `tagalot <keep folder>` opens a keep directly; the launcher appears if it can't.
-        open_keep_async(
-            None,
-            Path(keep_args[0]),
-            tagalot_app.settings,
-            tagalot_app.show_keep,
-            on_failed=lambda _: tagalot_app.show_launcher(),
-        )
+        # `tagalot <keep folder>` opens a keep directly, with the knight's splash until its
+        # window shows (#360); the launcher appears if it can't.
+        keep_dir = Path(keep_args[0])
+        splash = splash_screen(keep_dir.name.removesuffix(".keep") or str(keep_dir))
+        splash.show()
+
+        def opened(session: KeepSession) -> None:
+            splash.close()
+            tagalot_app.show_keep(session)
+
+        def failed(_: object) -> None:
+            splash.close()
+            tagalot_app.show_launcher()
+
+        open_keep_async(None, keep_dir, tagalot_app.settings, opened, on_failed=failed)
     else:
         tagalot_app.show_launcher()
 

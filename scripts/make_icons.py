@@ -12,7 +12,8 @@ writes, from ``tagalot-shield-hash.svg`` (the app icon: it reads at 16 px):
 - ``docs/images/favicon.ico`` and ``favicon.png``: the docs site's tab icon;
 
 and, from ``tagalot-tower.svg``, ``src/tagalot/resources/tagalot-tower.png`` (256 px: the
-About dialog, #359);
+About dialog, #359), and from ``tagalot-knight-visor-up.svg``, ``tagalot-knight.png`` (256 px:
+empty pages and the splash screen, #360);
 
 and copies the larger pictures to ``docs/images`` as SVGs with 256 px PNGs, for the docs
 site and the README: the tower (``logo``), the knight with his visor up (``knight``, the
@@ -81,6 +82,8 @@ def main() -> int:
     print(f"Wrote {len(ICON_SIZES)} PNGs, tagalot.png, tagalot.ico, and tagalot.icns")
     tower = QSvgRenderer(str(RESOURCES / "tagalot-tower.svg"))
     render(tower, TOWER_SIZE).save(RESOURCES / "tagalot-tower.png", optimize=True)
+    knight = QSvgRenderer(str(RESOURCES / "tagalot-knight-visor-up.svg"))
+    render(knight, TOWER_SIZE).save(RESOURCES / "tagalot-knight.png", optimize=True)
     DOCS_IMAGES.mkdir(parents=True, exist_ok=True)
     favicons = [render(renderer, s) for s in FAVICON_SIZES]
     favicons[-1].save(

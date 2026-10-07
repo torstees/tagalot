@@ -550,6 +550,8 @@ class MainWindow(QMainWindow):
             dashboard.open_entity.connect(self.open_entity)
             dashboard.search_tag.connect(lambda tag_id: self.add_tags_to_search([tag_id]))
             dashboard.search_value.connect(self._search_value)
+            dashboard.configure_requested.connect(self.configure_keep)
+            dashboard.scan_requested.connect(self.scan_now)
             return dashboard
         if target.kind == "dedupe":
             dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
@@ -680,7 +682,9 @@ class MainWindow(QMainWindow):
         """A search embedded in a detail page: a container's contents, or a related section
         (#125). Those with the same ``key`` (``contents:<type>``, ``related:<type>``) share
         their remembered layout and columns."""
-        return self._search_page(title, spec, key, layout="grid")
+        page = self._search_page(title, spec, key, layout="grid")
+        page.empty.set_compact(True)  # a small place: no knight
+        return page
 
     def _contents_in_search(self, detail: DetailPage) -> None:
         """Search all, listing only a detail page's contents (a Within chip)."""

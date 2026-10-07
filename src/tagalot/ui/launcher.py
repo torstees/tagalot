@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +41,7 @@ from tagalot.core.keep import (
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, save_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
+from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.folder_picker import choose_folder, start_folder
 from tagalot.ui.keep_config import CONTENTS_CHOICES
 from tagalot.ui.opening import open_keep_async
@@ -123,9 +125,17 @@ class LauncherDialog(QDialog):
         self.problems.linkActivated.connect(lambda _: self._show_problems())
         self.problems.setVisible(False)
 
+        self.no_keeps = EmptyState(
+            "No keeps yet",
+            "Make one with New keep\u2026, or open a keep's folder with Open folder\u2026",
+        )
+        self.recent_stack = QStackedWidget()
+        self.recent_stack.addWidget(self.recent)
+        self.recent_stack.addWidget(self.no_keeps)
+
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Recent keeps"))
-        layout.addWidget(self.recent)
+        layout.addWidget(self.recent_stack)
         layout.addLayout(buttons)
         layout.addWidget(self.status)
         layout.addWidget(self.problems)
@@ -162,8 +172,7 @@ class LauncherDialog(QDialog):
             self.recent.addItem(item)
         if self.recent.count():
             self.recent.setCurrentRow(0)
-        else:
-            self.status.setText("No recent keeps yet. Create one, or open a keep folder.")
+        self.recent_stack.setCurrentWidget(self.recent if self.recent.count() else self.no_keeps)
         self._update_buttons()
 
     def _catalog_loaded(self, catalog: ThemeCatalog) -> None:
