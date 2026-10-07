@@ -77,3 +77,25 @@ def test_the_docs_pictures() -> None:
             assert png.size == (256, 256)
         resources = ROOT / "src" / "tagalot" / "resources"
         assert (images / f"{name}.svg").read_bytes() == (resources / source).read_bytes()
+
+
+def test_the_setup_wizard_pictures() -> None:
+    """The Windows setup's wizard pictures (#361): every file tagalot.iss names is there,
+    a BMP at Inno Setup's size for its scaling."""
+    sizes = {
+        "wizard-100.bmp": (164, 314),
+        "wizard-150.bmp": (246, 459),
+        "wizard-200.bmp": (328, 604),
+        "wizard-small-100.bmp": (55, 55),
+        "wizard-small-150.bmp": (83, 80),
+        "wizard-small-200.bmp": (110, 106),
+    }
+    named: list[str] = []
+    for line in (PACKAGING / "tagalot.iss").read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("WizardImageFile", "WizardSmallImageFile"):
+            named += [name.strip() for name in value.split(",")]
+    assert sorted(named) == sorted(sizes)
+    for name in named:
+        with Image.open(PACKAGING / name) as image:
+            assert (image.format, image.size, image.mode) == ("BMP", sizes[name], "RGB")

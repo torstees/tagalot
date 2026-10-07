@@ -36,6 +36,10 @@ LicenseFile=..\LICENSE
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; The tower (#361; rendered by scripts/make_icons.py): the side panel of the first and last
+; pages, and the other pages' corner, each at 100%, 150%, and 200% scaling.
+WizardImageFile=wizard-100.bmp,wizard-150.bmp,wizard-200.bmp
+WizardSmallImageFile=wizard-small-100.bmp,wizard-small-150.bmp,wizard-small-200.bmp
 ; Close a running Tagalot before replacing its files.
 CloseApplications=yes
 

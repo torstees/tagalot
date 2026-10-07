@@ -15,6 +15,11 @@ and, from ``tagalot-tower.svg``, ``src/tagalot/resources/tagalot-tower.png`` (25
 About dialog, #359), and from ``tagalot-knight-visor-up.svg``, ``tagalot-knight.png`` (256 px:
 empty pages and the splash screen, #360);
 
+the Windows setup's wizard pictures (#361), from the tower, as BMPs at 100%, 150%, and
+200% scaling: ``packaging/wizard-<scale>.bmp`` (its first and last pages' side panel, the
+tower on the icon's blue) and ``packaging/wizard-small-<scale>.bmp`` (the other pages'
+corner, the tower on white);
+
 and copies the larger pictures to ``docs/images`` as SVGs with 256 px PNGs, for the docs
 site and the README: the tower (``logo``), the knight with his visor up (``knight``, the
 mascot), and the flag (``flag``).
@@ -48,6 +53,12 @@ PICTURES = {
 }
 """The docs site's and README's pictures: name in ``docs/images`` -> source SVG."""
 PICTURE_SIZE = 256
+WIZARD_SIZES = {100: (164, 314), 150: (246, 459), 200: (328, 604)}
+"""Inno Setup's wizard image sizes for these scalings (its WizardImageFile)."""
+WIZARD_SMALL_SIZES = {100: (55, 55), 150: (83, 80), 200: (110, 106)}
+"""Its small image sizes (WizardSmallImageFile)."""
+WIZARD_BLUE = (29, 59, 92)
+"""The panel's background: the icon's dark blue, as the docs site's cover."""
 
 
 def render(renderer: QSvgRenderer, size: int) -> Image.Image:
@@ -63,6 +74,25 @@ def render(renderer: QSvgRenderer, size: int) -> Image.Image:
     buffer.open(QIODevice.OpenModeFlag.WriteOnly)
     image.save(buffer, "PNG")
     return Image.open(io.BytesIO(bytes(data.data()))).convert("RGBA")
+
+
+def wizard_image(
+    renderer: QSvgRenderer,
+    size: tuple[int, int],
+    background: tuple[int, int, int],
+    share: float,
+    top: float | None = 0.22,
+) -> Image.Image:
+    """A picture for the setup wizard: ``renderer``'s drawing, ``share`` of the width
+    across, on ``background`` (BMP has no transparency), ``top`` of the way down (centred
+    with ``None``)."""
+    width, height = size
+    side = round(min(width, height) * share)
+    drawing = render(renderer, side)
+    picture = Image.new("RGB", size, background)
+    y = (height - side) // 2 if top is None else round(height * top)
+    picture.paste(drawing, ((width - side) // 2, y), drawing)
+    return picture
 
 
 def main() -> int:
@@ -84,6 +114,12 @@ def main() -> int:
     render(tower, TOWER_SIZE).save(RESOURCES / "tagalot-tower.png", optimize=True)
     knight = QSvgRenderer(str(RESOURCES / "tagalot-knight-visor-up.svg"))
     render(knight, TOWER_SIZE).save(RESOURCES / "tagalot-knight.png", optimize=True)
+    for scale, size in WIZARD_SIZES.items():
+        wizard_image(tower, size, WIZARD_BLUE, 0.78).save(PACKAGING / f"wizard-{scale}.bmp")
+    for scale, size in WIZARD_SMALL_SIZES.items():
+        wizard_image(tower, size, (255, 255, 255), 0.92, top=None).save(
+            PACKAGING / f"wizard-small-{scale}.bmp"
+        )
     DOCS_IMAGES.mkdir(parents=True, exist_ok=True)
     favicons = [render(renderer, s) for s in FAVICON_SIZES]
     favicons[-1].save(
