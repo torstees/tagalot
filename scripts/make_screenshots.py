@@ -23,7 +23,7 @@ if sys.platform == "win32" and "QT_QPA_FONTDIR" not in os.environ:
     os.environ["QT_QPA_FONTDIR"] = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
 from PySide6.QtCore import QItemSelectionModel, QThreadPool
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
@@ -60,7 +60,19 @@ def settle(app: QApplication, seconds: float = 1.5) -> None:
         time.sleep(0.03)
 
 
+SHOWN_FOLDER = r"D:\Keeps"
+"""Shown instead of the temporary folder the demos are built in: the pictures are
+published, and that folder's path names this computer's user."""
+built_in: Path | None = None
+
+
 def save(widget: QWidget, name: str) -> None:
+    """Save a picture of ``widget``, any label naming the demos' temporary folder showing
+    :data:`SHOWN_FOLDER` instead."""
+    if built_in is not None:
+        for label in widget.findChildren(QLabel):
+            if str(built_in) in label.text():
+                label.setText(label.text().replace(str(built_in), SHOWN_FOLDER))
     widget.grab().save(str(SCREENS / f"{name}.png"))
     print(f"docs/images/screens/{name}.png")
 
@@ -205,6 +217,8 @@ def main() -> int:
     script = demo_script()
     with tempfile.TemporaryDirectory(prefix="tagalot-screens-") as folder:
         base = Path(folder)
+        global built_in
+        built_in = base
         music(app, script.make_music_demo(base))
         assets(app, script.make_assets_demo(base))
         books(app, script.make_books_demo(base))
