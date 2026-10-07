@@ -4,7 +4,7 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 
 ## What it makes
 
-- **Book:** an EPUB, PDF, Markdown file, Word (`.docx`, and `.doc` by name), OpenDocument (`.odt`), Pages file, or a **link file** (`.url`, `.webloc`, `.desktop`) for a work that lives on the web (a serial on Royal Road or AO3; opening it opens the page).
+- **Book:** an EPUB, Kindle book (`.mobi`, `.azw`, `.azw3`), PDF, Markdown file, Word (`.docx`, and `.doc` by name), OpenDocument (`.odt`), Pages file, or a **link file** (`.url`, `.webloc`, `.desktop`) for a work that lives on the web (a serial on Royal Road or AO3; opening it opens the page).
 - **Comic:** a CBZ, CBR, or CB7, with its `ComicInfo.xml`: series, number, volume, story arc, writers and artists, publisher, imprint.
 - **Author:** one per spelling the files give ("Pratchett, Terry" as its sort name). [Merge](../guide/dedupe.md) two spellings to make them one; later files under either land on the merged author.
 - **Series** (in reading order), **Universe** (series and works sharing a world: Discworld, Cosmere), and **Collection** (an omnibus or anthology).
@@ -26,7 +26,7 @@ Where a file came from. The **Source folder level** option names the folder that
 
 ## Covers and thumbnails
 
-An EPUB shows its cover, a PDF its first page, a Word or OpenDocument file its preview, a comic its first page. A Markdown file's front matter can name a cover picture (`cover: images/cover.jpg`, relative to the file, or Obsidian's `[[cover.jpg]]`). A series, universe, or collection shows one of its first works'.
+An EPUB or a Kindle book shows its cover, a PDF its first page, a Word or OpenDocument file its preview, a comic its first page. A Markdown file's front matter can name a cover picture (`cover: images/cover.jpg`, relative to the file, or Obsidian's `[[cover.jpg]]`). A series, universe, or collection shows one of its first works'.
 
 ## Genres and subjects as tags
 
@@ -34,7 +34,7 @@ An EPUB's subjects, a comic's genres and tags, a PDF's keywords, and Markdown's 
 
 ## Searching inside books
 
-Books are documents: when the keep [searches inside documents](../guide/search-inside-documents.md), the text of their EPUBs, PDFs, Markdown, Word, and OpenDocument files is read, and **In documents** finds books by what they say. Comics aren't (their pages are pictures).
+Books are documents: when the keep [searches inside documents](../guide/search-inside-documents.md), the text of their EPUBs, Kindle books (without DRM), PDFs, Markdown, Word, and OpenDocument files is read, and **In documents** finds books by what they say. Comics aren't (their pages are pictures).
 
 ## Online details
 

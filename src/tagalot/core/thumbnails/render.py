@@ -20,10 +20,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from tagalot.core.thumbnails.archive import archive_image_bytes
 from tagalot.themes.api import (
+    MOBI_EXTENSIONS,
     Kind,
     ResourceInfo,
     epub_cover,
     kind_of,
+    mobi_cover,
     office_cover,
     pdf_cover,
 )
@@ -130,6 +132,12 @@ def load_epub_cover(path: str, size: int) -> Image.Image | None:
     return None if data is None else load_image_bytes(data, size)
 
 
+def load_mobi_cover(path: str, size: int) -> Image.Image | None:
+    """A Kindle or Mobipocket book's cover: the picture its details name, else its first."""
+    data = mobi_cover(path)
+    return None if data is None else load_image_bytes(data, size)
+
+
 def load_pdf_cover(path: str, size: int) -> Image.Image | None:
     """A PDF's first page (PDFium, one call at a time)."""
     data = pdf_cover(path, size)
@@ -154,6 +162,7 @@ RENDERERS: dict[Kind, Renderer] = {
 EXTENSION_RENDERERS: dict[str, Renderer] = {
     ".epub": Renderer("epub_cover", 1, load_epub_cover),
     ".pdf": Renderer("pdf_cover", 1, load_pdf_cover),
+    **{ext: Renderer("mobi_cover", 1, load_mobi_cover) for ext in MOBI_EXTENSIONS},
     ".docx": Renderer("office_cover", 1, load_office_cover),
     ".odt": Renderer("office_cover", 1, load_office_cover),
     ".pages": Renderer("office_cover", 1, load_office_cover),

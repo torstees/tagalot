@@ -49,7 +49,7 @@ A keep's **theme** decides what its files are. Built in:
 | **2D assets** | art packs, game assets, fonts | artists holding images, fonts, and archives |
 | **Music** | audio files with tags | artists ⊃ albums ⊃ songs; double-click plays |
 | **Movies** | video files, Kodi/Plex style | collections ⊃ movies, with their cast from `.nfo` files |
-| **Books** | EPUB, PDF, Markdown, Word, comics, web serials | books and comics, their authors, series, universes, collections |
+| **Books** | EPUB, Kindle, PDF, Markdown, Word, comics, web serials | books and comics, their authors, series, universes, collections |
 | **Research** | papers, preprints, theses | papers with authors in order, venues, projects; Zotero exports, BibTeX, literature notes |
 
 A theme is one Python file: [write your own](docs/THEMES.md) for recipes, photos, sheet music, or whatever you collect.

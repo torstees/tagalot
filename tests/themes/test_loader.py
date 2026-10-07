@@ -207,7 +207,7 @@ def test_declaration_problems_are_all_reported(tmp_path: Path) -> None:
     for expected in [
         "the theme needs a name",
         "version must be a positive integer, not 0",
-        "needs theme API version 99; this Tagalot provides 6",
+        "needs theme API version 99; this Tagalot provides 7",
         "extension '.FLAC' must be lowercase",
         "extension 'mp3' must be lowercase and start with '.'",
         "Song: role art is declared twice",

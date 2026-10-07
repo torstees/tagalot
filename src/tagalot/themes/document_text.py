@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from urllib.parse import unquote
 from xml.etree import ElementTree
 
+from tagalot.themes.mobi import MOBI_EXTENSIONS, mobi_text
 from tagalot.themes.readers import PDFIUM, _local, _opf_path, _xml
 
 MAX_TEXT = 5 * 1024 * 1024
@@ -25,7 +26,9 @@ MAX_PDF_PAGES = 2000
 """Pages of a PDF read."""
 MAX_PART = 20 * 1024 * 1024
 """A part of an EPUB or office document larger than this isn't read."""
-DOCUMENT_EXTENSIONS = frozenset({".pdf", ".epub", ".md", ".markdown", ".txt", ".docx", ".odt"})
+DOCUMENT_EXTENSIONS = (
+    frozenset({".pdf", ".epub", ".md", ".markdown", ".txt", ".docx", ".odt"}) | MOBI_EXTENSIONS
+)
 """Files :func:`read_document_text` reads; others have no text to give."""
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -37,15 +40,19 @@ _TAG = re.compile(r"<[^>]+>")
 def read_document_text(path: str) -> list[str]:
     """A document's text as pages, by its extension: a PDF's pages (PDFium's reading of
     them: a scanned PDF without a text layer has none), an EPUB's spine documents in reading
-    order (its chapters), and one page for Markdown (without its front matter), plain text,
-    DOCX, and ODT. Whitespace is collapsed to single spaces; empty pages stay, so page
-    numbers hold. At most :data:`MAX_TEXT` characters in all and :data:`MAX_PDF_PAGES`
-    pages. ``[]`` for a file of another kind (API version 6)."""
+    order (its chapters), a Kindle or Mobipocket book's text split at its page breaks (not
+    a protected one's, which raises ``ValueError``; API version 7), and one page for
+    Markdown (without its front matter), plain text, DOCX, and ODT. Whitespace is
+    collapsed to single spaces; empty pages stay, so page numbers hold. At most
+    :data:`MAX_TEXT` characters in all and :data:`MAX_PDF_PAGES` pages. ``[]`` for a file
+    of another kind (API version 6)."""
     ext = posixpath.splitext(path.replace("\\", "/"))[1].lower()
     if ext == ".pdf":
         pages: Iterable[str] = _pdf_pages(path)
     elif ext == ".epub":
         pages = _epub_pages(path)
+    elif ext in MOBI_EXTENSIONS:
+        pages = mobi_text(path)
     elif ext in (".md", ".markdown"):
         pages = [_without_front_matter(_read_text(path))]
     elif ext == ".txt":

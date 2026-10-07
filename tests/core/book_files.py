@@ -1,6 +1,8 @@
-"""Tiny EPUBs and comic archives for tests (the demo script has its own copy)."""
+"""Tiny EPUBs, Kindle books, and comic archives for tests (the demo script has its own
+copy)."""
 
 import io
+import struct
 import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -262,3 +264,115 @@ def paged_pdf(pages: Sequence[Sequence[str]]) -> bytes:
     out += b"trailer\n<< /Size %d /Root 1 0 R >>\n" % (len(objects) + 1)
     out += b"startxref\n%d\n%%%%EOF\n" % xref
     return bytes(out)
+
+
+# --- Kindle and Mobipocket books ---
+
+EXTH_TYPES = {
+    "authors": 100,
+    "publisher": 101,
+    "description": 103,
+    "isbn": 104,
+    "subjects": 105,
+    "date": 106,
+    "asin": 113,
+    "updated_title": 503,
+    "language": 524,
+}
+
+
+def palmdoc_pack(data: bytes) -> bytes:
+    """PalmDOC compression without back-references: literals, a space and a character in
+    one byte, and runs of other bytes behind a count."""
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        byte = data[i]
+        if byte == 0x20 and i + 1 < len(data) and 0x40 <= data[i + 1] <= 0x7F:
+            out.append(data[i + 1] ^ 0x80)
+            i += 2
+        elif byte == 0 or 0x09 <= byte <= 0x7F:
+            out.append(byte)
+            i += 1
+        else:
+            run = data[i : i + 8]
+            out.append(len(run))
+            out += run
+            i += len(run)
+    return bytes(out)
+
+
+def write_mobi(
+    path: Path,
+    *,
+    name: str = "A_Book",
+    full_title: str | None = None,
+    exth: Mapping[str, Any] | None = None,
+    text: str = "",
+    cover: bytes | None = None,
+    images: Sequence[bytes] = (),
+    encoding: int = 65001,
+    compression: int = 2,
+    encryption: int = 0,
+    trailing: int = 0b11,
+    record_size: int = 4096,
+) -> Path:
+    """A Mobipocket book: ``exth`` holds its details (keys of :data:`EXTH_TYPES`; a list
+    gives a record each), ``text`` its HTML, cut into records of ``record_size`` bytes and
+    compressed (``compression`` 1: none; 2: PalmDOC; 17480: HUFF/CDIC, written as is), each
+    with the trailing entries ``trailing`` names (a cut character's bytes; an entry). The
+    cover, when given, is the first picture after ``images``."""
+    codec = "utf-8" if encoding == 65001 else "cp1252"
+    raw = text.encode(codec)
+    chunks = [raw[i : i + record_size] for i in range(0, len(raw), record_size)] or [b""]
+    text_records = []
+    for chunk in chunks:
+        body = palmdoc_pack(chunk) if compression == 2 else chunk
+        if trailing & 1:
+            body += b"\x00"  # no character cut off: the entry is its one size byte
+        for bit in range(1, 16):
+            if trailing & (1 << bit):
+                body += b"xy\x83"  # two bytes of something, then its size (3), backwards
+        text_records.append(body)
+    pictures = [*images, *([cover] if cover is not None else [])]
+    first_image = 1 + len(text_records) if pictures else 0xFFFFFFFF
+
+    records: list[tuple[int, bytes]] = []
+    for key, value in (exth or {}).items():
+        for item in value if isinstance(value, list | tuple) else [value]:
+            records.append((EXTH_TYPES[key], str(item).encode(codec)))
+    if cover is not None:
+        records.append((201, struct.pack(">I", len(images))))
+    exth_body = b"".join(struct.pack(">II", t, len(v) + 8) + v for t, v in records)
+    exth_block = b"EXTH" + struct.pack(">II", 12 + len(exth_body), len(records)) + exth_body
+    exth_block += b"\0" * (-len(exth_block) % 4)
+
+    mobi_length = 0xE8
+    title_bytes = (full_title or "").encode(codec)
+    title_offset = 16 + mobi_length + len(exth_block)
+    head = bytearray(16 + mobi_length)
+    struct.pack_into(
+        ">HHIHHH", head, 0, compression, 0, len(raw), len(text_records), 4096, encryption
+    )
+    head[16:20] = b"MOBI"
+    struct.pack_into(">III", head, 20, mobi_length, 2, encoding)
+    struct.pack_into(">I", head, 36, 6)
+    struct.pack_into(">II", head, 84, title_offset, len(title_bytes))
+    struct.pack_into(">I", head, 108, first_image)
+    struct.pack_into(">I", head, 128, 0x40 if records else 0)
+    struct.pack_into(">H", head, 242, trailing)
+    record0 = bytes(head) + exth_block + title_bytes + b"\0\0"
+
+    blobs = [record0, *text_records, *pictures]
+    header = bytearray(78)
+    header[: len(name)] = name.encode("latin-1")
+    header[60:68] = b"BOOKMOBI"
+    struct.pack_into(">H", header, 76, len(blobs))
+    offset = 78 + 8 * len(blobs) + 2
+    table = bytearray()
+    for index, blob in enumerate(blobs):
+        table += struct.pack(">IB", offset, 0) + (2 * index).to_bytes(3, "big")
+        offset += len(blob)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(header) + bytes(table) + b"\0\0" + b"".join(blobs))
+    return path

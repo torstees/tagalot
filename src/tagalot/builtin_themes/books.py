@@ -6,9 +6,10 @@ Universe ⊃ Series ⊃ Book, Comic     Author ↔ Book, Comic (writers, artists
 Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 ```
 
-- **Formats:** books are EPUB, PDF, Markdown, Word (DOCX, and legacy DOC by name only),
-  OpenDocument (ODT), Pages, and link files (``.url``, ``.webloc``, ``.desktop``) for works
-  that live on the web; comics are CBZ, CBR, and CB7.
+- **Formats:** books are EPUB, Kindle and Mobipocket (MOBI, AZW, AZW3), PDF, Markdown,
+  Word (DOCX, and legacy DOC by name only), OpenDocument (ODT), Pages, and link files
+  (``.url``, ``.webloc``, ``.desktop``) for works that live on the web; comics are CBZ, CBR,
+  and CB7.
 - **A work and its files:** a book or comic is keyed by its title and
   first writer (a comic by its series, volume, and number), so the same novel bought from two
   sites is one work whose files are its versions. A file named like a book file beside it
@@ -17,12 +18,11 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
   What a file says replaces what it said before only while it is the work's one file; with
   several, each adds to the work (its writers, its series).
 - **Reading files** (``prepare``, a scan worker), with the :mod:`tagalot.themes.api`
-  readers: an EPUB's package, a PDF's document info, Markdown front matter, an office
-  document's properties, a link file's address, a comic's ``ComicInfo.xml``; else the file
-  name:
-  ``Author - Title (Year)``, ``Series 03 - Title``, ``Series #012 (2020)``. Author lists
-  are split into people (``A, B, and C``), and a publisher's placeholder (``Author Names
-  Here``) is no author.
+  readers: an EPUB's package, a Kindle book's details (EXTH), a PDF's document info,
+  Markdown front matter, an office document's properties, a link file's address, a comic's
+  ``ComicInfo.xml``; else the file name: ``Author - Title (Year)``, ``Series 03 - Title``,
+  ``Series #012 (2020)``. Author lists are split into people (``A, B, and C``), and a
+  publisher's placeholder (``Author Names Here``) is no author.
 - **Sources:** where a file came from: the folder at the ``source_level`` option's depth
   (``1`` for ``Humble Bundle/…``), else a comic's web address's site, else an EPUB's
   publisher. A work's ``sources`` lists its files'.
@@ -30,8 +30,8 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
   file keywords (DESIGN.md §7).
 - **Links:** a work's ``link`` (``display="url"``) opens in the browser from its page.
 - **Thumbnails:** a work shows its cover (a picture front matter names, an EPUB's named
-  cover, a PDF's first page, an office document's preview, a comic's first page); a series,
-  universe, or collection one of its first works'.
+  cover, a Kindle book's cover, a PDF's first page, an office document's preview, a
+  comic's first page); a series, universe, or collection one of its first works'.
 - **Online details** (with the keep's consent): a book with an ISBN is looked up in Open
   Library, which fills in its year, publisher, language, and description where its files
   say nothing; what a file says always wins.
@@ -50,6 +50,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tagalot.themes.api import (
+    MOBI_EXTENSIONS,
     DetailView,
     Entity,
     EntityRef,
@@ -74,6 +75,7 @@ from tagalot.themes.api import (
     read_epub,
     read_front_matter,
     read_link_file,
+    read_mobi,
     read_office_info,
     read_pdf_info,
     related,
@@ -88,6 +90,7 @@ LINK_EXTENSIONS = frozenset({".url", ".webloc", ".desktop"})
 """Link files: works that live on the web (a serial), by address."""
 BOOK_EXTENSIONS = (
     frozenset({".epub", ".pdf", ".md", ".markdown", ".docx", ".odt", ".pages", ".doc"})
+    | MOBI_EXTENSIONS
     | LINK_EXTENSIONS
 )
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
@@ -217,7 +220,7 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 2  # 2: author lists split (#369), read again
-    api_version = 6  # full_text (5: online details; 3: ctx.resource_at, write_back)
+    api_version = 7  # read_mobi (6: full_text; 5: online details; 3: ctx.resource_at)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -583,6 +586,18 @@ def epub_details(epub: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def mobi_details(mobi: Mapping[str, Any]) -> dict[str, Any]:
+    """What :func:`read_mobi` found: its authors are writers (one may name several), its
+    subjects keywords, its publisher the source."""
+    return {
+        **{k: mobi.get(k) for k in ("title", "year", "publisher", "language", "isbn")},
+        "description": mobi.get("description"),
+        "writers": split_people(mobi.get("authors") or []),
+        "keywords": mobi.get("subjects") or [],
+        "source": mobi.get("publisher"),
+    }
+
+
 def pdf_details(info: Mapping[str, Any]) -> dict[str, Any]:
     """What :func:`read_pdf_info` found: its author is the writer, its subject the
     description, its keywords keywords. A PDF names no source."""
@@ -628,6 +643,7 @@ def nothing(path: str) -> dict[str, Any]:
 
 READERS: Mapping[str, tuple[Callable[[str], Any], Callable[[Any], dict[str, Any]]]] = {
     ".epub": (read_epub, epub_details),
+    **{ext: (read_mobi, mobi_details) for ext in MOBI_EXTENSIONS},
     ".pdf": (read_pdf_info, pdf_details),
     ".md": (read_front_matter, markdown_details),
     ".markdown": (read_front_matter, markdown_details),

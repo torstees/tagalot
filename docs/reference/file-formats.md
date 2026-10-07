@@ -25,6 +25,7 @@ MKV, MP4, AVI, MOV, WMV, WebM, M4V, MPG, through MediaInfo: length, resolution, 
 | Format | Read |
 |---|---|
 | **EPUB** | title, creators with their roles (writer, illustrator, editor, translator), series (Calibre's, or EPUB 3's), collections, subjects (as keywords), publisher, language, date, ISBN, description, source, and the cover |
+| **Kindle** (`.mobi`, `.azw`, `.azw3`) | title, authors, publisher, description, ISBN, subjects (as keywords), date, language, and the cover. A book with DRM still gives these; only its text is protected. (Not `.kfx`.) |
 | **PDF** | document info: title, author, subject (as the description), keywords, creation year; the first page as the cover. Research also reads the first page's text for a DOI, arXiv ID, or PubMed ID |
 | **Markdown** (`.md`, `.markdown`) | YAML (`---`) or TOML (`+++`) front matter: `title` (else the first `#` heading), `author`/`authors`, `series`, `series_index` (or `number`), `universe`, `tags`/`keywords`, `source`, `url`/`link`, `date`/`year`, `publisher`, `language`, `description`/`summary`, `cover`; research's notes use `citekey`, `doi`, `arxiv`, `pmid` |
 | **Word** (`.docx`) and **OpenDocument** (`.odt`) | title, author, keywords, subject, description, created, language, and the preview picture |
@@ -45,4 +46,4 @@ Each gives: type, citation key, title, authors and editors in order, year, venue
 
 ## Searching inside documents
 
-PDFs (page by page), EPUBs (chapter by chapter), and Markdown, plain text, Word (`.docx`), and OpenDocument (`.odt`) files, up to 5 MB of text each and 2,000 PDF pages. See [Searching inside documents](../guide/search-inside-documents.md).
+PDFs (page by page), EPUBs and Kindle books (chapter by chapter; not a Kindle book with DRM), and Markdown, plain text, Word (`.docx`), and OpenDocument (`.odt`) files, up to 5 MB of text each and 2,000 PDF pages. See [Searching inside documents](../guide/search-inside-documents.md).

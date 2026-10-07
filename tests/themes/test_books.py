@@ -49,6 +49,7 @@ from tests.core.book_files import (
     write_epub,
     write_link,
     write_markdown,
+    write_mobi,
     write_odt,
     write_pages,
     write_pdf,
@@ -510,6 +511,45 @@ def test_a_format_added_later_joins_its_book(env: Env) -> None:
     env.scan(T0 + timedelta(minutes=1))
     assert env.files_of("Policy as Code") == ["Bundle/policy.epub", "Bundle/policy.pdf"]
     assert "Policy as Code (Early Release)" not in env.titles(Book)
+
+
+def test_kindle_books(env: Env) -> None:
+    """A .mobi's details make a book, and one named like an EPUB beside it is that book's
+    file, though it names an author the EPUB doesn't (#370)."""
+    bundle = env.files / "Humble Bundle"
+    write_epub(
+        bundle / "effectivedevops.epub",
+        title="Effective DevOps",
+        creators=[("Jennifer Davis and Ryn Daniels", None)],
+    )
+    write_mobi(
+        bundle / "effectivedevops.mobi",
+        full_title="Effective DevOps",
+        exth={"authors": "Jennifer Davis and Katherine Daniels", "date": "2016-05-23"},
+        cover=jpeg(),
+    )
+    write_mobi(
+        env.files / "Kindle/Python_for_DevOps.azw3",
+        full_title="Python for DevOps",
+        exth={
+            "authors": "Noah Gift, Kennedy Behrman, and Alfredo Deza",
+            "publisher": "O'Reilly",
+            "subjects": ["DevOps"],
+            "isbn": "9781492057697",
+        },
+    )
+    env.scan()
+    assert env.files_of("Effective DevOps") == [
+        "Humble Bundle/effectivedevops.epub",
+        "Humble Bundle/effectivedevops.mobi",
+    ]
+    assert "Katherine Daniels" in env.credits("writers", "Effective DevOps")  # it adds
+    assert env.credits("writers", "Python for DevOps") == [
+        "Alfredo Deza", "Kennedy Behrman", "Noah Gift",
+    ]  # fmt: skip
+    fields = env.fields(Book, "Python for DevOps")
+    assert (fields["isbn"], fields["publisher"]) == ("9781492057697", "O'Reilly")
+    assert env.keywords("Python for DevOps") == ["DevOps"]
 
 
 def test_files_named_alike_elsewhere_are_not_joined(env: Env) -> None:

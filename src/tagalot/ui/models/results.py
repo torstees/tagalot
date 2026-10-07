@@ -47,9 +47,14 @@ from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, entity_tags, name_key
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.themes.api import MOBI_EXTENSIONS
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
+
+CHAPTERED = frozenset({".epub"}) | MOBI_EXTENSIONS
+"""Books whose text is read as chapters (an EPUB's spine, a Kindle book's page breaks),
+not pages."""
 
 PAGE_SIZE = 100
 MAX_PAGES = 50
@@ -105,11 +110,11 @@ class MatchValue:
 
 def match_value(snippet: Snippet) -> MatchValue:
     """A :class:`~tagalot.core.search.Snippet` as a cell: the file's name, and its page
-    (``p.``) or chapter (``ch.``, an EPUB's) when it has more than one."""
+    (``p.``) or chapter (``ch.``, an EPUB's or a Kindle book's) when it has more than one."""
     name = snippet.relpath.rpartition("/")[2]
     where = name
     if snippet.pages > 1:
-        unit = "ch." if name.lower().endswith(".epub") else "p."
+        unit = "ch." if "." + name.rpartition(".")[2].lower() in CHAPTERED else "p."
         where = f"{name}, {unit} {snippet.page}"
     plain = snippet.text.replace(MATCH_START, "").replace(MATCH_END, "")
     html_text = html.escape(snippet.text).replace(MATCH_START, "<b>").replace(MATCH_END, "</b>")
