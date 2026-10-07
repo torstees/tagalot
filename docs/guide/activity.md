@@ -38,7 +38,7 @@ reports what this copy of Tagalot can do, without opening a window, one line eac
 - the libraries for reading files: Pillow (pictures), mutagen (music tags), MediaInfo (video details), PDFium (PDFs), PyYAML and ruamel.yaml (Markdown front matter), py7zr (7z archives), and RAR (and whether a tool to read RAR archives is installed).
 
 ```
-Tagalot 0.7.0
+Tagalot 0.8.0
 Python         ok           3.12.11 (win32, AMD64)
 Qt             ok           PySide6 6.11.2, Qt 6.11.2
 SQLite FTS5    ok           available

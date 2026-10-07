@@ -1,6 +1,6 @@
 [project]
 name = "tagalot"
-version = "0.7.0"
+version = "0.8.0"
 description = "A tag-based file browser for music, movies, books, papers, and art, that never changes your files"
 readme = "README.md"
 license = "MIT"
