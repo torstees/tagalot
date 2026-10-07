@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -130,6 +130,29 @@ def no_unexpected_modals(
         raise UnexpectedModal(
             f"A menu opened in a test that doesn't answer it ({'; '.join(catcher.caught)}); "
             "its exec() would wait forever. Call the menu's actions directly instead."
+        )
+
+
+POOL_DRAIN_MS = 10_000
+"""How long a test's leftover background jobs may take to finish after it."""
+
+
+@pytest.fixture(autouse=True)
+def background_jobs_finish() -> Iterator[None]:
+    """Each GUI test's background jobs finish before the next test starts (#374).
+
+    The window runs searches, index builds, and saves on Qt's shared thread pool
+    (``ui.workers.run_in_pool``). A job a test leaves running (a search its last change
+    started) would otherwise overlap the next test, sharing its threads. They take
+    milliseconds; one still running after :data:`POOL_DRAIN_MS` is stuck, and fails the
+    test that left it.
+    """
+    yield
+    pool = QThreadPool.globalInstance()
+    if not pool.waitForDone(POOL_DRAIN_MS):
+        pytest.fail(
+            f"{pool.activeThreadCount()} background job(s) still running "
+            f"{POOL_DRAIN_MS / 1000:.0f} s after the test ended"
         )
 
 
