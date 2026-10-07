@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 6              # the theme API it needs
+    api_version = 7              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -140,6 +140,7 @@ A scan hands your theme **batches** of new and changed files and folders, as `Re
 The API has readers for formats several themes want, so they all read them the same way. Call them in `prepare`. They only read, return plain dicts (`None` or empty for what a file doesn't say), and raise `OSError` or `ValueError` for a file that can't be read at all:
 
 - **`read_epub(path)`**: an EPUB's `title`, `creators` (`(name, role)` pairs: `"writer"`, `"artist"`, `"editor"`, `"translator"`, or `None`), `series` and `series_index`, `collections`, `subjects`, `publisher`, `language`, `year`, `isbn`, `description` (HTML removed), `source`, and `cover` (the cover's path inside the file). **`epub_cover(path)`** gives the cover's bytes.
+- **`read_mobi(path)`** (API version 7): a Kindle or Mobipocket book's (`.mobi`, `.azw`, `.azw3`; `MOBI_EXTENSIONS`) `title`, `authors` (each as written: one may name several, so pass them through `split_people`), `publisher`, `description` (HTML removed), `isbn`, `asin`, `subjects`, `year`, `language`, `version` (6 for Mobipocket, 8 for KF8), `encrypted` (DRM: its details and cover are still there, its text isn't), and `cover` (the record holding the cover). **`mobi_cover(path)`** gives the cover's bytes.
 - **`read_comic_info(path)`**: a comic archive's (CBZ, CB7, CBR) `ComicInfo.xml` as `series`, `number` (text: `"12"`, `"Annual 1"`), `volume`, `title`, `writers`, `artists`, `publisher`, `imprint`, `genres`, `tags`, `web`, `year`, `story_arc`, `series_group`, and `summary`; `None` when it has none.
 
 - **`read_pdf_info(path)`**: a PDF's `title`, `authors`, `subject`, `keywords`, `year`, and `pages`. **`pdf_text(path, pages=1)`** gives the text of its first pages, and **`find_identifiers(text)`** the first DOI, arXiv ID (and version), and PubMed ID in a text. **`pdf_cover(path, size)`** draws its first page as JPEG bytes. PDFium isn't thread-safe; both hold the lock `PDFIUM`, which your own PDFium calls should hold too.
@@ -248,7 +249,7 @@ class StoriesTheme(Theme):
 
 ## Searching inside documents
 
-Mark a type whose files are documents (a paper, a book) with `full_text = True` (API version 6), and when a keep searches inside documents, Tagalot reads the text of the files in its primary role in the background after scans, as pages: a PDF's pages, an EPUB's chapters, one page for Markdown, plain text, DOCX, and ODT (`read_document_text`, which you can call too). For a format it doesn't read, or to read one your own way, override `document_text`:
+Mark a type whose files are documents (a paper, a book) with `full_text = True` (API version 6), and when a keep searches inside documents, Tagalot reads the text of the files in its primary role in the background after scans, as pages: a PDF's pages, an EPUB's chapters, a Kindle book's chapters (API version 7), one page for Markdown, plain text, DOCX, and ODT (`read_document_text`, which you can call too). For a format it doesn't read, or to read one your own way, override `document_text`:
 
 ```python
 class Paper(Entity):

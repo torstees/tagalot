@@ -42,6 +42,7 @@ PDF has a cover drawn from its first page, a Markdown story has front matter, so
 no metadata (named from their file names or headings), and one book is a near-duplicate of
 another. A bundle's EPUB and PDF of one book are named alike and disagree on its author (the
 EPUB has a template's placeholder): one book; another EPUB names two authors in one creator.
+A Kindle copy of it (``smallgods.mobi``, its cover and text) is a third file of that book.
 Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy" match no
 tag.
 
@@ -736,6 +737,20 @@ BOOK_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
 }
 """PDFs with a text layer for the books demo, by path: their lines and document info."""
 
+BOOK_MOBIS: dict[str, dict[str, Any]] = {
+    "Humble Bundle/smallgods.mobi": {
+        "title": "Small Gods",
+        "authors": ["Terry Pratchett"],
+        "date": "1992-05-07",
+        "chapters": [
+            "Brutha weeds the melons in the Citadel's garden.",
+            "The Great God Om speaks to him from a tortoise's shell, and is ignored.",
+        ],
+        "cover": ((90, 70, 40), "Small Gods"),
+    },
+}
+"""Kindle books for the books demo (#370), by path: details, chapters, and a cover."""
+
 BOOK_COMICS: dict[str, dict[str, str] | None] = {
     "Comixology/Saga 001.cbz": {
         "Series": "Saga",
@@ -797,6 +812,43 @@ BOOK_TAGS = {
     ("Genre", "Humour"): ["Discworld"],  # on the series: its books count (inherit tags)
     ("Read",): ["The Colour of Magic", "Saga #1"],
 }
+
+
+def _mobi(path: Path, details: dict[str, Any]) -> None:
+    """A small Kindle book (as ``tests/core/book_files.write_mobi``): its details in an
+    EXTH block, its chapters as uncompressed text between page breaks, then its cover."""
+    html = "<mbp:pagebreak/>".join(f"<p>{escape(c)}</p>" for c in details["chapters"])
+    text = f"<html><body>{html}</body></html>".encode()
+    exth = [(100, a) for a in details["authors"]] + [(106, details["date"])]
+    exth_body = b"".join(
+        struct.pack(">II", kind, len(value.encode()) + 8) + value.encode() for kind, value in exth
+    )
+    exth_body += struct.pack(">III", 201, 12, 0)  # the cover: the first picture
+    block = b"EXTH" + struct.pack(">II", 12 + len(exth_body), len(exth) + 1) + exth_body
+    block += b"\0" * (-len(block) % 4)
+    title = details["title"].encode()
+    head = bytearray(16 + 0xE8)
+    struct.pack_into(">HHIHHH", head, 0, 1, 0, len(text), 1, 4096, 0)  # uncompressed
+    head[16:20] = b"MOBI"
+    struct.pack_into(">IIII", head, 20, 0xE8, 2, 65001, 0)
+    struct.pack_into(">I", head, 36, 6)
+    struct.pack_into(">II", head, 84, 16 + 0xE8 + len(block), len(title))
+    struct.pack_into(">I", head, 108, 2)  # the first picture: after one text record
+    struct.pack_into(">I", head, 128, 0x40)
+    color, words = details["cover"]
+    records = [bytes(head) + block + title + b"\0\0", text, _cover(color, words)]
+    header = bytearray(78)
+    name = details["title"].replace(" ", "_").encode()[:31]
+    header[: len(name)] = name
+    header[60:68] = b"BOOKMOBI"
+    struct.pack_into(">H", header, 76, len(records))
+    offset = 78 + 8 * len(records) + 2
+    table = b""
+    for index, record in enumerate(records):
+        table += struct.pack(">II", offset, 2 * index)
+        offset += len(record)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(bytes(header) + table + b"\0\0" + b"".join(records))
 
 
 def _epub(path: Path, details: dict[str, Any]) -> None:
@@ -1148,6 +1200,8 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     )
     for relpath, (lines, info) in BOOK_PDFS.items():
         _text_pdf(files / relpath, lines, info)
+    for relpath, details in BOOK_MOBIS.items():
+        _mobi(files / relpath, details)
     _office_and_links(files)
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}

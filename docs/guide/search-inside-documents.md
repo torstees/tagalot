@@ -20,6 +20,7 @@ After each scan, Tagalot reads the text of new and changed documents in the back
 
 - **PDFs** page by page (a scanned PDF without a text layer has no text to read);
 - **EPUBs** chapter by chapter;
+- **Kindle books** (`.mobi`, `.azw`, `.azw3`) chapter by chapter, unless they have DRM (their text is protected) or were compressed by Kindle's own tools in a way Tagalot doesn't read yet;
 - **Markdown**, **plain text**, **Word (.docx)**, and **OpenDocument (.odt)** files as one page each.
 
 A file's text stops at 5 MB, and a PDF's at 2,000 pages. A file that can't be read is listed in the [Activity panel](activity.md) as **Text not read**, and isn't tried again until it changes. The text is kept in the keep's `fulltext.db`.
@@ -35,5 +36,5 @@ Items still match by their titles and fields as usual; the documents add more. A
 
 ## Where it matched
 
-- In the **list**, a **Match** column after the title shows a snippet around the match, with the matched words in bold. Its tooltip names the file and the page (`p. 8`, or `ch. 3` for an EPUB).
+- In the **list**, a **Match** column after the title shows a snippet around the match, with the matched words in bold. Its tooltip names the file and the page (`p. 8`, or `ch. 3` for an EPUB or a Kindle book).
 - On **grid** cards, the last line is the snippet, from the match on.

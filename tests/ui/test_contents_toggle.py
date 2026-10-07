@@ -110,6 +110,7 @@ def test_where_each_item_matched(qtbot: QtBot, window: MainWindow, session: Keep
 
 def test_naming_the_page() -> None:
     assert match_value(Snippet("Books/Guards.epub", 3, 30, "a")).where == "Guards.epub, ch. 3"
+    assert match_value(Snippet("Books/Guards.AZW3", 3, 30, "a")).where == "Guards.AZW3, ch. 3"
     assert match_value(Snippet("p.pdf", 8, 12, "a")).where == "p.pdf, p. 8"
     assert match_value(Snippet("notes.txt", 1, 1, "a")).where == "notes.txt"
     value = match_value(Snippet("p.pdf", 1, 2, "a < \x02b\x03"))

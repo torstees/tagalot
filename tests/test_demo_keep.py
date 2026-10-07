@@ -207,7 +207,8 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
     # It opens ready to search inside documents: the text is read and indexed.
     assert _inside(keep_dir, "luggage") == ["The Colour of Magic"]  # an EPUB's chapter
     assert _inside(keep_dir, "explode") == ["Notes on Dragons"]  # an ODT's text
-    assert _inside(keep_dir, "tortoise") == ["Small Gods"]  # the PDF beside its EPUB
+    assert _inside(keep_dir, "tortoise") == ["Small Gods"]  # its PDF and its Kindle copy
+    assert _inside(keep_dir, "melons") == ["Small Gods"]  # a Kindle book's chapter
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_books_demo(tmp_path)
 

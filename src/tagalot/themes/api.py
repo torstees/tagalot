@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 6
+API_VERSION = 7
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -29,7 +29,9 @@ the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
 :func:`read_bibliography`, and :attr:`Entity.made_by_hand`; version 5 added online
 details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
 :meth:`Theme.online_details`); version 6 added searching inside documents
-(:attr:`Entity.full_text`, :meth:`Theme.document_text`, :func:`read_document_text`)."""
+(:attr:`Entity.full_text`, :meth:`Theme.document_text`, :func:`read_document_text`);
+version 7 added Kindle and Mobipocket books (:func:`read_mobi`, :func:`mobi_cover`, and
+their text in :func:`read_document_text`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1340,6 +1342,7 @@ class Theme:
 
 from tagalot.themes.bibliography import BIBLIOGRAPHY_EXTENSIONS, read_bibliography  # noqa: E402
 from tagalot.themes.document_text import DOCUMENT_EXTENSIONS, read_document_text  # noqa: E402
+from tagalot.themes.mobi import MOBI_EXTENSIONS, mobi_cover, read_mobi  # noqa: E402
 from tagalot.themes.readers import (  # noqa: E402
     PDFIUM,
     epub_cover,
@@ -1366,6 +1369,7 @@ __all__ = [
     "FOLDER_IMAGE_EXTENSIONS",
     "FOLDER_IMAGE_NAMES",
     "KIND_EXTENSIONS",
+    "MOBI_EXTENSIONS",
     "OPTION_TYPES",
     "PDFIUM",
     "SEARCH_KINDS",
@@ -1418,6 +1422,7 @@ __all__ = [
     "field",
     "find_identifiers",
     "kind_of",
+    "mobi_cover",
     "office_cover",
     "option",
     "pdf_cover",
@@ -1429,6 +1434,7 @@ __all__ = [
     "read_epub",
     "read_front_matter",
     "read_link_file",
+    "read_mobi",
     "read_office_info",
     "read_pdf_info",
     "related",
