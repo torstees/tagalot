@@ -19,3 +19,12 @@ def icon_files() -> dict[int, Traversable]:
     """The icon's PNG for each size in :data:`ICON_SIZES`."""
     folder = resources.files(__name__)
     return {size: folder / f"tagalot-{size}.png" for size in ICON_SIZES}
+
+
+TOWER_SIZE = 256
+"""The tower picture's size (the About dialog shows it at half, sharp on high-DPI screens)."""
+
+
+def tower_file() -> Traversable:
+    """The tower, rendered from ``tagalot-tower.svg`` (the About dialog, #359)."""
+    return resources.files(__name__) / "tagalot-tower.png"

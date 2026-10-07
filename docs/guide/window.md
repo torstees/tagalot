@@ -12,7 +12,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 - **Edit:** Undo, Redo, Tag selection… (Ctrl+T), Save search… (Ctrl+S), Save search as… (Ctrl+Shift+S).
 - **Go:** Back, Forward.
 - **View:** the Tags panel, the Preview strip, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
-- **Help:** Keyboard shortcuts (F1).
+- **Help:** Keyboard shortcuts (F1), and **About Tagalot**: the version, links to these docs and the project, and **Copy check report** (what `tagalot --check` says, for a bug report).
 
 ## The navigation
 

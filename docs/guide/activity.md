@@ -34,7 +34,7 @@ reports what this copy of Tagalot can do, without opening a window, one line eac
 
 - the version, Python, Qt, and SQLite's text search (FTS5);
 - the themes it found (and any theme file that failed to load, with why), and the template for new themes;
-- the icon;
+- the icon, and the About dialog's picture;
 - the libraries for reading files: Pillow (pictures), mutagen (music tags), MediaInfo (video details), PDFium (PDFs), PyYAML and ruamel.yaml (Markdown front matter), py7zr (7z archives), and RAR (and whether a tool to read RAR archives is installed).
 
 ```
@@ -49,5 +49,7 @@ All good.
 ```
 
 It exits with an error when something is missing. From source, run `uv run tagalot --check`; packaged Windows builds have no console, so add `--output check.txt` and read the file.
+
+From the window, **Help → About Tagalot → Copy check report** runs the same check and puts its report on the clipboard, ready to paste into a bug report.
 
 For theme authors: `tagalot --check-theme <id or file>` checks one theme ([the theme guide](../THEMES.md)).

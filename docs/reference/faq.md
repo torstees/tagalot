@@ -46,4 +46,4 @@ Problems with files are in the [Activity panel](../guide/activity.md). Running f
 
 ## How do I report a problem?
 
-Open an issue at [github.com/torstees/tagalot/issues](https://github.com/torstees/tagalot/issues), with what `tagalot --check` says and what you did.
+Open an issue at [github.com/torstees/tagalot/issues](https://github.com/torstees/tagalot/issues), with what you did and what `tagalot --check` says (**Help → About Tagalot → Copy check report** copies it).
