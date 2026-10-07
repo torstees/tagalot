@@ -11,6 +11,9 @@ writes, from ``tagalot-shield-hash.svg`` (the app icon: it reads at 16 px):
 - ``packaging/tagalot.png``: the Linux AppImage (256 px);
 - ``docs/images/favicon.ico`` and ``favicon.png``: the docs site's tab icon;
 
+and, from ``tagalot-tower.svg``, ``src/tagalot/resources/tagalot-tower.png`` (256 px: the
+About dialog, #359);
+
 and copies the larger pictures to ``docs/images`` as SVGs with 256 px PNGs, for the docs
 site and the README: the tower (``logo``), the knight with his visor up (``knight``, the
 mascot), and the flag (``flag``).
@@ -27,7 +30,7 @@ from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PySide6.QtGui import QGuiApplication, QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
-from tagalot.resources import ICON_SIZES
+from tagalot.resources import ICON_SIZES, TOWER_SIZE
 
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / "src" / "tagalot" / "resources"
@@ -76,6 +79,8 @@ def main() -> int:
     big.save(PACKAGING / "tagalot.ico", sizes=[(s, s) for s in ICON_SIZES], append_images=smaller)
     render(renderer, ICNS_SIZE).save(PACKAGING / "tagalot.icns")
     print(f"Wrote {len(ICON_SIZES)} PNGs, tagalot.png, tagalot.ico, and tagalot.icns")
+    tower = QSvgRenderer(str(RESOURCES / "tagalot-tower.svg"))
+    render(tower, TOWER_SIZE).save(RESOURCES / "tagalot-tower.png", optimize=True)
     DOCS_IMAGES.mkdir(parents=True, exist_ok=True)
     favicons = [render(renderer, s) for s in FAVICON_SIZES]
     favicons[-1].save(

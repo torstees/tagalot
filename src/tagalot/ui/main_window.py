@@ -72,6 +72,7 @@ from tagalot.core.triage import UnlinkedFile, exact_pattern
 from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write_back, write_files
 from tagalot.themes.api import Kind, SearchView, entity_label
+from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
@@ -348,6 +349,10 @@ class MainWindow(QMainWindow):
         self.shortcuts_action = help_action(self)
         self.shortcuts_action.triggered.connect(self.show_shortcuts)
         help_menu.addAction(self.shortcuts_action)
+        self.about_action = QAction("About Tagalot", self)
+        self.about_action.setMenuRole(QAction.MenuRole.AboutRole)  # the app menu, on a Mac
+        self.about_action.triggered.connect(self.show_about)
+        help_menu.addAction(self.about_action)
 
         # Status bar: a message plus a busy indicator while scanning.
         self.thumbnail_status = QLabel()
@@ -1850,6 +1855,10 @@ class MainWindow(QMainWindow):
         for page in self.search_pages():
             page.grid.viewport().update()
         logger.info("Made %d background thumbnails (%d pictures)", result.done, result.pictures)
+
+    def show_about(self) -> None:
+        """Help → About Tagalot (#359)."""
+        AboutDialog(self).exec()
 
     # --- reading documents' text (#348; core.contents) ---
 
