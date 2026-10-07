@@ -354,13 +354,31 @@ def test_near_duplicates() -> None:
     theme = BooksTheme()
     a = _record("The Colour of Magic", authors="Terry Pratchett", series_index=None)
     b = _record("The Color of Magic", authors="Terry Pratchett", series_index=None)
-    assert list(theme.blocking_keys(Book, a)) == ["terry pratchett"]
+    assert list(theme.blocking_keys(Book, a)) == ["by:terry pratchett", "title:the colour of magic"]
     assert theme.similarity(Book, a, b) >= theme.near_duplicate_threshold
     one = _record("Mistborn 1", authors="B", series_index=1.0)
     two = _record("Mistborn 2", authors="B", series_index=2.0)
     assert theme.similarity(Book, one, two) == 0.0
     assert list(theme.blocking_keys(Author, _record("x"))) == []
-    assert list(theme.blocking_keys(Comic, _record("x", writers="Wilson, Other"))) == ["wilson"]
+    assert list(theme.blocking_keys(Comic, _record("x", writers="Wilson, Other"))) == [
+        "by:wilson",
+        "title:x",
+    ]
+
+
+def test_near_duplicates_by_title() -> None:
+    """One of a book's files names no writer, or other writers as well (#369): the title
+    finds it; writers that are known on both sides and share no one are different books."""
+    theme = BooksTheme()
+    epub = _record("Learning DevSecOps", authors="Steve Suehring", series_index=None)
+    pdf = _record("Learning DevSecOps", authors=None, series_index=None)
+    assert "title:learning devsecops" in theme.blocking_keys(Book, pdf)
+    assert theme.similarity(Book, epub, pdf) == 1.0
+    older = _record("Effective DevOps", authors="Jennifer Davis, Katherine Daniels")
+    newer = _record("Effective DevOps", authors="Ryn Daniels, Jennifer Davis")
+    assert theme.similarity(Book, older, newer) == 1.0  # Jennifer Davis wrote both
+    other = _record("Effective DevOps", authors="Someone Else")
+    assert theme.similarity(Book, newer, other) == 0.0
 
 
 def _resource(path: Path) -> ResourceInfo:
@@ -434,6 +452,75 @@ def test_a_pdf_joins_the_same_book_in_epub(env: Env) -> None:
         "Kobo/colour.epub",
         "Loose/colour.pdf",
     ]
+
+
+def test_a_downloads_formats_are_one_book(env: Env) -> None:
+    """A bundle's EPUB and PDF of one book, named alike, whose details name the authors
+    differently, or not at all, or as a template's placeholder (#369)."""
+    bundle = env.files / "Humble Tech Book-Devops 2025"
+    write_epub(
+        bundle / "pythonfordevops.epub",
+        title="Python for DevOps",
+        creators=[("Noah Gift, Kennedy Behrman, Alfredo Deza, and Grig Gheorghiu", None)],
+    )
+    write_pdf(
+        bundle / "pythonfordevops.pdf",
+        title="Python for DevOps",
+        author="Noah Gift, Kennedy Behrman, Alfredo Deza, and Grig Gheorghiu",
+    )
+    write_epub(
+        bundle / "effectivedevops.epub",
+        title="Effective DevOps",
+        creators=[("Jennifer Davis and Ryn Daniels", None)],
+    )
+    write_pdf(bundle / "EffectiveDevOps.pdf", title="Effective DevOps", author="Jennifer Davis")
+    write_epub(
+        bundle / "ckad.epub", title="CKAD Study Guide", creators=[("AUTHOR NAMES HERE", None)]
+    )
+    write_pdf(bundle / "ckad.pdf", title="CKAD Study Guide", author="Benjamin Muschko")
+    write_epub(
+        bundle / "learningdevsecops.epub",
+        title="Learning DevSecOps",
+        creators=[("Steve Suehring", None)],
+    )
+    write_pdf(bundle / "learningdevsecops.pdf", title="Learning DevSecOps")
+    env.scan()
+
+    folder = "Humble Tech Book-Devops 2025"
+    assert env.files_of("Python for DevOps") == [
+        f"{folder}/pythonfordevops.epub",
+        f"{folder}/pythonfordevops.pdf",
+    ]
+    assert env.credits("writers", "Python for DevOps") == [
+        "Alfredo Deza", "Grig Gheorghiu", "Kennedy Behrman", "Noah Gift",
+    ]  # fmt: skip
+    assert len(env.files_of("Effective DevOps")) == 2  # its name, case aside
+    assert env.credits("writers", "Effective DevOps") == ["Jennifer Davis", "Ryn Daniels"]
+    assert len(env.files_of("CKAD Study Guide")) == 2
+    assert env.credits("writers", "CKAD Study Guide") == ["Benjamin Muschko"]
+    assert "AUTHOR NAMES HERE" not in env.titles(Author)
+    assert len(env.files_of("Learning DevSecOps")) == 2
+    assert env.titles(Book).count("Learning DevSecOps") == 1
+
+
+def test_a_format_added_later_joins_its_book(env: Env) -> None:
+    write_epub(env.files / "Bundle/policy.epub", title="Policy as Code", creators=PRATCHETT)
+    env.scan()
+    write_pdf(env.files / "Bundle/policy.pdf", title="Policy as Code (Early Release)")
+    env.scan(T0 + timedelta(minutes=1))
+    assert env.files_of("Policy as Code") == ["Bundle/policy.epub", "Bundle/policy.pdf"]
+    assert "Policy as Code (Early Release)" not in env.titles(Book)
+
+
+def test_files_named_alike_elsewhere_are_not_joined(env: Env) -> None:
+    write_pdf(env.files / "One/notes.pdf", title="Notes on Rust")
+    write_pdf(env.files / "Two/notes.pdf", title="Notes on Go")
+    write_markdown(env.files / "Two/notes.md", "# Notes on Go\n")
+    write_cbz(env.files / "Two/Notes.cbz", comic_info(Series="Notes", Number="1"))
+    env.scan()
+    assert env.files_of("Notes on Rust") == ["One/notes.pdf"]
+    assert env.files_of("Notes on Go") == ["Two/notes.md", "Two/notes.pdf"]
+    assert env.files_of("Notes #1") == ["Two/Notes.cbz"]  # a comic isn't a book's format
 
 
 def test_unreadable_pdf_and_front_matter_are_still_works(env: Env) -> None:

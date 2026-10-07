@@ -40,8 +40,10 @@ they came from (Kobo, Humble Bundle, Comixology, Royal Road, Loose). One book is
 (one work, two files), two series are in reading order, a comic series is in a universe, a
 PDF has a cover drawn from its first page, a Markdown story has front matter, some files have
 no metadata (named from their file names or headings), and one book is a near-duplicate of
-another. Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy"
-match no tag.
+another. A bundle's EPUB and PDF of one book are named alike and disagree on its author (the
+EPUB has a template's placeholder): one book; another EPUB names two authors in one creator.
+Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy" match no
+tag.
 
 ``--research`` creates ``scratch/Research.keep`` watching ``scratch/research-files`` with the
 built-in research theme: small PDFs with a text layer holding DOIs and arXiv IDs. One paper
@@ -705,12 +707,34 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
         "subjects": ["Fantasy", "Epic Fantasy"],
         "cover": ((170, 120, 30), "The Well of Ascension"),
     },
+    # A bundle's formats of one book, named alike (#369): the EPUB names a template's
+    # placeholder, its PDF (BOOK_PDFS) the author; one book with both files.
+    "Humble Bundle/smallgods.epub": {
+        "title": "Small Gods",
+        "creators": [("AUTHOR NAMES HERE", "aut")],
+        "series": ("Discworld", 13),
+        "subjects": ["Fantasy"],
+        "cover": ((90, 70, 40), "Small Gods"),
+    },
+    "Humble Bundle/The Long Earth.epub": {  # two authors in one creator: two authors
+        "title": "The Long Earth",
+        "creators": [("Terry Pratchett and Stephen Baxter", "aut")],
+        "subjects": ["Science Fiction"],
+    },
     # Files without metadata: named from their file names.
     "Loose/Discworld 02 - The Light Fantastic.epub": {},
     "Loose/Ursula K. Le Guin - A Wizard of Earthsea (1968).epub": {},
     "Loose/Terry Pratchett - The Color of Magic.epub": {},  # a near-duplicate
 }
 """EPUBs for the books demo, by path: their metadata (a cover as color and text)."""
+
+BOOK_PDFS: dict[str, tuple[list[str], dict[str, str]]] = {
+    "Humble Bundle/smallgods.pdf": (
+        ["Small Gods", "In the desert, a novice hears his god speak: it is a small tortoise."],
+        {"Title": "Small Gods", "Author": "Terry Pratchett"},
+    ),
+}
+"""PDFs with a text layer for the books demo, by path: their lines and document info."""
 
 BOOK_COMICS: dict[str, dict[str, str] | None] = {
     "Comixology/Saga 001.cbz": {
@@ -1122,6 +1146,8 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         subject="The world will end on a Saturday. Next Saturday, in fact.",
         keywords="Fantasy; Humor",
     )
+    for relpath, (lines, info) in BOOK_PDFS.items():
+        _text_pdf(files / relpath, lines, info)
     _office_and_links(files)
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}

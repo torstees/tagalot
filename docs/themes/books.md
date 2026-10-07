@@ -10,7 +10,9 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 - **Series** (in reading order), **Universe** (series and works sharing a world: Discworld, Cosmere), and **Collection** (an omnibus or anthology).
 - **Credits:** a book's page shows **Written by** and **Art by**; an author's page their **Books**, **Comics**, **Illustrated**, and **Comic art**. Add and remove credits by hand; they stay.
 
-**One work, several files:** the same book as an EPUB and a PDF, or bought from two stores, is one book whose files are its versions. While a book has one file, what the file says is what the book says; with several, each file only adds.
+**One work, several files:** the same book as an EPUB and a PDF, or bought from two stores, is one book whose files are its versions: books are matched by title and first author. Files with the same name in one folder (`devops.epub` and `devops.pdf`, as a bundle downloads them) are always one book, even when their details disagree. While a book has one file, what the file says is what the book says; with several, each file only adds.
+
+Author lists are split into people (`Noah Gift, Kennedy Behrman, and Alfredo Deza` is three authors), and a publisher's placeholder such as `AUTHOR NAMES HERE` is ignored.
 
 What each format gives is in [File formats](../reference/file-formats.md). Without details, the file name is read: `Author - Title (Year)`, `Series 03 - Title`, comics as `Series #012 (2020)`.
 
@@ -44,4 +46,4 @@ A book with an ISBN can be looked up in Open Library (with your consent, [Online
 
 ## Duplicates
 
-Books by the same first writer with nearly the same title (unless they're different numbers in a series) are listed as similar items.
+Books with nearly the same title by the same first writer, or where one names no writer, are listed as similar items (unless they're different numbers in a series, or both name writers and share none). After upgrading from Tagalot 0.8.0, a keep's books are read again once, and a book split in two before (an EPUB and a PDF that named their authors differently) is listed there to [merge](../guide/dedupe.md).

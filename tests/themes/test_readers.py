@@ -235,6 +235,19 @@ def test_pdfs_read_from_many_threads(tmp_path: Path) -> None:
         ("Terry Pratchett, Neil Gaiman", ["Terry Pratchett", "Neil Gaiman"]),
         ("Terry Pratchett and Neil Gaiman", ["Terry Pratchett", "Neil Gaiman"]),
         ("A. One & B. Two; C.  Three", ["A. One", "B. Two", "C. Three"]),
+        # the serial comma (#369): as O'Reilly's EPUBs and PDFs write their authors
+        (
+            "Noah Gift, Kennedy Behrman, Alfredo Deza, and Grig Gheorghiu",
+            ["Noah Gift", "Kennedy Behrman", "Alfredo Deza", "Grig Gheorghiu"],
+        ),
+        (
+            ["Bas Meijer, Lorin Hochstein,", "René Moser"],
+            ["Bas Meijer", "Lorin Hochstein", "René Moser"],
+        ),
+        ("Jennifer Davis and Ryn Daniels", ["Jennifer Davis", "Ryn Daniels"]),
+        ("Pratchett, Terry and Gaiman, Neil", ["Pratchett, Terry", "Gaiman, Neil"]),
+        ("Pratchett, Terry,", ["Pratchett, Terry"]),
+        (" , ; and ", []),
         (
             ["Ann Leckie", "Martha Wells; N. K. Jemisin"],
             ["Ann Leckie", "Martha Wells", "N. K. Jemisin"],

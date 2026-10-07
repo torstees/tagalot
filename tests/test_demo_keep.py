@@ -195,18 +195,19 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
             # Fantasy comes from the books' own subjects (file keywords).
             fantasy = count_by_type(conn, SearchSpec(include=_ids(tree, "Fantasy")), tree)
     assert everything == {
-        "books.author": 12,
-        "books.book": 17,
+        "books.author": 13,  # Stephen Baxter, of a two-author creator
+        "books.book": 19,  # Small Gods: its EPUB and PDF are one book
         "books.collection": 1,
         "books.comic": 4,
         "books.series": 6,
         "books.universe": 2,
     }
-    assert funny == {"books.book": 3}
-    assert fantasy == {"books.book": 7}  # from EPUBs, a PDF, Markdown, and a Word document
+    assert funny == {"books.book": 4}  # Discworld, tagged, and its books
+    assert fantasy == {"books.book": 8}  # from EPUBs, PDFs, Markdown, and a Word document
     # It opens ready to search inside documents: the text is read and indexed.
     assert _inside(keep_dir, "luggage") == ["The Colour of Magic"]  # an EPUB's chapter
     assert _inside(keep_dir, "explode") == ["Notes on Dragons"]  # an ODT's text
+    assert _inside(keep_dir, "tortoise") == ["Small Gods"]  # the PDF beside its EPUB
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_books_demo(tmp_path)
 

@@ -278,18 +278,21 @@ def read_comic_info(path: str) -> dict[str, Any] | None:
 
 def split_people(value: Any) -> list[str]:
     """People named in one value: a list, or text joined by ``;``, ``&``, or ``and``
-    (``"Terry Pratchett; Neil Gaiman"``). Commas split only when every part looks like a
-    full name, so ``"Pratchett, Terry"`` stays one person."""
+    (``"Terry Pratchett; Neil Gaiman"``), or commas. Commas split a part only when every
+    piece looks like a full name, so ``"Pratchett, Terry"`` stays one person and ``"Ann
+    Leckie, Martha Wells, and N. K. Jemisin"`` is three."""
     if isinstance(value, list | tuple):
         return [n for v in value for n in split_people(v)]
     if not isinstance(value, str):
         return []
-    parts = [p.strip() for p in re.split(r"\s*(?:;|&|\band\b)\s*", value) if p.strip()]
-    if len(parts) == 1 and "," in parts[0]:
-        pieces = [p.strip() for p in parts[0].split(",") if p.strip()]
+    people: list[str] = []
+    for part in re.split(r"\s*(?:;|&|\band\b)\s*", value):
+        pieces = [p.strip() for p in part.split(",") if p.strip()]
         if len(pieces) > 1 and all(" " in p for p in pieces):
-            parts = pieces
-    return [" ".join(p.split()) for p in parts]
+            people += pieces
+        elif pieces:
+            people.append(", ".join(pieces))  # one name, without a serial comma's leftover
+    return [" ".join(p.split()) for p in people]
 
 
 def split_keywords(value: Any, spaces: bool = True) -> list[str]:

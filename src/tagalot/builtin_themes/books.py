@@ -11,14 +11,18 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
   that live on the web; comics are CBZ, CBR, and CB7.
 - **A work and its files:** a book or comic is keyed by its title and
   first writer (a comic by its series, volume, and number), so the same novel bought from two
-  sites is one work whose files are its versions. A file already linked to a work updates it
-  in place. What a file says replaces what it said before only while it is the work's one
-  file; with several, each adds to the work (its writers, its series).
+  sites is one work whose files are its versions. A file named like a book file beside it
+  (``devops.epub`` and ``devops.pdf``) joins that file's work whatever their details say: a
+  download's formats of one book. A file already linked to a work updates it in place.
+  What a file says replaces what it said before only while it is the work's one file; with
+  several, each adds to the work (its writers, its series).
 - **Reading files** (``prepare``, a scan worker), with the :mod:`tagalot.themes.api`
   readers: an EPUB's package, a PDF's document info, Markdown front matter, an office
   document's properties, a link file's address, a comic's ``ComicInfo.xml``; else the file
   name:
-  ``Author - Title (Year)``, ``Series 03 - Title``, ``Series #012 (2020)``.
+  ``Author - Title (Year)``, ``Series 03 - Title``, ``Series #012 (2020)``. Author lists
+  are split into people (``A, B, and C``), and a publisher's placeholder (``Author Names
+  Here``) is no author.
 - **Sources:** where a file came from: the folder at the ``source_level`` option's depth
   (``1`` for ``Humble Bundle/…``), else a comic's web address's site, else an EPUB's
   publisher. A work's ``sources`` lists its files'.
@@ -38,6 +42,7 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 
 import difflib
 import logging
+import os
 import posixpath
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -73,6 +78,7 @@ from tagalot.themes.api import (
     read_pdf_info,
     related,
     role,
+    split_people,
     top_values,
 )
 
@@ -210,7 +216,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 1
+    id, name, version = "books", "Books", 2  # 2: author lists split (#369), read again
     api_version = 6  # full_text (5: online details; 3: ctx.resource_at, write_back)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
@@ -342,18 +348,24 @@ class BooksTheme(Theme):
     # --- near-duplicates ---
 
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
-        """Works by the same first writer."""
+        """Works by the same first writer, and works with the same title (one of a book's
+        files may name no writer, or name them differently)."""
         if entity_type not in WORKS:
             return ()
-        names = record.fields.get("authors" if entity_type is Book else "writers") or ""
-        first = normalize(names.split(",")[0])
-        return [first] if first else []
+        writers = split(record.fields.get("authors" if entity_type is Book else "writers"))
+        first = normalize(writers[0]) if writers else ""
+        title = normalize(record.title or "")
+        return [k for k in (f"by:{first}" if first else "", f"title:{title}" if title else "") if k]
 
     def similarity(self, entity_type: type[Entity], a: Record, b: Record) -> float:
         """How alike the titles are (ignoring case and punctuation); different numbers in
-        a series are different works however alike their titles."""
+        a series are different works however alike their titles, and so are works whose
+        writers are known and share no one."""
         numbers = a.fields.get("series_index"), b.fields.get("series_index")
         if None not in numbers and numbers[0] != numbers[1]:
+            return 0.0
+        writers = people_of(entity_type, a), people_of(entity_type, b)
+        if all(writers) and not writers[0] & writers[1]:
             return 0.0
         return difflib.SequenceMatcher(None, normalize(a.title), normalize(b.title)).ratio()
 
@@ -361,6 +373,7 @@ class BooksTheme(Theme):
 
     def prepare(self, batch: Sequence[ResourceInfo]) -> Mapping[int, Any]:
         found: dict[int, Any] = {}
+        folders: dict[str, list[str]] = {}  # each folder's file names, read once a batch
         for resource in batch:
             if resource.kind != "file" or not resource.path:
                 continue
@@ -378,6 +391,8 @@ class BooksTheme(Theme):
                 fallback = book_work if resource.ext in BOOK_EXTENSIONS else comic_work
                 found[resource.id] = fallback(resource.relpath, None)
                 found[resource.id]["error"] = f"{type(e).__name__}: {e}"
+            if resource.id in found:
+                found[resource.id]["siblings"] = siblings(resource, folders)
         return found
 
     # --- ingest (DB writer) ---
@@ -434,12 +449,16 @@ class BooksTheme(Theme):
         source = source_of(resource.relpath, ctx.option("source_level"), work.pop("source"))
         title = work.pop("title")
         cover = work.pop("cover", None)
+        beside: list[str] = work.pop("siblings", None) or []
 
         existing = ctx.entities_of(resource, "file")
         if existing:
             entity = existing[0]
         else:
-            entity = ctx.upsert(kind, work_key(kind, title, writers, work, resource.relpath))
+            joined = sibling_work(self.type_id_of(kind), resource, beside, ctx)
+            entity = joined or ctx.upsert(
+                kind, work_key(kind, title, writers, work, resource.relpath)
+            )
             ctx.link(entity, resource, "file")
         alone = not [r for r in ctx.linked(entity, "file") if r != resource.id]
         before = ctx.get(entity).fields
@@ -525,8 +544,8 @@ def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]
     return {
         "type": "book",
         "title": meta.get("title") or guess["title"],
-        "writers": unique(meta.get("writers") or guess["writers"]),
-        "artists": unique(meta.get("artists") or []),
+        "writers": real_people(meta.get("writers")) or real_people(guess["writers"]),
+        "artists": real_people(meta.get("artists")),
         "series": meta.get("series") or guess["series"],
         "series_index": first_of(meta.get("series_index"), guess["series_index"]),
         "universe": meta.get("universe"),
@@ -545,8 +564,13 @@ def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]
 
 def epub_details(epub: Mapping[str, Any]) -> dict[str, Any]:
     """What :func:`read_epub` found, as :func:`book_work` takes it: creators without a
-    role are writers, its subjects are keywords, its publisher is the source."""
-    creators: list[tuple[str, str | None]] = epub.get("creators") or []
+    role are writers (one creator may name several: ``A, B, and C``), its subjects are
+    keywords, its publisher is the source."""
+    creators = [
+        (person, role)
+        for names, role in epub.get("creators") or []
+        for person in split_people(names)
+    ]
     return {
         **{k: epub.get(k) for k in ("title", "series", "series_index", "year", "publisher")},
         **{k: epub.get(k) for k in ("language", "isbn", "description")},
@@ -632,8 +656,8 @@ def comic_work(relpath: str, info: Mapping[str, Any] | None) -> dict[str, Any]:
     return {
         "type": "comic",
         "title": title,
-        "writers": unique(meta.get("writers") or []),
-        "artists": unique(meta.get("artists") or []),
+        "writers": real_people(meta.get("writers")),
+        "artists": real_people(meta.get("artists")),
         "series": series,
         "number": number,
         "volume": meta.get("volume") or guess["volume"],
@@ -884,6 +908,67 @@ def unique(names: Iterable[str]) -> list[str]:
         if normalize(name) and normalize(name) not in found:
             found[normalize(name)] = name
     return list(found.values())
+
+
+PLACEHOLDER_NAMES = frozenset(
+    {"author", "author name", "author names", "author names here", "unknown", "unknown author"}
+)
+"""Names a publisher's template left in a file's details (normalized): no one."""
+
+
+def real_people(names: Iterable[str] | None) -> list[str]:
+    """Each name once, without placeholders (``AUTHOR NAMES HERE``)."""
+    return [n for n in unique(names or []) if normalize(n) not in PLACEHOLDER_NAMES]
+
+
+def people_of(entity_type: type[Entity], record: Record) -> set[str]:
+    """A work's writers (normalized), as its record lists them."""
+    names = record.fields.get("authors" if entity_type is Book else "writers")
+    return {normalize(n) for n in split(names)} - {""}
+
+
+SIBLING_EXTENSIONS = (BOOK_EXTENSIONS - LINK_EXTENSIONS) | COMIC_EXTENSIONS
+"""Files that are one work's formats when named alike in one folder (not link files: a
+bookmark beside a book may be its web page, or something else)."""
+
+
+def siblings(resource: ResourceInfo, folders: dict[str, list[str]]) -> list[str]:
+    """The other book or comic files in ``resource``'s folder with its name, case aside
+    (``devops.pdf`` beside ``devops.epub``), as relpaths; ``folders`` caches each folder's
+    listing. Only what is on disk; a folder that can't be listed gives none."""
+    if resource.ext not in SIBLING_EXTENSIONS:
+        return []
+    folder = os.path.dirname(resource.path)
+    if folder not in folders:
+        try:
+            folders[folder] = os.listdir(folder)
+        except OSError:
+            folders[folder] = []
+    name = posixpath.basename(resource.relpath)
+    stem = posixpath.splitext(name)[0].casefold()
+    parent = posixpath.dirname(resource.relpath)
+    return [
+        posixpath.join(parent, other)
+        for other in sorted(folders[folder])
+        if other != name
+        and posixpath.splitext(other)[0].casefold() == stem
+        and posixpath.splitext(other)[1].casefold() in SIBLING_EXTENSIONS
+    ]
+
+
+def sibling_work(
+    type_id: str, resource: ResourceInfo, beside: Sequence[str], ctx: IngestContext
+) -> EntityRef | None:
+    """The work (of type ``type_id``) that a same-named file beside ``resource`` is already
+    a file of; ``None`` while those files aren't read yet (the first one read makes it)."""
+    for relpath in beside:
+        other = ctx.resource_at(resource, relpath)
+        if other is None:
+            continue
+        works = [w for w in ctx.entities_of(other, "file") if w.type == type_id]
+        if works:
+            return works[0]
+    return None
 
 
 def split(text: str | None) -> list[str]:
