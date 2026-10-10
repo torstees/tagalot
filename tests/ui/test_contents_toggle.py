@@ -48,10 +48,27 @@ def window(qtbot: QtBot, session: KeepSession) -> MainWindow:
     return window
 
 
+WAIT_MS = 10_000
+"""How long a search may take to show its result."""
+
+
 def _page(window: MainWindow) -> SearchPage:
     page = window.stack.currentWidget()
     assert isinstance(page, SearchPage)
     return page
+
+
+def _wait_for_status(qtbot: QtBot, page: SearchPage, status: str) -> None:
+    """Wait for the page to show ``status``; on a timeout, say what it showed instead
+    (#374: a rare failure in full runs said only that it timed out)."""
+    try:
+        qtbot.waitUntil(lambda: page.status.text() == status, timeout=WAIT_MS)
+    except qtbot.TimeoutError:
+        spec = page.current_spec()
+        pytest.fail(
+            f"waited {WAIT_MS / 1000:.0f} s for {status!r}; the page shows "
+            f"{page.status.text()!r} (text {spec.text!r}, inside documents: {spec.contents})"
+        )
 
 
 def test_contents_is_offered_only_when_the_keep_searches_documents(
@@ -77,9 +94,9 @@ def test_the_toggle_finds_items_by_their_contents(
         window.update_contents()
     page = _page(window)
     page.filter_bar.set_text("photosynth")
-    qtbot.waitUntil(lambda: page.status.text() == "Nothing found", timeout=10_000)
+    _wait_for_status(qtbot, page, "Nothing found")
     page.filter_bar.contents_box.setChecked(True)
-    qtbot.waitUntil(lambda: page.status.text() == "1 item", timeout=5000)
+    _wait_for_status(qtbot, page, "1 item")
     assert page.current_spec().contents is True
     saved = page.saved_definition()
     assert saved.filters.contents is True  # kept with a saved search
@@ -92,11 +109,11 @@ def test_where_each_item_matched(qtbot: QtBot, window: MainWindow, session: Keep
     page = _page(window)
     page.filter_bar.contents_box.setChecked(True)
     page.filter_bar.set_text("photosynth")
-    qtbot.waitUntil(lambda: page.status.text() == "1 item", timeout=5000)
+    _wait_for_status(qtbot, page, "1 item")
     keys = [c.key for c in page.model.columns]
     assert keys[:2] == ["title", MATCH]  # beside the title
     cell = page.model.index(0, keys.index(MATCH))
-    qtbot.waitUntil(lambda: bool(cell.data()), timeout=5000)
+    qtbot.waitUntil(lambda: bool(cell.data()), timeout=WAIT_MS)
     assert cell.data() == "Photosynthesis needs light"
     assert cell.data(MATCH_HTML_ROLE) == "<b>Photosynthesis</b> needs light"
     assert cell.data(Qt.ItemDataRole.ToolTipRole).endswith("botany.pdf, p. 2")
@@ -104,7 +121,7 @@ def test_where_each_item_matched(qtbot: QtBot, window: MainWindow, session: Keep
 
     page.filter_bar.contents_box.setChecked(False)  # no longer inside documents
     page.filter_bar.set_text("botany")  # by its title
-    qtbot.waitUntil(lambda: MATCH not in [c.key for c in page.model.columns], timeout=5000)
+    qtbot.waitUntil(lambda: MATCH not in [c.key for c in page.model.columns], timeout=WAIT_MS)
     assert not page.grid.show_match
 
 

@@ -162,6 +162,7 @@ docs/                    # the documentation site (docsify: index.html, _sidebar
 - Search semantics (include/exclude, descendant expansion, inheritance, show-contained, within) need thorough table-driven tests; they are the heart of the app.
 - Mark GUI tests with `@pytest.mark.gui`.
 - GUI tests never leave a modal open: offscreen, nothing closes it and the run hangs. `tests/ui/conftest.py` fails a test that opens a dialog, message box, or menu it doesn't answer (#272). Patch the dialog (`monkeypatch.setattr(QMessageBox, "question", ...)`, or the dialog class's `exec`), and test a menu by calling its actions rather than showing it.
+- GUI tests don't leave background jobs running: `tests/ui/conftest.py` waits for Qt's shared thread pool after each test, and fails the test whose job is still running 10 s later (#374). Wait for what a test checks with `qtbot.waitUntil`/`waitSignal`, and when a wait can time out, say in the failure what was seen instead.
 - For performance-sensitive code (search, scanning), add a benchmark test that builds ~50k entities and asserts a generous time bound; mark it `@pytest.mark.slow`.
 
 ## When unsure
