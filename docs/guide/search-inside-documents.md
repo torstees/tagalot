@@ -20,10 +20,10 @@ After each scan, Tagalot reads the text of new and changed documents in the back
 
 - **PDFs** page by page (a scanned PDF without a text layer has no text to read);
 - **EPUBs** chapter by chapter;
-- **Kindle books** (`.mobi`, `.azw`, `.azw3`) chapter by chapter, unless they have DRM (their text is protected) or were compressed by Kindle's own tools in a way Tagalot doesn't read yet;
+- **Kindle books** (`.mobi`, `.azw`, `.azw3`) chapter by chapter, unless they have DRM (their text is protected);
 - **Markdown**, **plain text**, **Word (.docx)**, and **OpenDocument (.odt)** files as one page each.
 
-A file's text stops at 5 MB, and a PDF's at 2,000 pages. A file that can't be read is listed in the [Activity panel](activity.md) as **Text not read**, and isn't tried again until it changes. The text is kept in the keep's `fulltext.db`.
+A file's text stops at 5 MB, and a PDF's at 2,000 pages. A file that can't be read is listed in the [Activity panel](activity.md) as **Text not read**, and isn't tried again until it changes, or until a newer Tagalot reads more kinds of files (then it's tried once more). The text is kept in the keep's `fulltext.db`.
 
 ## Searching
 

@@ -7,9 +7,16 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Connection, select, update
 
-from tagalot.core.contents import ContentsResult, contents_file, contents_page
+from tagalot.core.contents import (
+    READERS_VERSION,
+    ContentsResult,
+    contents_file,
+    contents_meta,
+    contents_page,
+    readers_version,
+)
 from tagalot.core.keep import KeepConfigError, RootConfig, ThemeRef, create_keep, load_keep_config
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
@@ -136,6 +143,30 @@ def test_only_new_and_changed_files_are_read_again(session: KeepSession, files: 
     count, _ = _read(session)
     assert count == 1
     assert _pages(session)["notes.txt"] == ["different words now"]
+
+
+def test_failed_files_are_tried_again_when_the_readers_improve(session: KeepSession) -> None:
+    """A store last read by older readers (#375: before Kindle's HUFF/CDIC text) tries the
+    files that failed once more, and only those; then they rest again."""
+    session.set_contents_index("words")
+    _read(session)
+    with session.contents.reader.connect() as conn:
+        assert readers_version(conn) == READERS_VERSION
+    assert _read(session)[0] == 0
+
+    def older(conn: Connection) -> None:
+        conn.execute(
+            update(contents_meta).where(contents_meta.c.key == "readers").values(value="1")
+        )
+
+    session.contents.writer.run(older)
+    count, result = _read(session)
+    assert count == 1  # broken.pdf, not the files that were read
+    assert result is not None
+    assert [f[1] for f in result.failed] == ["broken.pdf"]
+    with session.contents.reader.connect() as conn:
+        assert readers_version(conn) == READERS_VERSION
+    assert _read(session)[0] == 0  # it failed again: not tried until the next improvement
 
 
 def test_a_deleted_files_text_goes(session: KeepSession, files: Path) -> None:

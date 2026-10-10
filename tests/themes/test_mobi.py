@@ -15,7 +15,7 @@ from tagalot.themes.api import (
     read_mobi,
 )
 from tagalot.themes.mobi import mobi_text, palmdoc_unpack, without_trailing_entries
-from tests.core.book_files import jpeg, palmdoc_pack, write_epub, write_mobi
+from tests.core.book_files import HuffCdic, jpeg, palmdoc_pack, write_epub, write_mobi
 
 DETAILS = {
     "authors": ["Noah Gift, Kennedy Behrman, and Alfredo Deza"],
@@ -102,9 +102,81 @@ def test_text_that_isnt_read(tmp_path: Path) -> None:
     assert read_mobi(str(locked))["title"] == "Locked"  # its details aren't protected
     with pytest.raises(ValueError, match="protected"):
         read_document_text(str(locked))
-    huff = write_mobi(tmp_path / "b.azw3", text="<p>x</p>", compression=17480)
-    with pytest.raises(ValueError, match="HUFF/CDIC"):
-        mobi_text(str(huff))
+    tableless = write_mobi(tmp_path / "b.azw3", text="<p>x</p>", compression=17480)
+    with pytest.raises(ValueError, match="HUFF/CDIC tables aren't where"):
+        mobi_text(str(tableless))
+    unknown = write_mobi(tmp_path / "c.azw3", text="<p>x</p>", compression=3)
+    with pytest.raises(ValueError, match="unknown way"):
+        mobi_text(str(unknown))
+
+
+# --- HUFF/CDIC (#375) ---
+
+WORDS = [f"word{i:03d} ".encode() for i in range(300)]
+"""More phrases than one CDIC record holds (256), with codes of 10 bits: longer than the
+first-byte table's 8, so the decoder searches the code lengths."""
+
+
+def _huffman() -> HuffCdic:
+    phrases: list[tuple[bytes | list[int], int]] = [
+        (b"<p>The ", 3),
+        (b"mists ", 4),
+        (b"come ", 5),
+        (b"at night.</p>", 6),
+        (b"<mbp:pagebreak/>", 7),
+        *((w, 10) for w in WORDS),
+        ([0, 1], 12),  # compressed: "<p>The mists "
+        ([305, 2], 12),  # compressed, using the one above: "<p>The mists come "
+    ]
+    huffman = HuffCdic(phrases)
+    assert huffman.order == list(range(len(phrases)))  # given shortest first: as stored
+    return huffman
+
+
+def test_huffcdic_text(tmp_path: Path) -> None:
+    huffman = _huffman()
+    records = [
+        [0, 1, 2, 3, 4],  # short codes, all within the first byte
+        [306, 3, 4, *range(5, 305)],  # nested phrases, then every word, past 256 of them
+        [305, 2, 3],  # the phrase the nested one used, decoded already
+    ]
+    path = write_mobi(tmp_path / "a.azw3", full_title="Mistborn", huffman=(huffman, records))
+    pages = mobi_text(str(path))
+    words = " ".join(w.decode().strip() for w in WORDS)
+    assert pages == [
+        "The mists come at night.",  # the first record, to its page break
+        "The mists come at night.",  # the nested phrases, to the second's page break
+        f"{words} The mists come at night.",  # every word, then the third record
+    ]
+    assert read_document_text(str(path)) == pages
+
+
+def test_huffcdic_tables_that_cant_be_read(tmp_path: Path) -> None:
+    looped = HuffCdic([(b"a", 2), ([1], 2), (b"b", 2)])  # entry 1 is its own code
+    path = write_mobi(tmp_path / "loop.azw3", huffman=(looped, [[0, 1, 2]]))
+    with pytest.raises(ValueError, match="loop"):
+        mobi_text(str(path))
+
+    whole = write_mobi(tmp_path / "ok.azw3", huffman=(_huffman(), [[0, 1, 2, 3]])).read_bytes()
+    at = whole.index(b"HUFF")
+    broken = bytearray(whole)
+    struct.pack_into(">I", broken, at + 24, 0)  # the first byte's code has no length
+    (tmp_path / "zero.azw3").write_bytes(bytes(broken))
+    with pytest.raises(ValueError, match="no length"):
+        mobi_text(str(tmp_path / "zero.azw3"))
+    short = bytearray(whole)
+    struct.pack_into(">I", short, at + 8, 60_000)  # its table past the record's end
+    (tmp_path / "short.azw3").write_bytes(bytes(short))
+    with pytest.raises(ValueError, match="cut short"):
+        mobi_text(str(tmp_path / "short.azw3"))
+    missing = bytearray(whole)
+    missing[at : at + 4] = b"HUFH"
+    (tmp_path / "missing.azw3").write_bytes(bytes(missing))
+    with pytest.raises(ValueError, match="HUFF record is missing"):
+        mobi_text(str(tmp_path / "missing.azw3"))
+    for cut in range(at, len(whole), 97):  # never IndexError or struct.error
+        (tmp_path / "cut.azw3").write_bytes(whole[:cut])
+        _read_or_refuse(str(tmp_path / "cut.azw3"))
 
 
 def test_files_that_arent_books(tmp_path: Path) -> None:

@@ -316,15 +316,24 @@ def write_mobi(
     encryption: int = 0,
     trailing: int = 0b11,
     record_size: int = 4096,
+    huffman: "tuple[HuffCdic, Sequence[Sequence[int]]] | None" = None,
 ) -> Path:
     """A Mobipocket book: ``exth`` holds its details (keys of :data:`EXTH_TYPES`; a list
     gives a record each), ``text`` its HTML, cut into records of ``record_size`` bytes and
     compressed (``compression`` 1: none; 2: PalmDOC; 17480: HUFF/CDIC, written as is), each
     with the trailing entries ``trailing`` names (a cut character's bytes; an entry). The
-    cover, when given, is the first picture after ``images``."""
+    cover, when given, is the first picture after ``images``. ``huffman`` makes a
+    HUFF/CDIC book instead: its compressor and each text record's dictionary entries (the
+    ``text`` is then unused); its tables follow the text records."""
     codec = "utf-8" if encoding == 65001 else "cp1252"
     raw = text.encode(codec)
     chunks = [raw[i : i + record_size] for i in range(0, len(raw), record_size)] or [b""]
+    tables: list[bytes] = []
+    if huffman is not None:
+        compressor, entries = huffman
+        compression = 17480
+        chunks = [compressor.encode(r) for r in entries]
+        tables = [compressor.huff(), *compressor.cdic()]
     text_records = []
     for chunk in chunks:
         body = palmdoc_pack(chunk) if compression == 2 else chunk
@@ -335,7 +344,7 @@ def write_mobi(
                 body += b"xy\x83"  # two bytes of something, then its size (3), backwards
         text_records.append(body)
     pictures = [*images, *([cover] if cover is not None else [])]
-    first_image = 1 + len(text_records) if pictures else 0xFFFFFFFF
+    first_image = 1 + len(text_records) + len(tables) if pictures else 0xFFFFFFFF
 
     records: list[tuple[int, bytes]] = []
     for key, value in (exth or {}).items():
@@ -359,11 +368,13 @@ def write_mobi(
     struct.pack_into(">I", head, 36, 6)
     struct.pack_into(">II", head, 84, title_offset, len(title_bytes))
     struct.pack_into(">I", head, 108, first_image)
+    if tables:  # the HUFF record and its CDIC records, after the text
+        struct.pack_into(">II", head, 0x70, 1 + len(text_records), len(tables))
     struct.pack_into(">I", head, 128, 0x40 if records else 0)
     struct.pack_into(">H", head, 242, trailing)
     record0 = bytes(head) + exth_block + title_bytes + b"\0\0"
 
-    blobs = [record0, *text_records, *pictures]
+    blobs = [record0, *text_records, *tables, *pictures]
     header = bytearray(78)
     header[: len(name)] = name.encode("latin-1")
     header[60:68] = b"BOOKMOBI"
@@ -376,3 +387,77 @@ def write_mobi(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(bytes(header) + bytes(table) + b"\0\0" + b"".join(blobs))
     return path
+
+
+class HuffCdic:
+    """A HUFF/CDIC compressor for tests, assigning codes the way Kindle readers decode them:
+    phrases sorted by code length, shorter codes numerically higher (they take the top of
+    the code space), and a phrase's index counting down from its length's highest code.
+
+    ``phrases`` are ``(bytes, code length)``; a phrase given as a list of other phrases'
+    indexes (into the sorted order, :attr:`order`) is stored compressed, as those phrases'
+    codes. Lengths must leave room (Kraft sum below one) so a byte's padding never decodes.
+    """
+
+    def __init__(self, phrases: Sequence[tuple[bytes | list[int], int]]) -> None:
+        self.order = sorted(range(len(phrases)), key=lambda i: phrases[i][1])
+        """``order[k]`` is the given phrase stored as dictionary entry ``k``."""
+        self.entries = [phrases[i] for i in self.order]
+        self.codes: list[tuple[int, int]] = []  # (code, length) of each entry
+        self.lowest: dict[int, int] = {}
+        self.highest: dict[int, int] = {}
+        top = 1 << 32  # the code space left, left-aligned: longer codes go below
+        base = 0
+        for length in range(1, 33):
+            count = sum(1 for _, n in self.entries if n == length)
+            step = 1 << (32 - length)
+            hi = top // step - 1  # the highest code of this length, as a length-bit value
+            self.highest[length] = hi + base  # the index of a code is this minus the code
+            for k in range(base, base + count):
+                self.codes.append((self.highest[length] - k, length))
+            top -= count * step
+            self.lowest[length] = top // step  # as a length-bit value
+            base += count
+        assert sum(1 / (1 << n) for _, n in self.entries) < 1, "leave room for padding"
+
+    def encode(self, indexes: Sequence[int]) -> bytes:
+        """These dictionary entries' codes, as bytes (the last one padded with zeros)."""
+        bits = "".join(
+            format(code, f"0{length}b") for code, length in (self.codes[i] for i in indexes)
+        )
+        bits += "0" * (-len(bits) % 8)
+        return int(bits, 2).to_bytes(len(bits) // 8, "big") if bits else b""
+
+    def huff(self) -> bytes:
+        """The HUFF record: its header, the cache by first byte, and each length's range."""
+        cache = bytearray()
+        for byte in range(256):
+            window = byte << 24
+            length = next((n for n in range(1, 9) if window >= self.lowest[n] << (32 - n)), None)
+            if length is not None:  # a code of at most 8 bits starts with this byte
+                cache += struct.pack(">I", (self.highest[length] << 8) | 0x80 | length)
+            else:  # longer: the decoder searches from 9 bits on
+                cache += struct.pack(">I", 9)
+        base = bytearray()
+        for length in range(1, 33):
+            base += struct.pack(">II", self.lowest[length], self.highest[length])
+        header = b"HUFF" + struct.pack(">IIIII", 24, 24, 24 + 1024, 0, 0)
+        return header + bytes(cache) + bytes(base)
+
+    def cdic(self, bits: int = 8) -> list[bytes]:
+        """The CDIC records: ``1 << bits`` phrases each (a literal flagged, a compressed one
+        as its parts' codes)."""
+        stored = [
+            (p, True) if isinstance(p, bytes) else (self.encode(p), False) for p, _ in self.entries
+        ]
+        records = []
+        per = 1 << bits
+        for first in range(0, len(stored), per):
+            chunk = stored[first : first + per]
+            table, body = bytearray(), bytearray()
+            for data, literal in chunk:
+                table += struct.pack(">H", 2 * len(chunk) + len(body))
+                body += struct.pack(">H", len(data) | (0x8000 if literal else 0)) + data
+            header = b"CDIC" + struct.pack(">III", 16, len(stored), bits)
+            records.append(header + bytes(table) + bytes(body))
+        return records

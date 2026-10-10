@@ -7,9 +7,10 @@ the PalmDOC header (compression, encryption, how many text records), the MOBI he
 (authors, publisher, ISBN, subjects, date, cover). Then come the text records, compressed,
 and the images, stored as they are.
 
+Text records are compressed with PalmDOC (Calibre's and most publishers' books) or
+HUFF/CDIC (Amazon's tools: a Huffman code over a dictionary of phrases, #375), or not at all.
 DRM encrypts only the text: a protected book's details and cover read as any other's, its
-text doesn't (:func:`mobi_text` raises). Text compressed with HUFF/CDIC (common in KF8
-``.azw3`` from Kindle tools) isn't read either. ``.kfx`` is another format altogether.
+text doesn't (:func:`mobi_text` raises). ``.kfx`` is another format altogether.
 
 Standard library only, reading only the records it needs (a book on a network share isn't
 read whole for its details). Re-exported by :mod:`tagalot.themes.api`.
@@ -18,7 +19,7 @@ read whole for its details). Re-exported by :mod:`tagalot.themes.api`.
 import html
 import re
 import struct
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any, BinaryIO
 
 MOBI_EXTENSIONS = frozenset({".mobi", ".azw", ".azw3"})
@@ -67,6 +68,9 @@ class _Book:
         self.version = self._int(36) if self.mobi else 0
         self.first_image = self._int(108) if self.mobi_length >= 0x60 else _NO_IMAGE
         self.has_exth = self.mobi and bool(self._int(128) & 0x40)
+        self.huff_first, self.huff_count = (
+            (self._int(0x70), self._int(0x74)) if self.mobi_length >= 0x68 else (0, 0)
+        )
         trailing = self.head[242:244] if self.mobi_length >= 0xE4 else b""
         self.trailing = struct.unpack(">H", trailing)[0] if len(trailing) == 2 else 0
 
@@ -190,23 +194,35 @@ def mobi_cover(path: str) -> bytes | None:
 
 def mobi_text(path: str) -> list[str]:
     """A book's text as pages, split where it breaks pages (``<mbp:pagebreak/>``), its
-    markup taken out. Raises ``ValueError`` for a protected book or text compressed in a
-    way it doesn't read (HUFF/CDIC)."""
+    markup taken out. Raises ``ValueError`` for a protected book, text compressed in an
+    unknown way, or broken compression tables."""
     with open(path, "rb") as file:
         book = _Book(file)
         if book.encryption:
             raise ValueError("its text is protected (DRM)")
-        if book.compression == _HUFF_CDIC:
-            raise ValueError("its text is compressed with HUFF/CDIC, which isn't read")
-        if book.compression not in (_NO_COMPRESSION, _PALMDOC):
+        if book.compression not in (_NO_COMPRESSION, _PALMDOC, _HUFF_CDIC):
             raise ValueError(f"its text is compressed in an unknown way ({book.compression})")
+        unpack = _unpacker(book)
         data = bytearray()
         for index in range(1, min(book.text_count, len(book.offsets) - 1) + 1):
-            record = without_trailing_entries(book.record(index), book.trailing)
-            data += palmdoc_unpack(record) if book.compression == _PALMDOC else record
+            data += unpack(without_trailing_entries(book.record(index), book.trailing))
             if len(data) >= MAX_MOBI_TEXT:
                 break
     return [_html_text(part, book.codec) for part in _PAGE_BREAK.split(bytes(data))]
+
+
+def _unpacker(book: _Book) -> Callable[[bytes], bytes]:
+    """How ``book``'s text records unpack: PalmDOC, HUFF/CDIC (its tables read once, from
+    the records the MOBI header names), or as they are."""
+    if book.compression == _PALMDOC:
+        return palmdoc_unpack
+    if book.compression == _NO_COMPRESSION:
+        return bytes
+    first, count = book.huff_first, book.huff_count
+    if count < 2 or first < 1 or first + count > len(book.offsets):
+        raise ValueError("its HUFF/CDIC tables aren't where its header says")
+    huffman = _Huffman(book.record(first), [book.record(first + i) for i in range(1, count)])
+    return huffman.unpack
 
 
 def without_trailing_entries(record: bytes, flags: int) -> bytes:
@@ -264,6 +280,113 @@ def palmdoc_unpack(data: bytes) -> bytes:
             for _ in range(length):
                 out.append(out[-distance])
     return bytes(out)
+
+
+_MAX_DEPTH = 32
+"""How deep a dictionary phrase may refer to other compressed phrases."""
+
+
+class _Huffman:
+    """A book's HUFF/CDIC decompressor: the HUFF record's code tables and the CDIC records'
+    phrases, each phrase decoded the first time it's used.
+
+    A code is read from a 32-bit window over the bit stream. Its first byte picks a cache
+    entry: the code's length, whether that length is final, and the highest code of that
+    length. When it isn't final, the length grows while the window is below that length's
+    lowest code (longer codes are numerically lower). The phrase's index is the highest code
+    of its length minus the code.
+    """
+
+    def __init__(self, huff: bytes, cdics: list[bytes]) -> None:
+        try:
+            self._tables(huff)
+            self._phrases(cdics)
+        except struct.error as e:
+            raise ValueError(f"its HUFF/CDIC tables are cut short: {e}") from e
+
+    def _tables(self, huff: bytes) -> None:
+        if huff[:4] != b"HUFF":
+            raise ValueError("its HUFF record is missing")
+        cache_at, base_at = struct.unpack_from(">II", huff, 8)
+        self.cache: list[tuple[int, bool, int]] = []
+        for i in range(256):
+            (value,) = struct.unpack_from(">I", huff, cache_at + 4 * i)
+            length, final, high = value & 0x1F, bool(value & 0x80), value >> 8
+            if length == 0:
+                raise ValueError("its HUFF table has a code of no length")
+            self.cache.append((length, final, ((high + 1) << (32 - length)) - 1))
+        self.lowest = [0] * 34
+        self.highest = [0] * 34
+        for length in range(1, 33):
+            low, high = struct.unpack_from(">II", huff, base_at + 8 * (length - 1))
+            self.lowest[length] = low << (32 - length)
+            self.highest[length] = ((high + 1) << (32 - length)) - 1
+        self.lowest[33] = 0  # past the longest code: the loop below always stops
+
+    def _phrases(self, cdics: list[bytes]) -> None:
+        self.phrases: list[bytes | None] = []
+        self.literal: list[bool] = []
+        for cdic in cdics:
+            if cdic[:4] != b"CDIC":
+                raise ValueError("a CDIC record is missing")
+            header, total, bits = struct.unpack_from(">III", cdic, 4)
+            count = min(1 << min(bits, 16), total - len(self.phrases))
+            for i in range(count):
+                (at,) = struct.unpack_from(">H", cdic, header + 2 * i)
+                (size,) = struct.unpack_from(">H", cdic, header + at)
+                start = header + at + 2
+                phrase = cdic[start : start + (size & 0x7FFF)]
+                if len(phrase) != size & 0x7FFF:
+                    raise ValueError("a CDIC phrase runs past its record")
+                self.phrases.append(phrase)
+                self.literal.append(bool(size & 0x8000))
+
+    def unpack(self, data: bytes, depth: int = 0) -> bytes:
+        """``data``, a bit stream of codes, as the phrases they stand for."""
+        if depth > _MAX_DEPTH:
+            raise ValueError("its HUFF/CDIC phrases refer to each other in a loop")
+        bits_left = len(data) * 8
+        padded = data + b"\0" * 8
+        (window,) = struct.unpack_from(">Q", padded, 0)
+        at, shift = 0, 32
+        out = bytearray()
+        while True:
+            if shift <= 0:
+                at += 4
+                (window,) = struct.unpack_from(">Q", padded, at)
+                shift += 32
+            code = (window >> shift) & 0xFFFFFFFF
+            length, final, high = self.cache[code >> 24]
+            if not final:
+                while code < self.lowest[length]:
+                    length += 1
+                if length > 32:
+                    if bits_left < 32:
+                        break  # the padding at the record's end: no code
+                    raise ValueError("its compressed text has a code its tables don't know")
+                high = self.highest[length]
+            shift -= length
+            bits_left -= length
+            if bits_left < 0:
+                break
+            index = (high - code) >> (32 - length)
+            if index >= len(self.phrases):
+                raise ValueError("its compressed text names a phrase its dictionary lacks")
+            out += self._phrase(index, depth)
+            if len(out) >= MAX_MOBI_TEXT:
+                break
+        return bytes(out)
+
+    def _phrase(self, index: int, depth: int) -> bytes:
+        phrase = self.phrases[index]
+        if phrase is None:
+            raise ValueError("its HUFF/CDIC phrases refer to each other in a loop")
+        if not self.literal[index]:
+            self.phrases[index] = None  # being decoded: a loop back to it is caught
+            phrase = self.unpack(phrase, depth + 1)
+            self.phrases[index] = phrase
+            self.literal[index] = True
+        return phrase
 
 
 def _html_text(data: bytes, codec: str) -> str:

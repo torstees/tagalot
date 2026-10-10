@@ -10,7 +10,9 @@ the one-writer rule is per database.
 - **Reading** (:class:`ContentsQueue`): in the background after a scan, :data:`THREADS` at a
   time, by ``Theme.document_text`` or else :func:`~tagalot.themes.api.read_document_text`,
   as pages. A file that can't be read is recorded with its error and not tried again until
-  it changes. Nothing is read while the keep's contents search is Off.
+  it changes, or until Tagalot's readers improve (:data:`READERS_VERSION`, #375): then each
+  file that failed is tried once more. Nothing is read while the keep's contents search is
+  Off.
 - A file whose resource is deleted loses its text (:func:`forget_deleted`); one that is
   missing or offline keeps it (AGENTS.md rule 7).
 - **The index** (#349): an FTS5 table over ``contents_page`` (external content, so the
@@ -69,6 +71,10 @@ FULLTEXT_DB = "fulltext.db"
 SCHEMA_VERSION = 2
 """``PRAGMA user_version`` of ``fulltext.db``; a file with another version is rebuilt (it
 holds nothing that can't be read again)."""
+READERS_VERSION = 2
+"""Raised when the readers read more than before (2: Kindle books' HUFF/CDIC text, #375), so
+files that failed are tried again once (``contents_meta``'s ``readers`` says which version
+last read them all)."""
 THREADS = 2
 """Files read at once in the background (a PDF's pages take PDFium's lock in turn)."""
 BATCH = 20
@@ -104,7 +110,8 @@ contents_meta = Table(
     Column("key", String, primary_key=True),
     Column("value", Text),
 )
-"""Settings of the store: ``index``, the name of the index that is built (§8)."""
+"""Settings of the store: ``index``, the name of the index that is built (§8); ``readers``,
+the :data:`READERS_VERSION` that last read every document."""
 
 INDEXES: dict[str, tuple[str, str]] = {
     "words": ("contents_words", "unicode61 remove_diacritics 2"),
@@ -227,12 +234,20 @@ def document_files(conn: Connection, schema: ThemeSchema) -> list[DocumentFile]:
 
 
 def files_to_read(keep: Connection, store: Connection, schema: ThemeSchema) -> list[DocumentFile]:
-    """The document files not read yet, or changed since (size or modification time)."""
+    """The document files not read yet, or changed since (size or modification time), and
+    those that couldn't be read when the readers have improved since (:data:`READERS_VERSION`)."""
+    retry = readers_version(store) < READERS_VERSION
     known = {
         row.resource_id: (row.size, row.mtime_ns)
         for row in store.execute(
-            select(contents_file.c.resource_id, contents_file.c.size, contents_file.c.mtime_ns)
+            select(
+                contents_file.c.resource_id,
+                contents_file.c.size,
+                contents_file.c.mtime_ns,
+                contents_file.c.error,
+            )
         )
+        if not (retry and row.error is not None)
     }
     return [
         f for f in document_files(keep, schema) if known.get(f.resource_id) != (f.size, f.mtime_ns)
@@ -315,6 +330,19 @@ def ready_index(conn: Connection) -> str | None:
     """The index type searches use: the one built last (``None``: none)."""
     found = conn.scalar(select(contents_meta.c.value).where(contents_meta.c.key == "index"))
     return found if found in INDEXES else None
+
+
+def readers_version(conn: Connection) -> int:
+    """The :data:`READERS_VERSION` that last read every document (1 before it was kept)."""
+    found = conn.scalar(select(contents_meta.c.value).where(contents_meta.c.key == "readers"))
+    return int(found) if found and found.isdigit() else 1
+
+
+def mark_readers_current(conn: Connection) -> None:
+    """Every document has been read (or tried) by these readers (in the contents writer)."""
+    value = str(READERS_VERSION)
+    upsert = sqlite_insert(contents_meta).values(key="readers", value=value)
+    conn.execute(upsert.on_conflict_do_update(index_elements=["key"], set_={"value": value}))
 
 
 def _set_ready(conn: Connection, name: str | None) -> None:
@@ -549,6 +577,8 @@ class ContentsQueue:
             while window and not stop.is_set():
                 finish(window.popleft())
             save()  # what was read is kept, even when stopping
+            if not stop.is_set() and finished == total:
+                self.store.writer.run(mark_readers_current)  # failures needn't be tried again
         except Exception:
             logger.exception("Reading documents' text failed")
         finally:
