@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import Connection, bindparam, delete, exists, insert, select, update
 
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.notes import note_rank
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,8 @@ def walk_root(
     - ``exclude``: glob patterns (see :func:`compile_excludes`); matching folders are pruned.
     - ``extensions``: lowercase extensions such as ``{".flac", ".jpg"}``; ``None`` keeps all.
     - ``dirs``: whether directories become entries (the root itself never does).
+    - Notes (§9 *Notes*): a Markdown file named as its folder's note is listed whatever
+      ``extensions`` say, when its folder is one ``dirs`` lists (:func:`is_folder_note`).
     - Symlinked folders and junctions are not followed; symlinked files are included.
     - Unreadable folders and files go to ``on_error`` and the walk continues.
 
@@ -131,7 +134,11 @@ def walk_root(
                     subdirs.append(relpath)
                 elif entry.is_file():
                     ext = os.path.splitext(entry.name)[1].lower()
-                    if wanted is not None and ext not in wanted:
+                    if (
+                        wanted is not None
+                        and ext not in wanted
+                        and not is_folder_note(relpath, dirs)
+                    ):
                         continue
                     st = entry.stat()
                     yield WalkEntry(
@@ -144,6 +151,14 @@ def walk_root(
             except OSError as e:
                 report(relpath, e)
         stack.extend(reversed(subdirs))  # pop in name order: depth-first, sorted
+
+
+def is_folder_note(relpath: str, dirs: DirRule) -> bool:
+    """Whether a file is named as the note of a folder the walk lists (#379)."""
+    folder = relpath.rpartition("/")[0]
+    if not folder or note_rank(relpath) is None:
+        return False
+    return dirs is True or (callable(dirs) and bool(dirs(folder)))
 
 
 def _log_error(relpath: str, error: OSError) -> None:
@@ -231,7 +246,7 @@ def walk_scope(
                 return False
         if kind is ResourceKind.DIR:
             return dirs is True or (callable(dirs) and bool(dirs(relpath)))
-        return wanted is None or ext.lower() in wanted
+        return wanted is None or ext.lower() in wanted or is_folder_note(relpath, dirs)
 
     return in_scope
 

@@ -25,10 +25,12 @@ from tagalot.core.models import (
     EntityContains,
     EntityMerge,
     EntityMergeResource,
+    EntityNote,
     EntityResource,
     FieldProvenance,
     FieldSource,
     Resource,
+    ResourceKind,
     ResourceStatus,
     UserContains,
     UserOrder,
@@ -151,6 +153,8 @@ class IngestSession:
         """``(entity, role)`` linked this session, for entities made this session."""
         self._user_owned: dict[int, set[str]] = {}
         """Each entity's user-edited fields (``title`` included), looked up once."""
+        self._from_notes: dict[int, set[str]] = {}
+        """Each entity's fields (``title`` included) its note gave, looked up once (#379)."""
         self._written: dict[int, dict[str, Any]] = {}
         """Values this session wrote for each entity, so writing the same again is skipped."""
         self._new_closure: list[int] = []
@@ -610,6 +614,35 @@ class IngestSession:
 
     # --- reporting ---
 
+    def note(self, entity: EntityRef, folder: ResourceInfo | int) -> None:
+        """The note inside ``folder`` is ``entity``'s (§9 *Notes*, API version 8): it is
+        read after this scan's files, and at later scans when it changes."""
+        self._table_of(entity)
+        folder_id = folder.id if isinstance(folder, ResourceInfo) else folder
+        kind = self.conn.scalar(select(Resource.kind).where(Resource.id == folder_id))
+        if kind is not ResourceKind.DIR:
+            raise IngestError(f"ctx.note needs a folder, not resource {folder_id}")
+        if self._gone(entity):
+            return
+        stored = self.conn.scalar(
+            select(EntityNote.folder_id).where(EntityNote.entity_id == entity.id)
+        )
+        if stored == folder_id:
+            return
+        upsert = sqlite_insert(EntityNote).values(entity_id=entity.id, folder_id=folder_id)
+        self.conn.execute(  # another folder: its note is read afresh
+            upsert.on_conflict_do_update(
+                index_elements=["entity_id"],
+                set_={"folder_id": folder_id, "resource_id": None, "size": None, "mtime_ns": None},
+            )
+        )
+
+    def mark_changed(self, entity_id: int) -> None:
+        """The entity changed outside this session's own writes (its note): its search text
+        is refreshed at :meth:`flush`."""
+        self._touch(entity_id)
+        self._dirty.add(entity_id)
+
     def warn(self, resource: ResourceInfo | None, message: str) -> None:
         """Record a problem with a file for the activity panel."""
         warning = IngestWarning(
@@ -765,6 +798,16 @@ class IngestSession:
         fields: Mapping[str, Any],
     ) -> None:
         user_owned = self._user_fields(entity_id)
+        noted = self._note_fields(entity_id)
+        if noted:  # what a note gave (§9 Notes): files give way on a title, and when empty
+            fetched = self.source == FieldSource.FETCHED
+            if TITLE in noted:
+                title = None
+            fields = {
+                k: v
+                for k, v in fields.items()
+                if k not in noted or not (fetched or v is None or v == "")
+            }
         written = self._written.setdefault(entity_id, {})
         if title is not None and TITLE not in user_owned and written.get(TITLE, _UNSET) != title:
             self.conn.execute(update(Entity).where(Entity.id == entity_id).values(title=title))
@@ -802,6 +845,22 @@ class IngestSession:
                 )
             )
         return self._user_owned[entity_id]
+
+    def _note_fields(self, entity_id: int) -> set[str]:
+        """The fields (and ``title``) the entity's note gave (provenance ``note``), looked
+        up once a session: only the notes step writes them, never an ingest."""
+        if entity_id in self._created:
+            return set()
+        if entity_id not in self._from_notes:
+            self._from_notes[entity_id] = set(
+                self.conn.scalars(
+                    select(FieldProvenance.field).where(
+                        FieldProvenance.entity_id == entity_id,
+                        FieldProvenance.source == FieldSource.NOTE,
+                    )
+                )
+            )
+        return self._from_notes[entity_id]
 
     def _any_merges(self) -> bool:
         """Whether this keep has any merged items (most never do), checked once a session:
@@ -889,6 +948,13 @@ def theme_text_source(schema: ThemeSchema) -> fts.TextSource:
             )
             for entity_id, *values in rows:
                 result[entity_id] = list(values)
+        notes = conn.execute(
+            select(EntityNote.entity_id, EntityNote.body).where(
+                EntityNote.entity_id.in_(ids), EntityNote.body.is_not(None)
+            )
+        )
+        for entity_id, body in notes:  # an item's note is searchable as text (#379)
+            result.setdefault(entity_id, []).append(body)
         return result
 
     return source

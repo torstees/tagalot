@@ -25,6 +25,7 @@ from tagalot.core.fingerprint import (
 from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.keep import RootConfig
 from tagalot.core.models import Resource, ResourceStatus, Root
+from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
     BATCH_SIZE,
@@ -300,11 +301,16 @@ def _ingest_pending(
     report: ScanReport,
     say: Progress,
     options: Mapping[str, Any],
+    *,
+    reread_notes: bool = True,
 ) -> None:
-    """Hand every pending resource of the root to the theme, in batches.
+    """Hand every pending resource of the root to the theme, in batches, then read the
+    root's notes that changed (§9 *Notes*).
 
     A batch that fails rolls back and each of its resources is retried alone, so one bad
     file can't cost the rest; resources that still fail stay pending for the next scan.
+    Notes are kept from a theme that doesn't take Markdown, and from every theme once they
+    are an item's note.
     """
     with reader.connect() as conn:
         rows = conn.execute(
@@ -329,7 +335,67 @@ def _ingest_pending(
         ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
         for rid, rel, kind, ext, size, mtime in rows
     ]
+    pending, notes = _without_notes(reader, theme, pending)
+    if notes:
+        writer.run(partial(_mark_ingested, [r.id for r in notes], when))
     pending = _read_last(reader, root, path, theme, pending)
+    _ingest_files(writer, reader, root, theme, schema, when, report, say, options, pending)
+    if not reread_notes:
+        return
+    say(f"Looking for notes in {root.name}…")
+    changes, problems = read_notes(reader, schema, root.id, path)
+    report.ingest_warnings += problems
+    if not changes:
+        return
+    again, problems = writer.run(
+        partial(apply_notes, schema=schema, root_id=root.id, changes=changes)
+    )
+    report.ingest_warnings += problems
+    if again:  # a note stopped giving a value: the files give theirs again
+        writer.run(partial(_mark_pending, again))
+        _ingest_pending(
+            writer,
+            reader,
+            root,
+            path,
+            theme,
+            schema,
+            when,
+            report,
+            say,
+            options,
+            reread_notes=False,
+        )
+
+
+def _without_notes(
+    reader: Engine, theme: type[Theme], pending: list[ResourceInfo]
+) -> tuple[list[ResourceInfo], list[ResourceInfo]]:
+    """``pending`` without the notes the theme doesn't get (#379): note-named Markdown files
+    it doesn't take (recorded only as notes), and files that are items' notes."""
+    accepts = theme.extensions
+    candidates = [r for r in pending if r.kind == "file" and note_rank(r.relpath) is not None]
+    if not candidates:
+        return pending, []
+    with reader.connect() as conn:
+        used = used_notes(conn)
+    held = {r.id for r in candidates if (accepts and r.ext not in accepts) or r.id in used}
+    return [r for r in pending if r.id not in held], [r for r in pending if r.id in held]
+
+
+def _ingest_files(
+    writer: DbWriter,
+    reader: Engine,
+    root: RootConfig,
+    theme: type[Theme],
+    schema: ThemeSchema,
+    when: datetime,
+    report: ScanReport,
+    say: Progress,
+    options: Mapping[str, Any],
+    pending: list[ResourceInfo],
+) -> None:
+    """Hand ``pending`` to the theme in batches (see :func:`_ingest_pending`)."""
     ingester = theme()
     reads = type(ingester).prepare is not Theme.prepare
     batches = [pending[i : i + INGEST_BATCH] for i in range(0, len(pending), INGEST_BATCH)]
@@ -359,6 +425,18 @@ def _ingest_pending(
     finally:
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _mark_ingested(ids: list[int], when: datetime, conn: Connection) -> None:
+    for start in range(0, len(ids), BATCH_SIZE):
+        chunk = ids[start : start + BATCH_SIZE]
+        conn.execute(update(Resource).where(Resource.id.in_(chunk)).values(ingested_at=when))
+
+
+def _mark_pending(ids: list[int], conn: Connection) -> None:
+    for start in range(0, len(ids), BATCH_SIZE):
+        chunk = ids[start : start + BATCH_SIZE]
+        conn.execute(update(Resource).where(Resource.id.in_(chunk)).values(ingested_at=None))
 
 
 def _read_last(

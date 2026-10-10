@@ -38,6 +38,7 @@ from tagalot.core.models import (
     Entity,
     EntityAncestor,
     EntityKeyword,
+    EntityNote,
     EntityResource,
     EntityTag,
     KeywordIgnored,
@@ -146,6 +147,9 @@ def _unlinked_where() -> list[ColumnElement[bool]]:
         Resource.status != ResourceStatus.MISSING,
         Resource.skipped.is_(False),
         Resource.id.not_in(select(EntityResource.resource_id)),
+        Resource.id.not_in(  # an item's note is used, though not linked (#379)
+            select(EntityNote.resource_id).where(EntityNote.resource_id.is_not(None))
+        ),
         _not_dismissed(UNLINKED, Resource.id, resource_marker()),
     ]
 
