@@ -74,6 +74,9 @@ class FieldSource(enum.StrEnum):
     EXTRACTED = "extracted"
     USER = "user"
     FETCHED = "fetched"
+    NOTE = "note"
+    """From the item's note (§9 *Notes*, core format 15): below the files' own details,
+    above online details."""
 
 
 def _enum(cls: type[enum.StrEnum]) -> Enum:
@@ -459,6 +462,42 @@ class DedupeDismissal(Base):
     key: Mapped[str] = mapped_column(primary_key=True)
     marker: Mapped[str] = mapped_column(default="")
     dismissed_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class EntityNote(Base):
+    """An item's note (§9 *Notes*, #379): where it is looked for (``folder_id``: the item's
+    folder, or the one a theme named with ``ctx.note``), the file last read
+    (``resource_id``, with its size and time then, so an unchanged note isn't read again),
+    and its body. Re-read from the file at scans; a note with no file (``resource_id`` and
+    ``folder_id`` both ``NULL``) is one typed in Tagalot (#383)."""
+
+    __tablename__ = "entity_note"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resource.id", ondelete="SET NULL"), index=True
+    )
+    resource_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resource.id", ondelete="SET NULL"), index=True
+    )
+    size: Mapped[int | None]
+    mtime_ns: Mapped[int | None]
+    body: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class NoteKeyRemoval(Base):
+    """An Extra field from a note that the user removed from that item (§9 *Notes*): later
+    scans leave it off. ``key`` is case-folded."""
+
+    __tablename__ = "note_key_removal"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(primary_key=True)
 
 
 class SavedSearch(Base):

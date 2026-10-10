@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 7              # the theme API it needs
+    api_version = 8              # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -123,7 +123,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -166,6 +166,7 @@ The API has readers for formats several themes want, so they all read them the s
 | `ctx.delete(item)` | Delete an item your theme made (an artist left with nothing). |
 | `ctx.prepared(resource)` | What `prepare` returned for a file. |
 | `ctx.resource_at(resource, "Stories/cover.jpg")` | Another file in the same root, by its path, to link it (a cover a Markdown file names). `None` if it isn't scanned; add its extension to `extensions`. Needs `api_version = 3`. |
+| `ctx.note(item, folder)` | The note inside a folder describes the item: `<folder>.md`, else `index.md`, else `README.md` (also `.markdown`). Tagalot reads it after the scan's files and whenever it changes: its title (for an item whose own folder it is), tags as keywords, keys matching your fields (only where no file gave a value), other keys as Extra fields, and its body on the item's page. Items whose primary file is a folder get their folder's note without asking; call this for others, such as a movie and the folder it's in. `folder` is a folder resource (`ctx.resource_at` finds one when `dirs` records it). Needs `api_version = 8`. |
 | `ctx.keywords(item, resource, ["Fantasy", "Genre/Space opera"])` | What a file says the item is about (front matter's tags, an EPUB's subjects). They become Tagalot tags only by matching tags the user defined (a path, an alias, or a name), never new ones; unmatched ones are listed for the user to map. |
 | `ctx.option(name)` | A theme option's value for the folder being scanned. |
 | `ctx.warn(resource, message)` | Report a problem with a file to the Activity panel. |

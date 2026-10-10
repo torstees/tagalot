@@ -23,7 +23,7 @@ DESIGN_EXAMPLE = """\
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 14                         # core schema version
+format_version = 15                         # core schema version
 
 [theme]
 id = "music"
@@ -96,7 +96,7 @@ def test_zero_roots_round_trip(tmp_path: Path) -> None:
 
 
 def test_new_config_uses_current_format_version() -> None:
-    assert _config().format_version == KEEP_FORMAT_VERSION == 14
+    assert _config().format_version == KEEP_FORMAT_VERSION == 15
 
 
 def test_exclude_defaults_to_empty(tmp_path: Path) -> None:
@@ -151,8 +151,8 @@ def test_invalid_toml(tmp_path: Path) -> None:
         ('id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"', 'id = "not-a-uuid"', "not a UUID"),
         ('name = "Music"', 'name = ""', r"\[keep\] name must be a non-empty string"),
         ('name = "Music"', "name = 5", r"\[keep\] name must be a non-empty string"),
-        ("format_version = 14", 'format_version = "3"', "format_version must be a positive"),
-        ("format_version = 14", "format_version = 0", "format_version must be a positive"),
+        ("format_version = 15", 'format_version = "3"', "format_version must be a positive"),
+        ("format_version = 15", "format_version = 0", "format_version must be a positive"),
         ('id = "music"', "id = 3", r"\[theme\] id must be a non-empty string"),
         ("\nversion = 1 ", "\nversion = true ", r"\[theme\] version must be a positive"),
         ('id = "nas-music"', 'id = "  "', r"\[\[roots\]\] #1 id must be a non-empty"),

@@ -489,6 +489,13 @@ def _front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
     return data, body
 
 
+def split_front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
+    """A Markdown text's front matter, parsed (``None`` when it has none), and the text
+    after it; ``ValueError`` for front matter that doesn't parse. For the core's notes
+    (§9 *Notes*); not part of the theme API."""
+    return _front_matter(text)
+
+
 def _scalar_year(value: Any) -> int | None:
     if isinstance(value, datetime.date):  # a datetime is a date too
         return value.year

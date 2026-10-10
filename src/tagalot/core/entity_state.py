@@ -24,10 +24,12 @@ from tagalot.core.ingest import theme_text_source
 from tagalot.core.models import (
     Entity,
     EntityContains,
+    EntityNote,
     EntityResource,
     EntityTag,
     FieldProvenance,
     FieldSource,
+    NoteKeyRemoval,
     UserContains,
     UserOrder,
     UserRelation,
@@ -63,6 +65,10 @@ class EntitySnapshot:
     """(parent id, child id, added): containment the user changed by hand (#329)."""
     user_orders: frozenset[str] = frozenset()
     """Ordered relationships whose items of this entity the user ordered by hand (#317)."""
+    note: tuple[int | None, int | None, int | None, int | None, str | None] | None = None
+    """Its note (#379): (folder id, file id, size, time, body), or ``None``."""
+    note_removals: frozenset[str] = frozenset()
+    """Extra fields from its note that the user removed (case-folded keys)."""
 
 
 States = Mapping[int, EntitySnapshot | None]
@@ -147,8 +153,29 @@ def snapshot_entities(
                     )
                 )
             ),
+            note=_note(conn, entity_id),
+            note_removals=frozenset(
+                conn.scalars(
+                    select(NoteKeyRemoval.key).where(NoteKeyRemoval.entity_id == entity_id)
+                )
+            ),
         )
     return found
+
+
+def _note(
+    conn: Connection, entity_id: int
+) -> tuple[int | None, int | None, int | None, int | None, str | None] | None:
+    row = conn.execute(
+        select(
+            EntityNote.folder_id,
+            EntityNote.resource_id,
+            EntityNote.size,
+            EntityNote.mtime_ns,
+            EntityNote.body,
+        ).where(EntityNote.entity_id == entity_id)
+    ).first()
+    return None if row is None else (row[0], row[1], row[2], row[3], row[4])
 
 
 def restore_states(conn: Connection, schema: ThemeSchema, states: States) -> None:
@@ -196,6 +223,7 @@ def restore_states(conn: Connection, schema: ThemeSchema, states: States) -> Non
         _restore_user_relations(conn, present)
         _restore_user_orders(conn, present)
         _restore_user_contains(conn, present)
+        _restore_notes(conn, present)
         _restore_edges(conn, present)
     fts.sync_entities(conn, ids, theme_text_source(schema))
 
@@ -322,6 +350,30 @@ def _restore_user_contains(conn: Connection, present: Mapping[int, EntitySnapsho
             insert(UserContains).prefix_with("OR IGNORE"),  # an item gone since: skipped
             [{"parent_id": p, "child_id": c, "added": added} for p, c, added in rows],
         )
+
+
+def _restore_notes(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:
+    """Each entity's note and the note keys the user removed become the snapshot's."""
+    ids = list(present)
+    conn.execute(delete(EntityNote).where(EntityNote.entity_id.in_(ids)))
+    conn.execute(delete(NoteKeyRemoval).where(NoteKeyRemoval.entity_id.in_(ids)))
+    notes = [
+        {
+            "entity_id": i,
+            "folder_id": folder,
+            "resource_id": file,
+            "size": size,
+            "mtime_ns": mtime,
+            "body": body,
+        }
+        for i, s in present.items()
+        if s.note is not None
+        for folder, file, size, mtime, body in [s.note]
+    ]
+    removals = [{"entity_id": i, "key": k} for i, s in present.items() for k in s.note_removals]
+    for model, rows in ((EntityNote, notes), (NoteKeyRemoval, removals)):
+        if rows:
+            conn.execute(insert(model).prefix_with("OR IGNORE"), rows)
 
 
 def _restore_user_orders(conn: Connection, present: Mapping[int, EntitySnapshot]) -> None:

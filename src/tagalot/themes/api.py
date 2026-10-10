@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 7
+API_VERSION = 8
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -31,7 +31,8 @@ details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
 :meth:`Theme.online_details`); version 6 added searching inside documents
 (:attr:`Entity.full_text`, :meth:`Theme.document_text`, :func:`read_document_text`);
 version 7 added Kindle and Mobipocket books (:func:`read_mobi`, :func:`mobi_cover`, and
-their text in :func:`read_document_text`)."""
+their text in :func:`read_document_text`); version 8 added notes
+(:meth:`IngestContext.note`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -626,6 +627,16 @@ class IngestContext(Protocol):
     def option(self, name: str) -> Any:
         """The value of a theme option (:func:`option`) for the root being scanned: the
         root's override, else the keep's setting, else the default."""
+        ...
+
+    def note(self, entity: EntityRef, folder: ResourceInfo | int) -> None:
+        """The note inside ``folder`` describes ``entity`` (DESIGN.md §9 *Notes*): the
+        Markdown file named after the folder, else ``index.md``, else ``README.md``. The core
+        reads it after this scan's files, and again when it changes: its keys fill fields
+        no file gave, the rest become Extra fields, its tags are file keywords, and its body
+        is shown on the item's page. For an item whose primary file isn't a folder (a movie
+        and its folder); an item whose primary file is a folder takes that folder's note
+        without asking. ``folder`` must be a folder resource. Needs ``api_version = 8``."""
         ...
 
     def warn(self, resource: ResourceInfo | None, message: str) -> None:

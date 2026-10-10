@@ -51,6 +51,8 @@ CORE_TABLES = {
     "user_order",
     "user_contains",
     "online_response",
+    "entity_note",
+    "note_key_removal",
     "schema_version",
 }
 FTS_TABLES = {

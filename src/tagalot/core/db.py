@@ -192,6 +192,21 @@ def _v13_online_responses(conn: Connection) -> None:
     Base.metadata.tables["online_response"].create(conn)
 
 
+def _v14_notes(conn: Connection) -> None:
+    """Format 15: items' notes (#379). ``field_provenance.source`` gains ``note``: its CHECK
+    constraint can't be altered in SQLite, so the table is rebuilt with its rows."""
+    table = Base.metadata.tables["field_provenance"]
+    conn.execute(text("ALTER TABLE field_provenance RENAME TO field_provenance_old"))
+    table.create(conn)
+    columns = ", ".join(c.name for c in table.columns)
+    conn.execute(
+        text(f"INSERT INTO field_provenance ({columns}) SELECT {columns} FROM field_provenance_old")
+    )
+    conn.execute(text("DROP TABLE field_provenance_old"))
+    for name in ("entity_note", "note_key_removal"):
+        Base.metadata.tables[name].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -206,6 +221,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     11: _v11_user_order,
     12: _v12_user_contains,
     13: _v13_online_responses,
+    14: _v14_notes,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 
