@@ -10,6 +10,9 @@ on purpose:
 - only a new file: an existing file of that name is reported, never replaced (the file is
   created exclusively), and the only folder made is the type's subfolder in the notes
   folder;
+- not a second note: a file where the other layout would put the note (``Actors/Keanu
+  Reeves.md`` or ``Keanu Reeves.md``), which a scan would match to the same item, is
+  reported too;
 - file names are made safe for every system (:func:`safe_name`).
 
 The note has front matter with ``title``, ``tagalot-type`` (in the one-folder layout, or
@@ -80,6 +83,9 @@ class NewNote:
     notes_folder: str
     """The notes folder on this computer: it must be there; only a subfolder is made."""
     text: str
+    elsewhere: tuple[tuple[str, str], ...] = ()
+    """Where the other layout would put the note (root-relative, this computer's path): a
+    file there would be the item's note too, so none is written."""
 
 
 def plan_note(
@@ -113,11 +119,12 @@ def plan_note(
     typed = config.new_notes == "one-folder" or (
         type_names(schema).get(search_key(folder)) != row.type
     )
-    relfolder = config.notes_path
-    if config.new_notes != "one-folder":
-        relfolder = posixpath.join(relfolder, folder) if relfolder else folder
     name = safe_name(row.title) + NOTE_EXTENSIONS[0]
-    relpath = posixpath.join(relfolder, name) if relfolder else name
+    in_folders = _join(config.notes_path, folder, name)
+    in_one = _join(config.notes_path, name)
+    relpath, other = (
+        (in_one, in_folders) if config.new_notes == "one-folder" else (in_folders, in_one)
+    )
     front: dict[str, object] = {"title": row.title}
     if typed:
         front[TYPE_KEY] = entity_label(entity)
@@ -128,7 +135,14 @@ def plan_note(
     base = root_path(config.notes_root)
     path = local_path(base, relpath)
     notes_folder = local_path(base, config.notes_path) if config.notes_path else base
-    return NewNote(entity_id, row.title, config.notes_root, relpath, path, notes_folder, text)
+    elsewhere = ((other, local_path(base, other)),)
+    return NewNote(
+        entity_id, row.title, config.notes_root, relpath, path, notes_folder, text, elsewhere
+    )
+
+
+def _join(*parts: str) -> str:
+    return posixpath.join(*(p for p in parts if p))
 
 
 def write_note(note: NewNote) -> None:
@@ -136,6 +150,12 @@ def write_note(note: NewNote) -> None:
     :class:`SaveNoteError` when the file is there already or can't be written."""
     if not os.path.isdir(note.notes_folder):
         raise SaveNoteError(f"The notes folder can't be reached: {note.notes_folder}")
+    for relpath, path in note.elsewhere:
+        if os.path.exists(path):
+            raise SaveNoteError(
+                f"{relpath} is there already, and it would be the note of {note.title!r} "
+                "too; nothing was written. Open it and copy the note in, or rename or move it."
+            )
     folder = os.path.dirname(note.path)
     try:
         if not os.path.isdir(folder):

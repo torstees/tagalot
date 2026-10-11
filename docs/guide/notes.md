@@ -106,7 +106,7 @@ Born in Greenwich Village.
 
 - **Where:** in a folder for each kind of item (`Actors/`), or all in the notes folder with a `tagalot-type` key, as Keep configuration says.
 - **What:** the item's title and its tags (as full paths), then the note.
-- **Never over a file:** if a file of that name is there, nothing is written and Tagalot says so. Characters some systems don't allow in file names (`:` `?` `*` `/` `\` `"` `<` `>` `|`) become `_`.
+- **Never over a file, never a second note:** if a file of that name is there, or one where the other layout would put it (`Actors/Robert De Niro.md` or `Robert De Niro.md`), nothing is written and Tagalot says so. Characters some systems don't allow in file names (`:` `?` `*` `/` `\` `"` `<` `>` `|`) become `_`.
 - **Afterwards** Tagalot scans the folder, and the item's note is the file's: **Open note** edits it from then on.
 
 Nothing else is ever written in the notes folder, or in the watched folder it's in.

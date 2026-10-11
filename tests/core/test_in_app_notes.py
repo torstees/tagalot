@@ -4,6 +4,7 @@ file wins over it (reported when it says otherwise); Save as note… writes a ne
 in the layout chosen, with a safe name, and the next scan reads it back."""
 
 import ntpath
+import re
 from pathlib import Path
 
 import pytest
@@ -160,6 +161,34 @@ def test_save_as_note_never_replaces_a_file(env: Env) -> None:
         )
     with pytest.raises(SaveNoteError, match=r"Notes/Actors/Jean Reno\.md is there already"):
         write_note(note)
+    assert existing.read_text("utf-8") == "Mine.\n"
+
+
+@pytest.mark.parametrize(
+    ("layout", "theirs", "ours"),
+    [
+        ("one-folder", "Notes/Actors/Jean Reno.md", "Notes/Jean Reno.md"),
+        ("folders", "Notes/Jean Reno.md", "Notes/Actors/Jean Reno.md"),
+    ],
+)
+def test_save_as_note_never_makes_a_second_note(
+    env: Env, layout: str, theirs: str, ours: str
+) -> None:
+    env.scan()
+    service = _service(env)
+    reno = _id(env, "Jean Reno")
+    service.edit_note(reno, "Typed.")
+    existing = env.write(theirs, "Mine.\n")  # where the other layout puts it, not scanned yet
+    config = _config_for(env, writable=True, new_notes=layout)
+    with env.reader.connect() as conn:
+        note = plan_note(
+            conn, env.schema, service.cache.get(), config, lambda _: str(env.files), reno
+        )
+    assert note.relpath == ours
+    message = f"{theirs} is there already, and it would be the note of 'Jean Reno' too"
+    with pytest.raises(SaveNoteError, match=re.escape(message)):
+        write_note(note)
+    assert not (env.files / ours).exists()
     assert existing.read_text("utf-8") == "Mine.\n"
 
 
