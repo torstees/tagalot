@@ -11,6 +11,10 @@ For audio files with tags: **artists** ⊃ **albums** ⊃ **songs**.
 - **Artist:** an album's artist is its songs' album artist (else their artist); when they disagree, it's **Various Artists** (a compilation). A song by someone other than its album's artist is also under its own artist.
 - Formats: MP3, FLAC, Ogg, Opus, M4A/AAC, WAV, WMA, AIFF.
 
+## Notes
+
+An album's folder can hold a [note](../guide/notes.md) named after it (`Queen/Live Box/Live Box.md`): a `year` or `genre` its songs' tags don't give (the tags win when they do), `tags`, anything else as Extra fields, and a description shown on the album's page. Artists have no folder of their own: their notes go in the keep's [notes folder](../guide/notes.md#the-notes-folder).
+
 ## Playing
 
 Double-click (or Enter) on a song **plays** its first version that's on this computer; Ctrl+Enter opens its page. **Play album** (on an album's menu or page) makes a playlist of its songs in order and opens it with your player.

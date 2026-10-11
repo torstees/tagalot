@@ -20,6 +20,9 @@ from tagalot.ui.main_window import MainWindow
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController
 
+AURORA = "Aurora Studio (Reykjavík)"
+"""The assets demo's first artist, named by its folder's note (#384)."""
+
 pytestmark = pytest.mark.gui
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "make_demo_keep.py"
@@ -77,7 +80,7 @@ def _titles(contents: SearchPage) -> list[str]:
 def test_an_artists_page_lists_its_assets(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    page = _open(qtbot, window, session, "Aurora Studio")
+    page = _open(qtbot, window, session, AURORA)
     contents = _contents(qtbot, page, "7 items")
     assert _titles(contents) == [
         "Aileron-Regular.ttf",
@@ -96,7 +99,7 @@ def test_an_artists_page_lists_its_assets(
 def test_the_contents_have_their_own_filters(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    contents = _contents(qtbot, _open(qtbot, window, session, "Aurora Studio"), "7 items")
+    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "7 items")
     contents.filter_bar.text_edit.setText("sky")
     contents.filter_bar.text_edit.returnPressed.emit()
     qtbot.waitUntil(lambda: contents.status.text() == "1 item", timeout=5000)
@@ -158,7 +161,7 @@ def test_opening_an_asset_from_the_contents(
 def test_the_contents_layout_is_remembered_per_type(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    contents = _contents(qtbot, _open(qtbot, window, session, "Aurora Studio"), "7 items")
+    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "7 items")
     contents.list_button.click()
     assert load_ui_state(session.keep.ui_state_path)["layouts"] == {
         "contents:assets2d.artist": "list"

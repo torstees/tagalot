@@ -11,7 +11,7 @@ from tagalot.ui import main_window
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
-from tests.ui.test_contents_search import _id, _open, session, window
+from tests.ui.test_contents_search import AURORA, _id, _open, session, window
 
 pytestmark = pytest.mark.gui
 
@@ -33,7 +33,7 @@ def _where(window: MainWindow) -> str:
 def _visit(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
     """Search all → Artists → Aurora Studio → forest.png."""
     window.navigation.select(ARTISTS)
-    _open(qtbot, window, session, "Aurora Studio")
+    _open(qtbot, window, session, AURORA)
     _open(qtbot, window, session, "forest.png")
 
 
@@ -49,7 +49,7 @@ def test_back_and_forward(qtbot: QtBot, window: MainWindow, session: KeepSession
         window.back_action.trigger()
         qtbot.waitUntil(lambda: _where(window) != "…")
         steps.append(_where(window))
-    assert steps == ["Aurora Studio", "Artists", "Search all"]
+    assert steps == [AURORA, "Artists", "Search all"]
     assert not window.back_action.isEnabled()
 
     window.forward_action.trigger()
@@ -112,7 +112,7 @@ def test_the_mouse_back_and_forward_buttons(
         QApplication.sendEvent(page, event)
 
     press(Qt.MouseButton.BackButton)
-    assert _where(window) == "Aurora Studio"
+    assert _where(window) == AURORA
     press(Qt.MouseButton.ForwardButton)
     assert _where(window) == "forest.png"
 
@@ -122,9 +122,9 @@ def test_breadcrumbs_open_the_container(
 ) -> None:
     forest = _open(qtbot, window, session, "forest.png")
     assert forest.breadcrumbs.isVisible()
-    assert "Aurora Studio" in forest.breadcrumbs.text()
-    forest.breadcrumbs.linkActivated.emit(str(_id(session, "Aurora Studio")))
-    qtbot.waitUntil(lambda: _where(window) == "Aurora Studio", timeout=5000)
+    assert AURORA in forest.breadcrumbs.text()
+    forest.breadcrumbs.linkActivated.emit(str(_id(session, AURORA)))
+    qtbot.waitUntil(lambda: _where(window) == AURORA, timeout=5000)
     aurora = window.stack.currentWidget()
     assert isinstance(aurora, DetailPage)
     assert not aurora.breadcrumbs.isVisible()  # an artist is at the top

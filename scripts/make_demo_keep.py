@@ -27,12 +27,15 @@ delete that file when you're done with the media demo.
 
 ``--assets`` creates ``scratch/Assets.keep`` watching ``scratch/asset-files`` with the built-in
 assets2d theme: two artists' images (one with a ``folder.jpg``), a font, a zip and a 7z
-archive of images, and a picture directly in the root (no artist), with a few tags.
+archive of images, and a picture directly in the root (no artist), with a few tags. Aurora
+Studio's folder has a note (``Aurora Studio.md``): a friendlier name, a website, a tag, two
+Extra fields, and a body with a picture.
 
 ``--music`` creates ``scratch/Music.keep`` watching ``scratch/music-files`` with the built-in
 music theme: short silent MP3s with tags. There is an album with a cover and a song in two
 versions (MP3 and FLAC; the FLAC holds no audio), an album with embedded cover art, a
-two-disc album, a compilation, an untagged folder, and a song directly in the root.
+two-disc album, a compilation, an untagged folder, and a song directly in the root. The
+two-disc album has a note (``Live Box.md``) giving its year, which its songs don't.
 
 ``--books`` creates ``scratch/Books.keep`` watching ``scratch/book-files`` with the built-in
 books theme: small EPUBs, PDFs, Markdown files, and comic archives in folders named for where
@@ -44,7 +47,8 @@ another. A bundle's EPUB and PDF of one book are named alike and disagree on its
 EPUB has a template's placeholder): one book; another EPUB names two authors in one creator.
 A Kindle copy of it (``smallgods.mobi``, its cover and text) is a third file of that book.
 Genres come from the files' subjects (file keywords); "Humor" and "Epic Fantasy" match no
-tag.
+tag. Its notes folder (``Notes``, chosen in ``keep.toml``) has notes for two authors, one in
+an ``Authors`` subfolder and one typed by ``tagalot-type``.
 
 ``--research`` creates ``scratch/Research.keep`` watching ``scratch/research-files`` with the
 built-in research theme: small PDFs with a text layer holding DOIs and arXiv IDs. One paper
@@ -326,6 +330,7 @@ ASSET_TAGS = {
     ("Use", "Icon"): ["gem.png", "heart.png"],
     ("Style", "Pixel art"): ["tileset.png", "gem.png", "heart.png"],
     ("Style", "Sketch"): ["sketch 01.jpg", "sketch 02.jpg"],
+    ("Style", "Painted"): [],  # Aurora Studio's note gives it
     ("Favorites",): ["forest.png", "Aileron-Regular.ttf"],
 }
 
@@ -356,6 +361,27 @@ def _demo_font() -> bytes:
     return base64.b64decode(found.group(1))
 
 
+ASSET_NOTES = {
+    "Aurora Studio/Aurora Studio.md": """---
+title: Aurora Studio (Reykjavík)
+website: https://aurora.example
+tags: [Painted]
+founded: 2009
+based in: Reykjavík, Iceland
+---
+# Aurora Studio (Reykjavík)
+
+Painted skies and **dusk** light since 2009: backgrounds, icons, a pixel font, and a UI
+pack for small games.
+
+![Dusk sky](<Backgrounds/dusk sky.png>)
+
+Free for personal projects; see the license in the UI pack.
+""",
+}
+"""Folder notes for the assets demo (DESIGN.md §9 *Notes*)."""
+
+
 def make_assets_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/asset-files`` and ``scratch/Assets.keep`` (the assets2d theme),
     scanned and tagged; returns the keep folder."""
@@ -379,6 +405,7 @@ def make_assets_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     with py7zr.SevenZipFile(files / "Kenji Sato" / "sketchbook.7z", "w") as sz:
         for i in (2, 10, 1):  # natural order picks page 1
             sz.writestr(_png((300, 400), (240 - i * 10, 230, 210)), f"page {i}.png")
+    _write_texts(files, ASSET_NOTES)
 
     create_keep(
         keep_dir,
@@ -476,6 +503,17 @@ def _cover(color: tuple[int, int, int], text: str) -> bytes:
     return buffer.getvalue()
 
 
+MUSIC_NOTES = {
+    "Queen/Live Box/Live Box.md": """---
+year: 1992
+recorded: Wembley Stadium, London
+---
+Two discs from the Magic tour. The songs' tags give no year; this note does.
+""",
+}
+"""An album's folder note for the music demo."""
+
+
 def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     """Create ``scratch/music-files`` and ``scratch/Music.keep`` (the music theme), scanned
     and tagged; returns the keep folder."""
@@ -497,6 +535,7 @@ def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     (files / "Miles Davis/Kind of Blue/cover.jpg").write_bytes(
         _cover((30, 60, 120), "Kind of Blue")
     )
+    _write_texts(files, MUSIC_NOTES)
 
     create_keep(
         keep_dir,
@@ -607,6 +646,37 @@ MOVIE_TAGS = {
     ("Genre", "Fantasy"): ["The Lord of the Rings"],
     ("Watched",): ["Heat", "Alien"],
 }
+
+
+MOVIE_NOTES = {
+    # A movie's folder note (ctx.note): the .nfo's details rank above it.
+    "Inception (2010)/Inception (2010).md": """---
+tagline: Your mind is the scene of the crime.
+---
+Watched it twice in a week; the hallway fight is all practical effects.
+""",
+}
+"""Notes in the movies' own folders."""
+
+MOVIE_NOTES_FOLDER = {
+    "Notes/Actors/Sigourney Weaver.md": """---
+born: 1949-10-08
+country: United States
+---
+Ellen Ripley in four **Alien** films.
+""",
+    "Notes/Leonardo DiCaprio.md": """---
+tagalot-type: actor
+aliases: [Leo DiCaprio]
+born: 1974-11-11
+first film: Critters 3
+---
+Cobb in Inception.
+""",
+    "Notes/Actors/Keanu Reeves.md": "Not in this keep's movies: Triage → Notes lists it.\n",
+}
+"""The movies demo's notes folder (``Notes``, chosen in ``keep.toml``): actors' notes in a
+subfolder and typed by ``tagalot-type``, and one that matches no item."""
 
 
 def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
@@ -1167,10 +1237,26 @@ def _read_contents(session: KeepSession) -> None:
         done.wait(120)
 
 
-def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+BOOK_NOTES_FOLDER = {
+    "Notes/Authors/Terry Pratchett.md": """---
+sort name: Pratchett, Terry
+born: 1948
+---
+Wrote 41 Discworld novels. Start with *Guards! Guards!* or *Small Gods*.
+""",
+    "Notes/Neil Gaiman.md": """---
+tagalot-type: author
+---
+Co-wrote *Good Omens* with Terry Pratchett.
+""",
+}
+"""The books demo's notes folder (``Notes``, chosen in ``keep.toml``)."""
+
+
+def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: bool = True) -> Path:
     """Create ``scratch/book-files`` and ``scratch/Books.keep`` (the books theme), scanned
     and tagged; returns the keep folder. The first folder names where a file came from
-    (``source_level = 1``)."""
+    (``source_level = 1``). ``notes``: with its notes folder."""
     files, keep_dir = scratch / "book-files", scratch / "Books.keep"
     if reset:
         _remove([keep_dir, files])
@@ -1203,6 +1289,8 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     for relpath, details in BOOK_MOBIS.items():
         _mobi(files / relpath, details)
     _office_and_links(files)
+    if notes:
+        _write_texts(files, BOOK_NOTES_FOLDER)
     root = RootConfig(
         "books", "Book files", str(files), list(DEFAULT_EXCLUDES), {"source_level": 1}
     )
@@ -1214,15 +1302,17 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         contents_index="words",  # searching inside documents (§8)
     )
     with KeepSession.open(keep_dir, Settings()) as session:
+        if notes:
+            session.set_notes_folder("books", "Notes")
         session.scan_all()
         _tag(session, BOOK_TAGS, {}, {})
         _read_contents(session)
     return keep_dir
 
 
-def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
+def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: bool = True) -> Path:
     """Create ``scratch/movie-files`` and ``scratch/Movies.keep`` (the movies theme),
-    scanned and tagged; returns the keep folder."""
+    scanned and tagged; returns the keep folder. ``notes``: with its notes folder."""
     files, keep_dir = scratch / "movie-files", scratch / "Movies.keep"
     if reset:
         _remove([keep_dir, files])
@@ -1244,6 +1334,9 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     photo = files / "Inception (2010)/.actors/Leonardo_DiCaprio.jpg"
     photo.parent.mkdir()
     photo.write_bytes(_cover((110, 90, 70), "Leonardo DiCaprio"))
+    _write_texts(files, MOVIE_NOTES)
+    if notes:
+        _write_texts(files, MOVIE_NOTES_FOLDER)
     create_keep(
         keep_dir,
         "Movies",
@@ -1251,9 +1344,18 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
         [RootConfig("movies", "Movie files", str(files), list(DEFAULT_EXCLUDES))],
     )
     with KeepSession.open(keep_dir, Settings()) as session:
+        if notes:
+            session.set_notes_folder("movies", "Notes")
         session.scan_all()
         _tag(session, MOVIE_TAGS, {}, {})
     return keep_dir
+
+
+def _write_texts(files: Path, texts: dict[str, str]) -> None:
+    for relpath, text in texts.items():
+        path = files / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 def _tag(

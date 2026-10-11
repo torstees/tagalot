@@ -215,13 +215,6 @@ def test_adding_editing_and_removing_extra_fields(
     qtbot.waitUntil(lambda: _extra(page, "Licence") is not None, timeout=5000)
 
 
-def test_a_type_without_fields_shows_extra_fields_first(
-    qtbot: QtBot, window: MainWindow, session: KeepSession
-) -> None:
-    page = _open(qtbot, window, session, "Kenji Sato")
-    assert _section_order(page)[0] == "section_extra"
-
-
 def test_a_duplicate_extra_name_is_refused(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:

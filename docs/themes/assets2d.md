@@ -8,7 +8,11 @@ For art packs, game assets, and fonts: **artists** holding **images**, **fonts**
 - **Font** (TTF, OTF, WOFF, WOFF2): family and style, read from the font. Its thumbnail is a sample: "Aa" and "Quick fox" drawn in it.
 - **Archive** (ZIP, 7z, RAR, CBZ, CBR, CB7): how many images it holds; its thumbnail is the best image inside (one named like a cover or preview, else the first).
 - All three have the artist, extension, folder, size, and when modified. Double-click opens the file.
-- **Artist:** a folder at the level the **Artist folder level** option says (1, the default: `Root/<Artist>/…`; 2 for `Root/<Store>/<Artist>/…`). Files above that level have no artist. The same artist's folders in two watched folders are one artist. An artist's thumbnail is its `folder.jpg` (or `cover.png`…), else one of its assets'.
+- **Artist:** a folder at the level the **Artist folder level** option says (1, the default: `Root/<Artist>/…`; 2 for `Root/<Store>/<Artist>/…`). Files above that level have no artist. The same artist's folders in two watched folders are one artist. An artist's thumbnail is its `folder.jpg` (or `cover.png`…), else one of its assets'. An artist has a **Website** (a link that opens in your browser), which you type, or which its note gives.
+
+## Notes
+
+An artist's folder can hold a [note](../guide/notes.md) named after it (`Aurora Studio/Aurora Studio.md`): a friendlier name (`title: Aurora Studio (Reykjavík)`), its `website`, `tags`, anything else as Extra fields, and a description shown on the artist's page.
 
 ## Searches
 

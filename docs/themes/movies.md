@@ -11,6 +11,12 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
 - **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`.
 
+## Notes
+
+A [note](../guide/notes.md) inside a movie's own folder (`Inception (2010)/Inception (2010).md`, or `index.md`, or `README.md`) describes the movie: fields an `.nfo` doesn't give (the `.nfo` wins when it does), `tags`, anything else as Extra fields, and a description shown on its page. A loose video's folder isn't the movie's, so its notes are left alone. A collection's folder note describes the collection.
+
+Actors have no folder: their notes go in the keep's [notes folder](../guide/notes.md#the-notes-folder), as `Notes/Actors/Sigourney Weaver.md` (or anywhere in it with `tagalot-type: actor`), and can give a `born` date and `country`.
+
 ## Pictures
 
 In a movie's folder, its **poster** is `poster.jpg` (or `folder`, `cover`, `movie`, `default`, or a picture named like the movie); its other pictures, and those in `screenshots`, `extrafanart`, `backdrops`… subfolders, are its **screenshots**. Beside loose videos, `Heat (1995)-poster.jpg` is that movie's poster and `-fanart`, `-landscape`, `-thumb`, `-banner` pictures are screenshots.

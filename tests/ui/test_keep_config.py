@@ -51,7 +51,7 @@ def test_the_window_lists_roots_with_their_status(
     assert config.roots.count() == 1
     assert config.roots.item(0).text() == "Music files  \u2014  online"
     assert config.name.text() == "Music files"
-    assert "Online \u00b7 24 files and folders \u00b7 last scanned" in config.status.text()
+    assert "Online \u00b7 25 files and folders \u00b7 last scanned" in config.status.text()
     assert config.watch_button.text() == "Stop watching"
     assert window.configure_keep() is config  # one per main window
 

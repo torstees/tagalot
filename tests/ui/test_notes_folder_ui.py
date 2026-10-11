@@ -38,7 +38,7 @@ def session(tmp_path: Path) -> Iterator[KeepSession]:
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    keep = module.make_movies_demo(tmp_path)
+    keep = module.make_movies_demo(tmp_path, notes=False)  # each test chooses its own
     notes = tmp_path / "movie-files" / "Notes"
     (notes / "Actors").mkdir(parents=True)
     (notes / "Actors" / "Al Pacino.md").write_text(PACINO, encoding="utf-8")

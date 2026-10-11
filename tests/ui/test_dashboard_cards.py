@@ -32,7 +32,7 @@ def test_the_themes_cards_and_their_links(qtbot: QtBot, window: MainWindow) -> N
         page, "Space used by images"
     )
     biggest = _card_text(page, "Biggest artists")
-    assert "Aurora Studio: 7 assets" in biggest
+    assert "Aurora Studio (Reykjavík): 7 assets" in biggest
     assert "Kenji Sato: 4 assets" in biggest
     types = _card_text(page, "Image types")
     assert ".png</a>: 6" in types  # each value links to a search

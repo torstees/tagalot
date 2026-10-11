@@ -7,6 +7,7 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 - **Book:** an EPUB, Kindle book (`.mobi`, `.azw`, `.azw3`), PDF, Markdown file, Word (`.docx`, and `.doc` by name), OpenDocument (`.odt`), Pages file, or a **link file** (`.url`, `.webloc`, `.desktop`) for a work that lives on the web (a serial on Royal Road or AO3; opening it opens the page).
 - **Comic:** a CBZ, CBR, or CB7, with its `ComicInfo.xml`: series, number, volume, story arc, writers and artists, publisher, imprint.
 - **Author:** one per spelling the files give ("Pratchett, Terry" as its sort name). [Merge](../guide/dedupe.md) two spellings to make them one; later files under either land on the merged author.
+- **Notes:** authors, series, and universes have no folder: their [notes](../guide/notes.md) go in the keep's [notes folder](../guide/notes.md#the-notes-folder), as `Notes/Authors/Terry Pratchett.md` (or anywhere in it with `tagalot-type: author`).
 - **Series** (in reading order), **Universe** (series and works sharing a world: Discworld, Cosmere), and **Collection** (an omnibus or anthology).
 - **Credits:** a book's page shows **Written by** and **Art by**; an author's page their **Books**, **Comics**, **Illustrated**, and **Comic art**. Add and remove credits by hand; they stay.
 

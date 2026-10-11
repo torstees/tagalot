@@ -13,7 +13,7 @@ from tagalot.ui.filter_bar import FilterBar
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
-from tests.ui.test_contents_search import _open, session, window
+from tests.ui.test_contents_search import AURORA, _open, session, window
 
 pytestmark = pytest.mark.gui
 
@@ -65,7 +65,7 @@ def test_drilling_down_in_search_all_keeps_the_tag_filters(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _search(qtbot, window, SEARCH_ALL, "14 items")
-    _drill(page, "Aurora Studio")
+    _drill(page, AURORA)
     qtbot.waitUntil(lambda: page.status.text() == "7 items", timeout=5000)
     assert page.showing_groups()  # still grouped: Images, Fonts, Archives
     assert [s.group.label for s in page.groups.sections] == ["Images", "Fonts", "Archives"]
@@ -88,7 +88,7 @@ def test_a_views_types_are_kept_when_the_container_holds_them(
     qtbot: QtBot, window: MainWindow
 ) -> None:
     images = _search(qtbot, window, NavTarget("view", key="Images", label="Images"), "9 items")
-    images.show_within(_hit_id(window, "Aurora Studio"), "Aurora Studio", "assets2d.artist")
+    images.show_within(_hit_id(window, AURORA), AURORA, "assets2d.artist")
     qtbot.waitUntil(lambda: images.status.text() == "5 items", timeout=5000)
 
 

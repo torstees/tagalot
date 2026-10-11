@@ -33,6 +33,11 @@ on their page); and its ``<set>`` puts the movie in a collection of that name. R
 again replaces the cast and set it gave before; an actor left in no movie, with no photo,
 is deleted. Cast added by hand comes with #260.
 
+**Notes** (#384, DESIGN.md §9 *Notes*): a movie's folder's note (``Inception (2010).md``,
+``index.md``, or ``README.md`` inside it) describes the movie (``ctx.note``); an .nfo's
+values rank above a note's. A collection's folder note describes the collection, and
+actors' notes live in the keep's notes folder.
+
 **Video details** (#259, theme version 2): each video is read with MediaInfo (pymediainfo)
 in ``prepare()``: its length, picture size, video codec, and audio languages. A movie with
 several versions shows its best one's (the most pixels), and the longest runtime; an .nfo's
@@ -348,7 +353,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 3  # 3: genres as file keywords (#295)
+    id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
+    api_version = 8  # ctx.note (3: ctx.resource_at)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True
@@ -626,6 +632,8 @@ class MoviesTheme(Theme):
             ctx.update(movie, **best_version(ctx, movie, resource, details["video"]))
         if not existing:
             ctx.link(movie, resource, "video")
+        if details.get("movie_folder") and (own := ctx.resource_at(resource, folder)):
+            ctx.note(movie, own)  # Inception (2010)/Inception (2010).md describes it
 
         parent = folder.rpartition("/")[0]
         if details.get("collection") and parent:
