@@ -27,8 +27,16 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.ui.badges import BadgeDelegate
 from tagalot.ui.dnd import dragged_tags
-from tagalot.ui.models.results import KEYWORDS, MATCH, MATCH_HTML_ROLE, TAGS, ResultColumn
+from tagalot.ui.models.results import (
+    BADGES,
+    KEYWORDS,
+    MATCH,
+    MATCH_HTML_ROLE,
+    TAGS,
+    ResultColumn,
+)
 
 TITLE_MIN_WIDTH = 200
 TAGS_WIDTH = 220
@@ -39,16 +47,25 @@ OUTLINE_COLOR = "#f0a020"
 COLUMN_WIDTH = 140
 MATCH_WIDTH = 360
 NUMERIC_WIDTH = 100
+BADGES_WIDTH = 90
+"""About four badges, then "+n"; wider shows more (#398)."""
 
 
 def list_columns(
-    schema: ThemeSchema, types: Sequence[str], keywords: bool = False, *, contents: bool = False
+    schema: ThemeSchema,
+    types: Sequence[str],
+    keywords: bool = False,
+    *,
+    contents: bool = False,
+    badges: bool = True,
 ) -> list[ResultColumn]:
     """The list layout's columns for a scope: the title (named as the types call it), the
     type when several types are in scope, the item's tags (hidden unless the user shows
     them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
     every field the scoped types share that their pages show: card fields first, shown,
-    then the rest, hidden until the user shows them (#314)."""
+    then the rest, hidden until the user shows them (#314). The Badges column (#398) is
+    shown unless ``badges`` is false (a keep whose tags have no icons), when it's offered
+    hidden."""
     tables = scoped_tables(schema, types)
     labels = {t.entity.title_label for t in tables}
     columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
@@ -56,6 +73,7 @@ def list_columns(
         columns.append(ResultColumn("type", "Type", sortable=False))
     if contents:  # the search looks inside documents: where each matched (#351)
         columns.append(ResultColumn(MATCH, "Match", sortable=False))
+    columns.append(ResultColumn(BADGES, "Badges", sortable=False, hidden_by_default=not badges))
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     if keywords:  # only in keeps whose files give keywords (§7)
         columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
@@ -248,8 +266,17 @@ def set_column_widths(table: QTableView, columns: Sequence[ResultColumn]) -> Non
             width = TAGS_WIDTH if column.key in (TAGS, KEYWORDS) else COLUMN_WIDTH
             if column.key == MATCH:
                 width = MATCH_WIDTH
+            elif column.key == BADGES:
+                width = BADGES_WIDTH
             table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else width)
-        table.setItemDelegateForColumn(i, match_delegate(table) if column.key == MATCH else None)  # type: ignore[arg-type]
+        delegate = (
+            match_delegate(table)
+            if column.key == MATCH
+            else badge_delegate(table)
+            if column.key == BADGES
+            else None
+        )
+        table.setItemDelegateForColumn(i, delegate)  # type: ignore[arg-type]
 
 
 class MatchDelegate(QStyledItemDelegate):
@@ -291,3 +318,9 @@ def match_delegate(table: QTableView) -> MatchDelegate:
     """The table's Match column delegate (one per table, made when first needed)."""
     found = table.findChild(MatchDelegate)
     return found if found is not None else MatchDelegate(table)
+
+
+def badge_delegate(table: QTableView) -> BadgeDelegate:
+    """The table's Badges column delegate (one per table, made when first needed)."""
+    found = table.findChild(BadgeDelegate)
+    return found if found is not None else BadgeDelegate(table)

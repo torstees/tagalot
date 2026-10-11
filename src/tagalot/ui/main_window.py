@@ -599,6 +599,7 @@ class MainWindow(QMainWindow):
             manager.delete_requested.connect(self._delete_tag)
             details = manager.details
             details.color_chosen.connect(self._set_tag_color)
+            details.icon_chosen.connect(self._set_tag_icon)
             details.description_saved.connect(self._set_tag_description)
             details.alias_added.connect(self._add_tag_alias)
             details.alias_removed.connect(self._remove_tag_alias)
@@ -1038,6 +1039,14 @@ class MainWindow(QMainWindow):
         )
         self.tag_actions.change(lambda: tags.set_color(tag_id, color), message)
 
+    def _set_tag_icon(self, tag_id: int, icon: str | None) -> None:
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        message = (
+            f"Set the icon of {name!r} to {icon}." if icon else f"Cleared the icon of {name!r}."
+        )
+        self.tag_actions.change(lambda: tags.set_icon(tag_id, icon), message)
+
     def _set_tag_description(self, tag_id: int, description: str) -> None:
         name = self._tag_name(tag_id)
         tags = self.tag_actions.session.tags
@@ -1376,6 +1385,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
         self._update_undo_actions()
         self._refresh_details()  # a refused edit: show the stored value again
+        for manager in self._pages.values():
+            if isinstance(manager, TagManagerPage):
+                manager.reload()  # a refused icon: the box shows the tag's own again
 
     def _update_undo_actions(self) -> None:
         for action, verb, label in (

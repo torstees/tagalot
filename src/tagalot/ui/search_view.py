@@ -202,6 +202,10 @@ class SearchPage(QWidget):
         """Columns hidden by default (fields not on cards) that the user showed (#314)."""
         self._sort = spec.sort
         self._pool = pool
+        cached = session.tag_cache.peek()
+        self._has_icons = cached is not None and cached.has_icons
+        """Whether some tag has an icon: the Badges column shows by default (#398). Kept up
+        to date as the page's tags load in the background."""
         self._generation = 0
         self._showing_sort = False  # true while the page itself moves the sort indicator
         self._plurals = type_plurals(session.schema)
@@ -644,7 +648,11 @@ class SearchPage(QWidget):
         self._apply_card_lines(spec.types)
         matches = spec.contents and bool(spec.text)  # where documents matched (#351)
         columns = list_columns(
-            self.session.schema, spec.types, self.session.has_keywords, contents=matches
+            self.session.schema,
+            spec.types,
+            self.session.has_keywords,
+            contents=matches,
+            badges=self._has_icons,  # no icons: no empty column
         )
         self.grid.show_match = matches
         shows_contents = self._tree_layout() or spec.show_contained
@@ -850,6 +858,9 @@ class SearchPage(QWidget):
         def loaded(tree: TagTree) -> None:
             if shiboken6.isValid(self.filter_bar):  # the page may have closed meanwhile
                 self.filter_bar.set_tree(tree)
+                if tree.has_icons != self._has_icons:  # the first icon, or the last gone
+                    self._has_icons = tree.has_icons
+                    self._run()
 
         run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
 

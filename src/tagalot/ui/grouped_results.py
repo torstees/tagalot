@@ -77,7 +77,11 @@ def load_groups(
                 continue
             types = (table.type_id,)
             columns = list_columns(
-                schema, types, session.has_keywords, contents=contents is not None
+                schema,
+                types,
+                session.has_keywords,
+                contents=contents is not None,
+                badges=tree.has_icons,
             )
             hits = run_search(
                 conn,

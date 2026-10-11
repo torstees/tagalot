@@ -191,6 +191,8 @@ class TagDetails(QFrame):
 
     color_chosen = Signal(int, object)
     """Tag id and ``#rrggbb``, or ``None`` to clear it."""
+    icon_chosen = Signal(int, object)
+    """Tag id and its new icon, or ``None`` to clear it (#398)."""
     description_saved = Signal(int, str)
     alias_added = Signal(int, str)
     alias_removed = Signal(int, str)
@@ -226,6 +228,25 @@ class TagDetails(QFrame):
         color_row.addWidget(self.color, 1)
         color_row.addWidget(self.choose_color)
         color_row.addWidget(self.clear_color)
+
+        # Icon: typed or pasted, saved on Enter or on leaving the box; Clear (#398).
+        self._icon: str | None = None
+        self.icon_edit = QLineEdit()
+        self.icon_edit.setMaxLength(16)
+        self.icon_edit.setMaximumWidth(self.fontMetrics().horizontalAdvance("M") * 8)
+        self.icon_edit.setToolTip(
+            "An emoji or a character, shown as a badge on items with this tag. Type or paste "
+            "one (on Windows, Win+. opens the emoji picker)."
+        )
+        self.icon_edit.editingFinished.connect(self._icon_edited)
+        self.icon_note = QLabel()
+        self.clear_icon = QPushButton("Clear")
+        self.clear_icon.clicked.connect(lambda: self._emit_icon(None))
+        icon_row = QHBoxLayout()
+        icon_row.setContentsMargins(0, 0, 0, 0)
+        icon_row.addWidget(self.icon_edit)
+        icon_row.addWidget(self.icon_note, 1)
+        icon_row.addWidget(self.clear_icon)
 
         # Description: edited here, saved on demand.
         self.description = QPlainTextEdit()
@@ -289,6 +310,7 @@ class TagDetails(QFrame):
 
         form = QFormLayout()
         form.addRow("Path:", self.path)
+        form.addRow("Icon:", icon_row)
         form.addRow("Color:", color_row)
         form.addRow("Description:", description_box)
         form.addRow("Applies to:", types_row)
@@ -321,6 +343,14 @@ class TagDetails(QFrame):
         node = tree.node(tag_id)
         self.title.setText(node.name)
         self.path.setText(PATH_SEPARATOR.join(tree.path(tag_id)))
+        self._icon = node.icon
+        self.icon_edit.setText(node.icon or "")
+        inherited = tree.icon(tag_id) if node.icon is None else None
+        if inherited is not None:
+            source = next(a for a in reversed(tree.ancestors(tag_id)) if tree.node(a).icon)
+            self.icon_note.setText(f"{inherited} from {tree.node(source).name!r}")
+        else:
+            self.icon_note.setText("" if node.icon else "None")
         self._color = node.color
         if node.color:
             self.color.setText(f'<span style="color:{node.color}">\u25a0</span> {node.color}')
@@ -352,6 +382,16 @@ class TagDetails(QFrame):
         return self.description.toPlainText().strip() != self._saved_description.strip()
 
     # --- edits ---
+
+    def _icon_edited(self) -> None:
+        icon = self.icon_edit.text().strip() or None
+        if icon != self._icon:
+            self._emit_icon(icon)
+
+    def _emit_icon(self, icon: str | None) -> None:
+        if self.tag_id is not None and (icon is not None or self._icon is not None):
+            self._icon = icon  # editingFinished comes again when the box loses focus
+            self.icon_chosen.emit(self.tag_id, icon)
 
     def _choose_color(self) -> None:
         color = pick_color(self, self._color)

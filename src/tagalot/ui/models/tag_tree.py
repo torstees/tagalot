@@ -192,13 +192,16 @@ class TagTreeModel(QAbstractItemModel):
             return None
         node = tree.node(tag_id)
         if role == Qt.ItemDataRole.DisplayRole:
+            name = f"{node.icon} {node.name}" if node.icon else node.name  # its own (#398)
             alias = self._alias_hits.get(tag_id)
             if alias is not None:
-                return f"{node.name} ({alias})"
+                return f"{name} ({alias})"
             if tag_id in self._description_hits and node.description:
                 excerpt = description_excerpt(node.description, self.filter_text, EXCERPT_WIDTH)
-                return f"{node.name} — {excerpt}"
-            return node.name
+                return f"{name} — {excerpt}"
+            return name
+        if role == Qt.ItemDataRole.EditRole:
+            return node.name  # renaming edits the name alone, not its icon
         if role == TAG_ID_ROLE:
             return tag_id
         if role == Qt.ItemDataRole.CheckStateRole:

@@ -164,15 +164,15 @@ def _tag(panel: TagPanel, name: str) -> int:
 
 def test_the_panel_shows_the_keeps_tags_top_level_open(panel: TagPanel) -> None:
     assert _shown(panel) == [  # in the order the demo created them
-        "Places",
+        "🌍 Places",
         "  Iceland",
         "  Beach",
         "People",
         "  Family",
         "Topics",
-        "  Money",
+        "  💰 Money",
         "  Sky",
-        "Favorites",
+        "⭐ Favorites",
     ]
     assert not panel.message.isVisible()
 
@@ -180,7 +180,7 @@ def test_the_panel_shows_the_keeps_tags_top_level_open(panel: TagPanel) -> None:
 def test_filtering_opens_matches_and_clearing_restores_folds(qtbot: QtBot, panel: TagPanel) -> None:
     panel.view.collapse(panel.model.index_of(_tag(panel, "Places")))
     QTest.keyClicks(panel.filter_edit, "ice")
-    assert _shown(panel) == ["Places", "  Iceland"]
+    assert _shown(panel) == ["🌍 Places", "  Iceland"]
     QTest.keyClick(panel.filter_edit, Qt.Key.Key_Escape)  # clears the filter
     assert panel.filter_edit.text() == ""
     assert "  Iceland" not in _shown(panel)  # Places is folded again, as the user left it
@@ -189,9 +189,9 @@ def test_filtering_opens_matches_and_clearing_restores_folds(qtbot: QtBot, panel
 
 def test_filtering_by_alias_and_no_matches(qtbot: QtBot, panel: TagPanel) -> None:
     QTest.keyClicks(panel.filter_edit, "finance")
-    assert _shown(panel) == ["Topics", "  Money (finance)"]
+    assert _shown(panel) == ["Topics", "  💰 Money (finance)"]
     panel.filter_edit.setText("isl")  # the alias is "Ísland": accents are ignored
-    assert _shown(panel) == ["Places", "  Iceland (Ísland)"]
+    assert _shown(panel) == ["🌍 Places", "  Iceland (Ísland)"]
     panel.filter_edit.setText("zebra")
     assert _shown(panel) == []
     assert panel.message.isVisible()
@@ -259,4 +259,4 @@ def test_the_demo_keeps_descriptions_show_in_the_panel(qtbot: QtBot, panel: TagP
     iceland = panel.model.index_of(_tag(panel, "Iceland"))
     assert "Summer 2019 road trip" in iceland.data(Qt.ItemDataRole.ToolTipRole)
     panel.filter_edit.setText("receipts")
-    assert _shown(panel) == ["Topics", "  Money — Receipts, taxes, and bills"]
+    assert _shown(panel) == ["Topics", "  💰 Money — Receipts, taxes, and bills"]
