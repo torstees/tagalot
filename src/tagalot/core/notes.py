@@ -286,10 +286,13 @@ def apply_note(
     *,
     folder_id: int | None,
     folder_note: bool,
+    root_id: str | None = None,
 ) -> bool:
     """Give ``entity`` what its note says (``None``: it has none now), replacing what an
     earlier note gave; returns whether its files should be read again, because the note no
-    longer gives a title or field it gave before."""
+    longer gives a title or field it gave before. A note typed in Tagalot (#383) gives way
+    to a note file, reported (with the file's ``root_id``) when its text differs, and is
+    kept while there is none."""
     conn = ctx.conn
     entity_table = ctx.schema.by_type_id(entity.type)
     row = conn.execute(
@@ -386,15 +389,26 @@ def apply_note(
 
     # Keywords, from the note file; the body; where the note was read from.
     stored = conn.execute(
-        select(EntityNote.resource_id, EntityNote.body).where(EntityNote.entity_id == entity.id)
+        select(EntityNote.resource_id, EntityNote.body, EntityNote.size).where(
+            EntityNote.entity_id == entity.id
+        )
     ).one_or_none()
     old_file = stored[0] if stored is not None else None
+    typed = typed_note(stored)
     if old_file is not None and (note is None or note.resource_id != old_file):
         ctx.keywords(entity, old_file, [])
     if note is not None:
         ctx.keywords(entity, note.resource_id, given.keywords)
-    body = body_without_title(given.body, title) if note is not None else None
-    if note is None and not folder_note and folder_id is not None:
+    body = body_without_title(given.body, title) if note is not None else typed
+    if note is not None and typed is not None and _differs(typed, body, title):
+        start = " ".join(typed.split())
+        start = start if len(start) <= TYPED_QUOTE else start[: TYPED_QUOTE - 1] + "…"
+        message = f"This note file replaced the note typed in Tagalot for {title!r}: {start}"
+        ctx.warnings.append(IngestWarning(root_id, note.relpath, message))
+        logger.warning("Note file %s replaced a typed note: %s", note.relpath, typed)
+    if typed is not None and note is None:
+        keep_row = True  # still no note file: the typed note stays
+    elif note is None and not folder_note and folder_id is not None:
         keep_row = True  # a theme names the folder: keep looking there
     else:
         keep_row = note is not None
@@ -424,6 +438,26 @@ def apply_note(
     if changed:
         ctx.mark_changed(entity.id)
     return reread
+
+
+TYPED_QUOTE = 200
+"""How much of a typed note a note file replaced is quoted in the activity panel."""
+
+
+def typed_note(stored: Any) -> str | None:
+    """The body of a note typed in Tagalot, from an ``entity_note`` row's ``(resource_id,
+    body, size)``: no file, and never read from one (a file read and since deleted keeps
+    its size until the next scan)."""
+    if stored is None or stored[0] is not None or stored[2] is not None:
+        return None
+    body: str | None = stored[1]
+    return body or None
+
+
+def _differs(typed: str, body: str | None, title: str | None) -> bool:
+    """Whether a note file's body says other than the typed note it replaces (Save as
+    note… writes the same text, perhaps under a ``# Title`` heading)."""
+    return body_without_title(typed, title).strip() != (body or "").strip()
 
 
 # --- a root's notes, at a scan ---
@@ -592,10 +626,11 @@ def apply_notes(
             change.file,
             folder_id=site.folder_id,
             folder_note=site.folder_note,
+            root_id=root_id,
         ):
             reread += primary_files(conn, schema, site.entity)
     ctx.flush()
-    return reread, warnings
+    return reread, warnings + ctx.warnings
 
 
 def primary_files(conn: Connection, schema: ThemeSchema, entity: EntityRef) -> list[int]:

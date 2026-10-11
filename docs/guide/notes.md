@@ -1,6 +1,6 @@
 # Notes
 
-A **note** is a Markdown file that describes an item: what no file says, like a friendlier name for a folder, an artist's background, or where a collection came from. Tagalot reads notes and shows them on the item's page; it never changes them.
+A **note** is a Markdown file that describes an item: what no file says, like a friendlier name for a folder, an artist's background, or where a collection came from. Tagalot reads notes and shows them on the item's page; it never changes them. An item without a note file can have a note [typed in Tagalot](#typing-a-note-in-tagalot), and **Save as note…** can make it a file.
 
 ## Where a note goes
 
@@ -73,6 +73,43 @@ Extra fields that came from the note are marked **• from the note**, and scans
 - **Ignore the key in every note:** the arrow beside its × → **Ignore this key in every note…**. After you agree, the fields notes gave under that key are removed from every item in the keep, and scans leave the key out from then on. Fields you added or edited yourself stay. The keep's list in [Keep configuration → Notes](keep-configuration.md#notes) gains the key.
 
 Each is one step you can undo.
+
+## Typing a note in Tagalot
+
+An item without a note file shows **Add a note** under its name. Click it, type (Markdown works: `**bold**`, lists, links), and press **Ctrl+Enter** or click away to save. **Esc** cancels; **Enter** starts a new line. The note is shown like a note file's, and **Search all** finds its words.
+
+To change it, click ✎ beside it or double-click it. Empty the box to remove it. Each change is one step you can undo (**Edit → Undo**).
+
+A typed note is kept in the keep, not in a file. If a note file for the item turns up later (in its folder, or in the notes folder), the file's note takes over, since a note is edited in one place. If the two say different things, the [activity panel](activity.md) says so and quotes the start of the typed note, so you can copy anything you need into the file.
+
+### Save as note…
+
+**More ▾ → Save as note…** writes the item's typed note as a new file in the [notes folder](#the-notes-folder), so you can keep it with your files and edit it in your own editor. It's there once Tagalot may add notes to the notes folder (**Let Save as note… add new notes to this folder** in [Keep configuration → Notes](keep-configuration.md#notes); it asks first).
+
+Tagalot shows where the file will go and asks before writing:
+
+```
+Notes/
+  Actors/
+    Robert De Niro.md
+```
+
+```
+---
+title: Robert De Niro
+tags:
+- Genre/Crime
+---
+
+Born in Greenwich Village.
+```
+
+- **Where:** in a folder for each kind of item (`Actors/`), or all in the notes folder with a `tagalot-type` key, as Keep configuration says.
+- **What:** the item's title and its tags (as full paths), then the note.
+- **Never over a file, never a second note:** if a file of that name is there, or one where the other layout would put it (`Actors/Robert De Niro.md` or `Robert De Niro.md`), nothing is written and Tagalot says so. Characters some systems don't allow in file names (`:` `?` `*` `/` `\` `"` `<` `>` `|`) become `_`.
+- **Afterwards** Tagalot scans the folder, and the item's note is the file's: **Open note** edits it from then on.
+
+Nothing else is ever written in the notes folder, or in the watched folder it's in.
 
 ## Keys to ignore
 

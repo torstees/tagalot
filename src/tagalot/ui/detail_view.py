@@ -140,6 +140,10 @@ class DetailPage(QWidget):
     ``None``): entity id, name, value, whether it is new."""
     note_key_ignore_requested = Signal(str)
     """Ignore this front-matter key in every note of the keep (#381); the user agreed."""
+    note_edited = Signal(int, str)
+    """The user typed the item's note (#383): entity id, the Markdown (empty: removed)."""
+    save_note_requested = Signal(int)
+    """Save as note… (#383): write the item's typed note as a file in the notes folder."""
     reread_requested = Signal(list, bool)
     write_back_requested = Signal(list)
     look_up_requested = Signal(list)
@@ -235,6 +239,7 @@ class DetailPage(QWidget):
         titles.addWidget(self.type_label)
         self.note_view = NoteView()
         self.note_view.open_note.connect(self.open_note)
+        self.note_view.edited.connect(lambda text: self.note_edited.emit(self.entity_id, text))
         titles.addWidget(self.note_view)
         titles.addStretch(1)
         self._titles = titles
@@ -254,6 +259,16 @@ class DetailPage(QWidget):
         self.open_note_action.setToolTip("Edit this item's note in its own program")
         self.open_note_action.triggered.connect(self.open_note)
         self.open_note_action.setVisible(False)
+        self.save_note_action = more.addAction("Save as note\u2026")
+        self.save_note_action.setObjectName("save_note_action")
+        self.save_note_action.setToolTip(
+            "Write this item's note as a new file in the notes folder; from then on it's "
+            "edited there"
+        )
+        self.save_note_action.triggered.connect(
+            lambda: self.save_note_requested.emit(self.entity_id)
+        )
+        self.save_note_action.setVisible(False)
         add_reread_actions(
             more, lambda replace: self.reread_requested.emit([self.entity_id], replace)
         )
@@ -327,6 +342,7 @@ class DetailPage(QWidget):
             self.thumbnail.clear()
             self.note_view.setVisible(False)
             self.open_note_action.setVisible(False)
+            self.save_note_action.setVisible(False)
         else:
             self.title_value.editable = True
             self.title_value.field_label = detail.title_label.lower()
@@ -472,8 +488,14 @@ class DetailPage(QWidget):
         if detail is None:
             return
         has_file = detail.note_file is not None
-        self.note_view.show_note(detail.note_body, loaded.note_folder, loaded.pictures, has_file)
+        self.note_view.show_note(
+            detail.note_body, loaded.note_folder, loaded.pictures, has_file, editable=True
+        )
         self.open_note_action.setVisible(has_file)
+        config = self.session.keep.config
+        self.save_note_action.setVisible(
+            not has_file and config.notes_root is not None and config.notes_writable
+        )
         # The note fills the room beside the picture; Show more gives it the rest.
         others = sum(
             w.sizeHint().height() + self._titles.spacing()

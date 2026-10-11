@@ -23,10 +23,13 @@ from tagalot.core.actions import ActionChange, restore_action
 from tagalot.core.fields import (
     ExtraChange,
     FieldChange,
+    NoteEdit,
     edit_extra,
     edit_field,
+    edit_note,
     restore_extra,
     restore_field,
+    restore_note,
 )
 from tagalot.core.keywords import (
     IgnoreChange,
@@ -110,6 +113,7 @@ Step = (
     TagChange
     | FieldChange
     | ExtraChange
+    | NoteEdit
     | NoteKeyChange
     | ReextractChange
     | ActionChange
@@ -321,6 +325,17 @@ class TagService:
             self._push(change)
         return change
 
+    def edit_note(self, entity_id: int, body: str | None) -> NoteEdit:
+        """Set the note typed in Tagalot for an item (#383); one undo step. Raises
+        :class:`~tagalot.core.fields.FieldEditError` when the item's note is a file."""
+        schema = self.schema
+        if schema is None:
+            raise RuntimeError("notes need the keep's schema")
+        change = self.writer.run(lambda conn: edit_note(conn, schema, entity_id, body))
+        if change.before != change.after:
+            self._push(change)
+        return change
+
     def ignore_note_key(self, key: str, *, listed: bool = False) -> NoteKeyChange:
         """Remove the Extra fields notes gave under ``key``, in every item; one undo step.
         The caller lists the key in ``keep.toml`` (``listed``: it was there already)."""
@@ -392,6 +407,9 @@ class TagService:
         elif isinstance(step, ExtraChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_extra(conn, schema, step, forward=forward))
+        elif isinstance(step, NoteEdit):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_note(conn, schema, step, forward=forward))
         elif isinstance(step, NoteKeyChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_note_key(conn, schema, step, forward=forward))

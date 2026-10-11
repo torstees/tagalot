@@ -14,7 +14,14 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import fts
 from tagalot.core.ingest import TITLE, theme_text_source
-from tagalot.core.models import Entity, FieldProvenance, FieldSource, NoteKeyRemoval, utcnow
+from tagalot.core.models import (
+    Entity,
+    EntityNote,
+    FieldProvenance,
+    FieldSource,
+    NoteKeyRemoval,
+    utcnow,
+)
 from tagalot.core.notes import EXTRA
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import FieldInfo, entity_label
@@ -328,3 +335,76 @@ def _write_note_state(
                 NoteKeyRemoval.entity_id == entity_id, NoteKeyRemoval.key == key
             )
         )
+
+
+# --- in-app notes (#383) ---
+
+
+@dataclass(frozen=True)
+class NoteEdit:
+    """Everything needed to undo and redo a change to a note typed in Tagalot."""
+
+    label: str
+    entity_id: int
+    before: str | None
+    after: str | None
+
+
+def edit_note(conn: Connection, schema: ThemeSchema, entity_id: int, body: str | None) -> NoteEdit:
+    """Set the note typed in Tagalot for an item without a note file (§9 *In-app notes*):
+    Markdown kept in ``entity_note`` with no file, searchable; empty removes it. An item
+    whose note is a file is edited in that file."""
+    row = conn.execute(select(Entity.title).where(Entity.id == entity_id)).first()
+    if row is None:
+        raise FieldEditError("This item no longer exists")
+    if _note_file(conn, entity_id) is not None:
+        raise FieldEditError(f"The note of {row.title!r} is a file: edit it with Open note")
+    before = conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
+    after = (body or "").strip("\n").rstrip() or None
+    if before is None:
+        label = f"Add a note to {row.title!r}"
+    elif after is None:
+        label = f"Remove the note of {row.title!r}"
+    else:
+        label = f"Edit the note of {row.title!r}"
+    _write_note(conn, schema, entity_id, after)
+    return NoteEdit(label, entity_id, before, after)
+
+
+def restore_note(conn: Connection, schema: ThemeSchema, change: NoteEdit, *, forward: bool) -> None:
+    """Put a typed note back as it was before the change, or after it; nothing changes
+    once the item's note is a file (the file is where it's edited)."""
+    exists = conn.scalar(select(Entity.id).where(Entity.id == change.entity_id))
+    if exists is None or _note_file(conn, change.entity_id) is not None:
+        return
+    _write_note(conn, schema, change.entity_id, change.after if forward else change.before)
+
+
+def _note_file(conn: Connection, entity_id: int) -> int | None:
+    return conn.scalar(select(EntityNote.resource_id).where(EntityNote.entity_id == entity_id))
+
+
+def _write_note(conn: Connection, schema: ThemeSchema, entity_id: int, body: str | None) -> None:
+    folder = conn.execute(
+        select(EntityNote.folder_id).where(EntityNote.entity_id == entity_id)
+    ).first()
+    if body is None and (folder is None or folder.folder_id is None):
+        conn.execute(delete(EntityNote).where(EntityNote.entity_id == entity_id))
+    else:
+        upsert = sqlite_insert(EntityNote).values(
+            entity_id=entity_id, resource_id=None, size=None, mtime_ns=None, body=body
+        )
+        conn.execute(
+            upsert.on_conflict_do_update(
+                index_elements=["entity_id"],
+                set_={
+                    "resource_id": None,
+                    "size": None,
+                    "mtime_ns": None,
+                    "body": body,
+                    "updated_at": utcnow(),
+                },
+            )
+        )
+    conn.execute(update(Entity).where(Entity.id == entity_id).values(updated_at=utcnow()))
+    fts.sync_entities(conn, [entity_id], theme_text_source(schema))

@@ -35,4 +35,6 @@ The folders the keep watches, each with its state (online, offline, not watched,
 
 **Notes folder:** where notes for items without a folder of their own live (see [The notes folder](notes.md#the-notes-folder)). **Choose…** picks it: a folder inside a watched folder is used in place; one outside every watched folder is watched for notes only, after asking. **None** stops using it. Either applies at the next scan, which offers to start.
 
+**Let Save as note… add new notes to this folder:** off by default. Turn it on (it asks first) to let **Save as note…** on an item write its [typed note](notes.md#save-as-note) as a new file here. That's all it lets Tagalot do: add new notes, never change or replace a file, even when the watched folder the notes folder is in doesn't allow **Write to file…**. Choosing another notes folder turns it off. **New notes go** in a folder for each kind of item (`Actors/Keanu Reeves.md`), or all in the notes folder, typed by `tagalot-type`.
+
 **Keys to ignore in notes:** front-matter keys that never become Extra fields, one per line. **In this keep** is saved with the keep; **In all your keeps** is saved for you on this computer; **Always** lists the built-in ones. Each list is saved when you leave its box and applies at the next scan. See [Notes](notes.md#keys-to-ignore).
