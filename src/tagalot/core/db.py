@@ -217,6 +217,11 @@ def _v16_notes_folder(conn: Connection) -> None:
     Base.metadata.tables["notes_folder_note"].create(conn)
 
 
+def _v17_tag_icons(conn: Connection) -> None:
+    """Format 18: a tag can have an icon, shown as a badge on items (#398)."""
+    conn.execute(text("ALTER TABLE tag ADD COLUMN icon VARCHAR"))
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -234,6 +239,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     14: _v14_notes,
     15: _v15_note_ignored_keys,
     16: _v16_notes_folder,
+    17: _v17_tag_icons,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

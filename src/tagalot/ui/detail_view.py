@@ -64,10 +64,12 @@ from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
+from tagalot.core.tags import entity_tags
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.lookups import LOOK_UP_TIP
+from tagalot.ui.models.results import TagsValue, badges_value
 from tagalot.ui.note_view import NoteView
 from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions, writes_back
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
@@ -98,6 +100,8 @@ class _Loaded:
     detail: EntityDetail | None
     note_folder: str | None = None
     pictures: dict[str, QImage] = field(default_factory=dict)
+    badges: TagsValue | None = None
+    """The item's tag badges (#398), shown beside its title."""
 
 
 def _read_note(detail: EntityDetail | None) -> _Loaded:
@@ -232,10 +236,22 @@ class DetailPage(QWidget):
         self.merged_note.setObjectName("merged_note")
         self.merged_note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         self.merged_note.setVisible(False)
+        # The badges of the item's own tags, beside its title (#398): all of them, since the
+        # page has room; their tooltip names the tags.
+        self.badges = QLabel()
+        self.badges.setObjectName("badges")
+        badge_font = QFont(font)
+        badge_font.setBold(False)
+        self.badges.setFont(badge_font)
+        self.badges.setVisible(False)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addWidget(self.title_value, 1)
+        title_row.addWidget(self.badges, 0, Qt.AlignmentFlag.AlignVCenter)
         titles = QVBoxLayout()
         titles.addWidget(self.merged_note)
         titles.addWidget(self.breadcrumbs)
-        titles.addWidget(self.title_value)
+        titles.addLayout(title_row)
         titles.addWidget(self.type_label)
         self.note_view = NoteView()
         self.note_view.open_note.connect(self.open_note)
@@ -313,16 +329,27 @@ class DetailPage(QWidget):
         generation, session, entity_id = self._generation, self.session, self.requested_id
 
         def job() -> _Loaded:
+            tree = session.tag_cache.get()
             with session.reader.connect() as conn:
                 detail = load_detail(conn, session.schema, entity_id, _root_path(session))
-            return _read_note(detail)
+                own = entity_tags(conn, [detail.id]).get(detail.id, []) if detail else []
+            loaded = _read_note(detail)
+            loaded.badges = badges_value(tree, own)
+            return loaded
 
         def done(loaded: _Loaded) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
                 self._show(loaded.detail)
                 self._show_note(loaded)
+                self._show_badges(loaded.badges)
 
         run_in_pool(job, on_done=done, pool=self._pool)
+
+    def _show_badges(self, badges: TagsValue | None) -> None:
+        shown = badges is not None and bool(badges.text)
+        self.badges.setVisible(shown)
+        self.badges.setText(badges.text if badges is not None else "")
+        self.badges.setToolTip(badges.tooltip if badges is not None else "")
 
     def _show(self, detail: EntityDetail | None) -> None:
         # While the item asked for is merged into another (§13), the page is that one's;

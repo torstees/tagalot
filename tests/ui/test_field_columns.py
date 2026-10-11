@@ -55,7 +55,7 @@ def _shown(page: SearchPage) -> list[str]:
 def test_list_columns_offer_every_field(session: KeepSession) -> None:
     columns = {c.key: c for c in list_columns(session.schema, ("books.book",))}
     keys = list(columns)
-    assert keys[:4] == ["title", "tags", "authors", "series"]  # card fields first
+    assert keys[:5] == ["title", "badges", "tags", "authors", "series"]  # card fields first
     assert not columns["authors"].hidden_by_default
     for key in ("link", "description", "isbn", "sources", "year"):
         assert columns[key].hidden_by_default, key

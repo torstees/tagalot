@@ -28,9 +28,24 @@ TOOLS → **Tag manager**: the whole tree, with how many items have each tag (**
 - **Move…**, or drag a tag onto another (or onto empty space for the top level). The status bar says how many items it affects.
 - **Merge…** folds one tag into another: its items get the other tag, its sub-tags move under it, and its name becomes an alias of the other. It says what will happen before it does it.
 - **Delete…** asks, for a tag with sub-tags, whether to delete them too or move them up a level, and says how many items will lose a tag. Items themselves are never deleted.
-- The details on the right: the tag's **color**, a **description** (shown in tooltips; finding a tag matches it too), **other names** (aliases: they find the tag in the panel and the search box, and match [file keywords](file-keywords.md)), and **what it applies to**.
+- The details on the right: the tag's **icon** (below), its **color**, a **description** (shown in tooltips; finding a tag matches it too), **other names** (aliases: they find the tag in the panel and the search box, and match [file keywords](file-keywords.md)), and **what it applies to**.
 - **Undo** and **Redo** buttons on its toolbar, the same history as Edit → Undo.
 - **Export tags…** and **Import tags…** save the whole tree to a file and load one back (below).
+
+### Tag icons
+
+A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` or ✓ for `Read`. Items show their tags' icons as small **badges**, so you can see at a glance what's a favorite.
+
+- **Setting one:** select the tag in the tag manager, type or paste the emoji into **Icon** (on Windows, Win+. opens the emoji picker), and press Enter. **Clear** removes it. Undo works as for any change.
+- **Sub-tags** without an icon of their own show their parent's (or the nearest one up): give `Places` a 🌍 and `Places › Iceland` shows it too. The details say where an inherited icon comes from.
+- **Where badges show:**
+  - in the grid, along the bottom of each thumbnail, as many as fit (bigger thumbnails show more), then "+2" for the rest;
+  - in the list's **Badges** column, as many as fit its width;
+  - beside the title on the item's page, all of them.
+
+  Point at them to see which tags they're for.
+- **Only an item's own tags give badges.** An album's tags don't put badges on every song, even with **Inherit tags** on.
+- Two tags with the same icon (like two sub-tags of `Read`) show it once.
 
 ### What a tag applies to
 
@@ -44,6 +59,7 @@ The file is nested like the tree. A tag can be written three ways:
 
 ```yaml
 Genre:                        # the full form: properties, and sub-tags under "tags:"
+  icon: 📚
   applies_to: [Book, Comic]
   tags:
     Fantasy:

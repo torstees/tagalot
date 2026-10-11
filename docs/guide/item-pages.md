@@ -6,7 +6,7 @@ Double-click an item (or press Enter) for its page; for kinds that open their fi
 
 ## What's on a page
 
-- **The header:** its thumbnail, title, and kind. Above the title, **breadcrumbs** show what holds it (`Discworld ›`), each opening that item's page. Under it, the item's [note](notes.md), with **Show more** for a long one and **Open note** for a note file; an item without a note file has **Add a note**, or ✎ to edit the note [typed in Tagalot](notes.md#typing-a-note-in-tagalot).
+- **The header:** its thumbnail, title, and kind, with the [badges](tags.md#tag-icons) of its tags beside the title. Above the title, **breadcrumbs** show what holds it (`Discworld ›`), each opening that item's page. Under it, the item's [note](notes.md), with **Show more** for a long one and **Open note** for a note file; an item without a note file has **Add a note**, or ✎ to edit the note [typed in Tagalot](notes.md#typing-a-note-in-tagalot).
 - **Details:** its fields. Fields you can change show a ✎ when you point at them.
 - **Extra fields:** fields of your own for this one item (a name and a value), searchable like any text. Those from the item's [note](notes.md) are marked "• from the note".
 - **Files:** each file it links, with its folder and size, and whether it's **offline** or **missing**. Right-click a file for Open file, Show in file manager, and Open with.

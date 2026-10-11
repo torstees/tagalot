@@ -61,6 +61,7 @@ from tagalot.core.tags import (
     reparent_tag,
     set_tag_color,
     set_tag_description,
+    set_tag_icon,
     set_tag_types,
     tag_entities,
     untag_entities,
@@ -74,8 +75,8 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY = 100
 """Undo steps kept per session."""
 
-TagRow = tuple[int, int | None, str, str | None, int, str | None, str | None]
-"""``(id, parent_id, name, color, sort_order, description, types)``."""
+TagRow = tuple[int, int | None, str, str | None, int, str | None, str | None, str | None]
+"""``(id, parent_id, name, color, sort_order, description, types, icon)``."""
 EntityTagRow = tuple[int, int, datetime]
 """``(entity_id, tag_id, added_at)``."""
 
@@ -214,6 +215,14 @@ class TagService:
             lambda tree: f"Change the types {_name(tree, tag_id)!r} applies to",
             lambda tree: _subtrees(tree, tag_id),
             lambda conn: set_tag_types(conn, tag_id, chosen),
+        )
+
+    def set_icon(self, tag_id: int, icon: str | None) -> None:
+        """Set or clear a tag's icon (#398); one undoable step."""
+        self._record(
+            lambda tree: f"Change the icon of {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: set_tag_icon(conn, tag_id, icon),
         )
 
     def set_description(self, tag_id: int, description: str | None) -> None:
@@ -535,7 +544,14 @@ def _subtrees(tree: TagTree, *tag_ids: int) -> frozenset[int]:
 def _tag_tables(conn: Connection) -> tuple[frozenset[TagRow], frozenset[tuple[int, str]]]:
     tags = conn.execute(
         select(
-            Tag.id, Tag.parent_id, Tag.name, Tag.color, Tag.sort_order, Tag.description, Tag.types
+            Tag.id,
+            Tag.parent_id,
+            Tag.name,
+            Tag.color,
+            Tag.sort_order,
+            Tag.description,
+            Tag.types,
+            Tag.icon,
         )
     )
     aliases = conn.execute(select(TagAlias.tag_id, TagAlias.alias))
@@ -629,8 +645,9 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
 
 
 def _tag_values(row: TagRow) -> dict[str, Any]:
-    tag_id, parent_id, name, color, sort_order, description, types = row
+    tag_id, parent_id, name, color, sort_order, description, types, icon = row
     return {
+        "icon": icon,
         "id": tag_id,
         "parent_id": parent_id,
         "name": name,

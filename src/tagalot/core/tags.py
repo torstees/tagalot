@@ -37,6 +37,17 @@ class TagNode:
     description: str | None = None
     types: str | None = None
     """The item types it may be applied to, as stored (see :func:`parse_types`)."""
+    icon: str | None = None
+    """Its own icon, if it has one (see :meth:`TagTree.icon` for the one it shows)."""
+
+
+@dataclass(frozen=True)
+class Badge:
+    """An icon an item shows, and the item's tags that give it (several sub-tags of one
+    ancestor can give the same icon, shown once)."""
+
+    icon: str
+    tag_ids: tuple[int, ...]
 
 
 def parse_types(stored: str | None) -> frozenset[str] | None:
@@ -130,6 +141,7 @@ class TagTree:
                     Tag.sort_order,
                     Tag.description,
                     Tag.types,
+                    Tag.icon,
                 )
             )
         ]
@@ -208,6 +220,33 @@ class TagTree:
             if own is not None:
                 allowed = own if allowed is None else allowed & own
         return allowed
+
+    def icon(self, tag_id: int) -> str | None:
+        """The icon ``tag_id`` shows: its own, else its nearest ancestor's (#398)."""
+        for t in (tag_id, *reversed(self.ancestors(tag_id))):
+            if (icon := self._nodes[t].icon) is not None:
+                return icon
+        return None
+
+    @cached_property
+    def has_icons(self) -> bool:
+        """Whether any tag has an icon: without one, no item has badges."""
+        return any(n.icon is not None for n in self._nodes.values())
+
+    def badges(self, tag_ids: Iterable[int]) -> tuple[Badge, ...]:
+        """The badges an item with these (its own) tags shows: each tag's icon, once per
+        icon, in the order of the tags' names (deleted tags and tags without an icon give
+        none)."""
+        found: dict[str, list[int]] = {}
+        ordered = sorted((t for t in set(tag_ids) if t in self), key=self._badge_order)
+        for tag_id in ordered:
+            icon = self.icon(tag_id)
+            if icon is not None:
+                found.setdefault(icon, []).append(tag_id)
+        return tuple(Badge(icon, tuple(ids)) for icon, ids in found.items())
+
+    def _badge_order(self, tag_id: int) -> tuple[str, ...]:
+        return tuple(name_key(n) for n in self.path(tag_id))
 
     def allows(self, tag_id: int, type_id: str) -> bool:
         """Whether ``tag_id`` may be applied to an item of type ``type_id``."""
@@ -327,6 +366,11 @@ class TagTreeCache:
                 self._generation += 1
                 logger.debug("Loaded tag tree (%d tags)", len(self._tree))
             return self._tree
+
+    def peek(self) -> TagTree | None:
+        """The cached tree if there is one, without loading it (or waiting for a load in
+        another thread): for the GUI thread, which mustn't read the keep."""
+        return self._tree
 
     def invalidate(self) -> None:
         """Forget the cached tree; the next :meth:`get` reloads it."""
@@ -507,6 +551,63 @@ def set_tag_color(conn: Connection, tag_id: int, color: str | None) -> None:
 
 MAX_DESCRIPTION = 2000
 """Characters allowed in a tag description."""
+
+_JOINER, _KEYCAP = "\u200d", "\u20e3"
+_VARIATIONS = frozenset("\ufe0e\ufe0f")
+MAX_ICON = 16
+"""Code points allowed in an icon (a family emoji with skin tones takes a dozen)."""
+
+
+def _is_modifier(char: str) -> bool:
+    """Code points that belong to the character before them: accents, variation selectors,
+    skin tones, keycaps, and emoji tag characters (subdivision flags)."""
+    code = ord(char)
+    return (
+        unicodedata.category(char) in ("Mn", "Me")
+        or char in _VARIATIONS
+        or 0x1F3FB <= code <= 0x1F3FF
+        or 0xE0020 <= code <= 0xE007F
+    )
+
+
+def _is_regional(char: str) -> bool:
+    return 0x1F1E6 <= ord(char) <= 0x1F1FF
+
+
+def clean_icon(icon: str | None) -> str | None:
+    """Validate a tag's icon: one emoji or one character, as the user sees it (an emoji
+    joined from several, with skin tones, a flag, or a letter with accents count as one).
+    Surrounding spaces are removed; blank clears it (``None``)."""
+    text = (icon or "").strip()
+    if not text:
+        return None
+    problem = "An icon is one emoji or one character."
+    if len(text) > MAX_ICON or any(c.isspace() for c in text):
+        raise TagError(problem)
+    characters, joined, flag_half = 0, False, False
+    for char in text:
+        if joined:  # the emoji after a joiner is part of the same one
+            joined = False
+            continue
+        if char == _JOINER:
+            joined = True
+            continue
+        if _is_modifier(char) or char == _KEYCAP:
+            continue
+        if _is_regional(char) and flag_half:  # the second letter of a flag
+            flag_half = False
+            continue
+        flag_half = _is_regional(char)
+        characters += 1
+    if characters != 1 or joined:
+        raise TagError(problem)
+    return text
+
+
+def set_tag_icon(conn: Connection, tag_id: int, icon: str | None) -> None:
+    """Set a tag's icon (:func:`clean_icon`) or clear it with ``None`` or blank."""
+    _existing(TagTree.load(conn), tag_id)
+    conn.execute(update(Tag).where(Tag.id == tag_id).values(icon=clean_icon(icon)))
 
 
 def set_tag_description(conn: Connection, tag_id: int, description: str | None) -> None:
@@ -821,6 +922,8 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
             conn.execute(insert(TagAlias).values(tag_id=target_id, alias=alias))
     if target.description is None and source.description is not None:
         conn.execute(update(Tag).where(Tag.id == target_id).values(description=source.description))
+    if target.icon is None and source.icon is not None:
+        conn.execute(update(Tag).where(Tag.id == target_id).values(icon=source.icon))
     conn.execute(delete(Tag).where(Tag.id == source_id))  # its entity_tag rows cascade
 
 

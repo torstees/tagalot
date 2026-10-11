@@ -51,12 +51,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.ui.badges import badge_side, paint_badges
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.models.results import (
+    BADGES,
     MATCH,
     PLACEHOLDER,
     MatchValue,
     ResultsModel,
+    TagsValue,
     display_value,
 )
 from tagalot.ui.result_table import OUTLINE_COLOR
@@ -139,6 +142,8 @@ class CardDelegate(QStyledItemDelegate):
                 self._placeholder(painter, box, palette)
         else:
             self._placeholder(painter, box, palette)
+        if found is not None:
+            self._badges(painter, box, found[1].get(BADGES), palette)
 
         metrics = grid.fontMetrics()
         width = rect.width() - 2 * PADDING
@@ -176,6 +181,24 @@ class CardDelegate(QStyledItemDelegate):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect.adjusted(1, 1, -2, -2))
 
+    def _badges(self, painter: QPainter, box: QRect, value: object, palette: QPalette) -> None:
+        """The item's tag badges along the thumbnail's bottom-left, as many as fit across it
+        (#398; chosen in review), each on a backing that reads on any picture."""
+        if not isinstance(value, TagsValue) or not value.text:
+            return
+        side = badge_side(self.grid.fontMetrics())
+        strip = QRect(box.x() + 3, box.bottom() - 2 - side, box.width() - 6, side)
+        backing = QColor(palette.color(QPalette.ColorRole.Base))
+        backing.setAlpha(210)
+        painter.setFont(self.grid.font())
+        paint_badges(
+            painter,
+            strip,
+            value.text.split(),
+            backing=backing,
+            text_color=palette.color(QPalette.ColorRole.Text),
+        )
+
     def _placeholder(self, painter: QPainter, box: QRect, palette: QPalette) -> None:
         color = QColor(palette.color(QPalette.ColorRole.Mid))
         color.setAlpha(60)
@@ -196,6 +219,9 @@ class CardDelegate(QStyledItemDelegate):
             value = display_value(found[1].get(key), self.grid.displays.get(key))
             if value:
                 lines.append(f"{label}: {value}")
+        badges = found[1].get(BADGES)
+        if isinstance(badges, TagsValue) and badges.tooltip:
+            lines.append(badges.tooltip)
         match = found[1].get(MATCH)
         if self.grid.show_match and isinstance(match, MatchValue):
             lines.append(f"{match.text} ({match.where})")

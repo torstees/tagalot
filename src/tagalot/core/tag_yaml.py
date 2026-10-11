@@ -3,13 +3,13 @@
 
 The file is nested like the tree. A tag is written as a plain name with nothing under it
 (``Read:``), as a short list of sub-tag names (``Mood: [Calm, Tense]``), or in the full
-form: a mapping of ``color``, ``description``, ``aliases``, ``applies_to`` (kinds of item,
+form: a mapping of ``icon``, ``color``, ``description``, ``aliases``, ``applies_to`` (kinds of item,
 by the theme's names), and ``tags`` (its sub-tags, in any of the three forms). Export
 always writes the full form, leaving out empty properties.
 
 Import matches tags by path, ignoring case and accents (a name also matches an existing
 tag's alias), creates the missing ones, and merges the file's properties into existing
-tags: a color, description, or ``applies_to`` replaces the tag's, aliases are added, and
+tags: an icon, color, description, or ``applies_to`` replaces the tag's, aliases are added, and
 anything the file leaves out stays. Optionally it deletes the tags the file doesn't name
 that no item uses. :func:`plan_import` says what would happen; :func:`import_tags` does it
 (through :meth:`~tagalot.core.tag_service.TagService.import_tags`, as one undoable step).
@@ -30,6 +30,7 @@ from tagalot.core.tags import (
     PATH_SEPARATOR,
     TagError,
     TagTree,
+    clean_icon,
     clean_name,
     format_types,
     name_key,
@@ -40,7 +41,7 @@ from tagalot.core.tags import (
 )
 from tagalot.core.theme_schema import ThemeSchema
 
-PROPERTIES = ("color", "description", "aliases", "applies_to", "tags")
+PROPERTIES = ("icon", "color", "description", "aliases", "applies_to", "tags")
 """The keys of a tag written in the full form."""
 
 _COLOR = re.compile(r"#[0-9a-fA-F]{6}")
@@ -123,6 +124,8 @@ def export_tags(tree: TagTree, schema: ThemeSchema) -> str:
     def tag(tag_id: int) -> dict[str, Any] | None:
         node = tree.node(tag_id)
         data: dict[str, Any] = {}
+        if node.icon:
+            data["icon"] = node.icon
         if node.color:
             data["color"] = node.color
         if node.description:
@@ -151,6 +154,7 @@ class _Parsed:
 
     name: str
     line: int | None
+    icon: str | None = None
     color: str | None = None
     description: str | None = None
     aliases: tuple[str, ...] = ()
@@ -300,6 +304,11 @@ class _Reader:
                 tag.children = self.mapping(value)
             else:
                 self.problem(line, f"{tag.name!r}: write its sub-tags under “tags:”.")
+        elif prop == "icon":
+            try:
+                tag.icon = clean_icon(str(value))
+            except TagError as error:
+                self.problem(line, f"{str(value)!r}: {error}")
         elif prop == "color":
             if isinstance(value, str) and _COLOR.fullmatch(value.strip()):
                 tag.color = value.strip().lower()
@@ -436,6 +445,8 @@ class _Planner:
                 known = {name_key(a) for a in tree.aliases(tag_id)} | {name_key(node.name)}
                 new_aliases = tuple(a for a in tag.aliases if name_key(a) not in known)
                 changes = [f"renamed to {rename!r}"] if rename else []
+                if tag.icon is not None and tag.icon != node.icon:
+                    changes.append("icon")
                 if tag.color is not None and tag.color != node.color:
                     changes.append("color")
                 if tag.description is not None and tag.description != node.description:
@@ -550,6 +561,7 @@ def import_tags(
                         .values(
                             parent_id=parent_id,
                             name=tag.name,
+                            icon=tag.icon,
                             color=tag.color,
                             description=tag.description,
                             types=format_types(item.types),
@@ -569,6 +581,8 @@ def import_tags(
                                 TagAlias.tag_id == tag_id, TagAlias.alias.in_(same)
                             )
                         )
+                if tag.icon is not None:
+                    values["icon"] = tag.icon
                 if tag.color is not None:
                     values["color"] = tag.color
                 if tag.description is not None:

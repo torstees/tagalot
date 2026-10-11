@@ -27,8 +27,8 @@ On the left, in four groups (click a heading to fold it; a folded one shows how 
 
 A search shows its items in one of three **layouts**, chosen with the buttons at the top right (remembered for each search):
 
-- **Grid:** thumbnails with a few lines under each (right-click for **Card lines** to choose which, and sizes). Make them bigger or smaller with **View → Thumbnail size**, Ctrl+wheel, or Ctrl+= and Ctrl+-.
-- **List:** columns. Click a column's heading to sort by it; right-click a heading to show or hide columns (every field can be a column, and a **Tags** column lists each item's tags).
+- **Grid:** thumbnails with a few lines under each, and the [icons of their tags](tags.md#tag-icons) along the bottom of each thumbnail (right-click for **Card lines** to choose which, and sizes). Make them bigger or smaller with **View → Thumbnail size**, Ctrl+wheel, or Ctrl+= and Ctrl+-.
+- **List:** columns. Click a column's heading to sort by it; right-click a heading to show or hide columns (every field can be a column, a **Tags** column lists each item's tags, and a **Badges** column shows their [icons](tags.md#tag-icons)). The Badges column shows once some tag has an icon.
 - **Tree:** containers with what they hold under them (an album and its songs).
 
 The heading says how many items match. Select with a click, Ctrl+click, Shift+click, or Ctrl+A. **Double-click** (or Enter) opens the item's page, or plays or opens its file for kinds that open files (songs, plain files); **Ctrl+Enter** does the other.

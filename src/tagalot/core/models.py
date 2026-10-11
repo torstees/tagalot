@@ -241,6 +241,9 @@ class Tag(Base):
     types: Mapped[str | None]
     """The item types this tag (and its sub-tags) may be applied to, as space-separated type
     ids (``"books.book books.comic"``); ``None``: every type (core format 10, #135)."""
+    icon: Mapped[str | None]
+    """An emoji or a single character shown as a badge on items with the tag (or a sub-tag
+    without an icon of its own); ``None``: no icon (core format 18, #398)."""
 
 
 # Sibling names are unique case-insensitively, including at the root level: SQLite treats

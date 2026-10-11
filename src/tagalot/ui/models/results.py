@@ -84,6 +84,9 @@ class ResultColumn:
 
 TAGS = "tags"
 """The key of the Tags column: an item's own tags, not a theme field."""
+BADGES = "badges"
+"""The key of the Badges column (and of every row's badges, for grid cards): the icons of
+an item's own tags (#398)."""
 KEYWORDS = "keywords"
 """The key of the Keywords column: what an item's files say it is about (#295)."""
 MATCH = "match"
@@ -150,6 +153,19 @@ class TagsValue:
     tooltip: str
 
 
+def badges_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
+    """An item's badges (from its own tags): the icons, space-separated, and a tooltip line
+    per icon with the tags that give it."""
+    badges = tree.badges(tag_ids)
+    return TagsValue(
+        " ".join(b.icon for b in badges),
+        "\n".join(
+            f"{b.icon} " + ", ".join(PATH_SEPARATOR.join(tree.path(t)) for t in b.tag_ids)
+            for b in badges
+        ),
+    )
+
+
 def tags_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
     """Tag names (with the path when a name is ambiguous) in name order; deleted tags are
     skipped."""
@@ -184,12 +200,18 @@ def row_values(
 ) -> dict[int, dict[str, Any]]:
     """The cell values for ``hits``: their theme fields and, if shown, their tags. Runs in a
     worker."""
-    names = [c.key for c in columns if c.key not in ("title", "type", TAGS, KEYWORDS)]
+    names = [c.key for c in columns if c.key not in ("title", "type", TAGS, KEYWORDS, BADGES)]
     values = field_values(conn, schema, hits, names) if names else {}
-    if any(c.key == TAGS for c in columns):
+    tags_shown = any(c.key == TAGS for c in columns)
+    if tags_shown or tree.has_icons:  # badges are on every row, for grid cards too
         tagged = entity_tags(conn, (h.id for h in hits))
         for hit in hits:
-            values.setdefault(hit.id, {})[TAGS] = tags_value(tree, tagged.get(hit.id, ()))
+            row = values.setdefault(hit.id, {})
+            own = tagged.get(hit.id, ())
+            if tags_shown:
+                row[TAGS] = tags_value(tree, own)
+            if tree.has_icons:
+                row[BADGES] = badges_value(tree, own)
     if any(c.key == KEYWORDS for c in columns):
         words = keywords_of(conn, (h.id for h in hits))
         index = keyword_index(tree)

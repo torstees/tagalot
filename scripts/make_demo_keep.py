@@ -120,6 +120,8 @@ TAGS: dict[tuple[str, ...], list[str]] = {
     ("Favorites",): ["glacier.jpg", "Family at the beach.jpg"],
 }
 ALIASES = {("Topics", "Money"): ["finance"], ("Places", "Iceland"): ["Ísland"]}
+ICONS = {("Favorites",): "⭐", ("Places",): "🌍", ("Topics", "Money"): "💰"}
+"""Tag icons, shown as badges on items (#398): Iceland and Beach show Places' globe."""
 DESCRIPTIONS = {
     ("Places", "Iceland"): "Summer 2019 road trip around the Ring Road",
     ("Topics", "Money"): "Receipts, taxes, and bills",
@@ -278,7 +280,7 @@ def make_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     )
     with KeepSession.open(keep_dir, Settings()) as session:
         session.scan_all()
-        _tag(session, TAGS, ALIASES, DESCRIPTIONS)
+        _tag(session, TAGS, ALIASES, DESCRIPTIONS, ICONS)
     return keep_dir
 
 
@@ -1363,9 +1365,10 @@ def _tag(
     tags: dict[tuple[str, ...], list[str]],
     aliases: dict[tuple[str, ...], list[str]],
     descriptions: dict[tuple[str, ...], str],
+    icons: dict[tuple[str, ...], str] | None = None,
 ) -> None:
     """Create ``tags`` and apply them by title (the app can't apply tags until the tagging
-    panel), then add ``aliases`` and ``descriptions``."""
+    panel), then add ``aliases``, ``descriptions``, and ``icons``."""
     with session.reader.connect() as conn:
         ids = {title: i for i, title in conn.execute(select(Entity.id, Entity.title))}
     tag_ids: dict[tuple[str, ...], int] = {}
@@ -1381,6 +1384,8 @@ def _tag(
             session.tags.add_alias(tag_ids[path], alias)
     for path, description in descriptions.items():
         session.tags.set_description(tag_ids[path], description)
+    for path, icon in (icons or {}).items():
+        session.tags.set_icon(tag_ids[path], icon)
     # The demo's own tagging: where a file's keyword already gave the tag (a song's genre,
     # #295), the row becomes the user's.
     tagged = sqlite_insert(EntityTag).on_conflict_do_update(
