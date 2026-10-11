@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
+    QFileDialog,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -57,6 +58,7 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import type_plurals, view_spec
 from tagalot.core.search_spec import FieldFilter, SearchSpec
 from tagalot.core.session import KeepSession
+from tagalot.core.tag_yaml import ImportPlan, export_tags, plan_import
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
@@ -80,7 +82,7 @@ from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
-from tagalot.ui.folder_picker import choose_save_file
+from tagalot.ui.folder_picker import choose_save_file, start_folder
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
@@ -93,6 +95,7 @@ from tagalot.ui.result_table import DEFAULT_HIDDEN
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.shortcuts import ShortcutsDialog, help_action
 from tagalot.ui.tag_actions import TagActions
+from tagalot.ui.tag_import import TagImportDialog
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.tag_picker import TagPickerDialog, map_dialog
@@ -603,6 +606,8 @@ class MainWindow(QMainWindow):
             details.types_requested.connect(self.change_tag_types)
             manager.undo_requested.connect(self.tag_actions.undo)
             manager.redo_requested.connect(self.tag_actions.redo)
+            manager.export_requested.connect(self.export_tag_file)
+            manager.import_requested.connect(self.import_tag_file)
             manager.set_history(self.tag_actions.undo_label, self.tag_actions.redo_label)
             return manager
         coming = QLabel(f"{target.label}\n\n{_COMING[target.kind]}")
@@ -1105,6 +1110,64 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         return answer == QMessageBox.StandardButton.Yes
+
+    # --- exporting and importing tags (#395) ---
+
+    def export_tag_file(self) -> None:
+        """Save the whole tag tree as YAML, where the user chooses (as other exports)."""
+        session = self.session
+        if session is None:
+            return
+        text = export_tags(session.tag_cache.get(), session.schema)
+        self.save_export(f"{session.keep.config.name} tags.yaml", text, "Export tags")
+
+    def import_tag_file(self) -> None:
+        """Choose a YAML tag file, read and plan it in a worker, show what it would do, and
+        import it as one undoable step."""
+        session = self.session
+        if session is None:
+            return
+        path = self.choose_tag_file()
+        if not path:
+            return
+        name = Path(path).name
+
+        def plan() -> tuple[str, ImportPlan, ImportPlan]:
+            text = Path(path).read_text(encoding="utf-8-sig")
+            with session.reader.connect() as conn:
+                return (
+                    text,
+                    plan_import(conn, text, session.schema, False),
+                    plan_import(conn, text, session.schema, True),
+                )
+
+        def planned(result: tuple[str, ImportPlan, ImportPlan]) -> None:
+            if not shiboken6.isValid(self):
+                return
+            text, keep, delete = result
+            dialog = TagImportDialog(name, keep, delete, self)
+            if self.review_tag_import(dialog):
+                self.tag_actions.import_tags(text, name, dialog.delete_unused())
+
+        def failed(error: BaseException) -> None:
+            if not shiboken6.isValid(self):
+                return
+            reason = "it isn't a text file" if isinstance(error, UnicodeError) else str(error)
+            QMessageBox.warning(self, "Import tags", f"Couldn't read {name}: {reason}.")
+
+        run_in_pool(plan, on_done=planned, on_error=failed)
+
+    def choose_tag_file(self) -> str:
+        """Ask for a tag file to import (tests replace this)."""
+        assert self.session is not None
+        start = start_folder(self.session.settings)
+        return QFileDialog.getOpenFileName(
+            self, "Import tags", start, "YAML files (*.yaml *.yml);;All files (*)"
+        )[0]
+
+    def review_tag_import(self, dialog: TagImportDialog) -> bool:
+        """Show what an import would do; whether to go ahead (tests replace this)."""
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     # --- file keywords (#295) ---
 
