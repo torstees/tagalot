@@ -6,12 +6,18 @@ import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QToolButton
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
 from tagalot.ui.detail_view import DetailPage
-from tagalot.ui.field_editor import EditableValue, ParseError, editor_text, parse_value
+from tagalot.ui.field_editor import (
+    BOX_WIDTH,
+    EditableValue,
+    ParseError,
+    editor_text,
+    parse_value,
+)
 from tagalot.ui.main_window import MainWindow
 from tests.ui.test_contents_search import _open, session, window
 
@@ -226,6 +232,34 @@ def test_a_duplicate_extra_name_is_refused(
         page._add_extra()
         qtbot.waitUntil(lambda: window.tag_actions.busy == 0, timeout=5000)
     assert "already has a field named 'Licence'" in window.statusBar().currentMessage()
+
+
+@pytest.mark.parametrize("width", [1200, 700])
+def test_the_text_box_isnt_squeezed(qtbot: QtBot, width: int) -> None:
+    """A value followed by a stretch (an Extra field's row) got the box's narrow hint, so
+    the box was clipped and what was typed couldn't be seen (#380 review)."""
+    url = "https://aurora.example/studio/about-us/contact-and-commissions"
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    value = EditableValue(url, str, editable=True, label="website")
+    layout.addWidget(value)
+    layout.addWidget(QToolButton())
+    layout.addStretch(1)
+    qtbot.addWidget(row)
+    row.resize(width, 40)
+    row.show()
+    value.start_editing()
+
+    def box_shown() -> None:
+        assert value.stack.width() >= value.box.width(), (
+            f"the box is {value.box.width()} px but only {value.stack.width()} px show"
+        )
+
+    qtbot.waitUntil(box_shown, timeout=2000)
+    assert value.box.width() >= BOX_WIDTH
+    text = value.box.fontMetrics().horizontalAdvance(url)
+    if width > text + 200:  # room for all of it: all of it shows
+        assert value.box.width() > text
 
 
 def test_a_url_field_shows_a_link_that_opens_the_browser(
