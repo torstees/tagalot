@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDockWidget,
-    QFileDialog,
     QInputDialog,
     QLabel,
     QMainWindow,
@@ -82,7 +81,7 @@ from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
-from tagalot.ui.folder_picker import choose_save_file, start_folder
+from tagalot.ui.folder_picker import choose_open_file, choose_save_file
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
@@ -914,7 +913,7 @@ class MainWindow(QMainWindow):
     def choose_export_path(self, name: str) -> str:
         """Ask where to save an export (tests replace this)."""
         assert self.session is not None
-        return choose_save_file(self, "Save", name, self.session.settings)
+        return choose_save_file(self, "Save", name, self.session.settings, self.files.settings_path)
 
     def confirm_export_in_root(self, root_name: str, relpath: str) -> bool:
         """Ask before saving inside a watched folder (tests replace this)."""
@@ -1160,10 +1159,13 @@ class MainWindow(QMainWindow):
     def choose_tag_file(self) -> str:
         """Ask for a tag file to import (tests replace this)."""
         assert self.session is not None
-        start = start_folder(self.session.settings)
-        return QFileDialog.getOpenFileName(
-            self, "Import tags", start, "YAML files (*.yaml *.yml);;All files (*)"
-        )[0]
+        return choose_open_file(
+            self,
+            "Import tags",
+            "YAML files (*.yaml *.yml);;All files (*)",
+            self.session.settings,
+            self.files.settings_path,
+        )
 
     def review_tag_import(self, dialog: TagImportDialog) -> bool:
         """Show what an import would do; whether to go ahead (tests replace this)."""

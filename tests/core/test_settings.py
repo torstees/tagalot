@@ -241,3 +241,14 @@ command = 'notepad {{path}}'
         "#2 needs an ext",
     ]:
         assert expected in caplog.text
+
+
+def test_last_save_folder(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    assert "last_save_folder" not in dump_settings(Settings())
+    path = tmp_path / "settings.toml"
+    save_settings(Settings(last_save_folder=Path(r"\nas\exports")), path)
+    assert load_settings(path).last_save_folder == Path(r"\nas\exports")
+    path.write_text("last_save_folder = []\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_settings(path).last_save_folder is None
+    assert "last_save_folder must be a path" in caplog.text
