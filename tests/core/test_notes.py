@@ -13,7 +13,10 @@ import pytest
 from sqlalchemy import Engine, delete, insert, select, text, update
 
 from tagalot.core.db import create_keep_engine, open_keep_database
+from tagalot.core.detail import load_detail
 from tagalot.core.entity_state import restore_states, snapshot_entities
+from tagalot.core.fields import edit_extra, restore_extra
+from tagalot.core.handlers import resource_to_open
 from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.models import (
@@ -456,3 +459,85 @@ def test_the_title_heading() -> None:
     assert body_without_title("\n# Aurora #\nSkies.", "Aurora") == "Skies."
     assert body_without_title("# Other\nSkies.", "Aurora") == "# Other\nSkies."
     assert body_without_title("Skies.", None) == "Skies."
+
+
+# --- on the item's page (#380) ---
+
+
+def test_editing_a_notes_extra_field_makes_it_the_users(env: Env) -> None:
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA)
+    env.scan()
+    aurora = env.item("Aurora (2001)")["id"]
+    change = env.writer.run(
+        lambda conn: edit_extra(conn, env.schema, aurora, "website", "https://mine.example")
+    )
+    assert env.item("Aurora (2001)")["sources"]["extra:website"] == FieldSource.USER
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA.replace("aurora.example", "new.example"))
+    env.scan()
+    assert env.item("Aurora (2001)")["extra"] == {"website": "https://mine.example"}
+    env.writer.run(lambda conn: restore_extra(conn, env.schema, change, forward=False))
+    restored = env.item("Aurora (2001)")
+    assert restored["sources"]["extra:website"] == FieldSource.NOTE  # the note's again
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA.replace("aurora.example", "third.example"))
+    env.scan()
+    assert env.item("Aurora (2001)")["extra"] == {"website": "https://third.example"}
+
+
+def test_removing_a_notes_extra_field_is_remembered(env: Env) -> None:
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA)
+    env.scan()
+    aurora = env.item("Aurora (2001)")["id"]
+    change = env.writer.run(lambda conn: edit_extra(conn, env.schema, aurora, "website", None))
+    assert change.label == "Remove 'website' from 'Aurora Studio'"
+    removed = env.item("Aurora (2001)")
+    assert removed["extra"] == {}
+    assert "extra:website" not in removed["sources"]
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA + "\nMore.\n")
+    env.scan()
+    assert env.item("Aurora (2001)")["extra"] == {}  # the note still has it: left off
+    with env.reader.connect() as conn:
+        assert conn.scalars(select(NoteKeyRemoval.key)).all() == ["website"]
+
+    env.writer.run(lambda conn: restore_extra(conn, env.schema, change, forward=False))
+    undone = env.item("Aurora (2001)")
+    assert undone["extra"] == {"website": "https://aurora.example"}
+    assert undone["sources"]["extra:website"] == FieldSource.NOTE
+    with env.reader.connect() as conn:
+        assert conn.scalars(select(NoteKeyRemoval.key)).all() == []
+    env.writer.run(lambda conn: restore_extra(conn, env.schema, change, forward=True))
+    with env.reader.connect() as conn:
+        assert conn.scalars(select(NoteKeyRemoval.key)).all() == ["website"]
+
+
+def test_the_users_own_extra_fields_are_untouched(env: Env) -> None:
+    env.scan()
+    brightwater = env.item("Brightwater")["id"]
+    env.writer.run(lambda conn: edit_extra(conn, env.schema, brightwater, "mood", "calm", new=True))
+    env.writer.run(lambda conn: edit_extra(conn, env.schema, brightwater, "mood", None))
+    item = env.item("Brightwater")
+    assert item["extra"] == {}
+    assert not [s for s in item["sources"] if s.startswith("extra:")]
+    with env.reader.connect() as conn:
+        assert conn.scalars(select(NoteKeyRemoval.key)).all() == []
+
+
+def test_the_page_shows_the_note(env: Env) -> None:
+    env.note("Aurora (2001)/Aurora (2001).md", AURORA)
+    env.scan()
+    aurora = env.item("Aurora (2001)")["id"]
+    env.writer.run(lambda conn: edit_extra(conn, env.schema, aurora, "mood", "calm", new=True))
+    root = str(env.files)
+    with env.reader.connect() as conn:
+        detail = load_detail(conn, env.schema, aurora, lambda _root: root)
+        assert detail is not None
+        assert detail.note_body == "Painted skies, *mostly* at dusk."
+        assert detail.note_file is not None
+        assert detail.note_file.relpath == "Aurora (2001)/Aurora (2001).md"
+        assert detail.note_file.path == str(env.files / "Aurora (2001)" / "Aurora (2001).md")
+        assert detail.extra_sources == (("website", FieldSource.NOTE),)  # not mood: the user's
+        # Open note finds the file, though no role links it.
+        found = resource_to_open(conn, aurora, detail.note_file.resource_id, lambda _r: root)
+        assert [f.relpath for f in found] == ["Aurora (2001)/Aurora (2001).md"]
+        brightwater = load_detail(conn, env.schema, env.item("Brightwater")["id"], lambda _r: root)
+    assert brightwater is not None
+    assert (brightwater.note_body, brightwater.note_file) == ("", None)

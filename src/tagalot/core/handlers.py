@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import Connection, select
 
-from tagalot.core.detail import FileRow, role_files
+from tagalot.core.detail import FileRow, note_file, role_files
 from tagalot.core.models import Entity, ResourceStatus
 from tagalot.core.theme_schema import ThemeSchema
 
@@ -83,8 +83,14 @@ def files_to_open(
 def resource_to_open(
     conn: Connection, entity_id: int, resource_id: int, root_path: Callable[[str], str | None]
 ) -> tuple[FileRow, ...]:
-    """One of the entity's files, as :func:`choose_file` takes it (empty if it's gone)."""
-    return role_files(conn, entity_id, None, root_path, resource_id=resource_id)
+    """One of the entity's files, or its note's (#380), as :func:`choose_file` takes it
+    (empty if it's gone)."""
+    found = role_files(conn, entity_id, None, root_path, resource_id=resource_id)
+    if not found:
+        note = note_file(conn, entity_id, root_path)
+        if note is not None and note.resource_id == resource_id:
+            return (note,)
+    return found
 
 
 def choose_file(files: Sequence[FileRow]) -> FileToOpen:

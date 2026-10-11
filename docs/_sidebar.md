@@ -11,6 +11,7 @@
   - [Tags](/guide/tags.md)
   - [Searching](/guide/searching.md)
   - [Item pages](/guide/item-pages.md)
+  - [Notes](/guide/notes.md)
   - [Searching inside documents](/guide/search-inside-documents.md)
   - [File keywords](/guide/file-keywords.md)
   - [Triage](/guide/triage.md)
