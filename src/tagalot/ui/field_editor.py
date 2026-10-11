@@ -38,6 +38,8 @@ from tagalot.ui.models.results import display_value
 
 PENCIL = "✎"
 BOX_WIDTH = 280
+BOX_PADDING = 24
+"""Room in the text box beside the value's text: its frame, margins, and the cursor."""
 """The text box's minimum width while editing."""
 EDITED_TIP = "You edited this; scans won't change it (Undo puts it back)"
 
@@ -121,12 +123,20 @@ class _Stack(QStackedWidget):
             # A wrapping label guesses a narrow width; ask for the text's own width.
             width = current.fontMetrics().horizontalAdvance(current.text()) + 4
             return QSize(width, current.heightForWidth(width))
+        if isinstance(current, QLineEdit):
+            # The box's own hint is narrow (about 108 px), less than its minimum width, so a
+            # stretch after the value squeezed it and clipped what was typed (#380 review):
+            # ask for room for the whole value, and never less than the box's minimum.
+            text = current.fontMetrics().horizontalAdvance(current.text()) + BOX_PADDING
+            return QSize(max(current.minimumWidth(), text), current.sizeHint().height())
         return current.sizeHint() if current is not None else super().sizeHint()
 
     def minimumSizeHint(self) -> QSize:
         current = self.currentWidget()
         if isinstance(current, QLabel):  # narrow windows: wrap rather than widen the page
             return QSize(min(self.sizeHint().width(), 120), current.minimumSizeHint().height())
+        if isinstance(current, QLineEdit):
+            return QSize(current.minimumWidth(), current.minimumSizeHint().height())
         return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
 
 
