@@ -297,6 +297,7 @@ def make_result_table(parent: QWidget | None = None) -> ResultTable:
     header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
     header.setStretchLastSection(True)  # the last shown column fills the rest, as in the tree
     header.setMinimumSectionSize(40)
+    header.setSectionsMovable(True)  # drag a heading to move its column, as in the tree
     table.setMinimumWidth(TITLE_MIN_WIDTH)
     return table
 

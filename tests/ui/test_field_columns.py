@@ -184,3 +184,36 @@ def test_the_tree_header_offers_the_columns_too(qtbot: QtBot, session: KeepSessi
     assert _shown(page)[-1] == "Description"  # and in the list
     {a.text(): a for a in page.column_menu().actions()}["Description"].setChecked(False)
     assert header.isSectionHidden(description)
+
+
+def test_columns_move_in_the_list_and_the_tree(qtbot: QtBot, session: KeepSession) -> None:
+    """Dragging a heading moves its column, in the list as in the tree; both keep one order."""
+    page = _books(qtbot, session)
+    table, tree = page.table.horizontalHeader(), page.tree.header()
+    assert table.sectionsMovable()
+    keys = [c.key for c in page.table.columns]
+    series, authors = keys.index("series"), keys.index("authors")
+    table.moveSection(table.visualIndex(series), table.visualIndex(authors))  # as a drag does
+    shown = [i for i in range(table.count()) if not table.isSectionHidden(i)]
+    order = sorted(shown, key=table.visualIndex)
+    assert [page.table.columns[i].label for i in order] == ["Title", "Series", "Author"]
+    assert tree.visualIndex(series) < tree.visualIndex(authors)  # the tree follows
+    tree.moveSection(tree.visualIndex(authors), tree.visualIndex(series))  # and back
+    assert table.visualIndex(authors) < table.visualIndex(series)
+
+
+def test_a_moved_column_stays_when_the_search_runs_again(
+    qtbot: QtBot, session: KeepSession
+) -> None:
+    page = _books(qtbot, session)
+    table = page.table.horizontalHeader()
+    keys = [c.key for c in page.table.columns]
+    series, authors = keys.index("series"), keys.index("authors")
+    table.moveSection(table.visualIndex(series), table.visualIndex(authors))
+    page.filter_bar.text_edit.setText("a")  # a new search, the same columns
+    page.filter_bar.text_edit.returnPressed.emit()
+    qtbot.waitUntil(
+        lambda: page.model.spec is not None and page.model.spec.text == "a", timeout=5000
+    )
+    assert table.visualIndex(series) < table.visualIndex(authors)
+    assert page.tree.header().visualIndex(series) < page.tree.header().visualIndex(authors)

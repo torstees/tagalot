@@ -26,6 +26,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMenu,
     QPushButton,
@@ -310,6 +311,10 @@ class SearchPage(QWidget):
         tree_header.setSortIndicatorShown(True)
         tree_header.setSectionsClickable(True)
         tree_header.sortIndicatorChanged.connect(self._sort_clicked)
+        self._moving = False
+        table_header = self.table.horizontalHeader()
+        table_header.sectionMoved.connect(lambda: self._same_order(table_header, tree_header))
+        tree_header.sectionMoved.connect(lambda: self._same_order(tree_header, table_header))
         tree_header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tree_header.customContextMenuRequested.connect(
             lambda point: self.column_menu().exec(self.tree.header().mapToGlobal(point))
@@ -690,6 +695,21 @@ class SearchPage(QWidget):
             self.tree.setColumnWidth(i, max(header.sectionSize(i), 60))
         title = next((i for i, c in enumerate(self.model.columns) if c.key == "title"), 0)
         self.tree.setColumnWidth(title, max(self.tree.columnWidth(title), 260))
+        self._same_order(header, self.tree.header())
+
+    def _same_order(self, source: QHeaderView, target: QHeaderView) -> None:
+        """Put ``target``'s columns in ``source``'s order: a column moved in the list moves
+        in the tree, and back (#413)."""
+        if self._moving or source.count() != target.count():
+            return
+        self._moving = True
+        try:
+            for visual in range(source.count()):
+                logical = source.logicalIndex(visual)
+                if target.visualIndex(logical) != visual:
+                    target.moveSection(target.visualIndex(logical), visual)
+        finally:
+            self._moving = False
 
     # --- the preview strip ---
 
