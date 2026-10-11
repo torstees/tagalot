@@ -231,6 +231,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("DROP TABLE online_response")
         conn.exec_driver_sql("DROP TABLE entity_note")
         conn.exec_driver_sql("DROP TABLE note_key_removal")
+        conn.exec_driver_sql("DROP TABLE note_ignored_key")
         # field_provenance as it was before notes: its CHECK knew three sources, and a row
         conn.exec_driver_sql("DROP TABLE field_provenance")
         conn.exec_driver_sql(
@@ -256,7 +257,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 15)
+    assert (info.value.stored, info.value.current) == (1, 16)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -279,6 +280,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "online_response" in inspect(engine).get_table_names()  # format 14 (#339)
         tables = inspect(engine).get_table_names()  # format 15 (#379): notes
         assert {"entity_note", "note_key_removal"} <= set(tables)
+        assert "note_ignored_key" in tables  # format 16 (#381)
         with engine.begin() as conn:  # the rebuilt table kept its row and takes notes
             kept = conn.exec_driver_sql("SELECT entity_id, field, source FROM field_provenance")
             assert [tuple(r) for r in kept] == [(1, "title", "user")]
@@ -292,5 +294,5 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 15
+    assert migrated.config.format_version == 16
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]

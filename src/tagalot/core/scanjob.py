@@ -25,6 +25,7 @@ from tagalot.core.fingerprint import (
 from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.keep import RootConfig
 from tagalot.core.models import Resource, ResourceStatus, Root
+from tagalot.core.note_keys import sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
@@ -106,6 +107,7 @@ def scan_root(
     schema: ThemeSchema | None = None,
     theme_options: Mapping[str, Any] | None = None,
     progress: Progress | None = None,
+    note_ignore_keys: frozenset[str] | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -119,6 +121,10 @@ def scan_root(
     ``theme_options`` are the keep's ``[theme.options]``; with the root's own options they
     give the values the theme sees. When those differ from the values the root was last
     ingested with, every file of the root is ingested again.
+
+    ``note_ignore_keys`` are the front-matter keys notes leave out (``core.note_keys``); when
+    they differ from those the notes were last applied with, every note is read again.
+    ``None`` keeps those.
     """
     if (theme is None) != (schema is None):
         raise ValueError("pass both theme and schema, or neither")
@@ -195,7 +201,17 @@ def scan_root(
         ):
             say(f"Theme options changed: ingesting {root.name} again…")
         _ingest_pending(
-            writer, reader, root, path, theme, schema, when, report, say, options.values
+            writer,
+            reader,
+            root,
+            path,
+            theme,
+            schema,
+            when,
+            report,
+            say,
+            options.values,
+            note_ignore_keys=note_ignore_keys,
         )
         writer.run(partial(_record_options, root.id, options.fingerprint(theme.version)))
     logger.info(
@@ -303,6 +319,7 @@ def _ingest_pending(
     options: Mapping[str, Any],
     *,
     reread_notes: bool = True,
+    note_ignore_keys: frozenset[str] | None = None,
 ) -> None:
     """Hand every pending resource of the root to the theme, in batches, then read the
     root's notes that changed (§9 *Notes*).
@@ -343,6 +360,8 @@ def _ingest_pending(
     if not reread_notes:
         return
     say(f"Looking for notes in {root.name}…")
+    if note_ignore_keys is not None:
+        writer.run(partial(sync_ignored, keys=note_ignore_keys))
     changes, problems = read_notes(reader, schema, root.id, path)
     report.ingest_warnings += problems
     if not changes:

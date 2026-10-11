@@ -207,6 +207,11 @@ def _v14_notes(conn: Connection) -> None:
         Base.metadata.tables[name].create(conn)
 
 
+def _v15_note_ignored_keys(conn: Connection) -> None:
+    """Format 16: the ignored note keys the notes were last applied with (#381)."""
+    Base.metadata.tables["note_ignored_key"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -222,6 +227,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     12: _v12_user_contains,
     13: _v13_online_responses,
     14: _v14_notes,
+    15: _v15_note_ignored_keys,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

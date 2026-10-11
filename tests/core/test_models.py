@@ -53,6 +53,7 @@ CORE_TABLES = {
     "online_response",
     "entity_note",
     "note_key_removal",
+    "note_ignored_key",
     "schema_version",
 }
 FTS_TABLES = {

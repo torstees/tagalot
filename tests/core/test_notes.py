@@ -98,14 +98,21 @@ class Env:
     files: Path
     clock: int = 0
 
-    def scan(self) -> ScanReport:
+    def scan(self, ignored: frozenset[str] | None = None) -> ScanReport:
         self.clock += 1
         when = datetime.datetime(2026, 10, 10, tzinfo=datetime.UTC) + datetime.timedelta(
             minutes=self.clock
         )
         root = RootConfig("r", "Studios", str(self.files))
         return scan_root(
-            self.writer, self.reader, root, root.path, when=when, theme=Studios, schema=self.schema
+            self.writer,
+            self.reader,
+            root,
+            root.path,
+            when=when,
+            theme=Studios,
+            schema=self.schema,
+            note_ignore_keys=ignored,
         )
 
     def note(self, relpath: str, text: str) -> Path:

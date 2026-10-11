@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.links import LinkError
+from tagalot.core.note_keys import NoteKeyError
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.relations import RelationError
 from tagalot.core.saved_searches import SavedDefinition
@@ -253,6 +254,14 @@ class TagActions(QObject):
 
         self._run(lambda: self.session.tags.ignore_keywords(keys, ignored), describe)
 
+    def ignore_note_key(self, key: str) -> None:
+        """Ignore a front-matter key in every note of the keep (#381): listed in
+        ``keep.toml``, the notes' fields under it removed now; one undo step."""
+        self._run(
+            lambda: self.session.ignore_note_key(key),
+            lambda change: f"{change.label}. Keep configuration → Notes lists the keys ignored.",
+        )
+
     def delete_items(self, ids: list[int]) -> None:
         """Delete items (never their files); one undo step."""
         self._run(
@@ -396,7 +405,8 @@ class TagActions(QObject):
                 return
             self.busy -= 1
             if isinstance(
-                error, TagError | FieldEditError | ActionError | LinkError | RelationError
+                error,
+                TagError | FieldEditError | ActionError | LinkError | RelationError | NoteKeyError,
             ):
                 self.message.emit(str(error))
             else:

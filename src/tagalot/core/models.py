@@ -500,6 +500,16 @@ class NoteKeyRemoval(Base):
     key: Mapped[str] = mapped_column(primary_key=True)
 
 
+class NoteIgnoredKey(Base):
+    """The ignored front-matter keys (case-folded, built-in ones included) that the keep's
+    notes were last applied with (§9 *Notes*, #381): when the lists in ``settings.toml`` and
+    ``keep.toml`` say otherwise, the next scan reads every note again."""
+
+    __tablename__ = "note_ignored_key"
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is ``core.saved_searches.SavedDefinition``'s JSON form:
     the page's search and its filter bar's, and how it was shown (§8, #127)."""

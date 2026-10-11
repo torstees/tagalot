@@ -58,10 +58,13 @@ class Settings:
     """Keep id -> root id -> local path, for reaching a share through a different mount."""
     handlers: list[HandlerOverride] = field(default_factory=list)
     theme_dirs: list[Path] = field(default_factory=list)
+    """Extra directories searched for themes."""
     last_folder: Path | None = None
     """The folder last chosen in one of Tagalot's folder pickers, where the next one (and a
     new keep's location) starts."""
-    """Extra directories searched for themes."""
+    note_ignore_keys: list[str] = field(default_factory=list)
+    """``[notes] ignore_keys``: front-matter keys notes never make Extra fields, in every
+    keep (DESIGN.md §9 *Notes*)."""
 
     def add_recent_keep(self, keep_dir: Path) -> None:
         """Move ``keep_dir`` to the front of the recent list, dropping duplicates and extras."""
@@ -178,6 +181,8 @@ def dump_settings(settings: Settings) -> str:
         if handler.role is not None:
             lines.append(f"role = {toml_str(handler.role)}")
         lines.append(f"command = {toml_str(handler.command)}")
+    if settings.note_ignore_keys:
+        lines += ["", "[notes]", f"ignore_keys = {toml_list(settings.note_ignore_keys)}"]
     return "\n".join(lines) + "\n"
 
 
@@ -209,7 +214,7 @@ def _string_list(path: Path, data: Mapping[str, Any], key: str) -> list[str]:
 
 
 def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
-    known = {"recent_keeps", "theme_dirs", "last_folder", "root_overrides", "handlers"}
+    known = {"recent_keeps", "theme_dirs", "last_folder", "root_overrides", "handlers", "notes"}
     for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
 
@@ -261,6 +266,15 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
             logger.warning("%s: [[handlers]] #%d %s; ignoring it", path, i, handler)
         else:
             settings.handlers.append(handler)
+
+    notes = data.get("notes", {})
+    if not isinstance(notes, dict):
+        logger.warning("%s: notes must be a table; ignoring it", path)
+        notes = {}
+    for key in sorted(set(notes) - {"ignore_keys"}):
+        logger.warning("%s: ignoring unknown key %r in [notes]", path, key)
+    keys = _string_list(path, notes, "ignore_keys")
+    settings.note_ignore_keys = [k.strip() for k in keys if k.strip()]
     return settings
 
 

@@ -36,6 +36,7 @@ from tagalot.core.models import (
     EntityResource,
     FieldProvenance,
     FieldSource,
+    NoteIgnoredKey,
     NoteKeyRemoval,
     Resource,
     ResourceKind,
@@ -563,8 +564,10 @@ def apply_notes(
 ) -> tuple[list[int], list[IngestWarning]]:
     """Apply notes read by :func:`read_notes` (a DB writer job); returns the resources to
     read again (the primary files of items whose notes stopped giving a value) and
-    problems with the notes' values."""
+    problems with the notes' values. Keys are ignored as the notes were last applied with
+    (``note_ignored_key``, ``core.note_keys``), else the built-in ones."""
     ctx = IngestSession(conn, schema)
+    ignored = set(conn.scalars(select(NoteIgnoredKey.key))) or DEFAULT_IGNORED_KEYS
     reread: list[int] = []
     warnings: list[IngestWarning] = []
     for change in changes:
@@ -572,7 +575,7 @@ def apply_notes(
         values = None
         if change.text is not None:
             fields = schema.by_type_id(site.entity.type).fields
-            values = map_note(change.text, fields)
+            values = map_note(change.text, fields, ignored)
             relpath = change.file.relpath if change.file else None
             warnings += [
                 IngestWarning(root_id, relpath, f"A note's value was left out: {problem}")

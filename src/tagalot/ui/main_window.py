@@ -524,6 +524,7 @@ class MainWindow(QMainWindow):
             detail.open_entity.connect(self.open_entity)
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
+            detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
             detail.reread_requested.connect(self.reread)
             detail.write_back_requested.connect(self.write_back)
             detail.look_up_requested.connect(self.look_up_online)
@@ -1252,6 +1253,8 @@ class MainWindow(QMainWindow):
         self._refresh_triage()
         self.refresh_keywords()  # a mapping, an alias, or a rename changes what matches
         self._load_saved_searches()  # saving, renaming, and their undo
+        if self.keep_config is not None:
+            self.keep_config.show_note_keys()  # ignoring a note key, and its undo
 
     def _tag_message(self, message: str) -> None:
         self.statusBar().showMessage(message)
