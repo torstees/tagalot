@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 15
+KEEP_FORMAT_VERSION = 16
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -121,11 +121,14 @@ class KeepConfig:
     thumbnails_after_scan: bool = True
     """``[thumbnails] after_scan``: make the thumbnails a scan affects in the background."""
     online_lookups: str | None = None
+    """``[online] lookups``: ``"allow"`` or ``"never"`` once the user answered (§9 *Online
+    details*); ``None``, not asked yet, so nothing is looked up."""
     contents_index: str | None = None
     """``[contents] index``: ``"words"`` or ``"substrings"`` to search inside documents;
     ``None``, Off (nothing is read)."""
-    """``[online] lookups``: ``"allow"`` or ``"never"`` once the user answered (§9 *Online
-    details*); ``None``, not asked yet, so nothing is looked up."""
+    note_ignore_keys: list[str] = field(default_factory=list)
+    """``[notes] ignore_keys``: front-matter keys this keep's notes never make Extra fields
+    (§9 *Notes*), with the user's own and the built-in ones."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -175,6 +178,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[online]", f"lookups = {toml_str(config.online_lookups)}"]
     if config.contents_index is not None:
         lines += ["", "[contents]", f"index = {toml_str(config.contents_index)}"]
+    if config.note_ignore_keys:
+        lines += ["", "[notes]", f"ignore_keys = {toml_list(config.note_ignore_keys)}"]
     for root in config.roots:
         lines += [
             "",
@@ -200,7 +205,7 @@ def dump_keep_config(config: KeepConfig) -> str:
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
     reader.warn_unknown(
-        data, {"keep", "theme", "roots", "thumbnails", "online", "contents"}, "top level"
+        data, {"keep", "theme", "roots", "thumbnails", "online", "contents", "notes"}, "top level"
     )
 
     keep = reader.table(data, "keep")
@@ -247,6 +252,15 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         contents_index = contents.get("index")
         if contents_index not in (None, *CONTENTS_INDEXES):
             raise KeepConfigError(path, '[contents] index must be "words" or "substrings"')
+
+    note_ignore_keys: list[str] = []
+    if "notes" in data:
+        notes_table = reader.table(data, "notes")
+        reader.warn_unknown(notes_table, {"ignore_keys"}, "[notes]")
+        keys = notes_table.get("ignore_keys", [])
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            raise KeepConfigError(path, "[notes] ignore_keys must be a list of strings")
+        note_ignore_keys = [k.strip() for k in keys if k.strip()]
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -298,6 +312,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         thumbnails_after_scan=after_scan,
         online_lookups=online_lookups,
         contents_index=contents_index,
+        note_ignore_keys=note_ignore_keys,
     )
 
 

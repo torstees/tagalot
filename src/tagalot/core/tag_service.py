@@ -39,6 +39,7 @@ from tagalot.core.keywords import (
 from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
+from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
 from tagalot.core.tags import (
@@ -109,6 +110,7 @@ Step = (
     TagChange
     | FieldChange
     | ExtraChange
+    | NoteKeyChange
     | ReextractChange
     | ActionChange
     | DismissChange
@@ -141,6 +143,9 @@ class TagService:
         self.schema = schema
         self._undo: list[Step] = []
         self._redo: list[Step] = []
+        self.on_note_key: Callable[[str, bool], None] | None = None
+        """Adds a key to the keep's ignored note keys (``True``) or takes it off, as undo
+        and redo replay ignoring it (the session sets it; ``keep.toml`` isn't the DB's)."""
 
     # --- operations ---
 
@@ -316,6 +321,16 @@ class TagService:
             self._push(change)
         return change
 
+    def ignore_note_key(self, key: str, *, listed: bool = False) -> NoteKeyChange:
+        """Remove the Extra fields notes gave under ``key``, in every item; one undo step.
+        The caller lists the key in ``keep.toml`` (``listed``: it was there already)."""
+        schema = self.schema
+        if schema is None:
+            raise RuntimeError("note keys need the keep's schema")
+        change = self.writer.run(lambda conn: ignore_note_key(conn, schema, key, listed=listed))
+        self._push(change)
+        return change
+
     def ignore_keywords(self, keys: Iterable[str], ignored: bool = True) -> int:
         """Ignore file keywords, or stop ignoring them (#295); one undo step. Returns how
         many changed."""
@@ -377,6 +392,11 @@ class TagService:
         elif isinstance(step, ExtraChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_extra(conn, schema, step, forward=forward))
+        elif isinstance(step, NoteKeyChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_note_key(conn, schema, step, forward=forward))
+            if self.on_note_key is not None and not step.listed:
+                self.on_note_key(step.key, forward)
         elif isinstance(step, ReextractChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_entities(conn, schema, step, forward=forward))

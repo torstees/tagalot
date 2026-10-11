@@ -7,6 +7,7 @@ thumbnail size override, and theme option values for the keep or one root.
 """
 
 import copy
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from tagalot.core.keep import (
     KeepError,
     validate_keep_config,
 )
+from tagalot.core.note_keys import NoteKeyError, check_key
 from tagalot.themes.api import Theme, ThemeOption
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 
@@ -61,6 +63,20 @@ def with_contents_index(config: KeepConfig, index: str | None) -> KeepConfig:
     if index not in (None, *CONTENTS_INDEXES):
         raise KeepError(f"Contents search can be words or substrings, not {index!r}.")
     return replace(config, contents_index=index, roots=copy.deepcopy(config.roots))
+
+
+def with_note_ignore_keys(config: KeepConfig, keys: Iterable[str]) -> KeepConfig:
+    """``config`` with these front-matter keys ignored in its notes (``[notes]
+    ignore_keys``), each once (case aside), in order; ``tagalot-…`` keys are refused."""
+    listed: list[str] = []
+    for key in keys:
+        try:
+            key = check_key(key)
+        except NoteKeyError as e:
+            raise KeepError(str(e)) from None
+        if key.casefold() not in {k.casefold() for k in listed}:
+            listed.append(key)
+    return replace(config, note_ignore_keys=listed, roots=copy.deepcopy(config.roots))
 
 
 def with_option(

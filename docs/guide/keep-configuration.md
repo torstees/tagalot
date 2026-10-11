@@ -1,6 +1,6 @@
 # Keep configuration
 
-**Keep → Configure keep…** opens a window of three tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer**); a value that can't be used is explained under the form.
+**Keep → Configure keep…** opens a window of four tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
 
 ![Keep configuration's Keep tab, for a research keep](../images/screens/keep-configuration.png)
 
@@ -30,3 +30,7 @@ The folders the keep watches, each with its state (online, offline, not watched,
 - **Theme options:** the theme's settings for this keep, each with **Default**. They apply at the next scan, which reads the affected files again. The built-in ones: 2D assets' **Artist folder level** and books' **Source folder level** (see each [theme](../themes/README.md)).
 - **Online details** (themes that look things up): **Look up details online**, and what it would send. See [Online details](online-details.md).
 - **Search inside documents** (themes with documents): **Off**, **Words**, or **Substrings**, what's stored, and **Clear contents text…**. See [Searching inside documents](search-inside-documents.md).
+
+## Notes
+
+**Keys to ignore in notes:** front-matter keys that never become Extra fields, one per line. **In this keep** is saved with the keep; **In all your keeps** is saved for you on this computer; **Always** lists the built-in ones. Each list is saved when you leave its box and applies at the next scan. See [Notes](notes.md#keys-to-ignore).

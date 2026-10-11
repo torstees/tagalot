@@ -52,6 +52,7 @@ from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_contents_index,
     with_name,
+    with_note_ignore_keys,
     with_online_lookups,
     with_option,
     with_thumbnail_max,
@@ -62,6 +63,7 @@ from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Entity, EntityResource, Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
+from tagalot.core.note_keys import NoteKeyChange, check_key, ignored_keys, with_key
 from tagalot.core.online import (
     Fetcher,
     LookupReport,
@@ -216,6 +218,7 @@ class KeepSession:
         # From now on, root paths follow the configuration (roots added, moved, overridden).
         thumbnails.root_path = session.root_path
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
+        session.tags.on_note_key = session._list_note_key
         with reader.connect() as conn:
             session.has_keywords = any_keywords(conn)
         return session
@@ -256,6 +259,7 @@ class KeepSession:
                     schema=self.schema,
                     theme_options=self.keep.config.theme_options,
                     progress=progress,
+                    note_ignore_keys=self.note_ignore_keys,
                 )
             )
             self.problems.add(problems_from_report(reports[-1]))
@@ -479,6 +483,32 @@ class KeepSession:
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
+
+    # --- ignored note keys (core.note_keys, #381) ---
+
+    @property
+    def note_ignore_keys(self) -> frozenset[str]:
+        """The front-matter keys notes leave out, case-folded: the built-in ones, the
+        user's (``settings.toml``), and the keep's (``keep.toml``)."""
+        return ignored_keys(self.settings.note_ignore_keys, self.keep.config.note_ignore_keys)
+
+    def set_note_ignore_keys(self, keys: Iterable[str]) -> None:
+        """Set the keep's ignored note keys; they apply at the next scan, which reads the
+        notes again. Runs in a worker."""
+        self.save_config(with_note_ignore_keys(self.keep.config, keys))
+
+    def ignore_note_key(self, key: str) -> NoteKeyChange:
+        """Ignore ``key`` in every note of this keep: list it in ``keep.toml`` and remove
+        the Extra fields notes gave under it now; one undo step. Runs in a worker."""
+        key = check_key(key)
+        listed = key.casefold() in {k.casefold() for k in self.keep.config.note_ignore_keys}
+        if not listed:
+            self._list_note_key(key, True)
+        return self.tags.ignore_note_key(key, listed=listed)
+
+    def _list_note_key(self, key: str, ignored: bool) -> None:
+        keys = with_key(self.keep.config.note_ignore_keys, key, ignored)
+        self.save_config(with_note_ignore_keys(self.keep.config, keys))
 
     # --- links made by hand (core.links) ---
 

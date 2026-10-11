@@ -35,7 +35,7 @@ Painted skies and dusk light, since 2009.
 - **`title`:** the item's name, in place of the folder's.
 - **`tags`** (or `keywords`): [file keywords](file-keywords.md). They become tags when they match tags you have.
 - **A key matching one of the item's fields**, by its name or label (`year`, `Genre`): that field, where no file gives one. What the files themselves say still wins, and a note's value replaces one looked up online.
-- **Any other key** becomes an **Extra field**, marked "• from the note".
+- **Any other key** becomes an **Extra field**, marked "• from the note", unless it is [ignored](#keys-to-ignore).
 - **The body** shows under the item's title, and is searchable.
 
 Your own edits always win: a name or field you changed by hand is never replaced by the note.
@@ -52,5 +52,16 @@ Extra fields that came from the note are marked **• from the note**, and scans
 
 - **Edit one** to make it yours: it's marked "• edited", and scans leave it alone.
 - **Remove one** (its ×) and later scans leave it off for this item, even though the note still has it.
+- **Ignore the key in every note:** the arrow beside its × → **Ignore this key in every note…**. After you agree, the fields notes gave under that key are removed from every item in the keep, and scans leave the key out from then on. Fields you added or edited yourself stay. The keep's list in [Keep configuration → Notes](keep-configuration.md#notes) gains the key.
 
-Both are one step you can undo.
+Each is one step you can undo.
+
+## Keys to ignore
+
+Some keys are housekeeping for your Markdown editor, not details of the item. Keys that are ignored never become Extra fields. Three lists apply together:
+
+- **Always:** keys editors add for themselves: `cssclass`, `cssclasses`, `permalink`, `position`, `publish`.
+- **In this keep:** saved with the keep (in `keep.toml`), so they go where the keep goes.
+- **In all your keeps:** saved for you on this computer (in `settings.toml`).
+
+Edit the last two in [Keep configuration → Notes](keep-configuration.md#notes), one key per line; case doesn't matter. A change applies at the next scan (**F5**), which reads the notes again: a key you stop ignoring comes back as an Extra field. Keys starting with `tagalot-` are Tagalot's own and can't be ignored.

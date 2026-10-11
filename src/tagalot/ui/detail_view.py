@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -87,6 +88,7 @@ FROM_NOTE_TIP = (
     "From this item's note: scans keep it up to date. Edit it to make it yours; "
     "remove it and scans leave it off (Undo puts it back)"
 )
+IGNORE_KEY = "Ignore this key in every note…"
 
 
 @dataclass
@@ -136,6 +138,8 @@ class DetailPage(QWidget):
     extra_edited = Signal(int, str, object, bool)
     """An extra field was added (last argument true), changed, or removed (value
     ``None``): entity id, name, value, whether it is new."""
+    note_key_ignore_requested = Signal(str)
+    """Ignore this front-matter key in every note of the keep (#381); the user agreed."""
     reread_requested = Signal(list, bool)
     write_back_requested = Signal(list)
     look_up_requested = Signal(list)
@@ -621,6 +625,15 @@ class DetailPage(QWidget):
             remove.clicked.connect(
                 lambda _c=False, name=name: self.extra_edited.emit(entity_id, name, None, False)
             )
+            if source == FieldSource.NOTE:  # the arrow: this key in every note (#381)
+                remove.setObjectName(f"remove_{name}")
+                remove.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+                menu = QMenu(remove)
+                menu.addAction("Remove from this item", remove.click)
+                ignore = menu.addAction(IGNORE_KEY)
+                ignore.setToolTip(f"Leave {name!r} out of every note in this keep")
+                ignore.triggered.connect(lambda _c=False, name=name: self.ignore_note_key(name))
+                remove.setMenu(menu)
             row.addWidget(editor)
             row.addWidget(remove)
             row.addStretch(1)  # the x follows its value
@@ -640,6 +653,24 @@ class DetailPage(QWidget):
         adding.addWidget(add)
         form.addRow(adding)
         return self._titled("Extra fields", body, "section_extra")
+
+    def ignore_note_key(self, name: str) -> None:
+        """Ignore ``name`` in every note of the keep, if the user agrees."""
+        if self.confirm_ignore_key(name):
+            self.note_key_ignore_requested.emit(name)
+
+    def confirm_ignore_key(self, name: str) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Ignore this key in every note?",
+            f"Leave {name!r} out of every note in this keep?\n\n"
+            f"The {name!r} fields that notes gave are removed from every item now, and "
+            "scans leave the key out from then on. Fields you added or edited stay. "
+            "Edit → Undo puts them back; Keep configuration → Notes lists the keys "
+            "ignored.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _add_extra(self) -> None:
         name, value = self.extra_name.text().strip(), self.extra_value.text().strip()

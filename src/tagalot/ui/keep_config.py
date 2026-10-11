@@ -1,6 +1,6 @@
 """The Keep configuration window (DESIGN.md §12 "Keep configuration").
 
-A window of its own (Keep → Configure keep…), one per main window, with three tabs:
+A window of its own (Keep → Configure keep…), one per main window, with four tabs:
 
 - **Folders:** the roots on the left; the selected one's name, folder, this computer's
   folder, exclude patterns, theme option overrides, and status on the right, with Scan
@@ -8,6 +8,8 @@ A window of its own (Keep → Configure keep…), one per main window, with thre
 - **Thumbnails:** the largest size thumbnails are made at, and the stored thumbnails, with
   Clear….
 - **Keep:** the keep's name and folder, its theme, and the theme's options.
+- **Notes:** the front-matter keys notes never make Extra fields: the keep's, the user's
+  (every keep on this computer), and the built-in ones (§9 *Notes*, #381).
 
 Every change is checked and saved as soon as it's made (``keep.toml``, or ``settings.toml``
 for this computer's folder), in a worker; a bad value is explained under the form and the
@@ -50,6 +52,8 @@ from tagalot.core.contents import ContentsStats
 from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
 from tagalot.core.keep_settings import MIN_THUMBNAIL_SIZE, with_name, with_option
+from tagalot.core.note_keys import NoteKeyError, check_key
+from tagalot.core.notes import DEFAULT_IGNORED_KEYS
 from tagalot.core.online import consent_text
 from tagalot.core.root_admin import (
     RemovalCounts,
@@ -224,6 +228,7 @@ class KeepConfigWindow(QWidget):
         self.tabs.addTab(folders, "Folders")
         self.tabs.addTab(self._thumbnails_tab(), "Thumbnails")
         self.tabs.addTab(self._keep_tab(), "Keep")
+        self.tabs.addTab(self._notes_tab(), "Notes")
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         # Thumbnails are stored as the grids show them: count them again while the
@@ -355,6 +360,51 @@ class KeepConfigWindow(QWidget):
         column.addStretch(1)
         return tab
 
+    def _notes_tab(self) -> QWidget:
+        about = QLabel(
+            "Keys listed here never become Extra fields when Tagalot reads notes. One key "
+            "per line; case doesn't matter. Changes apply at the next scan (F5), which "
+            "reads the notes again."
+        )
+        about.setWordWrap(True)
+        self.keep_ignore_keys = QPlainTextEdit()
+        self.keep_ignore_keys.setObjectName("keep_ignore_keys")
+        self.keep_ignore_keys.setPlaceholderText("mood-board")
+        self.keep_ignore_keys.setToolTip(
+            "Saved in this keep (keep.toml), so they go where the keep goes. Ignore this key "
+            "in every note\u2026 on an item's Extra field adds one. Saved when you leave the "
+            "box."
+        )
+        self.user_ignore_keys = QPlainTextEdit()
+        self.user_ignore_keys.setObjectName("user_ignore_keys")
+        self.user_ignore_keys.setToolTip(
+            "Saved for you on this computer (settings.toml): every keep you open ignores "
+            "them. Saved when you leave the box."
+        )
+        for box in (self.keep_ignore_keys, self.user_ignore_keys):
+            box.installEventFilter(self)
+        built_in = QLabel(", ".join(sorted(DEFAULT_IGNORED_KEYS)))
+        built_in.setToolTip("Keys editors add for themselves; always ignored")
+        built_in.setWordWrap(True)
+        self.notes_error = QLabel()
+        self.notes_error.setObjectName("notes_error")
+        self.notes_error.setStyleSheet("color: #c0392b;")
+        self.notes_error.setWordWrap(True)
+        form = QFormLayout()
+        form.addRow("In this keep:", self.keep_ignore_keys)
+        form.addRow("In all your keeps:", self.user_ignore_keys)
+        form.addRow("Always:", built_in)
+        group = QGroupBox("Keys to ignore in notes")
+        column = QVBoxLayout(group)
+        column.addWidget(about)
+        column.addLayout(form)
+        column.addWidget(self.notes_error)
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.addWidget(group)
+        layout.addStretch(1)
+        return tab
+
     # --- showing ---
 
     def reload(self) -> None:
@@ -463,7 +513,18 @@ class KeepConfigWindow(QWidget):
             label = QLabel(f"{spec.label}:")
             label.setToolTip(spec.description)
             self.keep_options_form.addRow(label, row)
+        self.show_note_keys()
         self.show_cache_stats()
+
+    def show_note_keys(self) -> None:
+        """The Notes tab's lists, as saved (a box being typed in is left alone)."""
+        lists = (
+            (self.keep_ignore_keys, self.session.keep.config.note_ignore_keys),
+            (self.user_ignore_keys, self.session.settings.note_ignore_keys),
+        )
+        for box, keys in lists:
+            if not box.hasFocus():
+                box.setPlainText("\n".join(keys))
 
     def _show_root_options(self, root: RootConfig) -> None:
         _clear_form(self.root_options_form)
@@ -687,11 +748,55 @@ class KeepConfigWindow(QWidget):
         self._run(lambda: save_settings(settings, settings_path), message)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """Save the exclude patterns when the box loses the focus."""
-        if watched is self.exclude and event.type() == QEvent.Type.FocusOut:
-            patterns, notes = parse_skip_lines(self.exclude.toPlainText().splitlines())
-            self._edit(exclude=patterns, exclude_notes=notes)
+        """Save the exclude patterns, or a list of keys to ignore in notes, when its box
+        loses the focus."""
+        if event.type() == QEvent.Type.FocusOut:
+            if watched is self.exclude:
+                patterns, notes = parse_skip_lines(self.exclude.toPlainText().splitlines())
+                self._edit(exclude=patterns, exclude_notes=notes)
+            elif watched is self.keep_ignore_keys:
+                self.set_keep_ignore_keys(self.keep_ignore_keys.toPlainText().splitlines())
+            elif watched is self.user_ignore_keys:
+                self.set_user_ignore_keys(self.user_ignore_keys.toPlainText().splitlines())
         return super().eventFilter(watched, event)
+
+    def _note_keys(self, lines: list[str]) -> list[str] | None:
+        """The keys typed, each once (case aside), or ``None`` (saying why) if one can't
+        be ignored."""
+        keys: list[str] = []
+        try:
+            for line in lines:
+                if line.strip() and line.strip().casefold() not in {k.casefold() for k in keys}:
+                    keys.append(check_key(line))
+        except NoteKeyError as e:
+            self.notes_error.setText(str(e))
+            return None
+        self.notes_error.clear()
+        return keys
+
+    def set_keep_ignore_keys(self, lines: list[str]) -> None:
+        """Save the keys this keep ignores in notes (``keep.toml``)."""
+        keys = self._note_keys(lines)
+        session = self.session
+        if keys is None or keys == session.keep.config.note_ignore_keys:
+            return
+        self._run(
+            lambda: session.set_note_ignore_keys(keys),
+            "Saved the keys this keep ignores in notes; they apply at the next scan (F5).",
+        )
+
+    def set_user_ignore_keys(self, lines: list[str]) -> None:
+        """Save the keys every keep ignores in notes (``settings.toml``)."""
+        keys = self._note_keys(lines)
+        settings, settings_path = self.session.settings, self.settings_path
+        if keys is None or keys == settings.note_ignore_keys:
+            return
+        settings.note_ignore_keys = keys
+        self._run(
+            lambda: save_settings(settings, settings_path),
+            "Saved the keys all your keeps ignore in notes; they apply at each keep's next "
+            "scan (F5).",
+        )
 
     def _choose_new_root(self) -> None:
         folder = self.pick_folder("Watch a folder")

@@ -38,9 +38,9 @@ from tagalot.ui.models.results import display_value
 
 PENCIL = "✎"
 BOX_WIDTH = 280
+"""The text box's minimum width while editing."""
 BOX_PADDING = 24
 """Room in the text box beside the value's text: its frame, margins, and the cursor."""
-"""The text box's minimum width while editing."""
 EDITED_TIP = "You edited this; scans won't change it (Undo puts it back)"
 
 
