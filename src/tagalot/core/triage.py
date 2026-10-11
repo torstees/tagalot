@@ -42,6 +42,7 @@ from tagalot.core.models import (
     EntityResource,
     EntityTag,
     KeywordIgnored,
+    NotesFolderNote,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -150,6 +151,7 @@ def _unlinked_where() -> list[ColumnElement[bool]]:
         Resource.id.not_in(  # an item's note is used, though not linked (#379)
             select(EntityNote.resource_id).where(EntityNote.resource_id.is_not(None))
         ),
+        Resource.id.not_in(select(NotesFolderNote.resource_id)),  # listed under Notes
         _not_dismissed(UNLINKED, Resource.id, resource_marker()),
     ]
 
@@ -177,6 +179,67 @@ def count_unlinked(conn: Connection) -> int:
     return int(
         conn.scalar(select(func.count()).select_from(Resource).where(*_unlinked_where())) or 0
     )
+
+
+# --- the notes folder's notes (#382) ---
+
+
+@dataclass(frozen=True)
+class NoteProblem:
+    """A notes-folder note that isn't an item's note: it matches no item, several, or an
+    item that has another note."""
+
+    resource_id: int
+    root_id: str
+    relpath: str
+    status: ResourceStatus
+    matches: int
+    item_title: str | None
+    """The item it matched, when it matched one (which has another note)."""
+
+    @property
+    def reason(self) -> str:
+        if self.matches == 0:
+            return "No item has this title or one of its aliases"
+        if self.matches > 1:
+            return f"{self.matches} items match; add tagalot-type, or an alias only one of them has"
+        return f"{self.item_title!r} has another note"
+
+
+def _note_problem_where() -> list[ColumnElement[bool]]:
+    return [
+        Resource.status != ResourceStatus.MISSING,
+        or_(NotesFolderNote.matches != 1, NotesFolderNote.applied.is_(False)),
+    ]
+
+
+def note_problems(conn: Connection) -> list[NoteProblem]:
+    """The notes folder's notes that aren't items' notes, by path."""
+    query = (
+        select(
+            Resource.id,
+            Resource.root_id,
+            Resource.relpath,
+            Resource.status,
+            NotesFolderNote.matches,
+            Entity.title,
+        )
+        .join(Resource, Resource.id == NotesFolderNote.resource_id)
+        .join(Entity, Entity.id == NotesFolderNote.item_id, isouter=True)
+        .where(*_note_problem_where())
+        .order_by(Resource.relpath)
+    )
+    return [NoteProblem(*row) for row in conn.execute(query)]
+
+
+def count_note_problems(conn: Connection) -> int:
+    query = (
+        select(func.count())
+        .select_from(NotesFolderNote)
+        .join(Resource, Resource.id == NotesFolderNote.resource_id)
+        .where(*_note_problem_where())
+    )
+    return int(conn.scalar(query) or 0)
 
 
 def exact_pattern(relpath: str) -> str:

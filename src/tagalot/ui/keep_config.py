@@ -8,8 +8,9 @@ A window of its own (Keep → Configure keep…), one per main window, with four
 - **Thumbnails:** the largest size thumbnails are made at, and the stored thumbnails, with
   Clear….
 - **Keep:** the keep's name and folder, its theme, and the theme's options.
-- **Notes:** the front-matter keys notes never make Extra fields: the keep's, the user's
-  (every keep on this computer), and the built-in ones (§9 *Notes*, #381).
+- **Notes:** the keep's notes folder, Choose… and None (§9 *The notes folder*, #382); and
+  the front-matter keys notes never make Extra fields: the keep's, the user's (every keep
+  on this computer), and the built-in ones (§9 *Notes*, #381).
 
 Every change is checked and saved as soon as it's made (``keep.toml``, or ``settings.toml``
 for this computer's folder), in a worker; a bad value is explained under the form and the
@@ -60,11 +61,14 @@ from tagalot.core.root_admin import (
     RootStatus,
     add_root,
     edit_root,
+    notes_folder_for,
     parse_skip_lines,
     removal_counts,
     root_statuses,
     skip_lines,
+    with_notes_folder,
 )
+from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import save_settings
 from tagalot.core.thumbnails.cache import CacheStats
@@ -399,8 +403,38 @@ class KeepConfigWindow(QWidget):
         column.addWidget(about)
         column.addLayout(form)
         column.addWidget(self.notes_error)
+
+        folder_about = QLabel(
+            "One folder of Markdown notes for items that have no folder of their own "
+            "(actors, authors, a music artist). Each note is matched to an item by its title "
+            "(or file name) and aliases, and typed by its tagalot-type key or its subfolder "
+            "(Actors/Keanu Reeves.md). Nothing in it is read as anything but notes."
+        )
+        folder_about.setWordWrap(True)
+        self.notes_folder = QLabel()
+        self.notes_folder.setObjectName("notes_folder")
+        self.notes_folder.setWordWrap(True)
+        self.notes_folder.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        choose = QPushButton("Choose\u2026")
+        choose.setToolTip(
+            "A folder inside a watched folder, or one of its own (then watched for notes only)"
+        )
+        choose.clicked.connect(self._choose_notes_folder)
+        self.no_notes_folder = QPushButton("None")
+        self.no_notes_folder.setToolTip("Stop using a notes folder (its files stay as they are)")
+        self.no_notes_folder.clicked.connect(lambda: self.set_notes_folder(None))
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self.notes_folder, 1)
+        folder_row.addWidget(choose)
+        folder_row.addWidget(self.no_notes_folder)
+        folder_group = QGroupBox("Notes folder")
+        folder_column = QVBoxLayout(folder_group)
+        folder_column.addWidget(folder_about)
+        folder_column.addLayout(folder_row)
+
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.addWidget(folder_group)
         layout.addWidget(group)
         layout.addStretch(1)
         return tab
@@ -517,7 +551,16 @@ class KeepConfigWindow(QWidget):
         self.show_cache_stats()
 
     def show_note_keys(self) -> None:
-        """The Notes tab's lists, as saved (a box being typed in is left alone)."""
+        """The Notes tab, as saved (a box being typed in is left alone)."""
+        config = self.session.keep.config
+        root = next((r for r in config.roots if r.id == config.notes_root), None)
+        if root is None:
+            self.notes_folder.setText("None")
+        else:
+            where = local_path(self.session.root_path(root.id), config.notes_path)
+            whole = "all of it" if not config.notes_path else config.notes_path
+            self.notes_folder.setText(f"{where}\n(in {root.name}: {whole})")
+        self.no_notes_folder.setEnabled(root is not None)
         lists = (
             (self.keep_ignore_keys, self.session.keep.config.note_ignore_keys),
             (self.user_ignore_keys, self.session.settings.note_ignore_keys),
@@ -759,6 +802,71 @@ class KeepConfigWindow(QWidget):
             elif watched is self.user_ignore_keys:
                 self.set_user_ignore_keys(self.user_ignore_keys.toPlainText().splitlines())
         return super().eventFilter(watched, event)
+
+    def _choose_notes_folder(self) -> None:
+        folder = self.pick_folder("Choose the notes folder")
+        if folder:
+            self.use_notes_folder(folder)
+
+    def use_notes_folder(self, folder: str) -> None:
+        """Make ``folder`` the notes folder: in place, inside a watched folder; else, if the
+        user agrees, watched as a folder of its own for notes only. Then offer a scan."""
+        session = self.session
+        config = session.keep.config
+        found = notes_folder_for(config, session.root_path, folder)
+        if found is not None:
+            root_id, path = found
+            root = next(r for r in config.roots if r.id == root_id)
+
+            def saved() -> None:
+                if self.ask_scan(root):
+                    self.scan_requested.emit([root_id])
+
+            self._run(
+                lambda: session.set_notes_folder(root_id, path),
+                f"The notes folder is {folder}; the next scan of {root.name} reads it.",
+                saved,
+            )
+            return
+        if not self.ask_notes_root(folder):
+            return
+        try:
+            added = add_root(config, session.keep.dir, "", folder)
+            new = next(r for r in added.roots if r.id not in {r.id for r in config.roots})
+            updated = with_notes_folder(added, new.id, "")
+        except (KeepError, StopIteration) as e:
+            self._refused(str(e) or f"{folder} is already watched.")
+            return
+
+        def watched() -> None:
+            if self.ask_scan(new):
+                self.scan_requested.emit([new.id])
+
+        self._run(
+            lambda: session.save_config(updated),
+            f"Now watching {new.name} for notes only.",
+            watched,
+        )
+
+    def set_notes_folder(self, root_id: str | None, path: str = "") -> None:
+        """Use the notes folder at ``path`` in ``root_id``, or none (``None``)."""
+        session = self.session
+        self._run(
+            lambda: session.set_notes_folder(root_id, path),
+            "The keep has no notes folder now; the next scan reads its files as usual."
+            if root_id is None
+            else "Saved the notes folder; the next scan reads it.",
+        )
+
+    def ask_notes_root(self, folder: str) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Watch this folder for notes?",
+            f"{folder} isn't inside a watched folder. Watch it as a folder of its own, "
+            "used only for notes?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _note_keys(self, lines: list[str]) -> list[str] | None:
         """The keys typed, each once (case aside), or ``None`` (saying why) if one can't

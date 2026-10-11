@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 16
+KEEP_FORMAT_VERSION = 17
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -129,6 +129,12 @@ class KeepConfig:
     note_ignore_keys: list[str] = field(default_factory=list)
     """``[notes] ignore_keys``: front-matter keys this keep's notes never make Extra fields
     (§9 *Notes*), with the user's own and the built-in ones."""
+    notes_root: str | None = None
+    """``[notes] root``: the root holding the keep's notes folder (§9 *The notes folder*);
+    ``None``, no notes folder."""
+    notes_path: str = ""
+    """``[notes] path``: the notes folder inside :attr:`notes_root`, root-relative POSIX
+    (``""``: the whole root)."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -178,8 +184,16 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[online]", f"lookups = {toml_str(config.online_lookups)}"]
     if config.contents_index is not None:
         lines += ["", "[contents]", f"index = {toml_str(config.contents_index)}"]
+    notes_lines = []
+    if config.notes_root is not None:
+        notes_lines += [
+            f"root = {toml_str(config.notes_root)}",
+            f"path = {toml_str(config.notes_path)}",
+        ]
     if config.note_ignore_keys:
-        lines += ["", "[notes]", f"ignore_keys = {toml_list(config.note_ignore_keys)}"]
+        notes_lines.append(f"ignore_keys = {toml_list(config.note_ignore_keys)}")
+    if notes_lines:
+        lines += ["", "[notes]", *notes_lines]
     for root in config.roots:
         lines += [
             "",
@@ -254,13 +268,21 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             raise KeepConfigError(path, '[contents] index must be "words" or "substrings"')
 
     note_ignore_keys: list[str] = []
+    notes_root: str | None = None
+    notes_path = ""
     if "notes" in data:
         notes_table = reader.table(data, "notes")
-        reader.warn_unknown(notes_table, {"ignore_keys"}, "[notes]")
+        reader.warn_unknown(notes_table, {"ignore_keys", "root", "path"}, "[notes]")
         keys = notes_table.get("ignore_keys", [])
         if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
             raise KeepConfigError(path, "[notes] ignore_keys must be a list of strings")
         note_ignore_keys = [k.strip() for k in keys if k.strip()]
+        if "root" in notes_table:
+            notes_root = reader.string(notes_table, "root", "[notes]")
+            raw_path = notes_table.get("path", "")
+            if not isinstance(raw_path, str):
+                raise KeepConfigError(path, "[notes] path must be a string")
+            notes_path = clean_relpath(raw_path)
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -300,6 +322,9 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         if root.id in seen:
             raise KeepConfigError(path, f"duplicate root id {root.id!r}")
         seen.add(root.id)
+    if notes_root is not None and notes_root not in seen:
+        logger.warning("%s: [notes] root %r is no root of the keep; ignoring it", path, notes_root)
+        notes_root, notes_path = None, ""
 
     return KeepConfig(
         id=keep_id,
@@ -313,7 +338,16 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         online_lookups=online_lookups,
         contents_index=contents_index,
         note_ignore_keys=note_ignore_keys,
+        notes_root=notes_root,
+        notes_path=notes_path,
     )
+
+
+def clean_relpath(relpath: str) -> str:
+    """A folder path inside a root as Tagalot stores it: POSIX separators, no leading,
+    trailing, empty, or ``.`` parts (``"Notes\\Actors/"`` -> ``"Notes/Actors"``)."""
+    parts = relpath.replace("\\", "/").split("/")
+    return "/".join(p for p in parts if p.strip() and p != ".")
 
 
 class _Reader:

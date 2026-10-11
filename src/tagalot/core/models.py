@@ -510,6 +510,35 @@ class NoteIgnoredKey(Base):
     key: Mapped[str] = mapped_column(primary_key=True)
 
 
+class NotesFolderNote(Base):
+    """A note in the keep's notes folder (§9 *The notes folder*, #382), as last read: what
+    it is matched by, and what it matched. Its item's ``entity_note`` holds what it gave.
+    Notes matching no item, or several, and notes whose item has another note, are listed
+    in Triage."""
+
+    __tablename__ = "notes_folder_note"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    size: Mapped[int | None]
+    mtime_ns: Mapped[int | None]
+    title: Mapped[str]
+    """The note's ``title``, else its file name without the extension."""
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
+    type: Mapped[str | None]
+    """The entity type the note is for (``tagalot-type``, else its subfolder); ``None``:
+    any."""
+    matches: Mapped[int] = mapped_column(default=0)
+    """How many items it matched when last matched."""
+    item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("entity.id", ondelete="SET NULL"), index=True
+    )
+    """The item it matched, when it matched exactly one."""
+    applied: Mapped[bool] = mapped_column(default=False)
+    """It is that item's note (else the item has another one)."""
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is ``core.saved_searches.SavedDefinition``'s JSON form:
     the page's search and its filter bar's, and how it was shown (§8, #127)."""

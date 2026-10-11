@@ -17,6 +17,24 @@ Aurora Studio/
 
 This works for items that *are* folders: an artist in the [2D assets](../themes/assets2d.md) theme, an album in [Music](../themes/music.md), a collection in [Movies](../themes/movies.md). Notes are read at the next scan, and read again whenever you change them.
 
+## The notes folder
+
+Items with no folder of their own (an actor, an author, a music artist) take their notes from the keep's **notes folder**. Choose it in [Keep configuration → Notes](keep-configuration.md#notes): a folder inside a watched folder, or one anywhere else, which Tagalot then watches for notes only. Tagalot never treats a folder as the notes folder because of its name.
+
+```
+Notes/
+  Actors/
+    Al Pacino.md        ← the note for the actor "Al Pacino"
+  Keanu.md              ← tagalot-type: actor, aliases: [Keanu Reeves]
+```
+
+- **Which item:** the note's `title`, else its file name, or one of its `aliases`, matches the item's title. Case and accents don't matter (`Leon.md` finds "Léon").
+- **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label), else the name of the folder it's in (`Actors/`), else any kind. The key wins, so a note in the wrong folder can say what it's for.
+- **Nothing else is read there:** pictures and other files in the notes folder aren't items. Only its Markdown files are read, and only as notes.
+- **One note per item.** A note in the item's own folder wins over one in the notes folder.
+
+Notes that match no item, or several, and notes for an item that already has a note, are listed in [Triage → Notes](triage.md#notes). A new item finds a note that was already there at the next scan, so you can write notes before their items appear.
+
 ## What a note gives
 
 A note's front matter (the block between `---` lines at the top) gives details; the rest is its body.

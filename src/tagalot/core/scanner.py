@@ -13,7 +13,7 @@ from typing import Any
 from sqlalchemy import Connection, bindparam, delete, exists, insert, select, update
 
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
-from tagalot.core.notes import note_rank
+from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,7 @@ def walk_root(
     extensions: Collection[str] | None = None,
     dirs: DirRule = False,
     on_error: ErrorHandler | None = None,
+    notes: str | None = None,
 ) -> Iterator[WalkEntry]:
     """Yield the files (and optionally directories) under ``root_path``.
 
@@ -99,6 +100,8 @@ def walk_root(
     - ``dirs``: whether directories become entries (the root itself never does).
     - Notes (§9 *Notes*): a Markdown file named as its folder's note is listed whatever
       ``extensions`` say, when its folder is one ``dirs`` lists (:func:`is_folder_note`).
+    - ``notes``: the notes folder in this root (§9 *The notes folder*; ``""`` is the whole
+      root): only its Markdown files are listed, whatever ``extensions`` and ``dirs`` say.
     - Symlinked folders and junctions are not followed; symlinked files are included.
     - Unreadable folders and files go to ``on_error`` and the walk continues.
 
@@ -123,7 +126,9 @@ def walk_root(
                 continue
             try:
                 if entry.is_dir(follow_symlinks=False) and not entry.is_junction():
-                    if dirs is True or (callable(dirs) and dirs(relpath)):
+                    if in_notes(relpath, notes):
+                        pass  # walked for its notes, never an entry
+                    elif dirs is True or (callable(dirs) and dirs(relpath)):
                         yield WalkEntry(
                             relpath=relpath,
                             kind=ResourceKind.DIR,
@@ -134,7 +139,10 @@ def walk_root(
                     subdirs.append(relpath)
                 elif entry.is_file():
                     ext = os.path.splitext(entry.name)[1].lower()
-                    if (
+                    if in_notes(relpath, notes):
+                        if ext not in NOTE_EXTENSIONS:
+                            continue
+                    elif (
                         wanted is not None
                         and ext not in wanted
                         and not is_folder_note(relpath, dirs)
@@ -151,6 +159,17 @@ def walk_root(
             except OSError as e:
                 report(relpath, e)
         stack.extend(reversed(subdirs))  # pop in name order: depth-first, sorted
+
+
+def in_notes(relpath: str, notes: str | None) -> bool:
+    """Whether a root-relative path is the notes folder ``notes`` or inside it (``""``: the
+    whole root; ``None``: the root has none). Compared ignoring case, as Windows does."""
+    if notes is None:
+        return False
+    if notes == "":
+        return True
+    path, folder = relpath.casefold(), notes.casefold()
+    return path == folder or path.startswith(folder + "/")
 
 
 def is_folder_note(relpath: str, dirs: DirRule) -> bool:
@@ -232,6 +251,7 @@ def walk_scope(
     exclude: Iterable[str] = (),
     extensions: Collection[str] | None = None,
     dirs: DirRule = False,
+    notes: str | None = None,
 ) -> InScope:
     """Whether :func:`walk_root` with these settings would list a path, if it's there: not
     excluded (itself or a folder above it, since excluded folders are pruned), a wanted
@@ -244,6 +264,8 @@ def walk_scope(
             parts = relpath.split("/")
             if any(excluded.match("/".join(parts[:n])) for n in range(1, len(parts) + 1)):
                 return False
+        if in_notes(relpath, notes):
+            return kind is ResourceKind.FILE and ext.lower() in NOTE_EXTENSIONS
         if kind is ResourceKind.DIR:
             return dirs is True or (callable(dirs) and bool(dirs(relpath)))
         return wanted is None or ext.lower() in wanted or is_folder_note(relpath, dirs)

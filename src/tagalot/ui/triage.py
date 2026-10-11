@@ -1,6 +1,6 @@
 """The Triage page: what needs attention (DESIGN.md §12 "Triage").
 
-Three tabs, each with how many it holds:
+Tabs, each with how many it holds:
 
 - **Unlinked files:** files no item uses (a table, the first :data:`MAX_FILES`), with Open
   file, Show in file manager, Skip in scans (an exact exclude pattern on its root), and
@@ -9,6 +9,9 @@ Three tabs, each with how many it holds:
   Tags panel or by dropping tags, or Dismiss them.
 - **Missing files:** items whose files are all missing, a search page too, with Delete…
   and Show where they were.
+- **Unmatched keywords:** items with file keywords no tag matches (#295).
+- **Notes:** the notes folder's notes that aren't an item's note (#382): matching no
+  item, several, or an item with another note; with Open note and Show in file manager.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -45,8 +48,11 @@ from tagalot.core.triage import (
     MISSING,
     UNLINKED,
     UNTAGGED,
+    NoteProblem,
     UnlinkedFile,
+    count_note_problems,
     count_unlinked,
+    note_problems,
     unlinked_files,
 )
 from tagalot.ui.empty_state import EmptyState
@@ -57,12 +63,13 @@ from tagalot.ui.workers import run_in_pool
 MAX_FILES = 10_000
 """Unlinked files listed at once (the count shows them all)."""
 
-UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB = 0, 1, 2, 3
+UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, NOTES_TAB = 0, 1, 2, 3, 4
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
     MISSING_TAB: "Missing files",
     KEYWORDS_TAB: "Unmatched keywords",
+    NOTES_TAB: "Notes",
 }
 
 ModelIndex = QModelIndex | QPersistentModelIndex
@@ -74,6 +81,7 @@ class Counts:
     untagged: int
     missing: int
     keywords: int = 0
+    notes: int = 0
 
 
 class UnlinkedModel(QAbstractTableModel):
@@ -115,6 +123,43 @@ class UnlinkedModel(QAbstractTableModel):
         if column == 2:
             return format_bytes(file.size) if file.size is not None else ""
         return "offline" if file.status is ResourceStatus.OFFLINE else ""
+
+
+class NotesModel(QAbstractTableModel):
+    """The notes folder's notes that aren't items' notes: path, and why."""
+
+    HEADERS = ("Note", "Why")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.notes: list[NoteProblem] = []
+
+    def set_notes(self, notes: list[NoteProblem]) -> None:
+        self.beginResetModel()
+        self.notes = notes
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.notes)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+        note = self.notes[index.row()]
+        if index.column() == 0:
+            return note.relpath
+        offline = " (offline)" if note.status is ResourceStatus.OFFLINE else ""
+        return note.reason + offline
 
 
 class TriagePage(QWidget):
@@ -208,11 +253,41 @@ class TriagePage(QWidget):
         open_keywords.clicked.connect(self.keywords_requested.emit)
         keywords_tab = _tab(self.keywords, [open_keywords])
 
+        self.notes = NotesModel()
+        self.notes_table = QTableView()
+        self.notes_table.setObjectName("notes")
+        self.notes_table.setModel(self.notes)
+        self.notes_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.notes_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.notes_table.verticalHeader().hide()
+        header = self.notes_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.notes_table.doubleClicked.connect(lambda _: self._open_note(OPEN))
+        open_note = QPushButton("Open note")
+        open_note.setToolTip("Open the note in your Markdown editor, to fix its title or type")
+        open_note.clicked.connect(lambda: self._open_note(OPEN))
+        reveal_note = QPushButton("Show in file manager")
+        reveal_note.clicked.connect(lambda: self._open_note(REVEAL))
+        self.notes_note = QLabel(
+            "Notes in the notes folder that aren't an item's note. A note is matched by its "
+            "title (or file name) and aliases, and typed by tagalot-type or its folder."
+        )
+        self.notes_note.setWordWrap(True)
+        self.notes_empty = EmptyState(
+            "Every note has its item", "Notes in the notes folder each found one item."
+        )
+        self.notes_stack = QStackedWidget()
+        self.notes_stack.addWidget(self.notes_table)
+        self.notes_stack.addWidget(self.notes_empty)
+        notes_tab = _tab(self.notes_stack, [open_note, reveal_note], self.notes_note)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
         self.tabs.addTab(missing_tab, _TITLES[MISSING_TAB])
         self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
+        self.tabs.addTab(notes_tab, _TITLES[NOTES_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         self.refresh()
@@ -224,7 +299,7 @@ class TriagePage(QWidget):
         tabs refresh with the window's other searches)."""
         session = self.session
 
-        def job() -> tuple[Counts, list[UnlinkedFile]]:
+        def job() -> tuple[Counts, list[UnlinkedFile], list[NoteProblem]]:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
                 counts = Counts(
@@ -232,24 +307,30 @@ class TriagePage(QWidget):
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
+                    count_note_problems(conn),
                 )
-                return counts, unlinked_files(conn, MAX_FILES)
+                return counts, unlinked_files(conn, MAX_FILES), note_problems(conn)
 
-        def done(result: tuple[Counts, list[UnlinkedFile]]) -> None:
+        def done(result: tuple[Counts, list[UnlinkedFile], list[NoteProblem]]) -> None:
             if shiboken6.isValid(self):
                 self._show(*result)
 
         run_in_pool(job, on_done=done)
 
-    def _show(self, counts: Counts, files: list[UnlinkedFile]) -> None:
+    def _show(
+        self, counts: Counts, files: list[UnlinkedFile], notes: list[NoteProblem] | None = None
+    ) -> None:
         self.counts = counts
         for tab, n in (
             (UNLINKED_TAB, counts.unlinked),
             (UNTAGGED_TAB, counts.untagged),
             (MISSING_TAB, counts.missing),
             (KEYWORDS_TAB, counts.keywords),
+            (NOTES_TAB, counts.notes),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
+        self.notes.set_notes(notes or [])
+        self.notes_stack.setCurrentWidget(self.notes_table if notes else self.notes_empty)
         self.files.set_files(files)
         self.files_stack.setCurrentWidget(self.table if files else self.files_empty)
         if counts.unlinked > len(files):
@@ -289,6 +370,22 @@ class TriagePage(QWidget):
             return
         self.file_opener.act(
             FileToOpen(file.resource_id, local_path(base, file.relpath), False), how
+        )
+
+    def selected_note(self) -> NoteProblem | None:
+        rows = self.notes_table.selectionModel().selectedRows()
+        return self.notes.notes[rows[0].row()] if rows else None
+
+    def _open_note(self, how: str) -> None:
+        note = self.selected_note()
+        if note is None or self.file_opener is None:
+            return
+        base = _known(self.session)(note.root_id)
+        if base is None:
+            self.message.emit("The notes folder has no folder on this computer.")
+            return
+        self.file_opener.act(
+            FileToOpen(note.resource_id, local_path(base, note.relpath), False), how
         )
 
     def _link(self) -> None:
