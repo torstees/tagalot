@@ -59,4 +59,4 @@ A "reading list" or "to watch" list is a saved search: say, Papers with the fiel
 
 ## Sorting and columns
 
-In the list layout, click a column's heading to sort by it (again to reverse). Right-click a heading to show or hide columns: the title always stays, **Tags** lists each item's own tags, and every field the listed items share can be a column. Each search remembers its columns.
+In the list layout, click a column's heading to sort by it (again to reverse). Drag a heading's edge to make a column wider or narrower, the title's included; the last column fills the rest of the width. Right-click a heading to show or hide columns: the title always stays, **Tags** lists each item's own tags, and every field the listed items share can be a column. Each search remembers its columns.

@@ -10,6 +10,7 @@ from PySide6.QtGui import (
     QDropEvent,
     QPainter,
     QPalette,
+    QResizeEvent,
     QTextDocument,
 )
 from PySide6.QtWidgets import (
@@ -39,6 +40,9 @@ from tagalot.ui.models.results import (
 )
 
 TITLE_MIN_WIDTH = 200
+TITLE_MAX_WIDTH = 480
+"""The widest the title column starts: wider than that, the last column takes the rest
+(#413). It fits the spare width until the user resizes it."""
 TAGS_WIDTH = 220
 DEFAULT_HIDDEN = frozenset({TAGS, KEYWORDS})
 """Columns hidden until the user shows them (right-click a column header)."""
@@ -128,9 +132,15 @@ class ResultTable(QTableView):
         self._drop_rows: list[int] = []
         self._outlines: list[QFrame] = []
         self.columns: list[ResultColumn] = []
+        self.start_widths: dict[int, int] = {}
+        """Each column's starting width, by index (:func:`set_column_widths`)."""
+        self.title_fitted = True
+        """Whether the title still fits the spare width: until the user resizes it."""
+        self._fitting = False
         header = self.horizontalHeader()
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._header_menu)
+        header.sectionResized.connect(self._section_resized)
 
     # --- columns ---
 
@@ -143,6 +153,43 @@ class ResultTable(QTableView):
         hide = hidden_keys(self.columns, hidden, shown)
         for i, column in enumerate(self.columns):
             self.setColumnHidden(i, column.key in hide)
+        self.fit_title()
+
+    def _title(self) -> int | None:
+        return next((i for i, c in enumerate(self.columns) if c.key == "title"), None)
+
+    def fit_title(self) -> None:
+        """Give the title the width the other shown columns leave, between
+        :data:`TITLE_MIN_WIDTH` and :data:`TITLE_MAX_WIDTH`, unless the user resized it:
+        on a narrow window every column fits, on a wide one the last column fills the rest
+        (#413)."""
+        title = self._title()
+        if not self.title_fitted or title is None:
+            return
+        others = [i for i in range(len(self.columns)) if i != title and not self.isColumnHidden(i)]
+        if not others:
+            return  # the title alone: it fills the width as the last column
+        spare = self.viewport().width() - sum(self.start_widths.get(i, 0) for i in others)
+        self._fitting = True
+        try:
+            self.setColumnWidth(title, max(TITLE_MIN_WIDTH, min(TITLE_MAX_WIDTH, spare)))
+        finally:
+            self._fitting = False
+
+    def _section_resized(self, index: int, _old: int, _new: int) -> None:
+        if self._fitting or index != self._title():
+            return
+        header = self.horizontalHeader()
+        shown = [
+            header.visualIndex(i) for i in range(header.count()) if not header.isSectionHidden(i)
+        ]
+        if shown and header.visualIndex(index) == max(shown):
+            return  # stretched as the last shown column, not resized by the user
+        self.title_fitted = False
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.fit_title()
 
     def column_menu(self) -> QMenu:
         """A menu with a checkbox per column (the title can't be hidden)."""
@@ -248,27 +295,31 @@ def make_result_table(parent: QWidget | None = None) -> ResultTable:
     table.verticalHeader().setDefaultSectionSize(table.fontMetrics().height() + 8)
     header = table.horizontalHeader()
     header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-    header.setStretchLastSection(False)
+    header.setStretchLastSection(True)  # the last shown column fills the rest, as in the tree
     header.setMinimumSectionSize(40)
     table.setMinimumWidth(TITLE_MIN_WIDTH)
     return table
 
 
-def set_column_widths(table: QTableView, columns: Sequence[ResultColumn]) -> None:
-    """The title takes the remaining width; the other columns start narrow and can be
-    resized. Call again whenever the columns change."""
+def set_column_widths(table: ResultTable, columns: Sequence[ResultColumn]) -> None:
+    """Every column can be resized: the others start narrow, the title takes the spare
+    width up to :data:`TITLE_MAX_WIDTH` (:meth:`ResultTable.fit_title`), and the last shown
+    column fills the rest (#413). Call again whenever the columns change; then the title
+    fits the width again."""
     header = table.horizontalHeader()
+    table.start_widths = {}
+    table.title_fitted = True
     for i, column in enumerate(columns):
+        header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
         if column.key == "title":
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Stretch)
-        else:
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-            width = TAGS_WIDTH if column.key in (TAGS, KEYWORDS) else COLUMN_WIDTH
-            if column.key == MATCH:
-                width = MATCH_WIDTH
-            elif column.key == BADGES:
-                width = BADGES_WIDTH
-            table.setColumnWidth(i, NUMERIC_WIDTH if column.numeric else width)
+            continue  # fitted once the shown columns are known
+        width = TAGS_WIDTH if column.key in (TAGS, KEYWORDS) else COLUMN_WIDTH
+        if column.key == MATCH:
+            width = MATCH_WIDTH
+        elif column.key == BADGES:
+            width = BADGES_WIDTH
+        table.start_widths[i] = NUMERIC_WIDTH if column.numeric else width
+        table.setColumnWidth(i, table.start_widths[i])
         delegate = (
             match_delegate(table)
             if column.key == MATCH
