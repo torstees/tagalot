@@ -199,6 +199,13 @@ class TagActions(QObject):
             lambda change: f"{change.label}.",
         )
 
+    def edit_note(self, entity_id: int, text: str) -> None:
+        """Set the note typed for an item (empty: remove it); one undo step."""
+        self._run(
+            lambda: self.session.tags.edit_note(entity_id, text),
+            lambda change: f"{change.label}.",
+        )
+
     def reread(self, entity_ids: Iterable[int], replace_edits: bool) -> None:
         """Read these items' files again now (keeping, or replacing, what the user edited);
         one undo step."""

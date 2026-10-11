@@ -427,10 +427,30 @@ class KeepConfigWindow(QWidget):
         folder_row.addWidget(self.notes_folder, 1)
         folder_row.addWidget(choose)
         folder_row.addWidget(self.no_notes_folder)
+        self.notes_writable = QCheckBox("Let Save as note… add new notes to this folder")
+        self.notes_writable.setObjectName("notes_writable")
+        self.notes_writable.setToolTip(
+            "Off: Tagalot never writes here. On: Save as note… on an item (and only "
+            "that) writes its note as a new file here. It never changes or replaces a file, "
+            "whether or not the watched folder it's in lets Write to file… change files."
+        )
+        self.notes_writable.clicked.connect(self._toggle_notes_writable)
+        self.new_notes = QComboBox()
+        self.new_notes.setObjectName("new_notes")
+        self.new_notes.addItem("In a folder for each type (Actors/Keanu Reeves.md)", "folders")
+        self.new_notes.addItem("All in the notes folder, typed by tagalot-type", "one-folder")
+        self.new_notes.setToolTip("Where Save as note… puts new notes")
+        self.new_notes.activated.connect(self._choose_new_notes)
+        new_row = QHBoxLayout()
+        new_row.addWidget(QLabel("New notes go:"))
+        new_row.addWidget(self.new_notes)
+        new_row.addStretch(1)
         folder_group = QGroupBox("Notes folder")
         folder_column = QVBoxLayout(folder_group)
         folder_column.addWidget(folder_about)
         folder_column.addLayout(folder_row)
+        folder_column.addWidget(self.notes_writable)
+        folder_column.addLayout(new_row)
 
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -561,6 +581,10 @@ class KeepConfigWindow(QWidget):
             whole = "all of it" if not config.notes_path else config.notes_path
             self.notes_folder.setText(f"{where}\n(in {root.name}: {whole})")
         self.no_notes_folder.setEnabled(root is not None)
+        self.notes_writable.setEnabled(root is not None)
+        self.notes_writable.setChecked(root is not None and config.notes_writable)
+        self.new_notes.setEnabled(root is not None)
+        self.new_notes.setCurrentIndex(max(0, self.new_notes.findData(config.new_notes)))
         lists = (
             (self.keep_ignore_keys, self.session.keep.config.note_ignore_keys),
             (self.user_ignore_keys, self.session.settings.note_ignore_keys),
@@ -856,6 +880,48 @@ class KeepConfigWindow(QWidget):
             "The keep has no notes folder now; the next scan reads its files as usual."
             if root_id is None
             else "Saved the notes folder; the next scan reads it.",
+        )
+
+    def _toggle_notes_writable(self, on: bool) -> None:
+        """Let Save as note… write in the notes folder (after asking), or not."""
+        if on and not self.ask_notes_writable():
+            self.notes_writable.setChecked(False)
+            return
+        session = self.session
+        self._run(
+            lambda: session.set_notes_writing(writable=on),
+            "Save as note… may add notes to the notes folder."
+            if on
+            else "Tagalot won't write in the notes folder.",
+        )
+
+    def ask_notes_writable(self) -> bool:
+        config = self.session.keep.config
+        root = next((r for r in config.roots if r.id == config.notes_root), None)
+        if root is None:
+            return False
+        folder = local_path(self.session.root_path(root.id), config.notes_path)
+        answer = QMessageBox.question(
+            self,
+            "Let Tagalot add notes to this folder?",
+            f"Let Save as note… add new notes to {folder}?\n\n"
+            "Tagalot still writes nothing on its own: only when you choose Save as "
+            "note… on an item. It only adds new files (and a folder for each type, if "
+            "you choose that layout), never changes or replaces one, and writes nowhere "
+            "else in the folder it's in.",
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _choose_new_notes(self, index: int) -> None:
+        layout = str(self.new_notes.itemData(index))
+        if layout == self.session.keep.config.new_notes:
+            return
+        session = self.session
+        self._run(
+            lambda: session.set_notes_writing(new_notes=layout),
+            "Save as note… puts new notes in a folder for each type."
+            if layout == "folders"
+            else "Save as note… puts new notes in the notes folder itself.",
         )
 
     def ask_notes_root(self, folder: str) -> bool:

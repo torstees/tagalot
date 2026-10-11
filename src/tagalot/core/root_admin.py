@@ -27,6 +27,7 @@ from tagalot.core import closure, fts
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.keep import (
     DEFAULT_EXCLUDES,
+    NEW_NOTES,
     KeepConfig,
     KeepError,
     RootConfig,
@@ -161,7 +162,7 @@ def without_root(config: KeepConfig, root_id: str) -> KeepConfig:
     there)."""
     roots = [copy.deepcopy(r) for r in config.roots if r.id != root_id]
     if config.notes_root == root_id:
-        return replace(config, roots=roots, notes_root=None, notes_path="")
+        return replace(config, roots=roots, notes_root=None, notes_path="", notes_writable=False)
     return replace(config, roots=roots)
 
 
@@ -198,15 +199,36 @@ def notes_folder_for(
 
 def with_notes_folder(config: KeepConfig, root_id: str | None, path: str = "") -> KeepConfig:
     """``config`` with its notes folder at ``path`` in the root ``root_id`` (§9 *The notes
-    folder*), or none (``None``)."""
+    folder*), or none (``None``). A different folder isn't writable until the user says so."""
+    roots = copy.deepcopy(config.roots)
     if root_id is None:
-        return replace(config, notes_root=None, notes_path="", roots=copy.deepcopy(config.roots))
+        return replace(config, notes_root=None, notes_path="", notes_writable=False, roots=roots)
     if root_id not in {r.id for r in config.roots}:
         raise KeepError(f"The keep has no watched folder {root_id!r}.")
+    path = clean_relpath(path)
+    same = (root_id, path) == (config.notes_root, config.notes_path)
     return replace(
         config,
         notes_root=root_id,
-        notes_path=clean_relpath(path),
+        notes_path=path,
+        notes_writable=config.notes_writable and same,
+        roots=roots,
+    )
+
+
+def with_notes_writing(
+    config: KeepConfig, writable: bool | None = None, new_notes: str | None = None
+) -> KeepConfig:
+    """``config`` with Save as note… allowed (or not) to write into the notes folder, and
+    where it puts new notes (``"folders"`` or ``"one-folder"``)."""
+    if new_notes is not None and new_notes not in NEW_NOTES:
+        raise KeepError(f"Unknown layout for new notes: {new_notes!r}")
+    if writable and config.notes_root is None:
+        raise KeepError("The keep has no notes folder to write in.")
+    return replace(
+        config,
+        notes_writable=config.notes_writable if writable is None else writable,
+        new_notes=config.new_notes if new_notes is None else new_notes,
         roots=copy.deepcopy(config.roots),
     )
 

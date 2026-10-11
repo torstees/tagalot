@@ -51,6 +51,7 @@ from tagalot.core.models import ResourceKind
 from tagalot.core.online import LookupReport
 from tagalot.core.root_admin import RootStatus, add_skipped, root_statuses
 from tagalot.core.roots import place_in_roots
+from tagalot.core.save_note import NewNote, plan_note, write_note
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError, list_saved
 from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import type_plurals, view_spec
@@ -525,6 +526,8 @@ class MainWindow(QMainWindow):
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
             detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
+            detail.note_edited.connect(self.tag_actions.edit_note)
+            detail.save_note_requested.connect(self.save_as_note)
             detail.reread_requested.connect(self.reread)
             detail.write_back_requested.connect(self.write_back)
             detail.look_up_requested.connect(self.look_up_online)
@@ -741,6 +744,54 @@ class MainWindow(QMainWindow):
             on_done=planned,
             on_error=lambda e: self.statusBar().showMessage(f"Couldn't read the files: {e}"),
         )
+
+    # --- Save as note… (#383) ---
+
+    def save_as_note(self, entity_id: int) -> None:
+        """Write an item's typed note as a new file in the notes folder, after the user
+        sees where (in a worker); then scan the notes folder's root, so the note is read."""
+        session = self.session
+        assert session is not None
+
+        def plan() -> NewNote:
+            tree = session.tag_cache.get()
+            config = session.keep.config
+            with session.reader.connect() as conn:
+                return plan_note(conn, session.schema, tree, config, session.root_path, entity_id)
+
+        def planned(note: NewNote) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.statusBar().clearMessage()
+            if not self.confirm_save_note(note):
+                return
+            run_in_pool(
+                lambda: write_note(note),
+                on_done=lambda _: self._note_saved(note),
+                on_error=self._note_not_saved,
+            )
+
+        run_in_pool(plan, on_done=planned, on_error=self._note_not_saved)
+
+    def confirm_save_note(self, note: NewNote) -> bool:
+        """Ask before writing the note (tests stand in)."""
+        answer = QMessageBox.question(
+            self,
+            "Save as note",
+            f"Save the note of {note.title!r} as a new file?\n\n{note.path}\n\n"
+            "From then on it's edited in that file (Open note).",
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _note_saved(self, note: NewNote) -> None:
+        if shiboken6.isValid(self):
+            self.statusBar().showMessage(f"Saved the note of {note.title!r} as {note.relpath}.")
+            self._scan_roots([note.root_id])
+
+    def _note_not_saved(self, error: BaseException) -> None:
+        if shiboken6.isValid(self):
+            self.statusBar().clearMessage()
+            QMessageBox.warning(self, "The note wasn't saved", str(error))
 
     def confirm_write_back(self, plan: WritePlan) -> list[FileWrite]:
         """Show the preview; the files to write (none if the user cancels)."""

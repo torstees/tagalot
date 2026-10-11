@@ -84,9 +84,11 @@ from tagalot.core.root_admin import (
     edit_root,
     unwatch,
     with_notes_folder,
+    with_notes_writing,
     without_root,
 )
 from tagalot.core.roots import sync_roots
+from tagalot.core.save_note import NewNote, plan_note, write_note
 from tagalot.core.saved_searches import (
     SavedDefinition,
     delete_search,
@@ -526,6 +528,21 @@ class KeepSession:
         """Make ``path`` in the root ``root_id`` the keep's notes folder, or have none
         (``None``); it applies at the next scan. Runs in a worker."""
         self.save_config(with_notes_folder(self.keep.config, root_id, path))
+
+    def set_notes_writing(self, writable: bool | None = None, new_notes: str | None = None) -> None:
+        """Let Save as note… write in the notes folder (or not), and choose where it puts
+        new notes (``"folders"`` or ``"one-folder"``). Runs in a worker."""
+        self.save_config(with_notes_writing(self.keep.config, writable, new_notes))
+
+    def save_as_note(self, entity_id: int) -> NewNote:
+        """Write an item's typed note as a new file in the notes folder (Save as note…,
+        #383); raises :class:`~tagalot.core.save_note.SaveNoteError` when it can't. The
+        next scan of the notes folder reads it. Runs in a worker."""
+        tree = self.tag_cache.get()
+        with self.reader.connect() as conn:
+            note = plan_note(conn, self.schema, tree, self.keep.config, self.root_path, entity_id)
+        write_note(note)
+        return note
 
     def ignore_note_key(self, key: str) -> NoteKeyChange:
         """Ignore ``key`` in every note of this keep: list it in ``keep.toml`` and remove

@@ -102,6 +102,7 @@ src/tagalot/
     handlers.py          # open file / reveal / overrides
     dedupe.py
     writeback.py         # Write to file…: the one code path that changes files under a root
+    save_note.py         # Save as note…: a typed note as a new file in the notes folder
   themes/
     api.py               # PUBLIC theme API — the only module themes import
     readers.py           # format readers themes share (EPUB, comics, PDF, Markdown, office, links), in the API
@@ -134,7 +135,7 @@ docs/                    # the documentation site (docsify: index.html, _sidebar
 
 ## Architecture rules (do not break these)
 
-1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug. The single exception is **Write to file…** (#299): writing metadata back, by that explicit command only, into files in a root the user marked writable, through the one core code path `core/writeback.py` (DESIGN.md §4 *Writing back to files*); and saving an action's export (`ctx.save_text`, #322) where the user chose, which inside a watched folder needs the user's confirmation, never replaces an existing file, and adds the new file to that folder's Skip list (`MainWindow.save_export`). Nothing else may write under a root.
+1. **Never modify user files.** Tagalot must never write, move, rename, or delete anything under a root. It writes only inside the keep folder, the per-user config/cache directories, and the system temp directory. Any code path that could touch a root with a write operation is a bug. The exceptions are **Write to file…** (#299): writing metadata back, by that explicit command only, into files in a root the user marked writable, through the one core code path `core/writeback.py` (DESIGN.md §4 *Writing back to files*); and saving an action's export (`ctx.save_text`, #322) where the user chose, which inside a watched folder needs the user's confirmation, never replaces an existing file, and adds the new file to that folder's Skip list (`MainWindow.save_export`); and **Save as note…** (#383): adding an item's typed note as a new file to the keep's notes folder, by that command only, when the user marked the notes folder writable (`[notes] writable`), never replacing a file, through `core/save_note.py` (DESIGN.md §4 *Saving a note*). Nothing else may write under a root.
 2. **`core` never imports Qt or `ui`.** Core logic must be testable without a display. The UI depends on core, never the reverse.
 3. **Themes import only `tagalot.themes.api`.** Treat `api.py` as a public, versioned contract. Changes to it need a design-doc update. Built-in themes follow the same rule as third-party ones.
 4. **The GUI thread never blocks on I/O.** File-system walks, network access, hashing, metadata extraction, archive reading, image decoding, and slow queries run in workers and report back through signals.

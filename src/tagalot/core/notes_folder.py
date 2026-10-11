@@ -318,10 +318,13 @@ def apply_folder_notes(
                 IngestWarning(plan.root_id, file.relpath, f"A note's value was left out: {p}")
                 for p in values.problems
             ]
-        if apply_note(ctx, entity, values, file, folder_id=folders.get(item), folder_note=False):
+        folder = folders.get(item)
+        if apply_note(
+            ctx, entity, values, file, folder_id=folder, folder_note=False, root_id=plan.root_id
+        ):
             reread += primary_files(conn, schema, entity)
     ctx.flush()
-    return reread, warnings
+    return reread, warnings + ctx.warnings
 
 
 def notes_folder_files(conn: Connection) -> set[int]:

@@ -168,7 +168,10 @@ def test_open_note(
 
 def test_an_item_without_a_note(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
     page = _open(qtbot, window, session, "Kenji Sato")
-    assert not page.note_view.isVisible()
+    qtbot.waitUntil(page.note_view.isVisible, timeout=5000)  # Add a note (#383)
+    assert page.note_view.add_button.isVisible()
+    assert not page.note_view.body.isVisible()
+    assert not page.note_view.open_button.isVisible()
     assert not page.open_note_action.isVisible()
 
 

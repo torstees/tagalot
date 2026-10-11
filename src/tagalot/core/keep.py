@@ -42,6 +42,8 @@ CONTENTS_INDEXES = ("words", "substrings")
 """What ``[contents] index`` can say (§8 *Search inside documents*); absent is Off."""
 ONLINE_ANSWERS = ("allow", "never")
 """What ``[online] lookups`` can say (§9 *Online details*)."""
+NEW_NOTES = ("folders", "one-folder")
+"""Where Save as note… puts a new note: a subfolder per type, or all in the notes folder."""
 
 
 class KeepConfigError(KeepError):
@@ -135,6 +137,12 @@ class KeepConfig:
     notes_path: str = ""
     """``[notes] path``: the notes folder inside :attr:`notes_root`, root-relative POSIX
     (``""``: the whole root)."""
+    notes_writable: bool = False
+    """``[notes] writable``: **Save as note…** may write new notes into the notes folder
+    (§9 *In-app notes and Save as note…*), whether or not its root is writable."""
+    new_notes: str = "folders"
+    """``[notes] new_notes``: where Save as note… puts a note, ``"folders"`` (a subfolder
+    per type) or ``"one-folder"`` (typed by ``tagalot-type``)."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -190,6 +198,10 @@ def dump_keep_config(config: KeepConfig) -> str:
             f"root = {toml_str(config.notes_root)}",
             f"path = {toml_str(config.notes_path)}",
         ]
+        if config.notes_writable:
+            notes_lines.append("writable = true")
+        if config.new_notes != "folders":
+            notes_lines.append(f"new_notes = {toml_str(config.new_notes)}")
     if config.note_ignore_keys:
         notes_lines.append(f"ignore_keys = {toml_list(config.note_ignore_keys)}")
     if notes_lines:
@@ -270,9 +282,12 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     note_ignore_keys: list[str] = []
     notes_root: str | None = None
     notes_path = ""
+    notes_writable = False
+    new_notes = "folders"
     if "notes" in data:
         notes_table = reader.table(data, "notes")
-        reader.warn_unknown(notes_table, {"ignore_keys", "root", "path"}, "[notes]")
+        known_notes = {"ignore_keys", "root", "path", "writable", "new_notes"}
+        reader.warn_unknown(notes_table, known_notes, "[notes]")
         keys = notes_table.get("ignore_keys", [])
         if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
             raise KeepConfigError(path, "[notes] ignore_keys must be a list of strings")
@@ -283,6 +298,12 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             if not isinstance(raw_path, str):
                 raise KeepConfigError(path, "[notes] path must be a string")
             notes_path = clean_relpath(raw_path)
+        notes_writable = notes_table.get("writable", False)
+        if not isinstance(notes_writable, bool):
+            raise KeepConfigError(path, "[notes] writable must be true or false")
+        new_notes = notes_table.get("new_notes", "folders")
+        if new_notes not in NEW_NOTES:
+            raise KeepConfigError(path, '[notes] new_notes must be "folders" or "one-folder"')
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -325,6 +346,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     if notes_root is not None and notes_root not in seen:
         logger.warning("%s: [notes] root %r is no root of the keep; ignoring it", path, notes_root)
         notes_root, notes_path = None, ""
+    if notes_root is None:
+        notes_writable = False
 
     return KeepConfig(
         id=keep_id,
@@ -340,6 +363,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         note_ignore_keys=note_ignore_keys,
         notes_root=notes_root,
         notes_path=notes_path,
+        notes_writable=notes_writable,
+        new_notes=new_notes,
     )
 
 
