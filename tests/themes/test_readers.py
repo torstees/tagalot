@@ -313,6 +313,24 @@ def test_yaml_front_matter(tmp_path: Path) -> None:
     assert found["fields"]["rating"] == 5
 
 
+DESCRIPTIONS = {
+    "description": ("description: A loop.\nsummary: Other\n", "A loop."),
+    "summary": ("Summary: A loop.\n", "A loop."),
+    "synopsis": ("synopsis: A  loop.\n", "A loop."),
+    "blurb": ("blurb: A loop.\n", "A loop."),
+    "abstract": ("abstract: A loop.\n", "A loop."),
+    "the first given": ("synopsis: ''\nblurb: A loop.\n", "A loop."),
+    "none": ("rating: 5\n", None),
+}
+
+
+@pytest.mark.parametrize("case", DESCRIPTIONS.values(), ids=DESCRIPTIONS.keys())
+def test_the_description_and_its_other_names(tmp_path: Path, case: tuple[str, str | None]) -> None:
+    keys, expected = case
+    found = read_front_matter(str(write_markdown(tmp_path / "a.md", f"---\n{keys}---\nText\n")))
+    assert found["description"] == expected
+
+
 def test_toml_front_matter(tmp_path: Path) -> None:
     path = write_markdown(
         tmp_path / "a.md",
