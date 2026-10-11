@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import QHeaderView
 from pytestqt.qtbot import QtBot
@@ -168,3 +168,19 @@ def test_a_title_the_user_resized_keeps_its_width(qtbot: QtBot) -> None:
     assert header.sectionSize(0) == 150
     table.set_columns(table.columns, ("series",))  # showing or hiding a column keeps it too
     assert header.sectionSize(0) == 150
+
+
+def test_the_tree_header_offers_the_columns_too(qtbot: QtBot, session: KeepSession) -> None:
+    """Right-clicking the tree's header shows and hides columns, as the list's does."""
+    page = _books(qtbot, session)
+    page.tree_button.click()
+    header = page.tree.header()
+    assert header.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+    description = [c.key for c in page.table.columns].index("description")
+    assert header.isSectionHidden(description)
+    {a.text(): a for a in page.column_menu().actions()}["Description"].setChecked(True)
+    assert not header.isSectionHidden(description)
+    assert header.sectionSize(description) >= COLUMN_WIDTH
+    assert _shown(page)[-1] == "Description"  # and in the list
+    {a.text(): a for a in page.column_menu().actions()}["Description"].setChecked(False)
+    assert header.isSectionHidden(description)
