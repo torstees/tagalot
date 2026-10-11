@@ -265,6 +265,13 @@ def test_split_people(value: object, expected: list[str]) -> None:
         ("fantasy reading", ["fantasy", "reading"]),
         ("Science Fiction, Space Opera", ["Science Fiction", "Space Opera"]),
         (["#Genre/Fantasy", "to-read", "genre/fantasy"], ["Genre/Fantasy", "to-read"]),
+        # #420: a path keeps its spaces, and a list's items are whole
+        (["Locale > Fantasy > Castle"], ["Locale > Fantasy > Castle"]),
+        (["Science Fiction", "Space  Opera"], ["Science Fiction", "Space Opera"]),
+        (["Fantasy; Magic"], ["Fantasy", "Magic"]),  # an item can still list several
+        ("Locale > Fantasy > Castle", ["Locale > Fantasy > Castle"]),
+        ("Locale >  Castle reading", ["Locale > Castle", "reading"]),
+        ("Genre / Fantasy, Locale \u203a Castle", ["Genre / Fantasy", "Locale \u203a Castle"]),
         (1984, ["1984"]),
         (None, []),
     ],
