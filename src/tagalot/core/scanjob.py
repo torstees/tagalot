@@ -477,7 +477,7 @@ def scan_notes_folder(
     reader: Engine,
     roots: Sequence[RootConfig],
     root_path: Callable[[str], str],
-    notes_root: str,
+    notes_root: str | None,
     notes_path: str,
     *,
     theme: type[Theme],
@@ -486,12 +486,14 @@ def scan_notes_folder(
     progress: Progress | None = None,
 ) -> ScanReport:
     """Match the keep's notes folder's notes to items and apply them (§9 *The notes
-    folder*), after its roots were scanned, so a new item finds a note already there. Items
+    folder*), after its roots were scanned, so a new item finds a note already there. With
+    no notes folder (``notes_root`` ``None``), items let notes from one they had go. Items
     whose note stopped giving a value have their files read again at once."""
-    report = ScanReport(notes_root, online=True)
+    report = ScanReport(notes_root or "", online=True)
     say: Progress = progress or (lambda message: None)
     say("Matching the notes folder's notes…")
-    plan = plan_folder_notes(reader, schema, notes_root, notes_path, root_path(notes_root))
+    path = root_path(notes_root) if notes_root is not None else ""
+    plan = plan_folder_notes(reader, schema, notes_root, notes_path, path)
     report.ingest_warnings += plan.warnings
     again, problems = writer.run(partial(apply_folder_notes, schema=schema, plan=plan))
     report.ingest_warnings += problems

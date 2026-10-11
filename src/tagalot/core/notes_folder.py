@@ -144,27 +144,37 @@ class FolderNotesPlan:
 
 
 def plan_folder_notes(
-    reader: Engine, schema: ThemeSchema, root_id: str, notes_path: str, path: str
+    reader: Engine, schema: ThemeSchema, root_id: str | None, notes_path: str, path: str
 ) -> FolderNotesPlan:
     """Read the notes folder's notes that changed and match every note to an item (in the
-    caller's thread: a worker's). ``path`` is this computer's path for the root."""
-    plan = FolderNotesPlan(root_id)
+    caller's thread: a worker's). ``path`` is this computer's path for the root. With no
+    notes folder (``root_id`` ``None``), or notes left outside a moved one, items let the
+    notes they had from it go."""
+    plan = FolderNotesPlan(root_id or "")
     with reader.connect() as conn:
-        files = [
-            (NoteFile(rid, rel, size, mtime), status)
-            for rid, rel, size, mtime, status in conn.execute(
-                select(
-                    Resource.id, Resource.relpath, Resource.size, Resource.mtime_ns, Resource.status
-                ).where(
-                    Resource.root_id == root_id,
-                    Resource.kind == ResourceKind.FILE,
-                    Resource.ext.in_(NOTE_EXTENSIONS),
-                    Resource.skipped.is_(False),
-                    Resource.parent_resource_id.is_(None),
+        files = (
+            []
+            if root_id is None
+            else [
+                (NoteFile(rid, rel, size, mtime), status)
+                for rid, rel, size, mtime, status in conn.execute(
+                    select(
+                        Resource.id,
+                        Resource.relpath,
+                        Resource.size,
+                        Resource.mtime_ns,
+                        Resource.status,
+                    ).where(
+                        Resource.root_id == root_id,
+                        Resource.kind == ResourceKind.FILE,
+                        Resource.ext.in_(NOTE_EXTENSIONS),
+                        Resource.skipped.is_(False),
+                        Resource.parent_resource_id.is_(None),
+                    )
                 )
-            )
-            if in_notes(rel, notes_path)
-        ]
+                if in_notes(rel, notes_path)
+            ]
+        )
         stored = {row.resource_id: row for row in conn.execute(select(NotesFolderNote.__table__))}
         notes = {
             entity_id: (resource_id, size, mtime)
@@ -220,8 +230,9 @@ def plan_folder_notes(
     index: dict[str, list[tuple[int, str]]] = {}
     for entity_id, type_id, title in items:
         index.setdefault(search_key(title), []).append((entity_id, type_id))
-    folder_notes = {e for e, (rid, _, _) in notes.items() if rid not in by_id}
-    current = {e: rid for e, (rid, _, _) in notes.items() if rid in by_id}
+    ours = set(stored) | set(by_id)  # notes from the notes folder, as it is or was
+    folder_notes = {e for e, (rid, _, _) in notes.items() if rid not in ours}
+    current = {e: rid for e, (rid, _, _) in notes.items() if rid in ours}
     matched: dict[int, list[int]] = {}
     for rid, meta in metas.items():
         hits = {

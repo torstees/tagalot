@@ -64,6 +64,7 @@ from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Entity, EntityResource, Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
 from tagalot.core.note_keys import NoteKeyChange, check_key, ignored_keys, with_key
+from tagalot.core.notes_folder import notes_folder_files
 from tagalot.core.online import (
     Fetcher,
     LookupReport,
@@ -268,13 +269,13 @@ class KeepSession:
             )
             self.problems.add(problems_from_report(reports[-1]))
         notes_root = next((r for r in config.roots if r.id == config.notes_root), None)
-        if notes_root is not None and notes_root.watched:
+        if notes_root is not None or self._had_notes_folder():
             notes = scan_notes_folder(
                 self.writer,
                 self.reader,
                 config.roots,
                 self.root_path,
-                notes_root.id,
+                notes_root.id if notes_root is not None else None,
                 config.notes_path,
                 theme=self.theme,
                 schema=self.schema,
@@ -283,6 +284,11 @@ class KeepSession:
             )
             self.problems.add(problems_from_report(notes))
         return reports
+
+    def _had_notes_folder(self) -> bool:
+        """Notes from a notes folder are recorded (to let go of when it is gone)."""
+        with self.reader.connect() as conn:
+            return bool(notes_folder_files(conn))
 
     def reextract(
         self, entity_ids: Iterable[int], *, replace_edits: bool = False

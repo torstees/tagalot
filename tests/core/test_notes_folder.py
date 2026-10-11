@@ -84,7 +84,7 @@ class Env:
     reader: Engine
     schema: ThemeSchema
     files: Path
-    notes: str = "Notes"
+    notes: str | None = "Notes"
     clock: int = 0
 
     @property
@@ -112,8 +112,8 @@ class Env:
             self.reader,
             [root],
             lambda _: path or root.path,
-            root.id,
-            self.notes,
+            root.id if self.notes is not None else None,
+            self.notes or "",
             theme=Cast,
             schema=self.schema,
         )
@@ -301,6 +301,23 @@ def test_a_whole_root_of_notes(env: Env) -> None:
     assert Cast.seen == []  # the whole root is notes: no studios, no clips
     with env.reader.connect() as conn:
         assert list(conn.scalars(select(Resource.relpath))) == ["Al Pacino.md"]
+
+
+def test_no_notes_folder_or_a_moved_one(env: Env) -> None:
+    env.write("Notes/Actors/Al Pacino.md", PACINO)
+    env.write("Bios/Al Pacino.md", PACINO.replace("1940", "1941"))
+    env.scan()
+    assert env.item("Al Pacino")["born"] == 1940
+    env.notes = "Bios"  # moved: the old note goes, the new one comes
+    env.scan()
+    pacino = env.item("Al Pacino")
+    assert (pacino["born"], pacino["note"]) == (1941, "Bios/Al Pacino.md")
+    assert list(env.rows()) == ["Bios/Al Pacino.md"]
+    env.notes = None  # none at all
+    env.scan()
+    pacino = env.item("Al Pacino")
+    assert (pacino["born"], pacino["note"]) == (None, None)
+    assert env.rows() == {}
 
 
 # --- choosing it ---
