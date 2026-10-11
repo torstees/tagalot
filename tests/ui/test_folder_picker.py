@@ -1,15 +1,24 @@
 """Folder pickers start where a folder was last chosen, and remember the choice."""
 
 from pathlib import Path
+from typing import Self
 
 import pytest
+import shiboken6
 from PySide6.QtCore import QThreadPool
-from PySide6.QtWidgets import QFileDialog, QPushButton, QWidget
+from PySide6.QtWidgets import QDialog, QFileDialog, QPushButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.settings import Settings, load_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
-from tagalot.ui.folder_picker import choose_folder, start_folder
+from tagalot.ui import folder_picker
+from tagalot.ui.folder_picker import (
+    choose_folder,
+    choose_open_file,
+    choose_save_file,
+    save_filters,
+    start_folder,
+)
 from tagalot.ui.launcher import NewKeepDialog
 
 pytestmark = pytest.mark.gui
@@ -105,3 +114,54 @@ def test_start_folder() -> None:
     assert start_folder(None) == str(Path.home())
     assert start_folder(Settings()) == str(Path.home())
     assert start_folder(Settings(last_folder=Path("D:/Keeps"))) == str(Path("D:/Keeps"))
+
+
+def test_a_save_dialog_adds_the_extension() -> None:
+    # No real dialog is made here: its folder model slows the tests that come after it.
+    assert save_filters("Demo tags.yaml") == (["YAML files (*.yaml)", "All files (*)"], "yaml")
+    assert save_filters("notes") == ([], "")
+
+
+class FakeSaveDialog:
+    """Stands in for the save dialog: records where it started, answers with ``answer``."""
+
+    def __init__(self, started: list[str], answer: str) -> None:
+        self.started, self.answer = started, answer
+
+    def __call__(self, parent: QWidget | None, title: str, name: str, start: str) -> "Self":
+        self.started.append(start)
+        return self
+
+    def exec(self) -> int:
+        return QDialog.DialogCode.Accepted.value
+
+    def selectedFiles(self) -> list[str]:
+        return [self.answer]
+
+
+def test_saving_and_opening_start_where_a_file_was_last_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keeps, exports = tmp_path / "Keeps", tmp_path / "Exports"
+    settings, path = Settings(last_folder=keeps), tmp_path / "s.toml"
+    started: list[str] = []
+    saved = str(exports / "Demo tags.yaml")
+    monkeypatch.setattr(folder_picker, "save_file_dialog", FakeSaveDialog(started, saved))
+    monkeypatch.setattr(shiboken6, "delete", lambda dialog: None)
+    assert choose_save_file(None, "Save", "Demo tags.yaml", settings, path) == saved
+    assert started == [str(keeps)]  # nothing saved yet: where the folder pickers start
+    assert settings.last_save_folder == exports
+    assert settings.last_folder == keeps  # left alone
+    QThreadPool.globalInstance().waitForDone(5000)
+    assert load_settings(path).last_save_folder == exports
+
+    opened: list[str] = []
+
+    def open_file(parent: QWidget | None, title: str, start: str, filter_: str) -> tuple[str, str]:
+        opened.append(start)
+        return str(tmp_path / "Other" / "more tags.yaml"), filter_
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", open_file)
+    choose_open_file(None, "Import tags", "YAML files (*.yaml)", settings, path)
+    assert opened == [str(exports)]
+    assert settings.last_save_folder == tmp_path / "Other"

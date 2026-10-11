@@ -21,6 +21,7 @@ from tagalot.core.saved_searches import SavedDefinition
 from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.core.tag_service import Applied
+from tagalot.core.tag_yaml import ImportPlan, plan_summary
 from tagalot.core.tags import DeleteMode, TagError, count_tagged_entities, subtree_usage
 from tagalot.ui.workers import run_in_pool
 
@@ -126,6 +127,16 @@ class TagActions(QObject):
             return True
 
         self._run(run, lambda _: message)
+
+    def import_tags(self, text: str, name: str, delete_unused: bool) -> None:
+        """Import a YAML tag file as one undoable step (#395)."""
+        tags = self.session.tags
+
+        def work() -> ImportPlan | None:
+            plan = tags.import_tags(text, name, delete_unused=delete_unused)
+            return plan if plan.changes else None
+
+        self._run(work, lambda plan: plan_summary(plan) if plan else "No tags changed.")
 
     def merge(self, source_id: int, target_id: int, source: str, target: str) -> None:
         """Fold ``source_id`` into ``target_id`` (§7); the message says how many items

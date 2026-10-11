@@ -18,6 +18,8 @@ double-click, or **Rename**); it moves by dragging it onto another tag (or onto 
 for the top level) or with **Move to…**. The page only asks: it emits
 :attr:`TagManagerPage.add_requested` and friends, and the window runs the operation.
 Merge, delete, colors, aliases, and descriptions come with later tasks.
+**Export tags…** and **Import tags…** ask the window to save or load the tree as YAML
+(#395, ``core/tag_yaml.py``).
 """
 
 from collections.abc import Mapping
@@ -410,6 +412,8 @@ class TagManagerPage(QWidget):
     """Tag id, and a :class:`~tagalot.core.tags.DeleteMode` (``None`` without sub-tags)."""
     undo_requested = Signal()
     redo_requested = Signal()
+    export_requested = Signal()
+    import_requested = Signal()
 
     def __init__(
         self,
@@ -489,6 +493,14 @@ class TagManagerPage(QWidget):
         self.delete_button = QPushButton("Delete…")
         self.delete_button.setToolTip("Delete the selected tag (items are never deleted)")
         self.delete_button.clicked.connect(self.delete_current)
+        self.export_button = QPushButton("Export tags…")
+        self.export_button.setToolTip("Save the whole tag tree as a YAML file")
+        self.export_button.clicked.connect(self.export_requested)
+        self.import_button = QPushButton("Import tags…")
+        self.import_button.setToolTip(
+            "Add and update tags from a YAML file, after showing what would change"
+        )
+        self.import_button.clicked.connect(self.import_requested)
         # A toolbar, not a row: when the page is narrow, the buttons that don't fit move
         # into its overflow menu (…) instead of widening the page (and squeezing the navigation).
         self.toolbar = QToolBar("Tag operations")
@@ -501,6 +513,9 @@ class TagManagerPage(QWidget):
             self.delete_button,
         ):
             self.toolbar.addWidget(button)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.export_button)
+        self.toolbar.addWidget(self.import_button)
         # Undo and Redo use the session's history (Edit → Undo / Redo, Ctrl+Z / Ctrl+Y);
         # their tooltips name the step (the window keeps them up to date).
         self.undo_button = QPushButton("Undo")

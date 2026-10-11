@@ -45,6 +45,7 @@ from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicat
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
+from tagalot.core.tag_yaml import ImportPlan, import_tags
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
@@ -220,6 +221,18 @@ class TagService:
             lambda tree: f"Change the description of {_name(tree, tag_id)!r}",
             lambda tree: (),
             lambda conn: set_tag_description(conn, tag_id, description),
+        )
+
+    def import_tags(self, text: str, name: str, *, delete_unused: bool = False) -> ImportPlan:
+        """Import a YAML tag file (``name`` is how the step reads in Undo) as one undoable
+        step; returns what it did (#395). Changing a tag's ``applies_to`` can take it off
+        items, so every tag's uses are in the step's scope."""
+        schema = self.schema
+        assert schema is not None
+        return self._record(
+            lambda tree: f"Import tags from {name!r}",
+            lambda tree: tree,
+            lambda conn: import_tags(conn, text, schema, delete_unused),
         )
 
     # --- tagging entities ---

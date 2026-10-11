@@ -95,6 +95,7 @@ src/tagalot/
     maintenance.py       # repair actions for derived data (closure, search index)
     tags.py              # tag tree ops: add/rename/reparent/merge/delete
     tag_service.py       # tag ops through the writer, with undo/redo
+    tag_yaml.py          # the tag tree as YAML: export, and import with a preview
     search_spec.py       # SearchSpec and its JSON form
     search.py            # SearchSpec -> SQLAlchemy query
     fts.py               # keeping entity_fts in sync; rebuild

@@ -62,6 +62,9 @@ class Settings:
     last_folder: Path | None = None
     """The folder last chosen in one of Tagalot's folder pickers, where the next one (and a
     new keep's location) starts."""
+    last_save_folder: Path | None = None
+    """The folder a file was last saved to (an export) or a tag file imported from, where
+    the next save or import starts (#395)."""
     note_ignore_keys: list[str] = field(default_factory=list)
     """``[notes] ignore_keys``: front-matter keys notes never make Extra fields, in every
     keep (DESIGN.md §9 *Notes*)."""
@@ -171,6 +174,8 @@ def dump_settings(settings: Settings) -> str:
     ]
     if settings.last_folder is not None:
         lines.append(f"last_folder = {toml_str(str(settings.last_folder))}")
+    if settings.last_save_folder is not None:
+        lines.append(f"last_save_folder = {toml_str(str(settings.last_save_folder))}")
     for keep_id, overrides in settings.root_overrides.items():
         if not overrides:
             continue
@@ -214,7 +219,15 @@ def _string_list(path: Path, data: Mapping[str, Any], key: str) -> list[str]:
 
 
 def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
-    known = {"recent_keeps", "theme_dirs", "last_folder", "root_overrides", "handlers", "notes"}
+    known = {
+        "recent_keeps",
+        "theme_dirs",
+        "last_folder",
+        "last_save_folder",
+        "root_overrides",
+        "handlers",
+        "notes",
+    }
     for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
 
@@ -227,6 +240,11 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         settings.last_folder = Path(last_folder)
     elif last_folder is not None:
         logger.warning("%s: last_folder must be a path; ignoring it", path)
+    last_save = data.get("last_save_folder")
+    if isinstance(last_save, str) and last_save.strip():
+        settings.last_save_folder = Path(last_save)
+    elif last_save is not None:
+        logger.warning("%s: last_save_folder must be a path; ignoring it", path)
 
     raw_overrides = data.get("root_overrides", {})
     if not isinstance(raw_overrides, dict):
