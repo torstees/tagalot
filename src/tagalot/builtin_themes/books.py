@@ -196,7 +196,7 @@ FRONT_MATTER_KEYS: Mapping[str, tuple[str, ...]] = {
     "publisher": ("publisher",),
     "language": ("language", "lang"),
     "isbn": ("isbn",),
-    "description": ("description", "summary"),
+    "description": ("description", "summary", "synopsis", "blurb", "abstract"),
     "link": ("url", "link"),
 }
 """A book's editable fields and the front-matter keys they are written under: the first,
@@ -219,7 +219,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 2  # 2: author lists split (#369), read again
+    id, name, version = "books", "Books", 3  # 3: synopsis (#409); 2: author lists (#369)
     api_version = 7  # read_mobi (6: full_text; 5: online details; 3: ctx.resource_at)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
@@ -333,7 +333,7 @@ class BooksTheme(Theme):
         current: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         """A Markdown book's edited fields under the keys :func:`read_front_matter` reads,
-        using the one the file already has (``number``, ``lang``, ``summary``, ``link``)."""
+        using the one the file already has (``number``, ``lang``, ``synopsis``, ``link``)."""
         if entity_type is not Book:
             return {}
         values = {"title": item.title, **item.fields}

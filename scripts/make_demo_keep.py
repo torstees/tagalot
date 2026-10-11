@@ -870,6 +870,7 @@ BOOK_MARKDOWN = {
         "url: https://example.com/mother-of-learning\n"
         "date: 2011-10-21\n"
         "cover: images/mol-cover.jpg\n"
+        "synopsis: Zorian relives the same month at magic school, again and again.\n"
         "---\n"
         "# Arc 1: Good Morning Brother\n\nZorian's eyes abruptly shot open…\n"
     ),

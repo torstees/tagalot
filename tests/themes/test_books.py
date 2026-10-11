@@ -420,7 +420,7 @@ def test_pdf_and_markdown_books(env: Env) -> None:
         env.files / "Royal Road/mol-1.md",
         "---\ntitle: Mother of Learning\nauthor: nobody103\nseries: Mother of Learning\n"
         "number: 1\nuniverse: Eldemar\ntags: [time-loop, '#Fantasy']\n"
-        "url: https://example.com/mol\ndate: 2011-10-21\n---\n# Arc 1\n",
+        "url: https://example.com/mol\ndate: 2011-10-21\nsynopsis: A loop.\n---\n# Arc 1\n",
     )
     write_markdown(env.files / "Loose/notes.md", "Some text\n\n# A Short Story\n")
     env.scan()
@@ -440,6 +440,7 @@ def test_pdf_and_markdown_books(env: Env) -> None:
         2011,
         "Royal Road",
     )
+    assert mol["description"] == "A loop."  # its synopsis (#409)
     assert env.keywords("Mother of Learning") == ["Fantasy", "time-loop"]
     contents = env.contents()
     assert contents["Eldemar"] == ["Mother of Learning"]  # its series
@@ -750,6 +751,10 @@ def test_front_matter_uses_the_files_own_keys() -> None:
         "description": "A loop.",
         "url": "https://example.com/mol",
         "publisher": None,  # cleared in Tagalot: removed from the file
+    }
+    synopsis = {"Synopsis": "Old."}  # a description under another name (#409)
+    assert theme.front_matter(Book, item, frozenset({"description"}), synopsis) == {
+        "synopsis": "A loop."
     }
     assert theme.front_matter(Book, item, frozenset(), current) == {}  # nothing edited
     assert theme.front_matter(Comic, item, edited, current) == {}

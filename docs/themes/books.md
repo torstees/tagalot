@@ -15,7 +15,7 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 
 Author lists are split into people (`Noah Gift, Kennedy Behrman, and Alfredo Deza` is three authors), and a publisher's placeholder such as `AUTHOR NAMES HERE` is ignored.
 
-What each format gives is in [File formats](../reference/file-formats.md). Without details, the file name is read: `Author - Title (Year)`, `Series 03 - Title`, comics as `Series #012 (2020)`.
+What each format gives is in [File formats](../reference/file-formats.md). A Markdown book's description can be written in its front matter as `description`, `summary`, `synopsis`, `blurb`, or `abstract`. Without details, the file name is read: `Author - Title (Year)`, `Series 03 - Title`, comics as `Series #012 (2020)`.
 
 ## Searches
 

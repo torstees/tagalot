@@ -496,6 +496,11 @@ def split_front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
     return _front_matter(text)
 
 
+DESCRIPTION_KEYS = ("description", "summary", "synopsis", "blurb", "abstract")
+"""The front-matter keys :func:`read_front_matter` takes a description from, the first
+given winning (#409)."""
+
+
 def _scalar_year(value: Any) -> int | None:
     if isinstance(value, datetime.date):  # a datetime is a date too
         return value.year
@@ -513,10 +518,11 @@ def read_front_matter(path: str) -> dict[str, Any]:
     ``series_number``); ``universe``; ``keywords`` (``tags`` and ``keywords``, split as
     :func:`split_keywords` does); ``source``; ``link`` (``url`` or ``link``, if a web
     address); ``year`` (``year``, else ``date``); ``publisher``; ``language`` (or
-    ``lang``); ``description`` (or ``summary``); ``cover`` (a picture's path, as written,
-    relative to the file); and ``fields``, every key and value as written, for a theme's own
-    keys. Keys are matched ignoring case. A file without front matter gives just its
-    heading. Raises ``ValueError`` for front matter that doesn't parse.
+    ``lang``); ``description`` (or ``summary``, ``synopsis``, ``blurb``, ``abstract``);
+    ``cover`` (a picture's path, as written, relative to the file); and ``fields``, every
+    key and value as written, for a theme's own keys. Keys are matched ignoring case. A file
+    without front matter gives just its heading. Raises ``ValueError`` for front matter
+    that doesn't parse.
     """
     with open(path, "rb") as file:
         raw = file.read(MAX_FRONT_MATTER)
@@ -554,7 +560,7 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "year": _scalar_year(first("year")) or _scalar_year(first("date")),
         "publisher": words("publisher"),
         "language": words("language", "lang"),
-        "description": words("description", "summary"),
+        "description": words(*DESCRIPTION_KEYS),
         "cover": words("cover", "image"),
         "fields": fields,
     }
