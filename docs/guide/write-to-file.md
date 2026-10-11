@@ -22,6 +22,6 @@ Afterwards Tagalot scans those files, so it reads what it wrote.
 
 - **Only the front matter changes** (the block between its `---` or `+++` lines); the rest of the file is kept byte for byte. YAML keeps its comments, quotes, key order, and list style. A file without front matter gains a YAML block at the top.
 - **Tags** go under the file's `tags` key (or `keywords`): the file's own words stay, less any whose tag you took off the item; your other tags are added as full paths (`Genre/Fantasy`, as Obsidian writes nested tags).
-- **Fields you edited** in Tagalot (title, number in series, year, publisher, language, ISBN, description, link), under the keys the file already uses where it has them (`number` rather than `series_index`, say).
+- **Fields you edited** in Tagalot (title, number in series, year, publisher, language, ISBN, description, link), under the keys the file already uses where it has them (`number` rather than `series_index`, `synopsis` rather than `description`, say).
 
 It isn't an Edit → Undo step: the backups are the way back. Each write makes a new `backups/<date and time>/` folder in the keep.
