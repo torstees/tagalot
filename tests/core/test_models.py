@@ -54,6 +54,7 @@ CORE_TABLES = {
     "entity_note",
     "note_key_removal",
     "note_ignored_key",
+    "notes_folder_note",
     "schema_version",
 }
 FTS_TABLES = {

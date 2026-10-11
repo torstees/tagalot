@@ -14,10 +14,12 @@ session saves the result. The database side:
 """
 
 import copy
-from collections.abc import Iterable
+import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from types import ModuleType
 
 from sqlalchemy import Connection, delete, func, select, update
 
@@ -28,6 +30,7 @@ from tagalot.core.keep import (
     KeepConfig,
     KeepError,
     RootConfig,
+    clean_relpath,
     nested_paths,
     root_id_for,
     validate_keep_config,
@@ -154,8 +157,58 @@ def add_skipped(
 
 
 def without_root(config: KeepConfig, root_id: str) -> KeepConfig:
-    """``config`` with a root removed from ``keep.toml``."""
-    return replace(config, roots=[copy.deepcopy(r) for r in config.roots if r.id != root_id])
+    """``config`` with a root removed from ``keep.toml`` (and the notes folder, if it was
+    there)."""
+    roots = [copy.deepcopy(r) for r in config.roots if r.id != root_id]
+    if config.notes_root == root_id:
+        return replace(config, roots=roots, notes_root=None, notes_path="")
+    return replace(config, roots=roots)
+
+
+def folder_in_root(folder: str, root_path: str, pathmod: ModuleType = os.path) -> str | None:
+    """Where ``folder`` is inside the root at ``root_path``, as a root-relative POSIX path
+    (``""``: the root itself), or ``None`` if it isn't inside. Paths are compared as
+    ``pathmod`` does (``ntpath``: ignoring case, either slash, UNC shares)."""
+    if not folder.strip() or not root_path.strip():
+        return None
+    inner, outer = pathmod.normpath(folder), pathmod.normpath(root_path)
+    a, b = pathmod.normcase(inner), pathmod.normcase(outer)
+    if a == b:
+        return ""
+    prefix = b if b.endswith(pathmod.sep) else b + pathmod.sep
+    if not a.startswith(prefix):
+        return None
+    return clean_relpath(inner[len(prefix) :].replace(pathmod.sep, "/"))
+
+
+def notes_folder_for(
+    config: KeepConfig,
+    root_path: Callable[[str], str],
+    folder: str,
+    pathmod: ModuleType = os.path,
+) -> tuple[str, str] | None:
+    """The root (``root_path`` gives this computer's path for each) holding ``folder``, and
+    the folder's path in it, or ``None`` when no watched folder holds it."""
+    for root in config.roots:
+        inside = folder_in_root(folder, root_path(root.id), pathmod)
+        if inside is not None:
+            return root.id, inside
+    return None
+
+
+def with_notes_folder(config: KeepConfig, root_id: str | None, path: str = "") -> KeepConfig:
+    """``config`` with its notes folder at ``path`` in the root ``root_id`` (§9 *The notes
+    folder*), or none (``None``)."""
+    if root_id is None:
+        return replace(config, notes_root=None, notes_path="", roots=copy.deepcopy(config.roots))
+    if root_id not in {r.id for r in config.roots}:
+        raise KeepError(f"The keep has no watched folder {root_id!r}.")
+    return replace(
+        config,
+        notes_root=root_id,
+        notes_path=clean_relpath(path),
+        roots=copy.deepcopy(config.roots),
+    )
 
 
 def _check(config: KeepConfig, keep_dir: Path, root: RootConfig) -> None:

@@ -59,6 +59,7 @@ def test_the_three_lists(qtbot: QtBot, window: MainWindow) -> None:
         "Untagged items (18)",
         "Missing files (0)",
         "Unmatched keywords (10)",  # songs whose genres match no tag (#295)
+        "Notes (0)",  # the notes folder (#382)
     ]
     assert [f.relpath for f in page.files.files] == ["Miles Davis/Kind of Blue/cover.jpg"]
     assert window.current_items_page() is None  # the files tab has no items to tag

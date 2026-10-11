@@ -25,4 +25,8 @@ Items whose files are all gone (missing, not just offline). **Show where they we
 
 Items whose files give [keywords](file-keywords.md) that match no tag, with a **Keywords** column. A button opens the File keywords page to map or ignore them.
 
+## Notes
+
+Notes in the [notes folder](notes.md#the-notes-folder) that aren't an item's note, each with why: no item has its title or aliases; several items match (add `tagalot-type`, or an alias only one of them has); or the item it matches has another note. **Open note** opens it in your Markdown editor to fix it, and **Show in file manager** shows it in its folder. The list updates at the next scan.
+
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

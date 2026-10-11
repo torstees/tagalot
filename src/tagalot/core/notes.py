@@ -38,6 +38,7 @@ from tagalot.core.models import (
     FieldSource,
     NoteIgnoredKey,
     NoteKeyRemoval,
+    NotesFolderNote,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -536,12 +537,15 @@ def read_notes(
                 ).where(EntityNote.entity_id.in_([s.entity.id for s in sites]))
             )
         }
+        from_notes_folder = set(conn.scalars(select(NotesFolderNote.resource_id)))
     changes: list[NoteChange] = []
     warnings: list[IngestWarning] = []
     for site in sites:
         file = files.get(site.folder)
         was = stored.get(site.entity.id)
         if file is None:
+            if was is not None and was[0] in from_notes_folder:
+                continue  # the notes folder's note (#382): its own step looks after it
             if was is not None and was[0] is not None:
                 changes.append(NoteChange(site, None, None))
             elif was is None and not site.folder_note:

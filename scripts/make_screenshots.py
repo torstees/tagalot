@@ -190,7 +190,8 @@ def research(app: QApplication, keep: Path) -> None:
 
         config = window.configure_keep()
         config.resize(820, 560)
-        config.tabs.setCurrentIndex(config.tabs.count() - 1)
+        keep_tab = next(i for i in range(config.tabs.count()) if config.tabs.tabText(i) == "Keep")
+        config.tabs.setCurrentIndex(keep_tab)
         settle(app)
         save(config, "keep-configuration")
         config.close()

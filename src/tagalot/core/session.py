@@ -82,6 +82,7 @@ from tagalot.core.root_admin import (
     delete_root,
     edit_root,
     unwatch,
+    with_notes_folder,
     without_root,
 )
 from tagalot.core.roots import sync_roots
@@ -91,7 +92,7 @@ from tagalot.core.saved_searches import (
     rename_search,
     save_search,
 )
-from tagalot.core.scanjob import Progress, ScanReport, scan_root
+from tagalot.core.scanjob import Progress, ScanReport, scan_notes_folder, scan_root
 from tagalot.core.search import ContentsScope
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.settings import Settings
@@ -242,10 +243,12 @@ class KeepSession:
         self, progress: Progress | None = None, root_ids: Iterable[str] | None = None
     ) -> list[ScanReport]:
         """Scan every watched root (or those of ``root_ids``) in turn with the keep's
-        theme. Runs in a worker."""
+        theme, then match the notes folder's notes to items (§9 *The notes folder*). Runs
+        in a worker."""
         reports = []
         self.last_scan_started = datetime.now(UTC)
         wanted = set(root_ids) if root_ids is not None else None
+        config = self.keep.config
         for root in self.keep.config.roots:
             if not root.watched or (wanted is not None and root.id not in wanted):
                 continue
@@ -260,9 +263,25 @@ class KeepSession:
                     theme_options=self.keep.config.theme_options,
                     progress=progress,
                     note_ignore_keys=self.note_ignore_keys,
+                    notes_folder=config.notes_path if root.id == config.notes_root else None,
                 )
             )
             self.problems.add(problems_from_report(reports[-1]))
+        notes_root = next((r for r in config.roots if r.id == config.notes_root), None)
+        if notes_root is not None and notes_root.watched:
+            notes = scan_notes_folder(
+                self.writer,
+                self.reader,
+                config.roots,
+                self.root_path,
+                notes_root.id,
+                config.notes_path,
+                theme=self.theme,
+                schema=self.schema,
+                theme_options=config.theme_options,
+                progress=progress,
+            )
+            self.problems.add(problems_from_report(notes))
         return reports
 
     def reextract(
@@ -496,6 +515,11 @@ class KeepSession:
         """Set the keep's ignored note keys; they apply at the next scan, which reads the
         notes again. Runs in a worker."""
         self.save_config(with_note_ignore_keys(self.keep.config, keys))
+
+    def set_notes_folder(self, root_id: str | None, path: str = "") -> None:
+        """Make ``path`` in the root ``root_id`` the keep's notes folder, or have none
+        (``None``); it applies at the next scan. Runs in a worker."""
+        self.save_config(with_notes_folder(self.keep.config, root_id, path))
 
     def ignore_note_key(self, key: str) -> NoteKeyChange:
         """Ignore ``key`` in every note of this keep: list it in ``keep.toml`` and remove

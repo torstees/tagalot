@@ -212,6 +212,11 @@ def _v15_note_ignored_keys(conn: Connection) -> None:
     Base.metadata.tables["note_ignored_key"].create(conn)
 
 
+def _v16_notes_folder(conn: Connection) -> None:
+    """Format 17: notes in the keep's notes folder (#382)."""
+    Base.metadata.tables["notes_folder_note"].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -228,6 +233,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     13: _v13_online_responses,
     14: _v14_notes,
     15: _v15_note_ignored_keys,
+    16: _v16_notes_folder,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

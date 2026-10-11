@@ -6,7 +6,7 @@ Thumbnails (step 7) arrive in M8.
 """
 
 import logging
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -27,6 +27,7 @@ from tagalot.core.keep import RootConfig
 from tagalot.core.models import Resource, ResourceStatus, Root
 from tagalot.core.note_keys import sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
+from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
     BATCH_SIZE,
@@ -37,6 +38,7 @@ from tagalot.core.scanner import (
     apply_diff,
     detect_moves,
     diff_root,
+    in_notes,
     load_known,
     merge_applied,
     split_diff,
@@ -108,6 +110,7 @@ def scan_root(
     theme_options: Mapping[str, Any] | None = None,
     progress: Progress | None = None,
     note_ignore_keys: frozenset[str] | None = None,
+    notes_folder: str | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -125,6 +128,9 @@ def scan_root(
     ``note_ignore_keys`` are the front-matter keys notes leave out (``core.note_keys``); when
     they differ from those the notes were last applied with, every note is read again.
     ``None`` keeps those.
+
+    ``notes_folder`` is the keep's notes folder when it is in this root (``""``: the whole
+    root): only its Markdown files are recorded, and none of it reaches the theme.
     """
     if (theme is None) != (schema is None):
         raise ValueError("pass both theme and schema, or neither")
@@ -153,11 +159,16 @@ def scan_root(
     say(f"Walking {root.name}…")
     entries = list(
         walk_root(
-            path, exclude=root.exclude, extensions=extensions, dirs=dirs, on_error=on_read_error
+            path,
+            exclude=root.exclude,
+            extensions=extensions,
+            dirs=dirs,
+            on_error=on_read_error,
+            notes=notes_folder,
         )
     )
     with reader.connect() as conn:
-        scope = walk_scope(root.exclude, extensions, dirs)
+        scope = walk_scope(root.exclude, extensions, dirs, notes_folder)
         diff = diff_root(load_known(conn, root.id), entries, unreadable, scope)
     report.new, report.changed = len(diff.new), len(diff.changed)
     report.restored, report.missing = len(diff.restored), len(diff.missing)
@@ -212,6 +223,7 @@ def scan_root(
             say,
             options.values,
             note_ignore_keys=note_ignore_keys,
+            notes_folder=notes_folder,
         )
         writer.run(partial(_record_options, root.id, options.fingerprint(theme.version)))
     logger.info(
@@ -320,6 +332,7 @@ def _ingest_pending(
     *,
     reread_notes: bool = True,
     note_ignore_keys: frozenset[str] | None = None,
+    notes_folder: str | None = None,
 ) -> None:
     """Hand every pending resource of the root to the theme, in batches, then read the
     root's notes that changed (§9 *Notes*).
@@ -352,7 +365,7 @@ def _ingest_pending(
         ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
         for rid, rel, kind, ext, size, mtime in rows
     ]
-    pending, notes = _without_notes(reader, theme, pending)
+    pending, notes = _without_notes(reader, theme, pending, notes_folder)
     if notes:
         writer.run(partial(_mark_ingested, [r.id for r in notes], when))
     pending = _read_last(reader, root, path, theme, pending)
@@ -384,21 +397,28 @@ def _ingest_pending(
             say,
             options,
             reread_notes=False,
+            notes_folder=notes_folder,
         )
 
 
 def _without_notes(
-    reader: Engine, theme: type[Theme], pending: list[ResourceInfo]
+    reader: Engine,
+    theme: type[Theme],
+    pending: list[ResourceInfo],
+    notes_folder: str | None = None,
 ) -> tuple[list[ResourceInfo], list[ResourceInfo]]:
     """``pending`` without the notes the theme doesn't get (#379): note-named Markdown files
-    it doesn't take (recorded only as notes), and files that are items' notes."""
+    it doesn't take (recorded only as notes), files that are items' notes, and everything
+    in the notes folder (#382)."""
     accepts = theme.extensions
+    held = {r.id for r in pending if in_notes(r.relpath, notes_folder)}
     candidates = [r for r in pending if r.kind == "file" and note_rank(r.relpath) is not None]
-    if not candidates:
+    if candidates:
+        with reader.connect() as conn:
+            used = used_notes(conn)
+        held |= {r.id for r in candidates if (accepts and r.ext not in accepts) or r.id in used}
+    if not held:
         return pending, []
-    with reader.connect() as conn:
-        used = used_notes(conn)
-    held = {r.id for r in candidates if (accepts and r.ext not in accepts) or r.id in used}
     return [r for r in pending if r.id not in held], [r for r in pending if r.id in held]
 
 
@@ -450,6 +470,51 @@ def _mark_ingested(ids: list[int], when: datetime, conn: Connection) -> None:
     for start in range(0, len(ids), BATCH_SIZE):
         chunk = ids[start : start + BATCH_SIZE]
         conn.execute(update(Resource).where(Resource.id.in_(chunk)).values(ingested_at=when))
+
+
+def scan_notes_folder(
+    writer: DbWriter,
+    reader: Engine,
+    roots: Sequence[RootConfig],
+    root_path: Callable[[str], str],
+    notes_root: str,
+    notes_path: str,
+    *,
+    theme: type[Theme],
+    schema: ThemeSchema,
+    theme_options: Mapping[str, Any] | None = None,
+    progress: Progress | None = None,
+) -> ScanReport:
+    """Match the keep's notes folder's notes to items and apply them (§9 *The notes
+    folder*), after its roots were scanned, so a new item finds a note already there. Items
+    whose note stopped giving a value have their files read again at once."""
+    report = ScanReport(notes_root, online=True)
+    say: Progress = progress or (lambda message: None)
+    say("Matching the notes folder's notes…")
+    plan = plan_folder_notes(reader, schema, notes_root, notes_path, root_path(notes_root))
+    report.ingest_warnings += plan.warnings
+    again, problems = writer.run(partial(apply_folder_notes, schema=schema, plan=plan))
+    report.ingest_warnings += problems
+    if not again:
+        return report
+    writer.run(partial(_mark_pending, again))
+    with reader.connect() as conn:
+        affected = set(conn.scalars(select(Resource.root_id).where(Resource.id.in_(again))))
+    for root in roots:
+        if root.id in affected:
+            done = ingest_pending(
+                writer,
+                reader,
+                root,
+                root_path(root.id),
+                theme=theme,
+                schema=schema,
+                theme_options=theme_options,
+                progress=progress,
+            )
+            report.ingest_errors += done.ingest_errors
+            report.ingest_warnings += done.ingest_warnings
+    return report
 
 
 def _mark_pending(ids: list[int], conn: Connection) -> None:
