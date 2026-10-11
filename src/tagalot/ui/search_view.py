@@ -26,6 +26,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMenu,
     QPushButton,
@@ -68,6 +69,7 @@ from tagalot.ui.models.results import ResultColumn, ResultsModel
 from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
+    COLUMN_WIDTH,
     DEFAULT_HIDDEN,
     count_text,
     hidden_keys,
@@ -309,6 +311,14 @@ class SearchPage(QWidget):
         tree_header.setSortIndicatorShown(True)
         tree_header.setSectionsClickable(True)
         tree_header.sortIndicatorChanged.connect(self._sort_clicked)
+        self._moving = False
+        table_header = self.table.horizontalHeader()
+        table_header.sectionMoved.connect(lambda: self._same_order(table_header, tree_header))
+        tree_header.sectionMoved.connect(lambda: self._same_order(tree_header, table_header))
+        tree_header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        tree_header.customContextMenuRequested.connect(
+            lambda point: self.column_menu().exec(self.tree.header().mapToGlobal(point))
+        )
         self.tree.selectionModel().selectionChanged.connect(self.selection_changed)
         self.tree.activated.connect(self._tree_activated)
         add_open_keys(self.tree, self._tree_activated)
@@ -685,6 +695,21 @@ class SearchPage(QWidget):
             self.tree.setColumnWidth(i, max(header.sectionSize(i), 60))
         title = next((i for i, c in enumerate(self.model.columns) if c.key == "title"), 0)
         self.tree.setColumnWidth(title, max(self.tree.columnWidth(title), 260))
+        self._same_order(header, self.tree.header())
+
+    def _same_order(self, source: QHeaderView, target: QHeaderView) -> None:
+        """Put ``target``'s columns in ``source``'s order: a column moved in the list moves
+        in the tree, and back (#413)."""
+        if self._moving or source.count() != target.count():
+            return
+        self._moving = True
+        try:
+            for visual in range(source.count()):
+                logical = source.logicalIndex(visual)
+                if target.visualIndex(logical) != visual:
+                    target.moveSection(target.visualIndex(logical), visual)
+        finally:
+            self._moving = False
 
     # --- the preview strip ---
 
@@ -864,8 +889,13 @@ class SearchPage(QWidget):
 
         run_in_pool(self.session.tag_cache.get, on_done=loaded, pool=self._pool)
 
+    def column_menu(self) -> QMenu:
+        """The list's column checkboxes, for the tree's header too: the two layouts show the
+        same columns (#413)."""
+        return self.table.column_menu()
+
     def _column_toggled(self, key: str, visible: bool) -> None:
-        """Show or hide a column in the list and every section, and report it."""
+        """Show or hide a column in the list, the tree, and every section, and report it."""
         if visible:
             self.hidden_columns.discard(key)
             self.shown_columns.add(key)
@@ -877,6 +907,9 @@ class SearchPage(QWidget):
         self.tree.set_columns_hidden(
             [c.key for c in columns], hidden_keys(columns, self.hidden_columns, self.shown_columns)
         )
+        index = next((i for i, c in enumerate(columns) if c.key == key), None)
+        if visible and index is not None:  # shown in the tree at the list's starting width
+            self.tree.setColumnWidth(index, self.table.start_widths.get(index, COLUMN_WIDTH))
         self.groups.set_hidden_columns(self.hidden_columns, self.shown_columns)
         self.hidden_columns_changed.emit(sorted(self.hidden_columns))
         self.shown_columns_changed.emit(sorted(self.shown_columns))
