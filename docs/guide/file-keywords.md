@@ -12,6 +12,8 @@ A keyword matches a tag when it is (ignoring case and accents):
 
 A matching item gets the tag. Nothing ever creates a tag for you.
 
+In a Markdown file or a note, write a path the same way: `Locale > Fantasy > Castle` or `Locale/Fantasy/Castle`, as one item of `tags`. Each item of a list is one keyword, spaces and all (`- Science Fiction`). Written on one line instead, `tags: fantasy reading` is two keywords, and commas separate keywords that have spaces (`tags: Science Fiction, Locale > Castle`).
+
 - Tags from files are shown in *italics* in the Tags panel (when every selected item has it only from its files).
 - When the files change, a scan updates them: a keyword gone from every file takes its tag away, unless you also added the tag yourself.
 - **Taking one off by hand sticks:** later scans leave it off. The item's page offers **Restore**.

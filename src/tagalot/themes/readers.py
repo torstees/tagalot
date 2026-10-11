@@ -295,16 +295,23 @@ def split_people(value: Any) -> list[str]:
     return [" ".join(p.split()) for p in people]
 
 
+_SPACES = re.compile(r"(?<![/>\u203a]) (?![/>\u203a])")
+"""A space between keywords: not one beside a path separator (``/``, ``>``, or Tagalot's
+own, U+203A), which joins a path's levels."""
+
+
 def split_keywords(value: Any, spaces: bool = True) -> list[str]:
     """Keywords in one value: a list, or text split on commas and semicolons (else, with
     ``spaces``, on spaces, as Obsidian's ``tags: fantasy reading``; without, a phrase such
     as a PDF's ``Language models`` is one keyword); a leading ``#`` is dropped, and a
-    nested tag keeps its path (``Genre/Fantasy``)."""
+    nested tag keeps its path (``Genre/Fantasy``, ``Locale > Fantasy > Castle``: spaces
+    beside a path separator don't split it). A list's items are never split on
+    spaces: ``- Science Fiction`` is one keyword (#420)."""
     if isinstance(value, list | tuple):
-        words = [w for v in value for w in split_keywords(v, spaces)]
+        words = [w for v in value for w in split_keywords(v, spaces=False)]
     elif isinstance(value, str):
         listed = re.search(r"[,;]", value) or not spaces
-        pieces = re.split(r"[,;]", value) if listed else value.split()
+        pieces = re.split(r"[,;]", value) if listed else _SPACES.split(" ".join(value.split()))
         words = [" ".join(p.strip().lstrip("#").split()) for p in pieces]
     elif isinstance(value, int | float) and not isinstance(value, bool):
         words = [str(value)]
