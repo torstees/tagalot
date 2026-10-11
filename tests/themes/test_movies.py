@@ -29,7 +29,7 @@ from tagalot.builtin_themes.movies import (
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.keywords import keywords_of
-from tagalot.core.models import Entity, EntityContains, EntityResource, Resource
+from tagalot.core.models import Entity, EntityContains, EntityNote, EntityResource, Resource
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
@@ -517,4 +517,45 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 3  # 2: video details; 3: genres as keywords (#295)
+    assert MoviesTheme.version == 4  # 2: video details; 3: genres as keywords; 4: notes
+
+
+def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:
+    """An item's note body, Extra fields, and director (for a movie)."""
+    table = env.schema.entities[Movie].table
+    with env.reader.connect() as conn:
+        entity_id, extra = conn.execute(
+            select(Entity.id, Entity.extra).where(Entity.title == title)
+        ).one()
+        body = conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
+        director = conn.scalar(select(table.c.director).where(table.c.id == entity_id))
+    return body, dict(extra or {}), director
+
+
+def test_a_movies_folder_note(env: Env) -> None:
+    # A movie's own folder's note describes it (#384); loose videos' folder has none.
+    (env.files / "Inception (2010)" / "Inception (2010).md").write_text(
+        "---\ndirector: Someone Else\nstudio: Syncopy\n---\nDreams within dreams.\n",
+        encoding="utf-8",
+    )
+    (env.files / "README.md").write_text("The whole library.\n", encoding="utf-8")
+    (env.files / "The Lord of the Rings" / "index.md").write_text(
+        "---\ntitle: Middle-earth\n---\nPeter Jackson's trilogy.\n", encoding="utf-8"
+    )
+    env.scan()
+    assert _note(env, "Inception") == (
+        "Dreams within dreams.",
+        {"studio": "Syncopy"},
+        "Someone Else",  # no file gave a director
+    )
+    assert _note(env, "Heat") == (None, {}, None)
+    assert _note(env, "Middle-earth")[0] == "Peter Jackson's trilogy."  # the collection
+    # An .nfo ranks above the note.
+    (env.files / "Inception (2010)" / "movie.nfo").write_text(INCEPTION_NFO, encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=1))
+    body, extra, director = _note(env, "Inception")
+    assert (body, extra, director) == (
+        "Dreams within dreams.",
+        {"studio": "Syncopy"},
+        "Christopher Nolan",
+    )

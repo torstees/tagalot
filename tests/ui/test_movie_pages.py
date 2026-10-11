@@ -19,6 +19,7 @@ from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.workers import ScanController
+from tests.ui.test_field_editing import _section_order
 from tests.ui.test_within import _search
 
 pytestmark = pytest.mark.gui
@@ -150,9 +151,10 @@ def test_the_add_to_cast_dialog(qtbot: QtBot, session: KeepSession) -> None:
     qtbot.waitUntil(lambda: dialog.results.count() == 6, timeout=5000)  # every actor
     dialog.search.setText("al")
     dialog.look_up()
-    qtbot.waitUntil(lambda: dialog.results.count() == 2, timeout=5000)
+    qtbot.waitUntil(lambda: dialog.results.item(0).text() == "New actor: al", timeout=5000)
     texts = [dialog.results.item(n).text() for n in range(dialog.results.count())]
-    assert texts == ["New actor: al", "Al Pacino"]
+    # Sigourney Weaver's note says "Alien": notes are searchable (#384's demo).
+    assert texts == ["New actor: al", "Al Pacino", "Sigourney Weaver"]
     assert not dialog.results.item(1).flags() & Qt.ItemFlag.ItemIsEnabled  # already there
     assert dialog.chosen() == (None, "al")
     dialog.search.setText("Al Pacino")
@@ -221,3 +223,10 @@ def test_a_collection_lists_its_movies_by_year(
         "The Two Towers",
         "The Return of the King",
     ]
+
+
+def test_a_type_without_fields_shows_extra_fields_first(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _page_of(qtbot, window, session, "The Lord of the Rings")  # a Collection
+    assert _section_order(page)[0] == "section_extra"

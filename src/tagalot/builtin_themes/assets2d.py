@@ -67,9 +67,14 @@ ARTIST_LEVEL = option(
 
 
 class Artist(Entity):
-    """Whoever made the assets in a folder."""
+    """Whoever made the assets in a folder. Its folder's note (``Aurora Studio.md``) can give
+    a friendlier name and its ``website`` (#384); no file does."""
 
     title_label = "Name"
+    website: str | None = field("Website", search="text", display="url")
+    folder: str | None = field("Folder", editable=False)
+    """The artist folder's name, as its assets' ``artist`` says it (the title may be the
+    note's friendlier name)."""
     roles = [role("folder", kinds={"dir"}, primary=True)]
 
 
@@ -139,7 +144,7 @@ class ContentsThumbnail(ThumbnailProvider):
 
 class Assets2DTheme(Theme):
     # Version 2 reads a picture hash from images: existing keeps read their files again once.
-    id, name, version = "assets2d", "2D assets", 2
+    id, name, version = "assets2d", "2D assets", 3  # 3: an artist's folder name
     extensions = frozenset(
         KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.FONT] | KIND_EXTENSIONS[Kind.ARCHIVE]
     )
@@ -192,9 +197,10 @@ class Assets2DTheme(Theme):
     def biggest_artists(self, ctx: DashboardContext) -> CardRows:
         counts = []
         for artist in ctx.find(Artist):
-            name = ctx.get(artist).title
-            n = sum(ctx.count(kind, artist=name) for kind in (Image, Font, Archive))
-            counts.append((n, name))
+            record = ctx.get(artist)
+            folder = record.fields.get("folder") or record.title  # its note may rename it
+            n = sum(ctx.count(kind, artist=folder) for kind in (Image, Font, Archive))
+            counts.append((n, record.title))
         counts.sort(key=lambda c: (-c[0], c[1].casefold()))
         if not counts:
             return "No artists yet."
@@ -258,14 +264,15 @@ class Assets2DTheme(Theme):
                 asset = ctx.upsert(asset_type, f"file:{uuid.uuid4().hex}", title=title, **values)
                 ctx.link(asset, resource, "file")
             if artist is not None:
-                ctx.contain(ctx.upsert(Artist, artist_key(artist), title=artist), asset)
+                artist_ref = ctx.upsert(Artist, artist_key(artist), title=artist, folder=artist)
+                ctx.contain(artist_ref, asset)
 
     def _ingest_folder(self, resource: ResourceInfo, level: int, ctx: IngestContext) -> None:
         """An artist's folder becomes its ``folder`` link; a folder at another level stops
         being one (after the level changed)."""
         if resource.relpath.count("/") == level - 1:
             name = resource.relpath.rpartition("/")[2]
-            artist = ctx.upsert(Artist, artist_key(name), title=name)
+            artist = ctx.upsert(Artist, artist_key(name), title=name, folder=name)
             ctx.link(artist, resource, "folder")
             return
         for artist in ctx.entities_of(resource, "folder"):

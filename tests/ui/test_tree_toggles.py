@@ -14,7 +14,7 @@ from tagalot.ui.models.results import TAGS
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import ScanController
-from tests.ui.test_contents_search import _id, session, window
+from tests.ui.test_contents_search import AURORA, _id, session, window
 from tests.ui.test_within import _search
 
 pytestmark = pytest.mark.gui
@@ -52,7 +52,7 @@ def _tree(qtbot: QtBot, window: MainWindow) -> tuple[SearchPage, QModelIndex]:
     page.tree_button.click()
     assert page.results.currentWidget() is page.tree
     qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
-    aurora = _tree_row(page, "Aurora Studio")
+    aurora = _tree_row(page, AURORA)
     page.tree.expand(aurora)
     qtbot.waitUntil(lambda: page.tree_model.rowCount(aurora) == 7, timeout=5000)
     return page, aurora
@@ -130,7 +130,7 @@ def test_by_contents_finds_artists_by_their_images(
     artists.filter_bar.aggregate_box.setChecked(True)
     # forest.png is tagged Favorites, and it is Aurora Studio's.
     qtbot.waitUntil(lambda: artists.status.text() == "1 item", timeout=5000)
-    assert _titles(artists) == ["Aurora Studio"]
+    assert _titles(artists) == [AURORA]
     state = load_ui_state(session.keep.ui_state_path)
     assert state["toggles"]["view:Artists"]["aggregate_up"] is True  # remembered
 
@@ -154,7 +154,7 @@ def test_clear_all_keeps_the_toggles(qtbot: QtBot, window: MainWindow) -> None:
 
 def test_the_tree_expands_containers(qtbot: QtBot, window: MainWindow) -> None:
     page, aurora = _tree(qtbot, window)
-    assert _tree_titles(page) == ["Aurora Studio", "Kenji Sato"]
+    assert _tree_titles(page) == [AURORA, "Kenji Sato"]
     assert _tree_titles(page, aurora) == [  # by title, ignoring case
         "Aileron-Regular.ttf",
         "dusk sky.png",
@@ -286,7 +286,7 @@ def test_a_child_that_becomes_excluded_leaves_the_tree(
     assert favorites is not None
     page.filter_bar.add_tag(favorites, exclude=True)  # excluded children are left out
     qtbot.waitUntil(lambda: page.status.text() == "2 items", timeout=5000)
-    aurora = _tree_row(page, "Aurora Studio")
+    aurora = _tree_row(page, AURORA)
     page.tree.expand(aurora)
     qtbot.waitUntil(lambda: page.tree_model.rowCount(aurora) == 5, timeout=5000)  # no forest, font
     assert "gem.png" in _tree_titles(page, aurora)

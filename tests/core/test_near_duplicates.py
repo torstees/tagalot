@@ -136,6 +136,6 @@ def test_a_new_theme_version_reads_every_file_again_once(assets: KeepSession) ->
     with assets.reader.connect() as conn:
         recorded = conn.scalar(select(Root.ingest_options))
     assert recorded is not None
-    assert '"__theme_version__": 2' in recorded
+    assert '"__theme_version__": 3' in recorded
     [again] = assets.scan_all()
     assert again.ingested == 0

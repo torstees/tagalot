@@ -30,7 +30,7 @@ pytestmark = pytest.mark.gui
 
 NOTE = """---
 title: Aurora Studio (Reykjavík)
-website: https://aurora.example
+homepage: https://aurora.example
 mood: calm
 ---
 # Aurora Studio (Reykjavík)
@@ -198,7 +198,7 @@ def test_the_notes_extra_fields(qtbot: QtBot, window: MainWindow, session: KeepS
     qtbot.waitUntil(lambda: _extra(page, "mood") is None, timeout=5000)
     session.scan_all()  # the note still says it: left off
     page.refresh()
-    qtbot.waitUntil(lambda: _extra(page, "website") is not None, timeout=5000)
+    qtbot.waitUntil(lambda: _extra(page, "homepage") is not None, timeout=5000)
     assert _extra(page, "mood") is None
 
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
@@ -238,7 +238,7 @@ def test_ignoring_a_key_in_every_note(
     assert load_keep_config(session.keep.toml_path).note_ignore_keys == ["mood"]
     session.scan_all()  # scans leave it out from now on
     page.refresh()
-    qtbot.waitUntil(lambda: _extra(page, "website") is not None, timeout=5000)
+    qtbot.waitUntil(lambda: _extra(page, "homepage") is not None, timeout=5000)
     assert _extra(page, "mood") is None
 
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
@@ -264,10 +264,10 @@ def test_the_keys_in_keep_configuration(
     assert "next scan" in saved.args[0]
     assert load_keep_config(session.keep.toml_path).note_ignore_keys == ["Mood"]
 
-    config.user_ignore_keys.setPlainText("website")
+    config.user_ignore_keys.setPlainText("homepage")
     with qtbot.waitSignal(config.changed, timeout=5000):
         QApplication.sendEvent(config.user_ignore_keys, QFocusEvent(QEvent.Type.FocusOut))
-    assert load_settings(config.settings_path).note_ignore_keys == ["website"]
+    assert load_settings(config.settings_path).note_ignore_keys == ["homepage"]
 
     config.keep_ignore_keys.setPlainText("tagalot-type")
     QApplication.sendEvent(config.keep_ignore_keys, QFocusEvent(QEvent.Type.FocusOut))
@@ -278,5 +278,5 @@ def test_the_keys_in_keep_configuration(
     page = _page(qtbot, window, session)
     qtbot.waitUntil(lambda: page.findChild(QWidget, "section_extra") is not None, timeout=5000)
     assert _extra(page, "mood") is None
-    assert _extra(page, "website") is None
+    assert _extra(page, "homepage") is None
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
