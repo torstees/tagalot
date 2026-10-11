@@ -61,7 +61,8 @@ Read:                         # just the name
 
 **Importing** shows what will change before it changes anything: the new tags, the tags it updates and how, and any problems (with their line in the file).
 
-- **Tags are matched by where they are in the tree**, ignoring case and accents, and a name also matches a tag's other names: `Sci-Fi` under `Genre` is `Genre › Science Fiction`. Importing never renames a tag.
+- **Tags are matched by where they are in the tree**, ignoring case and accents, and a name also matches a tag's other names: `Sci-Fi` under `Genre` is `Genre › Science Fiction`.
+- **A name spelled differently is fixed:** if the file writes `fantasy` and the tag is `Fantasy` (or `Cafe` for `Café`), the tag takes the file's spelling, so you can tidy names in a text editor. A match through another name never renames: `Sci-Fi` leaves `Science Fiction` as it is.
 - **What the file says is added to what's there:** a color, description, or `applies_to` in the file replaces the tag's, other names are added, and anything the file leaves out stays as it is. To clear a color or remove another name, use the tag manager.
 - **Problems are left out, and the rest imports:** a color that isn't `#rrggbb`, a kind of item this keep doesn't have, a sub-tag that applies to more than its parent allows. A file that isn't YAML imports nothing.
 - **Delete tags not in this file that no item uses** (off unless you tick it) also deletes the tags the file doesn't mention, but only those no item has and with no sub-tag that stays. The preview lists them, and the ones kept because items use them. If you renamed a tag in the file and items use it, the old one stays: merge it into the new one with **Merge…**.

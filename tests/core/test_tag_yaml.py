@@ -173,13 +173,12 @@ Format:
     assert tree.children(None)[-1] == env.find("Format")  # after the existing top level
 
 
-def test_matching_ignores_case_and_accents_and_finds_aliases(env: Env) -> None:
+def test_matching_finds_aliases_without_renaming(env: Env) -> None:
     text = """
-genre:
+Genre:
   tags:
     sci-fi:
       color: "#112233"
-places: [island]
 """
     plan = env.plan(text)
     assert plan.new == ()
@@ -187,8 +186,41 @@ places: [island]
     env.tags.import_tags(text, "tags.yaml")
     tree = env.tree()
     assert tree.node(3).color == "#112233"
-    assert tree.node(3).name == "Science Fiction"  # matching never renames
+    assert tree.node(3).name == "Science Fiction"  # an alias never renames
     assert len(tree) == len(TAGS)
+
+
+def test_a_name_spelled_differently_renames_the_tag(env: Env) -> None:
+    """Matching ignores case and accents; the file's spelling then becomes the name, so
+    small fixes can be made in a text editor."""
+    text = """
+genre:
+  tags:
+    Science fiction:
+      color: "#112233"
+Places: [Island]
+"""
+    plan = env.plan(text)
+    assert plan.new == ()
+    assert plan.updated == (
+        TagUpdate("Genre", ("renamed to 'genre'",)),
+        TagUpdate(p("genre", "Science Fiction"), ("renamed to 'Science fiction'", "color")),
+        TagUpdate(p("Places", "\u00cdsland"), ("renamed to 'Island'",)),
+    )
+    env.tags.import_tags(text, "tags.yaml")
+    tree = env.tree()
+    assert [tree.node(t).name for t in (1, 3, 8)] == ["genre", "Science fiction", "Island"]
+    assert tree.node(3).color == "#112233"
+    assert len(tree) == len(TAGS)
+    assert env.plan(text) == ImportPlan()  # done
+
+
+def test_a_rename_drops_an_alias_that_is_now_the_name(env: Env) -> None:
+    env.tags.add_alias(8, "Island")
+    env.tags.import_tags("Places: [Island]\n", "tags.yaml")
+    tree = env.tree()
+    assert tree.node(8).name == "Island"
+    assert tree.aliases(8) == ()
 
 
 def test_properties_merge_into_what_is_there(env: Env) -> None:

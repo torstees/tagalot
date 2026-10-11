@@ -365,11 +365,13 @@ class _Planned:
     """Its ``applies_to``, narrowed to its parent's; ``None`` when not given."""
     children: list["_Planned"]
     new_aliases: tuple[str, ...]
+    rename: str | None = None
+    """The file's spelling of a tag it names with different case or accents."""
 
 
-def _match(tree: TagTree, parent_id: int | None, name: str) -> int | None:
+def _match(tree: TagTree, parent_id: int | None, name: str) -> tuple[int | None, bool]:
     """The existing tag under ``parent_id`` that ``name`` names: by name ignoring case, then
-    also ignoring accents, then by one of its aliases."""
+    also ignoring accents, then by one of its aliases; and whether it was by its name."""
     children = tree.children(parent_id)
     key, loose = name_key(name), search_key(name)
     tests: tuple[Callable[[int], bool], ...] = (
@@ -377,11 +379,11 @@ def _match(tree: TagTree, parent_id: int | None, name: str) -> int | None:
         lambda c: search_key(tree.node(c).name) == loose,
         lambda c: any(search_key(a) == loose for a in tree.aliases(c)),
     )
-    for test in tests:
+    for by_name, test in zip((True, True, False), tests, strict=True):
         for child in children:
             if test(child):
-                return child
-    return None
+                return child, by_name
+    return None, False
 
 
 class _Planner:
@@ -404,7 +406,7 @@ class _Planner:
         tree = self.tree
         planned = []
         for tag in parsed:
-            tag_id = None if parent_new else _match(tree, parent_id, tag.name)
+            tag_id, by_name = (None, False) if parent_new else _match(tree, parent_id, tag.name)
             if tag_id is not None and tag_id in self.named:
                 self.reader.problem(
                     tag.line,
@@ -424,6 +426,7 @@ class _Planner:
                 types = (types & inherited) or None
             own = types if types is not None else parse_types(node.types) if node else None
             scope = own if inherited is None else inherited if own is None else inherited & own
+            rename = tag.name if node and by_name and tag.name != node.name else None
             here = (*path, node.name if node else tag.name)
             new_aliases = tag.aliases
             if node is None or tag_id is None:
@@ -432,7 +435,7 @@ class _Planner:
                 self.named.add(tag_id)
                 known = {name_key(a) for a in tree.aliases(tag_id)} | {name_key(node.name)}
                 new_aliases = tuple(a for a in tag.aliases if name_key(a) not in known)
-                changes = []
+                changes = [f"renamed to {rename!r}"] if rename else []
                 if tag.color is not None and tag.color != node.color:
                     changes.append("color")
                 if tag.description is not None and tag.description != node.description:
@@ -444,8 +447,10 @@ class _Planner:
                     self.retyped[tag_id] = types
                 if changes:
                     self.updated.append(TagUpdate(PATH_SEPARATOR.join(here), tuple(changes)))
+            if rename:  # its sub-tags are shown under the new name
+                here = (*path, rename)
             children = self.walk(tag.children, tag_id, tag_id is None, scope, here)
-            planned.append(_Planned(tag, tag_id, types, children, new_aliases))
+            planned.append(_Planned(tag, tag_id, types, children, new_aliases, rename))
         return planned
 
 
@@ -555,6 +560,15 @@ def import_tags(
                 )
             else:
                 values: dict[str, Any] = {}
+                if item.rename is not None:
+                    values["name"] = item.rename
+                    same = [a for a in tree.aliases(tag_id) if name_key(a) == name_key(item.rename)]
+                    if same:  # an alias that is now its name
+                        conn.execute(
+                            delete(TagAlias).where(
+                                TagAlias.tag_id == tag_id, TagAlias.alias.in_(same)
+                            )
+                        )
                 if tag.color is not None:
                     values["color"] = tag.color
                 if tag.description is not None:
