@@ -6,14 +6,14 @@ Double-click an item (or press Enter) for its page; for kinds that open their fi
 
 ## What's on a page
 
-- **The header:** its thumbnail, title, and kind. Above the title, **breadcrumbs** show what holds it (`Discworld ›`), each opening that item's page.
+- **The header:** its thumbnail, title, and kind. Above the title, **breadcrumbs** show what holds it (`Discworld ›`), each opening that item's page. Under it, the item's [note](notes.md), if it has one, with **Show more** for a long one and **Open note**.
 - **Details:** its fields. Fields you can change show a ✎ when you point at them.
-- **Extra fields:** fields of your own for this one item (a name and a value), searchable like any text.
+- **Extra fields:** fields of your own for this one item (a name and a value), searchable like any text. Those from the item's [note](notes.md) are marked "• from the note".
 - **Files:** each file it links, with its folder and size, and whether it's **offline** or **missing**. Right-click a file for Open file, Show in file manager, and Open with.
 - **From the file:** the keywords its files gave and what became of each (see [File keywords](file-keywords.md)).
 - **Related items:** a movie's cast, a book's writers, a paper's authors in order, what a paper cites: each a small search of its own, with **Add…** to add one by hand and **Remove from …** on its items' menus. What you add or remove by hand stays that way through later scans.
 - **Contents:** for an item that holds others (an artist, an album, a series), a search of what it holds, with its own filter bar.
-- **More ▾:** Open file, Show in file manager, Open with, Re-read from file, Look up online and Write to file… (when the keep offers them), and the theme's commands also appear as buttons.
+- **More ▾:** Open file, Show in file manager, Open with, Open note (when it has one), Re-read from file, Look up online and Write to file… (when the keep offers them), and the theme's commands also appear as buttons.
 
 Tagging on a page applies to the page's item, or to the items selected in its contents.
 

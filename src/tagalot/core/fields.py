@@ -14,7 +14,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import fts
 from tagalot.core.ingest import TITLE, theme_text_source
-from tagalot.core.models import Entity, FieldProvenance, FieldSource, utcnow
+from tagalot.core.models import Entity, FieldProvenance, FieldSource, NoteKeyRemoval, utcnow
+from tagalot.core.notes import EXTRA
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import FieldInfo, entity_label
 
@@ -181,6 +182,14 @@ class ExtraChange:
     entity_id: int
     before: dict[str, Any]
     after: dict[str, Any]
+    name: str = ""
+    """The field changed."""
+    source_before: FieldSource | None = None
+    """Its provenance (``extra:<name>``): ``note`` for a field from the item's note (#380)."""
+    source_after: FieldSource | None = None
+    removed_before: bool = False
+    """Whether the item's note is to leave this key off (``note_key_removal``)."""
+    removed_after: bool = False
 
 
 def edit_extra(
@@ -193,7 +202,11 @@ def edit_extra(
     new: bool = False,
 ) -> ExtraChange:
     """Add (``new``), change, or remove (``value=None``, or empty) an extra field: a name
-    and a text value the user keeps on an entity, searchable as text."""
+    and a text value the user keeps on an entity, searchable as text.
+
+    A field from the item's note (#380) becomes the user's when changed (provenance
+    ``user``, so scans leave it), and removing one is remembered (``note_key_removal``), so
+    later scans leave it off."""
     row = conn.execute(select(Entity.title, Entity.extra).where(Entity.id == entity_id)).first()
     if row is None:
         raise FieldEditError("This item no longer exists")
@@ -218,8 +231,31 @@ def edit_extra(
     else:
         after[name] = text
         label = f"Set {name} of {row.title!r} to {text!r}"
+    source_before = conn.scalar(
+        select(FieldProvenance.source).where(
+            FieldProvenance.entity_id == entity_id, FieldProvenance.field == EXTRA + name
+        )
+    )
+    removed_before = _removed(conn, entity_id, name)
+    source_after, removed_after = source_before, removed_before
+    if source_before is not None:  # it came from the note
+        if name in after:
+            source_after = FieldSource.USER
+        else:
+            source_after, removed_after = None, True
     _write_extra(conn, schema, entity_id, after)
-    return ExtraChange(label, entity_id, before, after)
+    _write_note_state(conn, entity_id, name, source_after, removed_after)
+    return ExtraChange(
+        label,
+        entity_id,
+        before,
+        after,
+        name,
+        source_before,
+        source_after,
+        removed_before,
+        removed_after,
+    )
 
 
 def restore_extra(
@@ -229,6 +265,14 @@ def restore_extra(
     if conn.scalar(select(Entity.id).where(Entity.id == change.entity_id)) is None:
         return
     _write_extra(conn, schema, change.entity_id, change.after if forward else change.before)
+    if change.name:
+        _write_note_state(
+            conn,
+            change.entity_id,
+            change.name,
+            change.source_after if forward else change.source_before,
+            change.removed_after if forward else change.removed_before,
+        )
 
 
 def _write_extra(
@@ -238,3 +282,49 @@ def _write_extra(
         update(Entity).where(Entity.id == entity_id).values(extra=extra, updated_at=utcnow())
     )
     fts.sync_entities(conn, [entity_id], theme_text_source(schema))
+
+
+def _removed(conn: Connection, entity_id: int, name: str) -> bool:
+    key = name.casefold()
+    found = conn.scalar(
+        select(NoteKeyRemoval.key).where(
+            NoteKeyRemoval.entity_id == entity_id, NoteKeyRemoval.key == key
+        )
+    )
+    return found is not None
+
+
+def _write_note_state(
+    conn: Connection, entity_id: int, name: str, source: FieldSource | None, removed: bool
+) -> None:
+    """Set an extra field's provenance, and whether the item's note is to leave it off."""
+    field_name = EXTRA + name
+    if source is None:
+        conn.execute(
+            delete(FieldProvenance).where(
+                FieldProvenance.entity_id == entity_id, FieldProvenance.field == field_name
+            )
+        )
+    else:
+        stmt = sqlite_insert(FieldProvenance).values(
+            entity_id=entity_id, field=field_name, source=source, updated_at=utcnow()
+        )
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=["entity_id", "field"],
+                set_={"source": stmt.excluded.source, "updated_at": stmt.excluded.updated_at},
+            )
+        )
+    key = name.casefold()
+    if removed:
+        conn.execute(
+            sqlite_insert(NoteKeyRemoval)
+            .values(entity_id=entity_id, key=key)
+            .on_conflict_do_nothing()
+        )
+    else:
+        conn.execute(
+            delete(NoteKeyRemoval).where(
+                NoteKeyRemoval.entity_id == entity_id, NoteKeyRemoval.key == key
+            )
+        )

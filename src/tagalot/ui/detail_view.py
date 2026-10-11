@@ -23,7 +23,9 @@ are links that open their own pages.
 """
 
 import html
+import os
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QThreadPool, Signal
@@ -55,7 +57,8 @@ from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detai
 from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
-from tagalot.core.models import ResourceStatus
+from tagalot.core.models import FieldSource, ResourceStatus
+from tagalot.core.note_markdown import read_pictures, renderable
 from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.search_spec import SearchSpec, SortKey
@@ -64,6 +67,7 @@ from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.lookups import LOOK_UP_TIP
+from tagalot.ui.note_view import NoteView
 from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions, writes_back
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
@@ -73,8 +77,44 @@ HEADER_THUMBNAIL = 192
 
 GALLERY_THUMBNAIL = 128
 
+NOTE_PICTURE_WIDTH = 480
+"""A note's pictures are shown at most this wide, in pixels."""
+
 CRUMB = "\u203a"
 """Between breadcrumbs."""
+
+FROM_NOTE_TIP = (
+    "From this item's note: scans keep it up to date. Edit it to make it yours; "
+    "remove it and scans leave it off (Undo puts it back)"
+)
+
+
+@dataclass
+class _Loaded:
+    """What a page's worker read: the item, and its note's folder and pictures."""
+
+    detail: EntityDetail | None
+    note_folder: str | None = None
+    pictures: dict[str, QImage] = field(default_factory=dict)
+
+
+def _read_note(detail: EntityDetail | None) -> _Loaded:
+    """The note's folder on this computer and its pictures, read here in the worker."""
+    file = detail.note_file if detail is not None else None
+    if detail is None or file is None or file.path is None:
+        return _Loaded(detail)
+    folder = os.path.dirname(file.path)
+    pictures = {}
+    if file.status is ResourceStatus.OK:
+        for name, data in read_pictures(renderable(detail.note_body), folder).items():
+            image = QImage.fromData(data)
+            if image.width() > NOTE_PICTURE_WIDTH:
+                image = image.scaledToWidth(
+                    NOTE_PICTURE_WIDTH, Qt.TransformationMode.SmoothTransformation
+                )
+            if not image.isNull():
+                pictures[name] = image
+    return _Loaded(detail, folder, pictures)
 
 
 def related_key(session: KeepSession, name: str, side: str) -> str:
@@ -189,7 +229,11 @@ class DetailPage(QWidget):
         titles.addWidget(self.breadcrumbs)
         titles.addWidget(self.title_value)
         titles.addWidget(self.type_label)
+        self.note_view = NoteView()
+        self.note_view.open_note.connect(self.open_note)
+        titles.addWidget(self.note_view)
         titles.addStretch(1)
+        self._titles = titles
         self.more_button = QToolButton()
         self.more_button.setText("More \u25be")
         self.more_button.setAutoRaise(True)
@@ -201,6 +245,11 @@ class DetailPage(QWidget):
         self._look_up_added = False
         self.file_opener: FileOpener | None = None
         """Opens the item's files (the window sets it); without one, no file actions."""
+        self.open_note_action = more.addAction("Open note")
+        self.open_note_action.setObjectName("open_note_action")
+        self.open_note_action.setToolTip("Edit this item's note in its own program")
+        self.open_note_action.triggered.connect(self.open_note)
+        self.open_note_action.setVisible(False)
         add_reread_actions(
             more, lambda replace: self.reread_requested.emit([self.entity_id], replace)
         )
@@ -244,13 +293,15 @@ class DetailPage(QWidget):
         self._generation += 1
         generation, session, entity_id = self._generation, self.session, self.requested_id
 
-        def job() -> EntityDetail | None:
+        def job() -> _Loaded:
             with session.reader.connect() as conn:
-                return load_detail(conn, session.schema, entity_id, _root_path(session))
+                detail = load_detail(conn, session.schema, entity_id, _root_path(session))
+            return _read_note(detail)
 
-        def done(detail: EntityDetail | None) -> None:
+        def done(loaded: _Loaded) -> None:
             if shiboken6.isValid(self) and generation == self._generation:
-                self._show(detail)
+                self._show(loaded.detail)
+                self._show_note(loaded)
 
         run_in_pool(job, on_done=done, pool=self._pool)
 
@@ -270,6 +321,8 @@ class DetailPage(QWidget):
             self.title_value.show_value("This item no longer exists", False)
             self.type_label.setText("")
             self.thumbnail.clear()
+            self.note_view.setVisible(False)
+            self.open_note_action.setVisible(False)
         else:
             self.title_value.editable = True
             self.title_value.field_label = detail.title_label.lower()
@@ -408,6 +461,31 @@ class DetailPage(QWidget):
         self.breadcrumbs.setText(text)
         self.breadcrumbs.setVisible(bool(crumbs))
 
+    # --- the header's note ---
+
+    def _show_note(self, loaded: _Loaded) -> None:
+        detail = loaded.detail
+        if detail is None:
+            return
+        has_file = detail.note_file is not None
+        self.note_view.show_note(detail.note_body, loaded.note_folder, loaded.pictures, has_file)
+        self.open_note_action.setVisible(has_file)
+        # The note fills the room beside the picture; Show more gives it the rest.
+        others = sum(
+            w.sizeHint().height() + self._titles.spacing()
+            for w in (self.merged_note, self.breadcrumbs, self.title_value, self.type_label)
+            if w.isVisibleTo(self)
+        )
+        self.note_view.set_cap(HEADER_THUMBNAIL - others - self.note_view.more.sizeHint().height())
+
+    def open_note(self) -> None:
+        """Open the item's note file with its program."""
+        detail = self.detail
+        if self.file_opener is None or detail is None or detail.note_file is None:
+            return
+        opener, resource_id = self.file_opener, detail.note_file.resource_id
+        opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
+
     # --- the header's thumbnail ---
 
     def _show_thumbnail(self) -> None:
@@ -520,9 +598,14 @@ class DetailPage(QWidget):
         form = QFormLayout(body)
         form.setContentsMargins(12, 0, 0, 0)
         entity_id = self.entity_id
+        sources = dict(detail.extra_sources)
         for name, value in detail.extra:
             row = QHBoxLayout()
-            editor = EditableValue(value, str, editable=True, label=name)
+            source = sources.get(name)
+            editor = EditableValue(value, str, editable=True, edited=source is not None, label=name)
+            if source == FieldSource.NOTE:
+                editor.marker.setText("\u2022 from the note")
+                editor.marker.setToolTip(FROM_NOTE_TIP)
             editor.setObjectName(f"extra_{name}")
             editor.committed.connect(
                 lambda new, name=name: self.extra_edited.emit(entity_id, name, new, False)
@@ -530,7 +613,11 @@ class DetailPage(QWidget):
             remove = QToolButton()
             remove.setText(CLOSE_MARK)
             remove.setAutoRaise(True)
-            remove.setToolTip(f"Remove {name!r}")
+            remove.setToolTip(
+                f"Remove {name!r}; scans won't add it back from the note"
+                if source is not None
+                else f"Remove {name!r}"
+            )
             remove.clicked.connect(
                 lambda _c=False, name=name: self.extra_edited.emit(entity_id, name, None, False)
             )

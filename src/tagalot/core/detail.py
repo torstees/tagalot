@@ -19,11 +19,15 @@ from tagalot.core.models import (
     LAST_POSITION,
     Entity,
     EntityContains,
+    EntityNote,
     EntityResource,
+    FieldProvenance,
+    FieldSource,
     Resource,
     ResourceStatus,
     Root,
 )
+from tagalot.core.notes import EXTRA
 from tagalot.core.roots import local_path
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
 from tagalot.core.theme_schema import ThemeSchema
@@ -126,6 +130,13 @@ class EntityDetail:
     """What its files say it is about, and what became of each (§7 "File keywords")."""
     keyword_tags: tuple[tuple[int, str], ...] = ()
     """``(tag id, path)`` for the tags those keywords match, to name them."""
+    extra_sources: tuple[tuple[str, FieldSource], ...] = ()
+    """Where extra fields came from, by name: ``note`` for the item's note's, ``user`` for
+    one of those the user edited (#380). The user's own fields aren't listed."""
+    note_body: str = ""
+    """The body of the item's note, as Markdown (§9 *Notes*)."""
+    note_file: FileRow | None = None
+    """The note's file, if it has one."""
 
 
 PATH_MARK = "\u203a"
@@ -204,7 +215,59 @@ def load_detail(
         extra=extra,
         keywords=keywords,
         keyword_tags=tuple((t, PATH_SEPARATOR.join(tree.path(t))) for t in sorted(named)),
+        extra_sources=_extra_sources(conn, entity_id),
+        note_body=conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
+        or "",
+        note_file=note_file(conn, entity_id, root_path),
     )
+
+
+def _extra_sources(conn: Connection, entity_id: int) -> tuple[tuple[str, FieldSource], ...]:
+    rows = conn.execute(
+        select(FieldProvenance.field, FieldProvenance.source).where(
+            FieldProvenance.entity_id == entity_id, FieldProvenance.field.startswith(EXTRA)
+        )
+    )
+    return tuple(sorted((name[len(EXTRA) :], source) for name, source in rows))
+
+
+def note_file(
+    conn: Connection, entity_id: int, root_path: Callable[[str], str | None]
+) -> FileRow | None:
+    """The file the entity's note was read from (§9 *Notes*), or ``None``."""
+    row = conn.execute(
+        select(
+            Resource.id,
+            Resource.root_id,
+            Root.name,
+            Resource.relpath,
+            Resource.kind,
+            Resource.size,
+            Resource.status,
+            Resource.skipped,
+        )
+        .join(EntityNote, EntityNote.resource_id == Resource.id)
+        .join(Root, Root.id == Resource.root_id)
+        .where(EntityNote.entity_id == entity_id)
+    ).first()
+    if row is None:
+        return None
+    base = root_path(row.root_id)
+    return FileRow(
+        row.id,
+        row.name,
+        row.relpath,
+        row.kind.value,
+        row.size,
+        row.status,
+        local_path(base, row.relpath) if base is not None else None,
+        NOTE_ROLE,
+        row.skipped,
+    )
+
+
+NOTE_ROLE = "note"
+"""The role a note's file is shown and opened in; notes aren't linked in a theme role."""
 
 
 MAX_DEPTH = 64
