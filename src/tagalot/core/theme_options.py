@@ -6,7 +6,7 @@ fit the declaration are reported and replaced by the default, so a typo never st
 """
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +14,11 @@ from tagalot.themes.api import Theme
 
 THEME_VERSION_KEY = "__theme_version__"
 """Where a root's ingest record keeps the theme version (not an option name themes use)."""
+ASSETS_KEY = "__assets__"
+"""Where the values a theme's ingest sees carry the root's and the keep's default assets
+folders (``ctx.resource_at``'s ``assets``, #418; not an option name themes use). Only there
+when one is set, so the fingerprint of a root with none is as before, and changing one
+reads the root again."""
 
 
 @dataclass(frozen=True)
@@ -35,9 +40,14 @@ class EffectiveOptions:
 
 
 def effective_options(
-    theme: type[Theme], keep_options: Mapping[str, Any], root_options: Mapping[str, Any]
+    theme: type[Theme],
+    keep_options: Mapping[str, Any],
+    root_options: Mapping[str, Any],
+    assets: Sequence[str] = (),
 ) -> EffectiveOptions:
-    """The options in effect for a root: its override, else the keep's, else the default."""
+    """The options in effect for a root: its override, else the keep's, else the default.
+    ``assets`` are the default assets folders (the root's, then the keep's), carried under
+    :data:`ASSETS_KEY` when any is set."""
     declared = {o.name: o for o in theme.options}
     values = {name: o.default for name, o in declared.items()}
     problems: list[str] = []
@@ -63,6 +73,8 @@ def effective_options(
                 )
                 continue
             values[name] = value
+    if any(assets):
+        values[ASSETS_KEY] = [a for a in assets if a]
     return EffectiveOptions(values, problems)
 
 

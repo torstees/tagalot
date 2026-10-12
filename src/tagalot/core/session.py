@@ -51,6 +51,7 @@ from tagalot.core.ingest import IngestSession
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_contents_index,
+    with_markdown_assets,
     with_name,
     with_note_ignore_keys,
     with_online_lookups,
@@ -264,6 +265,7 @@ class KeepSession:
                     theme=self.theme,
                     schema=self.schema,
                     theme_options=self.keep.config.theme_options,
+                    markdown_assets=config.markdown_assets,
                     progress=progress,
                     note_ignore_keys=self.note_ignore_keys,
                     notes_folder=config.notes_path if root.id == config.notes_root else None,
@@ -282,6 +284,7 @@ class KeepSession:
                 theme=self.theme,
                 schema=self.schema,
                 theme_options=config.theme_options,
+                markdown_assets=config.markdown_assets,
                 progress=progress,
             )
             self.problems.add(problems_from_report(notes))
@@ -307,6 +310,7 @@ class KeepSession:
             entity_ids,
             replace_edits=replace_edits,
             theme_options=self.keep.config.theme_options,
+            markdown_assets=self.keep.config.markdown_assets,
         )
         change = report.change
         if change.before != change.after:
@@ -518,6 +522,11 @@ class KeepSession:
         """The front-matter keys notes leave out, case-folded: the built-in ones, the
         user's (``settings.toml``), and the keep's (``keep.toml``)."""
         return ignored_keys(self.settings.note_ignore_keys, self.keep.config.note_ignore_keys)
+
+    def set_markdown_assets(self, assets: str) -> None:
+        """Set the keep's default assets folder (#418); it applies to pictures and links on
+        items' pages at once, and to covers at the next scan. Runs in a worker."""
+        self.save_config(with_markdown_assets(self.keep.config, assets))
 
     def set_note_ignore_keys(self, keys: Iterable[str]) -> None:
         """Set the keep's ignored note keys; they apply at the next scan, which reads the

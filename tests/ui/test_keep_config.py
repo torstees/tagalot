@@ -84,6 +84,31 @@ def test_renaming_and_excludes_are_saved_at_once(
     assert config.exclude.toPlainText() == "**/Untagged/** # not sorted yet"
 
 
+def test_assets_folders_are_saved(
+    qtbot: QtBot, session: KeepSession, config: KeepConfigWindow
+) -> None:
+    """The folder's own assets folder (Folders tab) and the keep's (Keep tab), #418."""
+    config.keep_assets.setText("Attachments\\Shared ")
+    with qtbot.waitSignal(config.changed, timeout=5000) as saved:
+        config.keep_assets.editingFinished.emit()
+    assert "next scan" in saved.args[0]
+    assert load_keep_config(session.keep.toml_path).markdown_assets == "Attachments/Shared"
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    assert config.assets.placeholderText() == "The keep's: Attachments/Shared"
+
+    config.assets.setText("./_assets")
+    with qtbot.waitSignal(config.changed, timeout=5000) as saved:
+        config.assets.editingFinished.emit()
+    assert "Covers are looked for there" in saved.args[0]
+    assert load_keep_config(session.keep.toml_path).roots[0].assets == "./_assets"
+
+    before = session.keep.toml_path.read_text(encoding="utf-8")
+    config.assets.setText("../Elsewhere")  # outside the watched folder: refused
+    config.assets.editingFinished.emit()
+    assert "outside the watched folder" in config.error.text()
+    assert session.keep.toml_path.read_text(encoding="utf-8") == before
+
+
 def test_a_bad_folder_is_explained_and_not_saved(
     session: KeepSession, config: KeepConfigWindow
 ) -> None:

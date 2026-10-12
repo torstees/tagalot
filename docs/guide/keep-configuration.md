@@ -12,6 +12,7 @@ The folders the keep watches, each with its state (online, offline, not watched,
 - **On this computer:** a different path for this computer only (see [Keeps and folders](keeps-and-folders.md#on-this-computer)), with Browse and Clear.
 - **Skip:** patterns for files to leave out, one per line, each with an optional note after ` # `. See [Skipping files](keeps-and-folders.md#skipping-files).
 - **Write back:** "Let Write to file… change files in this folder", off unless you turn it on (it asks first). See [Writing to files](write-to-file.md).
+- **Assets folder:** where its Markdown files' pictures and links are looked for when they aren't beside the file (an attachments folder): a folder from the top of this folder, or from each file's own folder when it starts with `./`. Empty uses the keep's (shown greyed). A file's own `assets` key comes first. See [Assets folders](../themes/books.md#assets-folders).
 - **Status:** how many files and folders it knows, how many are offline or missing, the last scan, and the last error.
 - **Theme options for this folder:** the theme's settings for this folder only, over the keep's (tick one to override it here).
 - **Scan now** (this folder), **Stop watching** / **Watch again**, and **Remove…**.
@@ -27,6 +28,7 @@ The folders the keep watches, each with its state (online, offline, not watched,
 ## Keep
 
 - **Name** (editable), the keep's folder, its theme (and its version, and whether it's built in), and what kinds of items it holds.
+- **Assets folder:** the assets folder of every watched folder that doesn't name its own (see Folders above). Covers are looked for there at the next scan; notes' pictures and links at once.
 - **Theme options:** the theme's settings for this keep, each with **Default**. They apply at the next scan, which reads the affected files again. The built-in ones: 2D assets' **Artist folder level** and books' **Source folder level** (see each [theme](../themes/README.md)).
 - **Online details** (themes that look things up): **Look up details online**, and what it would send. See [Online details](online-details.md).
 - **Search inside documents** (themes with documents): **Off**, **Words**, or **Substrings**, what's stored, and **Clear contents text…**. See [Searching inside documents](search-inside-documents.md).

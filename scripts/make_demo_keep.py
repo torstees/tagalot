@@ -876,8 +876,18 @@ BOOK_MARKDOWN = {
     ),
     "Loose/A Short Story.md": "Written on a train.\n\n"
     "# The Lighthouse Keeper\n\nIt was a dark night.\n",
+    "Royal Road/The Wandering Inn 01.md": (
+        "---\n"
+        "title: The Wandering Inn\n"
+        "author: pirateaba\n"
+        "cover: covers/wandering-inn.jpg\n"
+        "assets: /Attachments\n"
+        "---\n"
+        "# Volume 1\n\nThe inn was empty.\n"
+    ),
 }
-"""Markdown books for the books demo: one with YAML front matter, one titled by its heading."""
+"""Markdown books for the books demo: one with YAML front matter, one titled by its heading,
+and one whose cover is in an assets folder (#418)."""
 
 BOOK_TAGS = {
     ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)
@@ -1276,6 +1286,11 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: bool
     (files / "Royal Road/images").mkdir(parents=True, exist_ok=True)
     (files / "Royal Road/images/mol-cover.jpg").write_bytes(
         _cover((20, 110, 110), "Mother of Learning")
+    )
+    # The Wandering Inn's, in the assets folder its front matter names (#418).
+    (files / "Attachments/covers").mkdir(parents=True, exist_ok=True)
+    (files / "Attachments/covers/wandering-inn.jpg").write_bytes(
+        _cover((130, 80, 20), "The Wandering Inn")
     )
     # A PDF: its document info, and a first page that becomes its cover.
     cover = Image.open(io.BytesIO(_cover((60, 60, 60), "Good Omens")))

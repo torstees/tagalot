@@ -24,7 +24,7 @@ are links that open their own pages.
 
 import html
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import shiboken6
@@ -53,13 +53,16 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.actions import actions_for
+from tagalot.core.assets import assets_folders
 from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
+from tagalot.core.keep import KeepConfig
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
 from tagalot.core.models import FieldSource, ResourceStatus
-from tagalot.core.note_markdown import read_pictures, renderable
+from tagalot.core.note_markdown import find_links, read_pictures, renderable
+from tagalot.core.roots import local_path
 from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.search_spec import SearchSpec, SortKey
@@ -100,19 +103,39 @@ class _Loaded:
     detail: EntityDetail | None
     note_folder: str | None = None
     pictures: dict[str, QImage] = field(default_factory=dict)
+    links: dict[str, str] = field(default_factory=dict)
+    """Where the note's links are, when in an assets folder rather than beside it."""
     badges: TagsValue | None = None
     """The item's tag badges (#398), shown beside its title."""
 
 
-def _read_note(detail: EntityDetail | None) -> _Loaded:
-    """The note's folder on this computer and its pictures, read here in the worker."""
+def note_assets(
+    detail: EntityDetail, config: KeepConfig, root_path: Callable[[str], str | None]
+) -> list[str]:
+    """The assets folders (this computer's paths) the item's note's pictures and links are
+    looked for in when not beside it (#418): the item's own, its folder's, the keep's."""
+    file = detail.note_file
+    base = root_path(file.root_id) if file is not None else None
+    if file is None or base is None:
+        return []
+    root = next((r for r in config.roots if r.id == file.root_id), None)
+    defaults = (root.assets if root is not None else "", config.markdown_assets)
+    return [local_path(base, f) for f in assets_folders(file.relpath, detail.assets, defaults)]
+
+
+def _read_note(detail: EntityDetail | None, assets: Sequence[str] = ()) -> _Loaded:
+    """The note's folder on this computer and its pictures, read here in the worker, and
+    where its links are when they're in one of the ``assets`` folders."""
     file = detail.note_file if detail is not None else None
     if detail is None or file is None or file.path is None:
         return _Loaded(detail)
     folder = os.path.dirname(file.path)
     pictures = {}
+    links: dict[str, str] = {}
     if file.status is ResourceStatus.OK:
-        for name, data in read_pictures(renderable(detail.note_body), folder).items():
+        body = renderable(detail.note_body)
+        links = find_links(body, folder, assets)
+        for name, data in read_pictures(body, folder, assets).items():
             image = QImage.fromData(data)
             if image.width() > NOTE_PICTURE_WIDTH:
                 image = image.scaledToWidth(
@@ -120,7 +143,7 @@ def _read_note(detail: EntityDetail | None) -> _Loaded:
                 )
             if not image.isNull():
                 pictures[name] = image
-    return _Loaded(detail, folder, pictures)
+    return _Loaded(detail, folder, pictures, links)
 
 
 def related_key(session: KeepSession, name: str, side: str) -> str:
@@ -327,13 +350,15 @@ class DetailPage(QWidget):
         """Read the entity again (after a scan or an edit)."""
         self._generation += 1
         generation, session, entity_id = self._generation, self.session, self.requested_id
+        config, roots = session.keep.config, _root_path(session)
 
         def job() -> _Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                detail = load_detail(conn, session.schema, entity_id, _root_path(session))
+                detail = load_detail(conn, session.schema, entity_id, roots)
                 own = entity_tags(conn, [detail.id]).get(detail.id, []) if detail else []
-            loaded = _read_note(detail)
+            assets = note_assets(detail, config, roots) if detail is not None else []
+            loaded = _read_note(detail, assets)
             loaded.badges = badges_value(tree, own)
             return loaded
 
@@ -516,7 +541,12 @@ class DetailPage(QWidget):
             return
         has_file = detail.note_file is not None
         self.note_view.show_note(
-            detail.note_body, loaded.note_folder, loaded.pictures, has_file, editable=True
+            detail.note_body,
+            loaded.note_folder,
+            loaded.pictures,
+            has_file,
+            editable=True,
+            links=loaded.links,
         )
         self.open_note_action.setVisible(has_file)
         config = self.session.keep.config

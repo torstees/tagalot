@@ -18,6 +18,7 @@ from sqlalchemy import Connection, Insert, Table, bindparam, delete, func, inser
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
+from tagalot.core.assets import assets_folders, in_assets
 from tagalot.core.keywords import apply_file_tags, set_keywords
 from tagalot.core.models import (
     LAST_POSITION,
@@ -38,6 +39,7 @@ from tagalot.core.models import (
     utcnow,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.theme_options import ASSETS_KEY
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import EntityRef, Record, ResourceInfo
@@ -313,9 +315,26 @@ class IngestSession:
         self._forget(entity.id)
         self._dirty.add(entity.id)  # its search row goes at flush
 
-    def resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
+    def resource_at(
+        self, beside: ResourceInfo, relpath: str, assets: str | None = None
+    ) -> ResourceInfo | None:
         """The resource at ``relpath`` in ``beside``'s root (see the API); its local path is
-        made from ``beside``'s, so it is only as known as that one."""
+        made from ``beside``'s, so it is only as known as that one. With ``assets``, then
+        under the assets folders (``core/assets.py``)."""
+        found = self._resource_at(beside, relpath)
+        if found is not None or assets is None:
+            return found
+        here = posixpath.dirname(beside.relpath)
+        name = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
+        ref = posixpath.relpath(name, here) if here else name
+        defaults = self._options.get(ASSETS_KEY, [])
+        for candidate in in_assets(assets_folders(beside.relpath, assets, defaults), ref):
+            found = self._resource_at(beside, candidate)
+            if found is not None:
+                return found
+        return None
+
+    def _resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
         relpath = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
         if relpath in ("", ".") or relpath == ".." or relpath.startswith("../"):
             return None

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 8
+API_VERSION = 9
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -32,7 +32,8 @@ details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
 (:attr:`Entity.full_text`, :meth:`Theme.document_text`, :func:`read_document_text`);
 version 7 added Kindle and Mobipocket books (:func:`read_mobi`, :func:`mobi_cover`, and
 their text in :func:`read_document_text`); version 8 added notes
-(:meth:`IngestContext.note`)."""
+(:meth:`IngestContext.note`); version 9 added assets folders (``assets`` of
+:meth:`IngestContext.resource_at`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -643,12 +644,22 @@ class IngestContext(Protocol):
         """Report a problem with a file to the activity panel."""
         ...
 
-    def resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
+    def resource_at(
+        self, beside: ResourceInfo, relpath: str, assets: str | None = None
+    ) -> ResourceInfo | None:
         """The file or folder at ``relpath`` (POSIX, relative to the root) in the same root
         as ``beside``: a cover picture a Markdown file names, say, to :meth:`link` it. It
         must be among the files the theme accepts (:attr:`Theme.extensions`) and not known
         to be missing; else ``None``. Case is ignored when no file matches exactly. Needs
-        ``api_version = 3``."""
+        ``api_version = 3``.
+
+        With ``assets`` (DESIGN.md §9 *Markdown*, #418), a file not at ``relpath`` is also
+        looked for under the assets folders, as ``beside`` named it (``relpath`` relative
+        to ``beside``'s folder, so not one written with a leading ``/`` or ``..``): first
+        ``assets`` itself, the item's own folder as its front matter (or the user) gave it,
+        relative to ``beside``'s folder or to the root with a leading ``/`` (``""`` for
+        none); then the folder's and the keep's default assets folders. Needs
+        ``api_version = 9``."""
         ...
 
     def prepared(self, resource: ResourceInfo | int) -> Any:

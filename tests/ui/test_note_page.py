@@ -141,6 +141,38 @@ def test_links_in_the_note(
     ]
 
 
+def test_pictures_and_links_from_assets_folders(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    files: Path,
+) -> None:
+    """Not beside the note: in the note's own assets folder (its ``assets`` key, an
+    Extra field), else the keep's default (#418)."""
+    folder = files / "Aurora Studio"
+    note = folder / "Aurora Studio.md"
+    text = note.read_text(encoding="utf-8").replace("mood: calm\n", "mood: calm\nassets: Media\n")
+    text += "\n![Glow](art/glow.png) ![Logo](logo.png) [Rates](rates.txt)\n"
+    note.write_text(text, encoding="utf-8")
+    (folder / "Media" / "art").mkdir(parents=True)
+    Image.new("RGB", (30, 10), (90, 90, 200)).save(folder / "Media" / "art" / "glow.png")
+    (folder / "Media" / "rates.txt").write_text("rates", encoding="utf-8")
+    (files / "Shared").mkdir()
+    Image.new("RGB", (12, 12), (10, 10, 10)).save(files / "Shared" / "logo.png")
+    session.scan_all()
+    page = _page(qtbot, window, session)
+    assert sorted(page.note_view.body.pictures) == ["art/glow.png", "studio at dusk.png"]
+    opened: list[str] = []
+    page.note_view.open_file = opened.append
+    page.note_view.body.anchorClicked.emit(QUrl("rates.txt"))
+    assert opened == [os.path.normpath(folder / "Media" / "rates.txt")]
+
+    session.set_markdown_assets("Shared")  # the keep's default, from the top of the folder
+    page.refresh()
+    qtbot.waitUntil(lambda: "logo.png" in page.note_view.body.pictures, timeout=5000)
+    assert page.note_view.body.pictures["logo.png"].width() == 12
+
+
 def test_open_note(
     qtbot: QtBot,
     window: MainWindow,

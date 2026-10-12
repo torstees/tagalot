@@ -71,6 +71,7 @@ def reextract(
     *,
     replace_edits: bool = False,
     theme_options: dict[str, Any] | None = None,
+    markdown_assets: str = "",
     when: datetime | None = None,
 ) -> ReextractReport:
     """Read the files of ``entity_ids`` again, now. Runs in a worker (it reads files)."""
@@ -113,6 +114,7 @@ def reextract(
             theme=theme,
             schema=schema,
             theme_options=theme_options,
+            markdown_assets=markdown_assets,
             when=when,
         )
         report.errors.extend(result.ingest_errors)

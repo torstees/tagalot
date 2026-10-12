@@ -146,6 +146,9 @@ class Book(Entity):
     sources: str | None = field("Sources", search="text", editable=False)
     """Where its files came from (``Humble Bundle, Kobo``)."""
     link: str | None = field("Link", search="text", display="url")
+    assets: str | None = field("Assets folder")
+    """Where a Markdown book's pictures are when not beside it (front matter ``assets``,
+    #418): relative to its file, or to the top of its folder with a leading ``/``."""
     cover: str | None = field("Cover file", editable=False, detail=False)
     """The picture front matter names (``<root id>:<path in the root>``), so the picture is
     linked whichever is read first."""
@@ -198,6 +201,7 @@ FRONT_MATTER_KEYS: Mapping[str, tuple[str, ...]] = {
     "isbn": ("isbn",),
     "description": ("description", "summary", "synopsis", "blurb", "abstract"),
     "link": ("url", "link"),
+    "assets": ("assets",),
 }
 """A book's editable fields and the front-matter keys they are written under: the first,
 unless the file already uses another."""
@@ -219,8 +223,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 3  # 3: synopsis (#409); 2: author lists (#369)
-    api_version = 7  # read_mobi (6: full_text; 5: online details; 3: ctx.resource_at)
+    id, name, version = "books", "Books", 4  # 4: assets (#418); 3: synopsis; 2: author lists
+    api_version = 9  # resource_at's assets (7: read_mobi; 6: full_text; 5: online; 3: covers)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -562,6 +566,7 @@ def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]
         "link": web_link(meta.get("link")),
         "source": meta.get("source"),
         "cover": meta.get("cover"),
+        "assets": meta.get("assets"),
     }
 
 
@@ -613,7 +618,7 @@ def pdf_details(info: Mapping[str, Any]) -> dict[str, Any]:
 def markdown_details(front: Mapping[str, Any]) -> dict[str, Any]:
     """What :func:`read_front_matter` found (its ``authors`` are writers)."""
     names = ("title", "series", "series_index", "universe", "keywords", "source", "link")
-    more = ("year", "publisher", "language", "description", "cover")
+    more = ("year", "publisher", "language", "description", "cover", "assets")
     return {
         **{k: front.get(k) for k in (*names, *more)},
         "writers": front.get("authors") or [],
@@ -860,7 +865,9 @@ def set_cover(
 ) -> None:
     """Link the picture a Markdown file's front matter names as the book's cover, if it is
     scanned; remember it, so a picture read later is linked then. While the file is the
-    book's only one, a cover it no longer names is let go."""
+    book's only one, a cover it no longer names is let go. A cover not beside the file is
+    looked for in the assets folders (the book's own, as edited or as its file says, then
+    the folder's and the keep's defaults, #418)."""
     target = cover_path(resource.relpath, cover)
     if target is None:
         if alone and resource.ext in (".md", ".markdown"):
@@ -868,8 +875,9 @@ def set_cover(
             for picture_id in ctx.linked(book, "cover"):
                 ctx.unlink(book, picture_id, "cover")
         return
-    ctx.update(book, cover=f"{resource.root_id}:{target}")
-    picture = ctx.resource_at(resource, target)
+    assets = ctx.get(book).fields.get("assets") or ""
+    picture = ctx.resource_at(resource, target, assets=assets)
+    ctx.update(book, cover=f"{resource.root_id}:{picture.relpath if picture else target}")
     if picture is not None:
         ctx.link(book, picture, "cover")
 
