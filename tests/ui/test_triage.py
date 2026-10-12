@@ -146,6 +146,42 @@ def test_items_whose_files_are_missing(
     qtbot.waitUntil(lambda: _tab_texts(page)[2] == "Missing files (1)", timeout=5000)
 
 
+def test_the_missing_list_menu_deletes_and_shows_where(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    nothing_is_launched: list[tuple[str, str]],
+    tmp_path: Path,
+) -> None:
+    """A missing item's right-click menu has Delete… and Show where it was (#422)."""
+    root = Path(session.root_path("music"))
+    song = root / "Jazz Hits" / "01 Take Five.mp3"
+    os.replace(song, tmp_path / song.name)
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+    page = _triage(qtbot, window)
+    qtbot.waitUntil(lambda: _tab_texts(page)[2] == "Missing files (1)", timeout=5000)
+    page.tabs.setCurrentIndex(MISSING_TAB)
+    take_five = _select_title(qtbot, page.missing, "Take Five")
+    hit = page.missing.model.hit(0)
+    assert hit is not None
+    assert hit.id == take_five
+    actions = {a.text(): a for a in page.missing.item_menu(hit).actions()}
+
+    actions["Show where it was"].trigger()
+    qtbot.waitUntil(lambda: len(nothing_is_launched) == 1, timeout=5000)
+    assert Path(nothing_is_launched[0][1]) == root / "Jazz Hits"
+
+    asked: list[int] = []
+    window.confirm_delete_items = lambda count: not asked.append(count)  # type: ignore[method-assign, func-returns-value]
+    with qtbot.waitSignal(window.tag_actions.changed, timeout=5000):
+        actions["Delete…"].trigger()
+    assert asked == [1]
+    qtbot.waitUntil(lambda: _tab_texts(page)[2] == "Missing files (0)", timeout=5000)
+    with session.reader.connect() as conn:
+        assert conn.scalar(select(Entity.id).where(Entity.id == take_five)) is None
+
+
 def test_unmatched_keywords_show_their_keywords(qtbot: QtBot, window: MainWindow) -> None:
     """The Keywords column (#295) is shown in this list, unmatched keywords first."""
     page = _triage(qtbot, window)

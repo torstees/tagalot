@@ -19,7 +19,7 @@ Items with no tag of their own (or, with Inherit tags on, none from what holds t
 
 ## Missing files
 
-Items whose files are all gone (missing, not just offline). **Show where they were** opens the folder the first file was in. **Delete…** deletes the items and their tags from the keep (after asking; it can be undone). Files on disk are never touched.
+Items whose files are all gone (missing, not just offline). **Show where they were** opens the folder the first file was in. **Delete…** deletes the items and their tags from the keep (after asking; it can be undone). Files on disk are never touched. Both are also in the right-click menu of an item in the list (as **Delete…** and **Show where it was**); with several items selected, Delete… deletes them all.
 
 ## Unmatched keywords
 
