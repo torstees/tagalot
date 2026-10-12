@@ -1160,7 +1160,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
   - A theme may read files without linking them (a cover image found in its folder), so some files here are expected.
 - **Untagged items** and **Missing files** are ordinary search pages with `SearchSpec.triage` (`"untagged"`: no tag of its own, or none from a container with Inherit tags; `"missing"`: at least one linked file, and none that isn't missing; offline isn't missing). The Tags panel and drops tag their selection, as on any search page.
   - Untagged items has **Dismiss**.
-  - Missing files has **Delete…** (after a question; the items and their tags go, never files; one undo step through the whole-entity snapshots of actions, §9) and **Show where they were** (opens the folder the first file was in, or says it's gone too).
+  - Missing files has **Delete…** (after a question; the items and their tags go, never files; one undo step through the whole-entity snapshots of actions, §9) and **Show where they were** (opens the folder the first file was in, or says it's gone too). Both are also in an item's right-click menu (as Delete… and Show where it was), acting on the selection when the clicked item is in it, else on that item.
 - **Dismissing** hides until changed: `triage_dismissal(list, target_id, marker)` stores how the thing looked. A file's marker is its size and modification time; an item's is its stored `updated_at`, which edits and re-reads change. The lists leave out rows whose marker still matches. It is one undo step.
 - Counts and the files table are read in a worker, and refreshed after tagging, undo, a scan, or a configuration change.
 

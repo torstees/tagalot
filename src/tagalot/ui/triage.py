@@ -8,7 +8,7 @@ Tabs, each with how many it holds:
 - **Untagged items:** a search page (``SearchSpec(triage="untagged")``): tag them with the
   Tags panel or by dropping tags, or Dismiss them.
 - **Missing files:** items whose files are all missing, a search page too, with Delete…
-  and Show where they were.
+  and Show where they were, both also in an item's right-click menu.
 - **Unmatched keywords:** items with file keywords no tag matches (#295).
 - **Notes:** the notes folder's notes that aren't an item's note (#382): matching no
   item, several, or an item with another note; with Open note and Show in file manager.
@@ -242,6 +242,8 @@ class TriagePage(QWidget):
         where.setToolTip("Open the folder the selected item's file was in, to look for it")
         where.clicked.connect(self._show_where)
         missing_tab = _tab(self.missing, [delete, where])
+        self.missing.add_menu_action("Delete…", self._delete_items)
+        self.missing.add_menu_action("Show where it was", self._show_where_of)
 
         self.keywords = make_search(
             "Unmatched keywords", SearchSpec(triage=KEYWORDS), "triage:keywords"
@@ -409,29 +411,31 @@ class TriagePage(QWidget):
         )
 
     def _delete(self) -> None:
-        self.missing.selected_entity_ids(
-            lambda ids: self.delete_requested.emit(ids) if ids else None
-        )
+        self.missing.selected_entity_ids(self._delete_items)
+
+    def _delete_items(self, ids: list[int]) -> None:
+        if ids:
+            self.delete_requested.emit(ids)
 
     def _show_where(self) -> None:
+        self.missing.selected_entity_ids(self._show_where_of)
+
+    def _show_where_of(self, ids: list[int]) -> None:
+        """Open the folder the first item's first file was in."""
+        if not ids:
+            return
         session = self.session
 
-        def chosen(ids: list[int]) -> None:
-            if not ids:
-                return
+        def job() -> str:
+            with session.reader.connect() as conn:
+                files = files_to_open(conn, session.schema, ids[0], _known(session))
+            paths = [f.path for f in files if f.path]
+            if not paths:
+                return ""
+            folder = os.path.dirname(paths[0])
+            return folder if os.path.isdir(folder) else f"!{folder}"
 
-            def job() -> str:
-                with session.reader.connect() as conn:
-                    files = files_to_open(conn, session.schema, ids[0], _known(session))
-                paths = [f.path for f in files if f.path]
-                if not paths:
-                    return ""
-                folder = os.path.dirname(paths[0])
-                return folder if os.path.isdir(folder) else f"!{folder}"
-
-            run_in_pool(job, on_done=self._found_folder)
-
-        self.missing.selected_entity_ids(chosen)
+        run_in_pool(job, on_done=self._found_folder)
 
     def _found_folder(self, folder: str) -> None:
         if not shiboken6.isValid(self):
