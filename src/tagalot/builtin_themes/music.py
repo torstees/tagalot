@@ -47,6 +47,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    TitleCard,
     action,
     contains,
     field,
@@ -250,7 +251,7 @@ class MusicTheme(Theme):
         if entity_type is Album:
             return [FolderImage(), EmbeddedAudioArt(), Icon("dir")]
         if entity_type is Artist:
-            return [ContentsThumbnail(), Icon("entity")]
+            return [ContentsThumbnail(), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)
 
     # --- reading files (scan worker) ---

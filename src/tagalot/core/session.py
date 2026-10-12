@@ -206,6 +206,7 @@ class KeepSession:
             ThumbCache(opened.keep.thumbs_path),
             root_paths.__getitem__,
             thumbnail_max,
+            opened.schema,
         )
         logger.info("Opened keep %r with the %r theme", opened.keep.config.name, theme.id)
         session = cls(

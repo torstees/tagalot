@@ -17,6 +17,7 @@ from PySide6.QtGui import QIcon, QImage
 from PySide6.QtWidgets import QApplication, QStyle
 
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
+from tagalot.ui.title_card import paint_title_card
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,8 @@ class ThumbnailLoader(QObject):
             result = resolver.resolve(entity_id)
             for path, message in result.problems:
                 logger.warning("Thumbnail of %s: %s", path, message)
+            if result.card is not None:
+                return LoadedThumbnail(paint_title_card(result.card, resolver.size), None)
             if result.thumbnail is None:
                 return LoadedThumbnail(None, result.icon)
             image = QImage.fromData(result.thumbnail.data)

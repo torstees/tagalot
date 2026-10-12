@@ -27,7 +27,7 @@ Where a file came from. The **Source folder level** option names the folder that
 
 ## Covers and thumbnails
 
-An EPUB or a Kindle book shows its cover, a PDF its first page, a Word or OpenDocument file its preview, a comic its first page. A Markdown file's front matter can name a cover picture (`cover: images/cover.jpg`, relative to the file, or Obsidian's `[[cover.jpg]]`). A series, universe, or collection shows one of its first works'.
+An EPUB or a Kindle book shows its cover, a PDF its first page, a Word or OpenDocument file its preview, a comic its first page. A Markdown file's front matter can name a cover picture (`cover: images/cover.jpg`, relative to the file, or Obsidian's `[[cover.jpg]]`). A series, universe, or collection shows one of its first works'. A book or comic without a picture shows a **title card**: its title and author on a color picked from the title. So does an author.
 
 ### Assets folders
 

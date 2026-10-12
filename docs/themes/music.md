@@ -28,7 +28,7 @@ The album and song searches inherit tags: tag an album `Live`, and its songs mat
 
 ## Thumbnails
 
-A song shows its embedded cover art, else its album's. An album shows the picture in its folder (`folder.jpg`, `cover.jpg`, `front.png`, `AlbumArt…`), else its songs' embedded art. An artist shows one of its albums'.
+A song shows its embedded cover art, else its album's. An album shows the picture in its folder (`folder.jpg`, `cover.jpg`, `front.png`, `AlbumArt…`), else its songs' embedded art. An artist shows one of its albums', else a **title card** with its name.
 
 ## Genres as tags
 

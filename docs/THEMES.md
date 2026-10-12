@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 9              # the theme API it needs
+    api_version = 10             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -211,7 +211,7 @@ def thumbnail_chain(self, entity_type):
     return super().thumbnail_chain(entity_type)
 ```
 
-Providers in the API: `RoleImage(role)`, `ImageFile()` (the primary file, drawn by its kind: an audio file shows its embedded art, an archive its first picture, an EPUB its cover), `FolderImage(names)` (`folder.jpg`, `cover.png`…), `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, and `Icon(kind)`, which ends the chain. For your own, subclass `ThumbnailProvider` and yield candidate files from `candidates(entity, ctx)`, using the read-only `ThumbnailContext` (`resources`, `parents`, `children`, `folder_files`, `thumbnail_of`).
+Providers in the API: `RoleImage(role)`, `ImageFile()` (the primary file, drawn by its kind: an audio file shows its embedded art, an archive its first picture, an EPUB its cover), `FolderImage(names)` (`folder.jpg`, `cover.png`…), `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, `TitleCard(subtitle, aspect)`, and `Icon(kind)`, which ends the chain. `TitleCard` also ends it: an item without a picture shows a card with its title on a soft color picked from it, and the field `subtitle` names under it (`TitleCard("authors")`; `aspect=1` for a square card). Put it last, so a real picture wins; it needs `api_version = 10`. For your own, subclass `ThumbnailProvider` and yield candidate files from `candidates(entity, ctx)`, using the read-only `ThumbnailContext` (`resources`, `parents`, `children`, `folder_files`, `thumbnail_of`).
 
 ## Commands: actions
 

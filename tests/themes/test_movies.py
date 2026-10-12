@@ -268,7 +268,11 @@ def test_thumbnail_chains() -> None:
         "RoleImage('screenshot')",
         "Icon('video')",
     ]
-    assert repr(theme.thumbnail_chain(Actor)[0]) == "RoleImage('photo')"
+    assert [repr(p) for p in theme.thumbnail_chain(Actor)] == [
+        "RoleImage('photo')",
+        "TitleCard(aspect=1)",
+        "Icon('entity')",
+    ]
 
 
 def test_a_renamed_file_moves_its_movie(env: Env) -> None:

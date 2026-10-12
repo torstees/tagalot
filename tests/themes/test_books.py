@@ -837,3 +837,15 @@ def test_front_matter_uses_the_files_own_keys() -> None:
     assert theme.front_matter(Book, item, frozenset(), current) == {}  # nothing edited
     assert theme.front_matter(Comic, item, edited, current) == {}
     assert BooksTheme.write_back == [Book]
+
+
+def test_works_and_authors_without_a_picture_show_title_cards() -> None:
+    theme = BooksTheme()
+    assert [repr(p) for p in theme.thumbnail_chain(Book)] == [
+        "RoleImage('cover')",
+        "ImageFile()",
+        "TitleCard('authors')",
+        "Icon('file')",
+    ]
+    assert repr(theme.thumbnail_chain(Comic)[-2]) == "TitleCard('writers')"
+    assert repr(theme.thumbnail_chain(Author)[0]) == "TitleCard(aspect=1)"

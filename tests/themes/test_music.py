@@ -318,6 +318,8 @@ def test_thumbnail_chains(env: Env, tmp_path: Path) -> None:
 
     def source(title: str) -> str | None:
         result = resolver.resolve(env.entity(title))
+        if result.card is not None:
+            return f"card: {result.card.title}"
         if result.resource_id is None:
             return result.icon
         with env.reader.connect() as conn:
@@ -333,7 +335,7 @@ def test_thumbnail_chains(env: Env, tmp_path: Path) -> None:
         assert source("Queen") == intro
         assert source("Take Five") == "audio"  # no art anywhere
         assert source("Jazz Hits") == "dir"
-        assert source("Dave Brubeck") == "entity"
+        assert source("Dave Brubeck") == "card: Dave Brubeck"  # no albums with art
     finally:
         cache.close()
 

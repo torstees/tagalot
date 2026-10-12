@@ -70,6 +70,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    TitleCard,
     contains,
     field,
     kind_of,
@@ -354,7 +355,7 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
-    api_version = 8  # ctx.note (3: ctx.resource_at)
+    api_version = 10  # TitleCard (8: ctx.note; 3: ctx.resource_at)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True
@@ -382,11 +383,13 @@ class MoviesTheme(Theme):
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         """A movie shows its poster, else its first screenshot; a collection its poster, else
-        one of its movies'; an actor their photo."""
+        one of its movies'; an actor their photo, else a title card."""
         if entity_type is Movie:
             return [RoleImage("poster"), RoleImage("screenshot"), Icon("video")]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
+        if entity_type is Actor:
+            return [RoleImage("photo"), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)
 
     # --- prepare (a worker): what the folders around each file say ---
