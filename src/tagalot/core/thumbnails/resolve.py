@@ -2,7 +2,9 @@
 
 :class:`ThumbnailResolver` runs in workers. For each entity it first tries the memoized
 source (``entity.thumb_resource_id``); otherwise it walks the chain, trying each candidate
-resource until one makes a picture, and remembers the winner through the DB writer. Pictures
+resource until one makes a picture, and remembers the winner through the DB writer. A chain
+that ends with :class:`TitleCard` gives a title card (``ThumbnailResult.card``) for the UI to
+paint. Pictures
 come from ``thumbs.db`` when cached, and files are only read for resources that are online.
 """
 
@@ -24,9 +26,11 @@ from tagalot.core.models import (
     ResourceStatus,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.cache import ThumbCache, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
 from tagalot.core.thumbnails.render import renderer_for
+from tagalot.core.thumbnails.title_card import Card, title_card
 from tagalot.core.writer import DbWriter, WriterClosedError
 from tagalot.themes.api import (
     Entity as ThemeEntity,
@@ -37,6 +41,7 @@ from tagalot.themes.api import (
     ResourceInfo,
     Theme,
     ThumbnailProvider,
+    TitleCard,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,7 +66,7 @@ FALLBACK_ICON = "entity"
 
 @dataclass(frozen=True)
 class ThumbnailResult:
-    """What to show for an entity: a picture, or else an icon name."""
+    """What to show for an entity: a picture, else a title card, else an icon name."""
 
     entity_id: int
     thumbnail: Thumbnail | None
@@ -70,6 +75,8 @@ class ThumbnailResult:
     """The resource the picture came from."""
     problems: tuple[tuple[str, str], ...] = ()
     """(path, message) for files that couldn't be read, for the activity panel."""
+    card: Card | None = None
+    """The title card to paint when there's no picture (:class:`TitleCard`)."""
 
 
 class ThumbnailResolver:
@@ -83,8 +90,11 @@ class ThumbnailResolver:
         cache: ThumbCache,
         root_path: Callable[[str], str],
         size: int = DEFAULT_THUMB_SIZE,
+        schema: ThemeSchema | None = None,
     ) -> None:
         self.reader = reader
+        self.schema = schema
+        """The theme's tables, for a title card's subtitle field."""
         self.writer = writer
         self.cache = cache
         self.root_path = root_path
@@ -198,16 +208,23 @@ class _Resolution:
                 if self._status.get(memo) == ResourceStatus.OFFLINE:
                     # Offline isn't gone: keep the memo and show the icon for now.
                     return self._result(entity, None, self._icon(entity), None)
-        picture, icon, source = self._run_chain(entity)
+        picture, icon, source, card = self._run_chain(entity)
         if source != memo:
             self.owner.remember(entity_id, source)
-        return self._result(entity, picture, icon, source)
+        return self._result(entity, picture, icon, source, card)
 
-    def _run_chain(self, entity: EntityRef) -> tuple[Thumbnail | None, str | None, int | None]:
+    def _run_chain(
+        self, entity: EntityRef
+    ) -> tuple[Thumbnail | None, str | None, int | None, Card | None]:
         tried: set[int] = set()
         for provider in self.owner.chain(entity.type):
             if isinstance(provider, Icon):
-                return None, provider.name, None
+                return None, provider.name, None, None
+            if isinstance(provider, TitleCard):
+                card = self._card(entity, provider)
+                if card is not None:
+                    return None, None, None, card
+                continue
             try:
                 for candidate in provider.candidates(entity, self):
                     if candidate.id in tried:
@@ -215,20 +232,43 @@ class _Resolution:
                     tried.add(candidate.id)
                     picture = self.picture(candidate)
                     if picture is not None:
-                        return picture, None, candidate.id
+                        return picture, None, candidate.id, None
             except Exception as e:  # a theme's provider must not break thumbnails
                 logger.warning("Thumbnail provider %r failed for entity %d", provider, entity.id)
                 self._problems.append((f"entity {entity.id}", f"{provider!r} failed: {e}"))
-        return None, FALLBACK_ICON, None
+        return None, FALLBACK_ICON, None, None
+
+    def _card(self, entity: EntityRef, provider: TitleCard) -> Card | None:
+        """The entity's title card; ``None`` when it has no title."""
+        title = self.conn.scalar(select(Entity.title).where(Entity.id == entity.id))
+        if not title or not title.strip():
+            return None
+        subtitle = ""
+        schema = self.owner.schema
+        if provider.subtitle and schema is not None:
+            try:
+                table = schema.by_type_id(entity.type).table
+                column = table.c[provider.subtitle]
+            except KeyError:  # not a field of this type: no subtitle
+                logger.warning("%r: %s has no field %r", provider, entity.type, provider.subtitle)
+            else:
+                value = self.conn.scalar(select(column).where(table.c.id == entity.id))
+                subtitle = "" if value is None else str(value)
+        return title_card(title, subtitle, provider.aspect)
 
     def _icon(self, entity: EntityRef) -> str:
         icons = [p for p in self.owner.chain(entity.type) if isinstance(p, Icon)]
         return icons[0].name if icons else FALLBACK_ICON
 
     def _result(
-        self, entity: EntityRef, picture: Thumbnail | None, icon: str | None, source: int | None
+        self,
+        entity: EntityRef,
+        picture: Thumbnail | None,
+        icon: str | None,
+        source: int | None,
+        card: Card | None = None,
     ) -> ThumbnailResult:
-        return ThumbnailResult(entity.id, picture, icon, source, tuple(self._problems))
+        return ThumbnailResult(entity.id, picture, icon, source, tuple(self._problems), card)
 
     # --- pictures ---
 

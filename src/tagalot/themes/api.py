@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 9
+API_VERSION = 10
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -33,7 +33,7 @@ details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
 version 7 added Kindle and Mobipocket books (:func:`read_mobi`, :func:`mobi_cover`, and
 their text in :func:`read_document_text`); version 8 added notes
 (:meth:`IngestContext.note`); version 9 added assets folders (``assets`` of
-:meth:`IngestContext.resource_at`)."""
+:meth:`IngestContext.resource_at`); version 10 added title cards (:class:`TitleCard`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -982,6 +982,30 @@ class Icon(ThumbnailProvider):
         return f"Icon({self.name!r})"
 
 
+class TitleCard(ThumbnailProvider):
+    """A card with the item's title, for an item without a picture; ends the chain, like
+    :class:`Icon`. The title is wrapped and as large as fits, on a soft color picked from it,
+    so items without pictures still look different from each other. ``subtitle`` names a
+    field shown under the title (a book's ``"authors"``); ``aspect`` is the card's width for
+    each unit of height (``2 / 3`` like a book cover, ``1`` square). An item with no title
+    goes on to the next provider. Put it last, so a real picture always wins:
+    ``[RoleImage("cover"), ImageFile(), TitleCard("authors")]``."""
+
+    id = "title_card"
+
+    def __init__(self, subtitle: str | None = None, aspect: float = 2 / 3) -> None:
+        if not 0.25 <= aspect <= 4:
+            raise ValueError(f"a title card's aspect must be from 0.25 to 4, not {aspect}")
+        self.subtitle = subtitle
+        self.aspect = aspect
+
+    def __repr__(self) -> str:
+        args = [repr(self.subtitle)] if self.subtitle else []
+        if self.aspect != 2 / 3:
+            args.append(f"aspect={self.aspect!r}")
+        return f"TitleCard({', '.join(args)})"
+
+
 def default_thumbnail_chain(entity: type[Entity]) -> list[ThumbnailProvider]:
     """The chain :meth:`Theme.thumbnail_chain` uses unless a theme overrides it: the roles
     marked ``thumbnail=True``, then the entity's own file, then an icon for its kind."""
@@ -1431,6 +1455,7 @@ __all__ = [
     "ThemeOption",
     "ThumbnailContext",
     "ThumbnailProvider",
+    "TitleCard",
     "TopValuesCard",
     "View",
     "action",

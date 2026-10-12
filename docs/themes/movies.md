@@ -9,7 +9,7 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **Video details** (read with MediaInfo): length, resolution, quality (`4K`, `1440p`, `1080p`, `720p`, `SD`), video codec, and audio languages. A movie with several versions shows its best.
 - **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating, which win over the file name; the **cast** in order; and a **set**, which becomes a collection.
 - **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
-- **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`.
+- **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
 
 ## Notes
 

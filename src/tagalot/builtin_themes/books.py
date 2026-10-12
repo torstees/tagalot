@@ -68,6 +68,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    TitleCard,
     contains,
     field,
     option,
@@ -224,7 +225,7 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 4  # 4: assets (#418); 3: synopsis; 2: author lists
-    api_version = 9  # resource_at's assets (7: read_mobi; 6: full_text; 5: online; 3: covers)
+    api_version = 10  # TitleCard (9: assets; 7: read_mobi; 6: full_text; 5: online; 3: covers)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -319,10 +320,13 @@ class BooksTheme(Theme):
     ]
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
+        # Without a picture, a title card (#415).
         if entity_type is Book:
-            return [RoleImage("cover"), ImageFile(), Icon("file")]
+            return [RoleImage("cover"), ImageFile(), TitleCard("authors"), Icon("file")]
         if entity_type is Comic:
-            return [ImageFile(), Icon("archive")]
+            return [ImageFile(), TitleCard("writers"), Icon("archive")]
+        if entity_type is Author:
+            return [TitleCard(aspect=1), Icon("entity")]
         if entity_type in (Series, Universe, Collection):
             return [ContentsThumbnail(), Icon("entity")]
         return super().thumbnail_chain(entity_type)

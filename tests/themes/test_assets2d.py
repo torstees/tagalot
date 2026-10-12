@@ -314,3 +314,14 @@ def test_preview_of_an_asset(env: Env) -> None:
     assert "Width" not in facts  # not a card field
     assert preview.file == "Assets \u203a Aurora/sky.png"
     assert missing is None
+
+
+def test_an_artist_without_a_picture_shows_a_title_card() -> None:
+    chain = Assets2DTheme().thumbnail_chain(Artist)
+    assert [type(p).__name__ for p in chain] == [
+        "FolderImage",
+        "ContentsThumbnail",
+        "TitleCard",
+        "Icon",
+    ]  # after its folder picture and its assets'
+    assert repr(chain[2]) == "TitleCard(aspect=1)"

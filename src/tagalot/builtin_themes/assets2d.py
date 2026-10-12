@@ -45,6 +45,7 @@ from tagalot.themes.api import (
     Theme,
     ThumbnailContext,
     ThumbnailProvider,
+    TitleCard,
     contains,
     dashboard_card,
     field,
@@ -210,7 +211,7 @@ class Assets2DTheme(Theme):
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Artist:
-            return [FolderImage(), ContentsThumbnail(), Icon("dir")]
+            return [FolderImage(), ContentsThumbnail(), TitleCard(aspect=1), Icon("dir")]
         return super().thumbnail_chain(entity_type)
 
     # --- reading files (scan worker) ---
