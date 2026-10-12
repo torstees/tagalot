@@ -12,7 +12,8 @@ The body is rendered Markdown, capped at the room beside the picture; **Show mor
 expands it in place. Its pictures are only those read in a worker
 (:func:`~tagalot.core.note_markdown.read_pictures`): the document never loads anything
 itself, so the GUI thread never touches a disk or a share. Links open in the browser, or,
-relative to the note's folder, with the file's own program.
+relative to the note's folder (or found in an assets folder by the worker, #418), with the
+file's own program.
 
 An item without a note file has a note typed here (#383): **Add a note**, or ✎ (or
 double-clicking the note) opens a box; Ctrl+Enter or clicking away saves, Esc cancels. A
@@ -181,6 +182,8 @@ class NoteView(QWidget):
         layout.addWidget(self.edit_row)
         layout.addLayout(footer)
         self.folder: str | None = None
+        self.links: dict[str, str] = {}
+        """Links found in an assets folder: ``{path beside the note: path there}``."""
         self.text = ""
         """The note's Markdown, as shown."""
         self.editable = False
@@ -199,11 +202,14 @@ class NoteView(QWidget):
         pictures: dict[str, QImage],
         has_file: bool,
         editable: bool = False,
+        links: dict[str, str] | None = None,
     ) -> None:
         """Show a note's Markdown ``body``; ``folder`` (this computer's path) resolves its
-        links, ``pictures`` are its pictures by the name written, read in a worker.
-        ``editable``: the note is typed here. A note being typed stays open."""
+        links (``links``: those found in an assets folder instead), ``pictures`` are its
+        pictures by the name written, read in a worker. ``editable``: the note is typed
+        here. A note being typed stays open."""
         self.folder = folder
+        self.links = links or {}
         self.text = body
         self.editable = editable and not has_file
         self.body.pictures = pictures
@@ -293,7 +299,7 @@ class NoteView(QWidget):
             field_editor.open_web_address(text)  # looked up now, so tests can stand in
             return
         if self.folder is not None and (path := resolve_link(self.folder, text)) is not None:
-            self.open_file(path)
+            self.open_file(self.links.get(path, path))
 
 
 def _open_local(path: str) -> None:

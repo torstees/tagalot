@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, update
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.books import (
@@ -26,6 +26,7 @@ from tagalot.builtin_themes.books import (
     sort_name,
 )
 from tagalot.core.db import create_keep_engine, open_keep_database
+from tagalot.core.fields import edit_field
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.keywords import keywords_of
 from tagalot.core.merge import merge_items
@@ -108,12 +109,16 @@ class Env:
     schema: ThemeSchema
     files: Path
     options: dict[str, Any]
+    assets: str = ""
+    """The folder's default assets folder (#418)."""
+    keep_assets: str = ""
+    """The keep's."""
 
     def scan(self, when: datetime = T0) -> ScanReport:
-        root = RootConfig("r", "Books", str(self.files), options=self.options)
+        root = RootConfig("r", "Books", str(self.files), options=self.options, assets=self.assets)
         return scan_root(
             self.writer, self.reader, root, root.path, when=when, theme=BooksTheme,
-            schema=self.schema,
+            schema=self.schema, markdown_assets=self.keep_assets,
         )  # fmt: skip
 
     def titles(self, entity: type) -> list[str]:
@@ -678,6 +683,77 @@ def test_a_cover_added_later_or_changed_or_dropped(env: Env) -> None:
     assert _covers(env, "Story") == []
 
 
+@pytest.mark.parametrize(
+    ("assets", "picture"),
+    [
+        ("Attachments", "Stories/Attachments/covers/c.jpg"),  # beside the file
+        ("../Shared/Assets", "Shared/Assets/covers/c.jpg"),  # several folders up and down
+        ("/Shared/Assets", "Shared/Assets/covers/c.jpg"),  # from the top of the folder
+    ],
+)
+def test_a_cover_in_the_files_assets_folder(env: Env, assets: str, picture: str) -> None:
+    """Front matter's ``assets`` names where its pictures are, when not beside it (#418);
+    the cover's own subfolders are kept under it."""
+    write_markdown(
+        env.files / "Stories/story.md",
+        f"---\ntitle: Story\ncover: covers/c.jpg\nassets: {assets}\n---\n",
+    )
+    (env.files / picture).parent.mkdir(parents=True, exist_ok=True)
+    (env.files / picture).write_bytes(jpeg())
+    env.scan()
+    assert _covers(env, "Story") == [picture]
+    assert env.fields(Book, "Story")["assets"] == assets
+
+
+def test_a_cover_beside_the_file_comes_first(env: Env) -> None:
+    write_markdown(
+        env.files / "Stories/story.md", "---\ntitle: Story\ncover: c.jpg\nassets: Art\n---\n"
+    )
+    for picture in ("Stories/c.jpg", "Stories/Art/c.jpg"):
+        (env.files / picture).parent.mkdir(parents=True, exist_ok=True)
+        (env.files / picture).write_bytes(jpeg())
+    env.scan()
+    assert _covers(env, "Story") == ["Stories/c.jpg"]
+
+
+def test_a_cover_in_the_folders_or_the_keeps_assets_folder(env: Env) -> None:
+    """Without its own, the watched folder's default, then the keep's (#418)."""
+    write_markdown(env.files / "Stories/story.md", "---\ntitle: Story\ncover: c.jpg\n---\n")
+    write_markdown(env.files / "Stories/other.md", "---\ntitle: Other\ncover: o.jpg\n---\n")
+    for picture in ("Pictures/c.jpg", "Stories/Local/o.jpg"):
+        (env.files / picture).parent.mkdir(parents=True, exist_ok=True)
+        (env.files / picture).write_bytes(jpeg())
+    env.keep_assets = "Pictures"
+    env.scan()
+    assert _covers(env, "Story") == ["Pictures/c.jpg"]
+    assert _covers(env, "Other") == []
+    env.assets = "./Local"  # the folder's, from each file's folder; the keep's after it
+    env.scan(T0 + timedelta(minutes=1))  # a changed setting reads the folder again
+    assert _covers(env, "Other") == ["Stories/Local/o.jpg"]
+    assert _covers(env, "Story") == ["Pictures/c.jpg"]
+
+
+def test_an_edited_assets_folder_finds_the_cover(env: Env) -> None:
+    """The user's value wins over the file's, like any field (#418)."""
+    write_markdown(
+        env.files / "Stories/story.md", "---\ntitle: Story\ncover: c.jpg\nassets: Wrong\n---\n"
+    )
+    (env.files / "Stories/Right").mkdir(parents=True)
+    (env.files / "Stories/Right/c.jpg").write_bytes(jpeg())
+    env.scan()
+    assert _covers(env, "Story") == []
+    with env.reader.connect() as conn:
+        story = conn.scalar(select(Entity.id).where(Entity.title == "Story"))
+    assert story is not None
+    env.writer.run(lambda conn: edit_field(conn, env.schema, story, "assets", "Right"))
+    env.writer.run(
+        lambda conn: conn.execute(update(Resource).values(ingested_at=None))
+    )  # read it again, as Re-read does
+    env.scan(T0 + timedelta(minutes=1))
+    assert env.fields(Book, "Story")["assets"] == "Right"
+    assert _covers(env, "Story") == ["Stories/Right/c.jpg"]
+
+
 # --- office documents and link files (#298) ---
 
 
@@ -752,6 +828,8 @@ def test_front_matter_uses_the_files_own_keys() -> None:
         "url": "https://example.com/mol",
         "publisher": None,  # cleared in Tagalot: removed from the file
     }
+    folder = _record("Story", assets="Art")  # the assets folder (#418)
+    assert theme.front_matter(Book, folder, frozenset({"assets"}), {}) == {"assets": "Art"}
     synopsis = {"Synopsis": "Old."}  # a description under another name (#409)
     assert theme.front_matter(Book, item, frozenset({"description"}), synopsis) == {
         "synopsis": "A loop."

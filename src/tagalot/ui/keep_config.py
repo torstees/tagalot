@@ -52,7 +52,12 @@ from PySide6.QtWidgets import (
 from tagalot.core.contents import ContentsStats
 from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
-from tagalot.core.keep_settings import MIN_THUMBNAIL_SIZE, with_name, with_option
+from tagalot.core.keep_settings import (
+    MIN_THUMBNAIL_SIZE,
+    with_markdown_assets,
+    with_name,
+    with_option,
+)
 from tagalot.core.note_keys import NoteKeyError, check_key
 from tagalot.core.notes import DEFAULT_IGNORED_KEYS
 from tagalot.core.online import consent_text
@@ -87,6 +92,12 @@ STATS_INTERVAL_MS = 3000
 """How often the stored-thumbnail count is read while the Thumbnails tab is in view."""
 
 _ROOT_ID = Qt.ItemDataRole.UserRole
+ASSETS_TIP = (
+    "Where Markdown files' pictures and links are looked for when they aren't beside the "
+    "file (an attachments folder): a folder from the top of the watched folder, or "
+    "from each file's own folder when it starts with ./ (./assets). A file's own assets "
+    "front-matter key comes first."
+)
 
 
 class KeepConfigWindow(QWidget):
@@ -189,6 +200,11 @@ class KeepConfigWindow(QWidget):
         )
         self.writable.clicked.connect(self._toggle_writable)
         form.addRow("Write back:", self.writable)
+        self.assets = QLineEdit()
+        self.assets.setObjectName("assets")
+        self.assets.setToolTip(ASSETS_TIP + " This folder's own; empty uses the keep's (Keep tab).")
+        self.assets.editingFinished.connect(lambda: self._edit(assets=self.assets.text()))
+        form.addRow("Assets folder:", self.assets)
         form.addRow("Status:", self.status)
 
         self.scan_button = QPushButton("Scan now")
@@ -313,6 +329,16 @@ class KeepConfigWindow(QWidget):
         form.addRow("Holds:", types)
         if about.text():
             form.addRow("", about)
+        self.keep_assets = QLineEdit()
+        self.keep_assets.setObjectName("keep_assets")
+        self.keep_assets.setPlaceholderText("None: only beside each file")
+        self.keep_assets.setToolTip(
+            ASSETS_TIP + " For every watched folder that doesn't name its own (Folders tab)."
+        )
+        self.keep_assets.editingFinished.connect(
+            lambda: self._set_markdown_assets(self.keep_assets.text())
+        )
+        form.addRow("Assets folder:", self.keep_assets)
         self.keep_options = QGroupBox("Theme options")
         self.keep_options.setToolTip(
             "The theme's settings for this keep; a folder can override them (Folders tab). "
@@ -521,6 +547,11 @@ class KeepConfigWindow(QWidget):
         )
         self.scan_button.setEnabled(root.watched)
         self.writable.setChecked(root.writable)
+        self.assets.setText(root.assets)
+        keep_assets = self.session.keep.config.markdown_assets
+        self.assets.setPlaceholderText(
+            f"The keep's: {keep_assets}" if keep_assets else "None: only beside each file"
+        )
         self._show_root_options(root)
         self._show_status()
 
@@ -538,6 +569,7 @@ class KeepConfigWindow(QWidget):
         """The Thumbnails and Keep tabs, from the saved configuration."""
         config = self.session.keep.config
         self.keep_name.setText(config.name)
+        self.keep_assets.setText(config.markdown_assets)
         self.setWindowTitle(f"Configure {config.name}")
         self.theme_size.blockSignals(True)
         self.theme_size.setChecked(config.thumbnail_max is None)
@@ -667,6 +699,21 @@ class KeepConfigWindow(QWidget):
         session = self.session
         self._run(lambda: session.rename_keep(name), f"Renamed the keep {name.strip()}.")
 
+    def _set_markdown_assets(self, assets: str) -> None:
+        config = self.session.keep.config
+        try:
+            cleaned = with_markdown_assets(config, assets).markdown_assets
+        except KeepError as e:
+            self._refused(str(e))
+            return
+        if cleaned == config.markdown_assets:
+            return
+        session = self.session
+        self._run(
+            lambda: session.set_markdown_assets(cleaned),
+            "Saved the assets folder. Covers are looked for there at the next scan (F5).",
+        )
+
     def _theme_size_toggled(self, use_theme: bool) -> None:
         self.max_size.setEnabled(not use_theme)
         self._set_thumbnail_max(None if use_theme else self.max_size.value())
@@ -771,6 +818,8 @@ class KeepConfigWindow(QWidget):
             return
         offers_scan = "path" in changes or "exclude" in changes
         message = f"Saved {root.name}." + (" Scan it to update its files." if offers_scan else "")
+        if "assets" in changes:
+            message = f"Saved {root.name}. Covers are looked for there at the next scan (F5)."
         self._run(lambda: session.save_config(config), message)
 
     def _toggle_writable(self, on: bool) -> None:

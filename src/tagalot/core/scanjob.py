@@ -108,6 +108,7 @@ def scan_root(
     theme: type[Theme] | None = None,
     schema: ThemeSchema | None = None,
     theme_options: Mapping[str, Any] | None = None,
+    markdown_assets: str = "",
     progress: Progress | None = None,
     note_ignore_keys: frozenset[str] | None = None,
     notes_folder: str | None = None,
@@ -122,8 +123,9 @@ def scan_root(
     extensions and directory rule then replace ``extensions`` and ``dirs``.
 
     ``theme_options`` are the keep's ``[theme.options]``; with the root's own options they
-    give the values the theme sees. When those differ from the values the root was last
-    ingested with, every file of the root is ingested again.
+    give the values the theme sees, with the root's and the keep's (``markdown_assets``)
+    default assets folders. When those differ from the values the root was last ingested
+    with, every file of the root is ingested again.
 
     ``note_ignore_keys`` are the front-matter keys notes leave out (``core.note_keys``); when
     they differ from those the notes were last applied with, every note is read again.
@@ -202,7 +204,9 @@ def scan_root(
 
     report.moves = writer.run(partial(_moves, applied))
     if theme is not None and schema is not None:
-        options = effective_options(theme, theme_options or {}, root.options)
+        options = effective_options(
+            theme, theme_options or {}, root.options, (root.assets, markdown_assets)
+        )
         for problem in options.problems:
             logger.warning("Root %s: %s", root.id, problem)
             report.ingest_warnings.append(IngestWarning(root.id, None, problem))
@@ -296,13 +300,16 @@ def ingest_pending(
     theme: type[Theme],
     schema: ThemeSchema,
     theme_options: Mapping[str, Any] | None = None,
+    markdown_assets: str = "",
     when: datetime | None = None,
     progress: Progress | None = None,
 ) -> ScanReport:
     """Ingest the root's pending resources now, without walking it (re-reading chosen files,
     DESIGN.md §6). The root's theme options apply as in a scan."""
     report = ScanReport(root.id, online=True)
-    options = effective_options(theme, theme_options or {}, root.options)
+    options = effective_options(
+        theme, theme_options or {}, root.options, (root.assets, markdown_assets)
+    )
     _ingest_pending(
         writer,
         reader,
@@ -483,6 +490,7 @@ def scan_notes_folder(
     theme: type[Theme],
     schema: ThemeSchema,
     theme_options: Mapping[str, Any] | None = None,
+    markdown_assets: str = "",
     progress: Progress | None = None,
 ) -> ScanReport:
     """Match the keep's notes folder's notes to items and apply them (§9 *The notes
@@ -512,6 +520,7 @@ def scan_notes_folder(
                 theme=theme,
                 schema=schema,
                 theme_options=theme_options,
+                markdown_assets=markdown_assets,
                 progress=progress,
             )
             report.ingest_errors += done.ingest_errors

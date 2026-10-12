@@ -12,6 +12,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from tagalot.core.assets import clean_setting
 from tagalot.core.keep import (
     CONTENTS_INDEXES,
     ONLINE_ANSWERS,
@@ -63,6 +64,16 @@ def with_contents_index(config: KeepConfig, index: str | None) -> KeepConfig:
     if index not in (None, *CONTENTS_INDEXES):
         raise KeepError(f"Contents search can be words or substrings, not {index!r}.")
     return replace(config, contents_index=index, roots=copy.deepcopy(config.roots))
+
+
+def with_markdown_assets(config: KeepConfig, assets: str) -> KeepConfig:
+    """``config`` with the keep's default assets folder (``[markdown] assets``, #418);
+    ``""`` for none."""
+    try:
+        cleaned = clean_setting(assets)
+    except ValueError as e:
+        raise KeepError(str(e)) from None
+    return replace(config, markdown_assets=cleaned, roots=copy.deepcopy(config.roots))
 
 
 def with_note_ignore_keys(config: KeepConfig, keys: Iterable[str]) -> KeepConfig:

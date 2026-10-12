@@ -29,6 +29,16 @@ Where a file came from. The **Source folder level** option names the folder that
 
 An EPUB or a Kindle book shows its cover, a PDF its first page, a Word or OpenDocument file its preview, a comic its first page. A Markdown file's front matter can name a cover picture (`cover: images/cover.jpg`, relative to the file, or Obsidian's `[[cover.jpg]]`). A series, universe, or collection shows one of its first works'.
 
+### Assets folders
+
+If your Markdown books keep their pictures in an attachments folder rather than beside each file, say where, and a cover that isn't beside the book is looked for there, by the name the file gives (`cover: covers/2024/dune.jpg` finds `Attachments/covers/2024/dune.jpg`):
+
+- **In the book's front matter:** `assets: Attachments`, relative to the file (`../Shared/Assets` works), or from the top of the watched folder with a leading `/` (`/Site/static/assets`). It shows on the book's page as **Assets folder**, where you can change it; your value wins over the file's, and [Write to file…](../guide/write-to-file.md) writes it back.
+- **For a whole watched folder:** Keep configuration → Folders → **Assets folder**.
+- **For the whole keep:** Keep configuration → Keep → **Assets folder**, for folders that don't name their own.
+
+Beside the file is always looked at first, then the book's own assets folder, then the folder's, then the keep's. A default is a folder from the top of the watched folder, or from each file's own folder when it starts with `./` (`./_assets`). Nothing outside the watched folder is used. Changing a default reads that folder's books again at the next scan; after changing a book's own **Assets folder**, **Re-read from file** finds its cover.
+
 ## Genres and subjects as tags
 
 An EPUB's subjects, a comic's genres and tags, a PDF's keywords, and Markdown's `tags` are [file keywords](../guide/file-keywords.md).

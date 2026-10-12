@@ -29,9 +29,13 @@ exclude = [                                 # Skip patterns
 # options = { artist_level = 1 }            # the theme's options, for this folder only
 # watched = false                           # not scanned; its items stay, offline
 # writable = true                           # Write to file… may change files here
+# assets = "Attachments"                    # Markdown files' assets folder (./ : from each file)
 
 [roots.exclude_notes]                       # why a Skip pattern is there
 'Old/**' = 'not sorted yet'
+
+[markdown]                                  # optional
+assets = "Attachments"                      # assets folder for folders naming none
 
 [thumbnails]                                # optional
 max_size = 512                              # the size thumbnails are made at

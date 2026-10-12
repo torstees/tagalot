@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy import Connection, func, select, union
 
+from tagalot.core.assets import ASSETS
 from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.keywords import ItemKeyword, item_keywords
@@ -30,7 +31,7 @@ from tagalot.core.models import (
 from tagalot.core.notes import EXTRA
 from tagalot.core.roots import local_path
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
-from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import (
     DetailView,
     Section,
@@ -60,6 +61,8 @@ class FileRow:
     """Scans leave it out now (an exclude pattern); its status is as last seen."""
     by_user: bool = False
     """Linked by hand (#243); it can be unlinked from the item's page."""
+    root_id: str = ""
+    """Its root's id (set for a note's file, to find its assets folders)."""
 
 
 @dataclass(frozen=True)
@@ -137,6 +140,9 @@ class EntityDetail:
     """The body of the item's note, as Markdown (§9 *Notes*)."""
     note_file: FileRow | None = None
     """The note's file, if it has one."""
+    assets: str | None = None
+    """Its own assets folder (#418): its ``assets`` field, else its Extra field of that
+    name (a note's ``assets`` key), as written."""
 
 
 PATH_MARK = "\u203a"
@@ -219,7 +225,20 @@ def load_detail(
         note_body=conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
         or "",
         note_file=note_file(conn, entity_id, root_path),
+        assets=_assets(conn, table, entity_id, row.extra),
     )
+
+
+def _assets(
+    conn: Connection, table: EntityTable, entity_id: int, extra: dict[str, Any] | None
+) -> str | None:
+    """The item's own assets folder: its field named ``assets``, else its Extra one."""
+    if any(f.name == ASSETS for f in table.fields):
+        value = conn.scalar(select(table.table.c[ASSETS]).where(table.table.c.id == entity_id))
+        if value:
+            return str(value)
+    found = next((v for k, v in (extra or {}).items() if k.casefold() == ASSETS), None)
+    return str(found) if found not in (None, "") else None
 
 
 def _extra_sources(conn: Connection, entity_id: int) -> tuple[tuple[str, FieldSource], ...]:
@@ -263,6 +282,7 @@ def note_file(
         local_path(base, row.relpath) if base is not None else None,
         NOTE_ROLE,
         row.skipped,
+        root_id=row.root_id,
     )
 
 

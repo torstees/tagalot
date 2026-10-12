@@ -526,7 +526,8 @@ def read_front_matter(path: str) -> dict[str, Any]:
     :func:`split_keywords` does); ``source``; ``link`` (``url`` or ``link``, if a web
     address); ``year`` (``year``, else ``date``); ``publisher``; ``language`` (or
     ``lang``); ``description`` (or ``summary``, ``synopsis``, ``blurb``, ``abstract``);
-    ``cover`` (a picture's path, as written, relative to the file); and ``fields``, every
+    ``cover`` (a picture's path, as written, relative to the file); ``assets`` (the folder
+    its pictures may be in instead, as written, #418); and ``fields``, every
     key and value as written, for a theme's own keys. Keys are matched ignoring case. A file
     without front matter gives just its heading. Raises ``ValueError`` for front matter
     that doesn't parse.
@@ -569,6 +570,7 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "language": words("language", "lang"),
         "description": words(*DESCRIPTION_KEYS),
         "cover": words("cover", "image"),
+        "assets": words("assets"),
         "fields": fields,
     }
 

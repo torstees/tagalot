@@ -105,6 +105,10 @@ class RootConfig:
     writable: bool = False
     """``writable = true``: **Write to file…** may change files here (DESIGN.md §4 *Writing
     back to files*). Off by default; no other root is ever written to."""
+    assets: str = ""
+    """``assets = "Attachments"``: where its Markdown files' relative pictures and links are
+    looked for when they aren't beside the file (``core/assets.py``, #418): relative to the
+    root's top, or to each file's folder with a leading ``./``. ``""``: the keep's default."""
 
 
 @dataclass
@@ -143,6 +147,8 @@ class KeepConfig:
     new_notes: str = "folders"
     """``[notes] new_notes``: where Save as note… puts a note, ``"folders"`` (a subfolder
     per type) or ``"one-folder"`` (typed by ``tagalot-type``)."""
+    markdown_assets: str = ""
+    """``[markdown] assets``: the assets folder of roots that name none (#418)."""
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -206,6 +212,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         notes_lines.append(f"ignore_keys = {toml_list(config.note_ignore_keys)}")
     if notes_lines:
         lines += ["", "[notes]", *notes_lines]
+    if config.markdown_assets:
+        lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
     for root in config.roots:
         lines += [
             "",
@@ -221,6 +229,8 @@ def dump_keep_config(config: KeepConfig) -> str:
             lines.append("watched = false")
         if root.writable:
             lines.append("writable = true")
+        if root.assets:
+            lines.append(f"assets = {toml_str(root.assets)}")
         notes = {p: n for p, n in root.exclude_notes.items() if p in root.exclude and n}
         if notes:
             lines += ["", "[roots.exclude_notes]"]
@@ -231,7 +241,9 @@ def dump_keep_config(config: KeepConfig) -> str:
 def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
     reader.warn_unknown(
-        data, {"keep", "theme", "roots", "thumbnails", "online", "contents", "notes"}, "top level"
+        data,
+        {"keep", "theme", "roots", "thumbnails", "online", "contents", "notes", "markdown"},
+        "top level",
     )
 
     keep = reader.table(data, "keep")
@@ -305,13 +317,29 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         if new_notes not in NEW_NOTES:
             raise KeepConfigError(path, '[notes] new_notes must be "folders" or "one-folder"')
 
+    markdown_assets = ""
+    if "markdown" in data:
+        markdown = reader.table(data, "markdown")
+        reader.warn_unknown(markdown, {"assets"}, "[markdown]")
+        markdown_assets = _assets(path, markdown, "[markdown]")
+
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
         raise KeepConfigError(path, "roots must be written as [[roots]] tables")
     roots: list[RootConfig] = []
     for i, raw in enumerate(raw_roots, start=1):
         where = f"[[roots]] #{i}"
-        known = {"id", "name", "path", "exclude", "exclude_notes", "options", "watched", "writable"}
+        known = {
+            "id",
+            "name",
+            "path",
+            "exclude",
+            "exclude_notes",
+            "options",
+            "watched",
+            "writable",
+            "assets",
+        }
         reader.warn_unknown(raw, known, where)
         watched, writable = raw.get("watched", True), raw.get("writable", False)
         if not isinstance(watched, bool):
@@ -336,6 +364,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                 options=reader.options(raw, f"{where} options"),
                 watched=watched,
                 writable=writable,
+                assets=_assets(path, raw, where),
             )
         )
     seen: set[str] = set()
@@ -365,7 +394,16 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         notes_path=notes_path,
         notes_writable=notes_writable,
         new_notes=new_notes,
+        markdown_assets=markdown_assets,
     )
+
+
+def _assets(path: Path, table: Mapping[str, Any], where: str) -> str:
+    """An ``assets`` folder setting, trimmed with ``/`` separators (``""``: none)."""
+    value = table.get("assets", "")
+    if not isinstance(value, str):
+        raise KeepConfigError(path, f"{where} assets must be a string")
+    return value.strip().replace("\\", "/")
 
 
 def clean_relpath(relpath: str) -> str:

@@ -24,6 +24,7 @@ from types import ModuleType
 from sqlalchemy import Connection, delete, func, select, update
 
 from tagalot.core import closure, fts
+from tagalot.core.assets import clean_setting
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.keep import (
     DEFAULT_EXCLUDES,
@@ -88,6 +89,7 @@ def edit_root(
     exclude_notes: dict[str, str] | None = None,
     watched: bool | None = None,
     writable: bool | None = None,
+    assets: str | None = None,
 ) -> KeepConfig:
     """``config`` with one root changed. Raises :class:`KeepError` for a bad value."""
     roots = copy.deepcopy(config.roots)
@@ -111,6 +113,11 @@ def edit_root(
         root.watched = watched
     if writable is not None:
         root.writable = writable
+    if assets is not None:
+        try:
+            root.assets = clean_setting(assets)
+        except ValueError as e:
+            raise KeepError(str(e)) from None
     new = replace(config, roots=roots)
     _check(new, keep_dir, root)
     return new
