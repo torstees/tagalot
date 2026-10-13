@@ -12,6 +12,9 @@ Tabs, each with how many it holds:
 - **Unmatched keywords:** items with file keywords no tag matches (#295).
 - **Notes:** the notes folder's notes that aren't an item's note (#382): matching no
   item, several, or an item with another note; with Open note and Show in file manager.
+- **Pictures:** items' pictures not found (a Markdown book's ``cover``), with the paths
+  tried and what is there now, and pictures that can't be drawn (#426); with Open page,
+  Show the file, and Re-read from file.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -39,6 +42,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
 from tagalot.core.models import ResourceStatus
+from tagalot.core.picture_problems import CANT_DRAW, PictureProblem, picture_problems
 from tagalot.core.roots import local_path
 from tagalot.core.search import count_matches
 from tagalot.core.search_spec import SearchSpec
@@ -55,6 +59,7 @@ from tagalot.core.triage import (
     note_problems,
     unlinked_files,
 )
+from tagalot.themes.api import entity_label
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.search_view import SearchPage
@@ -63,14 +68,16 @@ from tagalot.ui.workers import run_in_pool
 MAX_FILES = 10_000
 """Unlinked files listed at once (the count shows them all)."""
 
-UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, NOTES_TAB = 0, 1, 2, 3, 4
+UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, NOTES_TAB, PICTURES_TAB = range(6)
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
     MISSING_TAB: "Missing files",
     KEYWORDS_TAB: "Unmatched keywords",
     NOTES_TAB: "Notes",
+    PICTURES_TAB: "Pictures",
 }
+PICTURES_HINT = "Select a row to see where Tagalot looked."
 
 ModelIndex = QModelIndex | QPersistentModelIndex
 
@@ -82,6 +89,11 @@ class Counts:
     missing: int
     keywords: int = 0
     notes: int = 0
+    pictures: int = 0
+
+
+Loaded = tuple[Counts, list[UnlinkedFile], list[NoteProblem], list[PictureProblem]]
+"""What :meth:`TriagePage.refresh` loads in its worker."""
 
 
 class UnlinkedModel(QAbstractTableModel):
@@ -162,6 +174,72 @@ class NotesModel(QAbstractTableModel):
         return note.reason + offline
 
 
+class PicturesModel(QAbstractTableModel):
+    """Items' pictures not found or that can't be drawn: item, type, problem, file."""
+
+    HEADERS = ("Item", "Type", "Problem", "File")
+
+    def __init__(self, type_labels: dict[str, str]) -> None:
+        super().__init__()
+        self.type_labels = type_labels
+        self.problems: list[PictureProblem] = []
+
+    def set_problems(self, problems: list[PictureProblem]) -> None:
+        self.beginResetModel()
+        self.problems = problems
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.problems)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid() or role not in (
+            Qt.ItemDataRole.DisplayRole,
+            Qt.ItemDataRole.ToolTipRole,
+        ):
+            return None
+        problem = self.problems[index.row()]
+        return (
+            problem.title,
+            self.type_labels.get(problem.type, problem.type),
+            problem.summary,
+            problem.relpath,
+        )[index.column()]
+
+
+def picture_details(problem: PictureProblem) -> str:
+    """What the details under the Pictures list say about one row."""
+    name = problem.relpath.rpartition("/")[2]
+    if problem.kind == CANT_DRAW:
+        return (
+            f"{name} can't be drawn: {problem.reason}\n"
+            "Replace the picture or save it again in a common format (JPEG, PNG); it's "
+            "listed until the file changes."
+        )
+    lines = [f"{name} names its {problem.role}: {problem.written}"]
+    if not problem.tried:
+        lines.append(problem.reason or "")
+    else:
+        lines.append("Looked in, in order:")
+        lines.extend(f"{i}. {t.relpath}: {t.state}" for i, t in enumerate(problem.tried, 1))
+        if not any(t.found for t in problem.tried):
+            lines.append(
+                "Fix the name in the file, put the picture in one of these places, or set "
+                "an assets folder (the item's Assets folder field, or Keep configuration)."
+            )
+    return "\n".join(lines)
+
+
 class TriagePage(QWidget):
     """See the module docstring. Signals carry requests for the window to carry out."""
 
@@ -176,6 +254,10 @@ class TriagePage(QWidget):
     message = Signal(str)
     keywords_requested = Signal()
     """Open TOOLS → File keywords (#295)."""
+    open_requested = Signal(int)
+    """An item's page to open."""
+    reread_requested = Signal(list)
+    """Entity ids to read from their files again."""
 
     def __init__(
         self,
@@ -284,12 +366,65 @@ class TriagePage(QWidget):
         self.notes_stack.addWidget(self.notes_empty)
         notes_tab = _tab(self.notes_stack, [open_note, reveal_note], self.notes_note)
 
+        labels = {t.type_id: entity_label(t.entity) for t in session.schema.entities.values()}
+        self.pictures = PicturesModel(labels)
+        self.pictures_table = QTableView()
+        self.pictures_table.setObjectName("pictures")
+        self.pictures_table.setModel(self.pictures)
+        self.pictures_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.pictures_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.pictures_table.verticalHeader().hide()
+        header = self.pictures_table.horizontalHeader()
+        for column in (0, 1):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.pictures_table.doubleClicked.connect(lambda _: self._open_picture_item())
+        self.pictures_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._show_picture_details()
+        )
+        self.picture_details = QLabel(PICTURES_HINT)
+        self.picture_details.setObjectName("picture_details")
+        self.picture_details.setWordWrap(True)
+        self.picture_details.setTextFormat(Qt.TextFormat.PlainText)
+        self.picture_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.picture_details.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.picture_details.setMinimumHeight(self.fontMetrics().lineSpacing() * 6)
+        listed = QWidget()
+        listed_layout = QVBoxLayout(listed)
+        listed_layout.setContentsMargins(0, 0, 0, 0)
+        listed_layout.addWidget(self.pictures_table, 1)
+        listed_layout.addWidget(self.picture_details)
+        open_item = QPushButton("Open page")
+        open_item.clicked.connect(self._open_picture_item)
+        show_file = QPushButton("Show the file")
+        show_file.setToolTip(
+            "Show the file that names the picture, or the picture that can't be drawn, in "
+            "your file manager"
+        )
+        show_file.clicked.connect(self._show_picture_file)
+        reread = QPushButton("Re-read from file")
+        reread.setToolTip("Read the item's files again, after fixing the file or a setting")
+        reread.clicked.connect(self._reread_picture_item)
+        self.pictures_note = QLabel(
+            "Pictures items' files name that weren't found, and pictures that can't be drawn."
+        )
+        self.pictures_note.setWordWrap(True)
+        self.pictures_empty = EmptyState(
+            "Every picture is in place", "Pictures items' files name were found and can be drawn."
+        )
+        self.pictures_stack = QStackedWidget()
+        self.pictures_stack.addWidget(listed)
+        self.pictures_stack.addWidget(self.pictures_empty)
+        pictures_tab = _tab(self.pictures_stack, [open_item, show_file, reread], self.pictures_note)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
         self.tabs.addTab(missing_tab, _TITLES[MISSING_TAB])
         self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
         self.tabs.addTab(notes_tab, _TITLES[NOTES_TAB])
+        self.tabs.addTab(pictures_tab, _TITLES[PICTURES_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         self.refresh()
@@ -301,26 +436,34 @@ class TriagePage(QWidget):
         tabs refresh with the window's other searches)."""
         session = self.session
 
-        def job() -> tuple[Counts, list[UnlinkedFile], list[NoteProblem]]:
+        known = _known(session)
+
+        def job() -> Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
+                pictures = picture_problems(conn, known)
                 counts = Counts(
                     count_unlinked(conn),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
                     count_note_problems(conn),
+                    len(pictures),
                 )
-                return counts, unlinked_files(conn, MAX_FILES), note_problems(conn)
+                return counts, unlinked_files(conn, MAX_FILES), note_problems(conn), pictures
 
-        def done(result: tuple[Counts, list[UnlinkedFile], list[NoteProblem]]) -> None:
+        def done(result: Loaded) -> None:
             if shiboken6.isValid(self):
                 self._show(*result)
 
         run_in_pool(job, on_done=done)
 
     def _show(
-        self, counts: Counts, files: list[UnlinkedFile], notes: list[NoteProblem] | None = None
+        self,
+        counts: Counts,
+        files: list[UnlinkedFile],
+        notes: list[NoteProblem] | None = None,
+        pictures: list[PictureProblem] | None = None,
     ) -> None:
         self.counts = counts
         for tab, n in (
@@ -329,8 +472,12 @@ class TriagePage(QWidget):
             (MISSING_TAB, counts.missing),
             (KEYWORDS_TAB, counts.keywords),
             (NOTES_TAB, counts.notes),
+            (PICTURES_TAB, counts.pictures),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
+        self.pictures.set_problems(pictures or [])
+        self.pictures_stack.setCurrentIndex(0 if pictures else 1)
+        self._show_picture_details()
         self.notes.set_notes(notes or [])
         self.notes_stack.setCurrentWidget(self.notes_table if notes else self.notes_empty)
         self.files.set_files(files)
@@ -388,6 +535,36 @@ class TriagePage(QWidget):
             return
         self.file_opener.act(
             FileToOpen(note.resource_id, local_path(base, note.relpath), False), how
+        )
+
+    def selected_picture(self) -> PictureProblem | None:
+        rows = self.pictures_table.selectionModel().selectedRows()
+        return self.pictures.problems[rows[0].row()] if rows else None
+
+    def _show_picture_details(self) -> None:
+        problem = self.selected_picture()
+        self.picture_details.setText(PICTURES_HINT if problem is None else picture_details(problem))
+
+    def _open_picture_item(self) -> None:
+        problem = self.selected_picture()
+        if problem is not None:
+            self.open_requested.emit(problem.entity_id)
+
+    def _reread_picture_item(self) -> None:
+        problem = self.selected_picture()
+        if problem is not None:
+            self.reread_requested.emit([problem.entity_id])
+
+    def _show_picture_file(self) -> None:
+        problem = self.selected_picture()
+        if problem is None or self.file_opener is None:
+            return
+        base = _known(self.session)(problem.root_id)
+        if base is None:
+            self.message.emit("Its watched folder has no folder on this computer.")
+            return
+        self.file_opener.act(
+            FileToOpen(problem.resource_id, local_path(base, problem.relpath), False), REVEAL
         )
 
     def _link(self) -> None:

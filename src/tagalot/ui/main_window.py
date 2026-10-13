@@ -580,6 +580,8 @@ class MainWindow(QMainWindow):
             triage.link_requested.connect(self.link_files)
             triage.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
             triage.keywords_requested.connect(self.review_keywords)
+            triage.open_requested.connect(self.open_entity)
+            triage.reread_requested.connect(lambda ids: self.reread(ids, False))
             for listed in (triage.untagged, triage.missing, triage.keywords):
                 listed.selection_changed.connect(self._schedule_summary)
             triage.tabs.currentChanged.connect(lambda _: self._schedule_summary())

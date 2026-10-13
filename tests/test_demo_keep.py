@@ -195,8 +195,8 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
             # Fantasy comes from the books' own subjects (file keywords).
             fantasy = count_by_type(conn, SearchSpec(include=_ids(tree, "Fantasy")), tree)
     assert everything == {
-        "books.author": 14,  # Stephen Baxter, of a two-author creator; pirateaba (#418)
-        "books.book": 20,  # Small Gods: its EPUB and PDF are one book
+        "books.author": 15,  # Stephen Baxter, of a two-author creator; pirateaba (#418)
+        "books.book": 21,  # Small Gods: its EPUB and PDF are one book; Field Notes (#426)
         "books.collection": 1,
         "books.comic": 4,
         "books.series": 6,

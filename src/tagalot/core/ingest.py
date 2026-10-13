@@ -31,6 +31,7 @@ from tagalot.core.models import (
     EntityResource,
     FieldProvenance,
     FieldSource,
+    FileNotFound,
     NoteIgnoredKey,
     NoteKeyRemoval,
     Resource,
@@ -326,22 +327,65 @@ class IngestSession:
         """The resource at ``relpath`` in ``beside``'s root (see the API); its local path is
         made from ``beside``'s, so it is only as known as that one. With ``assets``, then
         under the assets folders (``core/assets.py``)."""
-        found = self._resource_at(beside, relpath)
-        if found is not None or assets is None:
-            return found
-        here = posixpath.dirname(beside.relpath)
-        name = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
-        ref = posixpath.relpath(name, here) if here else name
-        defaults = self._options.get(ASSETS_KEY, [])
-        for candidate in in_assets(assets_folders(beside.relpath, assets, defaults), ref):
+        for candidate in self._candidates(beside, relpath, assets):
             found = self._resource_at(beside, candidate)
             if found is not None:
                 return found
         return None
 
+    def _candidates(self, beside: ResourceInfo, relpath: str, assets: str | None) -> list[str]:
+        """Where :meth:`resource_at` looks, in order: ``relpath``, then (with ``assets``)
+        under the assets folders. Paths leaving the root are left out."""
+        name = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
+        found = [] if _outside(name) else [name]
+        if assets is not None:
+            here = posixpath.dirname(beside.relpath)
+            ref = posixpath.relpath(name, here) if here else name
+            defaults = self._options.get(ASSETS_KEY, [])
+            for candidate in in_assets(assets_folders(beside.relpath, assets, defaults), ref):
+                if candidate not in found:
+                    found.append(candidate)
+        return found
+
+    def not_found(
+        self,
+        entity: EntityRef,
+        beside: ResourceInfo,
+        relpath: str | None,
+        *,
+        role: str,
+        written: str,
+        assets: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Record a file ``beside`` names for ``entity``'s ``role`` that wasn't found (see the
+        theme API), with the paths :meth:`resource_at` looked in, for Triage."""
+        self._role(entity, role)
+        if self._gone(entity):
+            return
+        tried = [] if relpath is None else self._candidates(beside, relpath, assets)
+        if not tried and reason is None:
+            reason = "It isn't a path inside the watched folder."
+        values = {
+            "entity_id": entity.id,
+            "resource_id": beside.id,
+            "role": role,
+            "written": written,
+            "tried": tried,
+            "reason": reason,
+        }
+        self.conn.execute(
+            sqlite_insert(FileNotFound)
+            .values(values)
+            .on_conflict_do_update(
+                index_elements=["entity_id", "resource_id", "role"],
+                set_={k: values[k] for k in ("written", "tried", "reason")},
+            )
+        )
+
     def _resource_at(self, beside: ResourceInfo, relpath: str) -> ResourceInfo | None:
         relpath = posixpath.normpath(relpath.replace("\\", "/").strip("/"))
-        if relpath in ("", ".") or relpath == ".." or relpath.startswith("../"):
+        if _outside(relpath):
             return None
         columns = (Resource.id, Resource.relpath, Resource.kind, Resource.ext)
         found = select(*columns, Resource.size, Resource.mtime_ns).where(
@@ -1024,6 +1068,16 @@ def merged_into(conn: Connection, ids: Iterable[int]) -> dict[int, int]:
         if current != start:
             found[start] = current
     return found
+
+
+def _outside(relpath: str) -> bool:
+    """A normalized path that names no file inside its root."""
+    return relpath in ("", ".") or relpath == ".." or relpath.startswith("../")
+
+
+def forget_not_found(conn: Connection, resource_ids: Iterable[int]) -> None:
+    """Drop what these files named but wasn't found: they are being read again (#426)."""
+    conn.execute(delete(FileNotFound).where(FileNotFound.resource_id.in_(list(resource_ids))))
 
 
 def default_options(theme: type[Any]) -> dict[str, Any]:

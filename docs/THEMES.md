@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 12             # the theme API it needs
+    api_version = 13             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -167,6 +167,7 @@ The API has readers for formats several themes want, so they all read them the s
 | `ctx.prepared(resource)` | What `prepare` returned for a file. |
 | `ctx.resource_at(resource, "Stories/cover.jpg")` | Another file in the same root, by its path, to link it (a cover a Markdown file names). `None` if it isn't scanned; add its extension to `extensions`. Needs `api_version = 3`. With `assets=` (the item's own assets folder as its front matter gives it, or `""`), a file not there is also looked for, by the name relative to `resource`, under that folder and then the watched folder's and the keep's assets folders (Keep configuration); needs `api_version = 9`. |
 | `ctx.note(item, folder)` | The note inside a folder describes the item: `<folder>.md`, else `index.md`, else `README.md` (also `.markdown`). Tagalot reads it after the scan's files and whenever it changes: its title (for an item whose own folder it is), tags as keywords, keys matching your fields (only where no file gave a value), other keys as Extra fields, and its body on the item's page. Items whose primary file is a folder get their folder's note without asking; call this for others, such as a movie and the folder it's in. `folder` is a folder resource (`ctx.resource_at` finds one when `dirs` records it). Needs `api_version = 8`. |
+| `ctx.not_found(item, file, relpath, role=…, written=…, assets=None, reason=None)` | Say a file `file` names wasn't found: after `ctx.resource_at(file, relpath, assets=…)` gave `None`, pass the same `relpath` and `assets`, the role it was for (`"cover"`), and what the file says (`written`). Tagalot works out the paths it tried, and Triage's **Pictures** tab lists them with what is there now. For a value that isn't a path (a web address), pass `relpath=None` and say why in `reason`. Reports are replaced each time the file is read, so report only what's still missing; one stops showing once the item has a file in that role. Needs `api_version = 13`. |
 | `ctx.extra(item, values)` | Extra fields from the file you're reading: its keys you don't read into fields, such as `read_front_matter(path)["other"]`. Tagalot treats them as a note's keys (text, lists joined with `, `, ignored keys left out) and marks them "from the file". They replace what the file gave before, so pass every key each time you read it (`{}` for none). The user's edits and removals stay; for a key the item's note also gives, the file wins. Needs `api_version = 11`. |
 | `ctx.keywords(item, resource, ["Fantasy", "Genre/Space opera"])` | What a file says the item is about (front matter's tags, an EPUB's subjects). They become Tagalot tags only by matching tags the user defined (a path, an alias, or a name), never new ones; unmatched ones are listed for the user to map. |
 | `ctx.option(name)` | A theme option's value for the folder being scanned. |

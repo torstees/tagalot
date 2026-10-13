@@ -29,4 +29,13 @@ Items whose files give [keywords](file-keywords.md) that match no tag, with a **
 
 Notes in the [notes folder](notes.md#the-notes-folder) that aren't an item's note, each with why: no item has its title or aliases; several items match (add `tagalot-type`, or an alias only one of them has); or the item it matches has another note. **Open note** opens it in your Markdown editor to fix it, and **Show in file manager** shows it in its folder. The list updates at the next scan.
 
+## Pictures
+
+Items whose pictures are missing or broken:
+
+- **Not found:** a picture an item's file names that isn't there, such as a Markdown book's `cover`. Select the row to see what the file says and each place Tagalot looked, in order (beside the file, then the [assets folders](../themes/books.md)), with what is there now: not there, on disk but not scanned yet, skipped by the folder's settings, offline, or here now. Fix the name in the file, put the picture in one of those places, or set an assets folder. Then **Re-read from file**, or scan again for a picture you added. A cover that's a web address is listed too: Tagalot only shows pictures in your folders.
+- **Can't be drawn:** a picture an item has that is damaged or in a format Tagalot can't read, with the error. It shows up once Tagalot has tried to draw it (in a grid or on a page), and goes away when the file changes.
+
+**Open page** opens the item, and **Show the file** shows the file that names the picture (or the broken picture) in your file manager.
+
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

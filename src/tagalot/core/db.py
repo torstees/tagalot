@@ -222,6 +222,12 @@ def _v17_tag_icons(conn: Connection) -> None:
     conn.execute(text("ALTER TABLE tag ADD COLUMN icon VARCHAR"))
 
 
+def _v18_picture_problems(conn: Connection) -> None:
+    """Format 19: files named but not found, and pictures that can't be drawn (#426)."""
+    for name in ("file_not_found", "picture_failure"):
+        Base.metadata.tables[name].create(conn)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -240,6 +246,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     15: _v15_note_ignored_keys,
     16: _v16_notes_folder,
     17: _v17_tag_icons,
+    18: _v18_picture_problems,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

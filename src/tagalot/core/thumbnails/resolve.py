@@ -15,12 +15,14 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import Connection, Engine, Row, select, update
+from sqlalchemy import Connection, Engine, Row, delete, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core.models import (
     Entity,
     EntityContains,
     EntityResource,
+    PictureFailure,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -167,6 +169,25 @@ class ThumbnailResolver:
         with contextlib.suppress(WriterClosedError):
             self.writer.submit(work)
 
+    def record_failure(self, resource: ResourceInfo, error: str | None) -> None:
+        """Remember that a picture couldn't be drawn (``error``), for Triage, or that it was
+        drawn after all (``None``) (#426). Queued, not awaited."""
+
+        def work(conn: Connection) -> None:
+            if error is None:
+                drawn = PictureFailure.resource_id == resource.id
+                conn.execute(delete(PictureFailure).where(drawn))
+                return
+            values = {"size": resource.size, "mtime_ns": resource.mtime_ns, "error": error}
+            conn.execute(
+                sqlite_insert(PictureFailure)
+                .values(resource_id=resource.id, **values)
+                .on_conflict_do_update(index_elements=["resource_id"], set_=values)
+            )
+
+        with contextlib.suppress(WriterClosedError):
+            self.writer.submit(work)
+
 
 @dataclass
 class _Resolution:
@@ -293,11 +314,15 @@ class _Resolution:
         except Exception as e:  # unreadable, corrupt, or unsupported: try the next one
             logger.warning("Can't make a thumbnail of %s: %s", resource.path, e)
             self._problems.append((resource.path, f"{type(e).__name__}: {e}"))
+            self.owner.record_failure(resource, str(e) or type(e).__name__)
             picture = None
         if picture is None:
             self.owner.mark_failed(key)
             return None
         self.owner.cache.put(key, size, picture)
+        failed = select(PictureFailure.resource_id).where(PictureFailure.resource_id == resource.id)
+        if self.conn.scalar(failed) is not None:  # it was drawn after all
+            self.owner.record_failure(resource, None)
         return picture
 
     # --- ThumbnailContext ---

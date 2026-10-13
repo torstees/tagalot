@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 12
+API_VERSION = 13
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -36,7 +36,8 @@ their text in :func:`read_document_text`); version 8 added notes
 :meth:`IngestContext.resource_at`); version 10 added title cards (:class:`TitleCard`);
 version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 :func:`read_front_matter`'s ``other``); version 12 added descriptions
-(:attr:`Entity.description_field`)."""
+(:attr:`Entity.description_field`); version 13 added reporting files not found
+(:meth:`IngestContext.not_found`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -681,6 +682,31 @@ class IngestContext(Protocol):
         relative to ``beside``'s folder or to the root with a leading ``/`` (``""`` for
         none); then the folder's and the keep's default assets folders. Needs
         ``api_version = 9``."""
+        ...
+
+    def not_found(
+        self,
+        entity: EntityRef,
+        beside: ResourceInfo,
+        relpath: str | None,
+        *,
+        role: str,
+        written: str,
+        assets: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Say that a file ``beside`` names for ``entity``'s ``role`` wasn't found, such as a
+        cover picture front matter names: Triage lists it with the paths looked in, so the
+        user can fix the file or the assets folder setting (#426). Call it when
+        :meth:`resource_at` gave ``None``, with the same ``relpath`` and ``assets``: Tagalot
+        works out the paths it tried. ``written`` is what the file says, as written. When
+        nothing could be looked for (a web address, a path outside the watched folder),
+        pass ``relpath=None`` and say why in ``reason``.
+
+        What a file reported is replaced each time that file is read, so a theme only
+        reports what is still not found; it stops being listed once the item has a file
+        in ``role`` (a picture scanned later), and goes with the item. Needs
+        ``api_version = 13``."""
         ...
 
     def prepared(self, resource: ResourceInfo | int) -> Any:
