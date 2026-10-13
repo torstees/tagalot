@@ -13,10 +13,12 @@ open .ext files with…" (a per-user override in ``settings.toml``), and, when o
 
 import ctypes
 import logging
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import shiboken6
 from PySide6.QtCore import QModelIndex, QObject, QProcess, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QMenu, QWidget
@@ -277,12 +279,29 @@ class FileOpener(QObject):
             self.message.emit(f"No program opened {file.path}.")
 
     def reveal(self, file: FileToOpen) -> None:
-        command = reveal_command(file)
-        if command is None:
-            if not QDesktopServices.openUrl(QUrl.fromLocalFile(reveal_folder(file))):
-                self.message.emit(f"Couldn't show {file.path} in the file manager.")
-            return
-        self.start(command)
+        """Show the file in the file manager, and say where in the status bar. A file that
+        isn't there is said so instead: a file manager given one opens somewhere else
+        without a word (#432). Whether it's there is looked up in a worker."""
+
+        def shown(there: bool) -> None:
+            if not shiboken6.isValid(self):
+                return
+            if not there:
+                self.message.emit(
+                    f"Can't show {file.path}: it isn't there. Scan again, or check the "
+                    "watched folder's path in Keep configuration."
+                )
+                return
+            command = reveal_command(file)
+            if command is None:
+                if not QDesktopServices.openUrl(QUrl.fromLocalFile(reveal_folder(file))):
+                    self.message.emit(f"Couldn't show {file.path} in the file manager.")
+                    return
+            elif not self.start(command):
+                return
+            self.message.emit(f"Showing {file.path} in the file manager.")
+
+        run_in_pool(lambda: os.path.exists(file.path), on_done=shown, pool=self._pool)
 
     def open_with(self, file: FileToOpen) -> None:
         """A program chosen this once: Windows' own dialog, else a program to pick."""
@@ -294,12 +313,13 @@ class FileOpener(QObject):
         if program:
             self.start(open_with_command(file, program))
 
-    def start(self, command: Command) -> None:
-        """Start a program without waiting for it."""
+    def start(self, command: Command) -> bool:
+        """Start a program without waiting for it; whether it started (if not, it says so)."""
         started, _ = QProcess.startDetached(command.program, list(command.args))
         if not started:
             logger.warning("Couldn't start %s %s", command.program, command.args)
             self.message.emit(f"Couldn't start {command.program}.")
+        return bool(started)
 
 
 def _windows_open_with(path: str, hwnd: int) -> bool:
