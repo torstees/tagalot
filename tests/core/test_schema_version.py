@@ -262,7 +262,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 19)
+    assert (info.value.stored, info.value.current) == (1, 20)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -302,5 +302,26 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 19
+    assert migrated.config.format_version == 20
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]
+
+
+@pytest.mark.parametrize("has_ignores", [False, True], ids=["first build", "merged build"])
+def test_format_19_keeps_get_the_picture_ignore_table(tmp_path: Path, has_ignores: bool) -> None:
+    """The first build of format 19 made no ``picture_ignore``; the merged one did. Format 20
+    gives it to keeps without it and leaves keeps with it alone (#430)."""
+    keep, engine = open_keep_database(_keep(tmp_path))
+    with engine.begin() as conn:
+        if not has_ignores:
+            conn.exec_driver_sql("DROP TABLE picture_ignore")
+        conn.execute(update(SchemaVersion).values(version=19))
+    engine.dispose()
+    keep.config.format_version = 19
+    save_keep_config(keep.config, keep.toml_path)
+
+    migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
+    try:
+        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 20
+        assert "picture_ignore" in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
