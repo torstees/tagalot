@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import Connection, func, select, union
 
 from tagalot.core.assets import ASSETS
+from tagalot.core.extra_keys import EXTRA
 from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.keywords import ItemKeyword, item_keywords
@@ -28,7 +29,6 @@ from tagalot.core.models import (
     ResourceStatus,
     Root,
 )
-from tagalot.core.notes import EXTRA
 from tagalot.core.roots import local_path
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
 from tagalot.core.theme_schema import EntityTable, ThemeSchema

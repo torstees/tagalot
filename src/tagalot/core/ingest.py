@@ -19,6 +19,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
 from tagalot.core.assets import assets_folders, in_assets
+from tagalot.core.extra_keys import EXTRA, extra_values
 from tagalot.core.keywords import apply_file_tags, set_keywords
 from tagalot.core.models import (
     LAST_POSITION,
@@ -30,6 +31,8 @@ from tagalot.core.models import (
     EntityResource,
     FieldProvenance,
     FieldSource,
+    NoteIgnoredKey,
+    NoteKeyRemoval,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -169,6 +172,8 @@ class IngestSession:
         """Whether the keep has merged items (see :meth:`_any_merges`)."""
         self._inserts: dict[str, Insert] = {}
         """Each theme table's insert, built once."""
+        self._ignored: frozenset[str] | None = None
+        """Keys never made Extra fields (the lists notes are applied with), looked up once."""
 
     # --- entities ---
 
@@ -653,6 +658,83 @@ class IngestSession:
             upsert.on_conflict_do_update(
                 index_elements=["entity_id"],
                 set_={"folder_id": folder_id, "resource_id": None, "size": None, "mtime_ns": None},
+            )
+        )
+
+    def extra(self, entity: EntityRef, values: Mapping[str, Any]) -> None:
+        """Extra fields from the file being read (#410, API version 11): ``values`` are
+        front-matter keys the theme didn't read into fields, made Extra fields as a note's
+        are (``core/extra_keys.py``), marked as from the file. They replace what the item's
+        file gave before; a key the user removed or edited is left alone, and a key the
+        item's note also gives is the file's (the note's comes back when the file stops
+        giving it)."""
+        self._table_of(entity)
+        if self._gone(entity):
+            return
+        row = self.conn.execute(select(Entity.extra).where(Entity.id == entity.id)).one_or_none()
+        if row is None:
+            raise IngestError(f"entity {entity.id} no longer exists")
+        if self._ignored is None:
+            self._ignored = frozenset(self.conn.scalars(select(NoteIgnoredKey.key)))
+        given = extra_values(values, self._ignored)
+        before = dict(row.extra or {})
+        extras = dict(before)
+        theirs = {
+            name[len(EXTRA) :]: source
+            for name, source in self.conn.execute(
+                select(FieldProvenance.field, FieldProvenance.source).where(
+                    FieldProvenance.entity_id == entity.id,
+                    FieldProvenance.field.startswith(EXTRA, autoescape=True),
+                )
+            ).all()
+        }
+        removed = set(
+            self.conn.scalars(
+                select(NoteKeyRemoval.key).where(NoteKeyRemoval.entity_id == entity.id)
+            )
+        )
+        ours, wins = self.source, self.source == FieldSource.EXTRACTED
+        for name, text in given.items():
+            source = theirs.get(name)
+            if name.casefold() in removed or source == FieldSource.USER:
+                continue
+            if name in extras and source is None:
+                continue  # the user's own field of that name
+            if source == FieldSource.NOTE and not wins:
+                continue
+            extras[name] = text
+            if source != ours:
+                self._set_source(entity.id, EXTRA + name, ours)
+        gone = [
+            name
+            for name, source in theirs.items()
+            if source == ours and (name not in given or name.casefold() in removed)
+        ]
+        for name in gone:
+            extras.pop(name, None)
+        if gone:
+            self.conn.execute(
+                delete(FieldProvenance).where(
+                    FieldProvenance.entity_id == entity.id,
+                    FieldProvenance.field.in_([EXTRA + name for name in gone]),
+                )
+            )
+            # The note may give a key the file stopped giving: read it again.
+            self.conn.execute(
+                update(EntityNote).where(EntityNote.entity_id == entity.id).values(size=None)
+            )
+        if extras != before:
+            self._touch(entity.id)
+            self.conn.execute(update(Entity).where(Entity.id == entity.id).values(extra=extras))
+            self._dirty.add(entity.id)
+
+    def _set_source(self, entity_id: int, name: str, source: FieldSource) -> None:
+        row = {"entity_id": entity_id, "field": name, "source": source, "updated_at": utcnow()}
+        upsert = sqlite_insert(FieldProvenance).values(row)
+        self.conn.execute(
+            upsert.on_conflict_do_update(
+                index_elements=["entity_id", "field"],
+                set_={"source": upsert.excluded.source, "updated_at": upsert.excluded.updated_at},
             )
         )
 

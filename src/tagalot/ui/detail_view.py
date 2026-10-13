@@ -93,6 +93,10 @@ FROM_NOTE_TIP = (
     "From this item's note: scans keep it up to date. Edit it to make it yours; "
     "remove it and scans leave it off (Undo puts it back)"
 )
+FROM_FILE_TIP = (
+    "From this item's file (its front matter): scans keep it up to date. Edit it to make "
+    "it yours; remove it and scans leave it off (Undo puts it back)"
+)
 IGNORE_KEY = "Ignore this key in every note…"
 
 
@@ -689,6 +693,10 @@ class DetailPage(QWidget):
             if source == FieldSource.NOTE:
                 editor.marker.setText("\u2022 from the note")
                 editor.marker.setToolTip(FROM_NOTE_TIP)
+            elif source == FieldSource.EXTRACTED:  # its own front matter (#410)
+                editor.marker.setText("\u2022 from the file")
+                editor.marker.setToolTip(FROM_FILE_TIP)
+            given = source in (FieldSource.NOTE, FieldSource.EXTRACTED)
             editor.setObjectName(f"extra_{name}")
             editor.committed.connect(
                 lambda new, name=name: self.extra_edited.emit(entity_id, name, new, False)
@@ -697,20 +705,20 @@ class DetailPage(QWidget):
             remove.setText(CLOSE_MARK)
             remove.setAutoRaise(True)
             remove.setToolTip(
-                f"Remove {name!r}; scans won't add it back from the note"
+                f"Remove {name!r}; scans won't add it back"
                 if source is not None
                 else f"Remove {name!r}"
             )
             remove.clicked.connect(
                 lambda _c=False, name=name: self.extra_edited.emit(entity_id, name, None, False)
             )
-            if source == FieldSource.NOTE:  # the arrow: this key in every note (#381)
+            if given:  # the arrow: this key in every note and file (#381, #410)
                 remove.setObjectName(f"remove_{name}")
                 remove.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
                 menu = QMenu(remove)
                 menu.addAction("Remove from this item", remove.click)
                 ignore = menu.addAction(IGNORE_KEY)
-                ignore.setToolTip(f"Leave {name!r} out of every note in this keep")
+                ignore.setToolTip(f"Leave {name!r} out of every note and file in this keep")
                 ignore.triggered.connect(lambda _c=False, name=name: self.ignore_note_key(name))
                 remove.setMenu(menu)
             row.addWidget(editor)
@@ -743,7 +751,8 @@ class DetailPage(QWidget):
             self,
             "Ignore this key in every note?",
             f"Leave {name!r} out of every note in this keep?\n\n"
-            f"The {name!r} fields that notes gave are removed from every item now, and "
+            f"The {name!r} fields that notes and files' front matter gave are removed from "
+            "every item now, and "
             "scans leave the key out from then on. Fields you added or edited stay. "
             "Edit → Undo puts them back; Keep configuration → Notes lists the keys "
             "ignored.",

@@ -849,3 +849,20 @@ def test_works_and_authors_without_a_picture_show_title_cards() -> None:
     ]
     assert repr(theme.thumbnail_chain(Comic)[-2]) == "TitleCard('writers')"
     assert repr(theme.thumbnail_chain(Author)[0]) == "TitleCard(aspect=1)"
+
+
+def test_a_markdown_books_other_keys_are_extra_fields(env: Env) -> None:
+    write_markdown(
+        env.files / "Royal Road/mol-1.md",
+        "---\ntitle: Mother of Learning\nauthor: nobody103\nstatus: ongoing\n"
+        "Words: 120000\ncover: none.jpg\n---\n",
+    )
+    write_pdf(  # another file of it, read after: it gives no Extra fields, and keeps them
+        env.files / "Royal Road/mol-1.pdf", title="Mother of Learning", author="nobody103"
+    )
+    env.scan()
+    assert env.titles(Book).count("Mother of Learning") == 1
+    assert env.files_of("Mother of Learning") == ["Royal Road/mol-1.md", "Royal Road/mol-1.pdf"]
+    with env.reader.connect() as conn:
+        extra = conn.scalar(select(Entity.extra).where(Entity.title == "Mother of Learning"))
+    assert extra == {"status": "ongoing", "Words": "120000"}  # read keys aren't repeated

@@ -222,7 +222,7 @@ def test_the_notes_extra_fields(qtbot: QtBot, window: MainWindow, session: KeepS
     remove = next(
         b
         for b in page.findChildren(QToolButton)
-        if b.toolTip() == "Remove 'mood'; scans won't add it back from the note"
+        if b.toolTip() == "Remove 'mood'; scans won't add it back"
     )
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as removed:
         remove.click()

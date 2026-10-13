@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 10
+API_VERSION = 11
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -33,7 +33,9 @@ details (:attr:`Theme.online_sources`, :meth:`Theme.online_requests`,
 version 7 added Kindle and Mobipocket books (:func:`read_mobi`, :func:`mobi_cover`, and
 their text in :func:`read_document_text`); version 8 added notes
 (:meth:`IngestContext.note`); version 9 added assets folders (``assets`` of
-:meth:`IngestContext.resource_at`); version 10 added title cards (:class:`TitleCard`)."""
+:meth:`IngestContext.resource_at`); version 10 added title cards (:class:`TitleCard`);
+version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
+:func:`read_front_matter`'s ``other``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -638,6 +640,19 @@ class IngestContext(Protocol):
         is shown on the item's page. For an item whose primary file isn't a folder (a movie
         and its folder); an item whose primary file is a folder takes that folder's note
         without asking. ``folder`` must be a folder resource. Needs ``api_version = 8``."""
+        ...
+
+    def extra(self, entity: EntityRef, values: Mapping[str, Any]) -> None:
+        """Extra fields from the file being read (#410): ``values`` are its keys the theme
+        doesn't read into fields, such as :func:`read_front_matter`'s ``other``. The core
+        treats them as a note's keys (DESIGN.md §9 *Notes*): each becomes an Extra field
+        named as written, its value as text (lists joined with ``, ``, dates as
+        ``YYYY-MM-DD``; tables of keys are left out), except ``tagalot-…`` keys, ``title``,
+        ``tags``, ``keywords``, ``aliases``, and the keys the user ignores. They are marked
+        as from the file and replace what the item's file gave before, so call it with
+        every key each time the file is read (``{}`` when it gives none). A key the user
+        removed or edited is left alone; for a key the item's note also gives, the file
+        wins. Needs ``api_version = 11``."""
         ...
 
     def warn(self, resource: ResourceInfo | None, message: str) -> None:

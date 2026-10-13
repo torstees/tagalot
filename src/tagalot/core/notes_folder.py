@@ -26,6 +26,7 @@ from sqlalchemy import Connection, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, as_text
 from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -37,12 +38,10 @@ from tagalot.core.models import (
     ResourceStatus,
 )
 from tagalot.core.notes import (
-    DEFAULT_IGNORED_KEYS,
     NOTE_EXTENSIONS,
     NoteFile,
     NoteText,
     apply_note,
-    as_text,
     map_note,
     primary_files,
     read_note,

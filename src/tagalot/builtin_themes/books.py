@@ -224,8 +224,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 4  # 4: assets (#418); 3: synopsis; 2: author lists
-    api_version = 10  # TitleCard (9: assets; 7: read_mobi; 6: full_text; 5: online; 3: covers)
+    id, name, version = "books", "Books", 5  # 5: extra; 4: assets; 3: synopsis; 2: authors
+    api_version = 11  # extra (10: TitleCard; 9: assets; 7: mobi; 6: full_text; 5: online)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -460,6 +460,7 @@ class BooksTheme(Theme):
         source = source_of(resource.relpath, ctx.option("source_level"), work.pop("source"))
         title = work.pop("title")
         cover = work.pop("cover", None)
+        other: Mapping[str, Any] | None = work.pop("other", None)
         beside: list[str] = work.pop("siblings", None) or []
 
         existing = ctx.entities_of(resource, "file")
@@ -494,6 +495,8 @@ class BooksTheme(Theme):
         ctx.update(entity, title=title if alone else None, **values)
         ctx.keywords(entity, resource, keywords)
 
+        if other is not None:  # a Markdown file's other front matter keys (#410)
+            ctx.extra(entity, other)
         if kind is Book:
             set_cover(entity, resource, cover, alone, ctx)
         writes, draws = CREDITS[kind]
@@ -571,6 +574,7 @@ def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]
         "source": meta.get("source"),
         "cover": meta.get("cover"),
         "assets": meta.get("assets"),
+        "other": meta.get("other"),  # a Markdown file's other keys, as Extra fields (#410)
     }
 
 
@@ -626,6 +630,7 @@ def markdown_details(front: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **{k: front.get(k) for k in (*names, *more)},
         "writers": front.get("authors") or [],
+        "other": front.get("other") or {},
     }
 
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
 from tagalot.core.fields import edit_extra
 from tagalot.core.keep import KeepError, load_keep_config, save_keep_config
 from tagalot.core.keep_settings import with_note_ignore_keys
@@ -19,7 +20,6 @@ from tagalot.core.note_keys import (
     restore_note_key,
     with_key,
 )
-from tagalot.core.notes import DEFAULT_IGNORED_KEYS
 from tagalot.core.settings import Settings, load_settings, save_settings
 from tests.core.test_keep_toml import _config
 from tests.core.test_notes import AURORA, Env, env
