@@ -29,9 +29,10 @@ from tagalot.core.models import (
 )
 from tagalot.core.roots import local_path
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.thumbnails.archive import ArchiveError, read_pictures
 from tagalot.core.thumbnails.cache import ThumbCache, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
-from tagalot.core.thumbnails.render import renderer_for
+from tagalot.core.thumbnails.render import load_image_bytes, renderer_for
 from tagalot.core.thumbnails.title_card import Card, title_card
 from tagalot.core.writer import DbWriter, WriterClosedError
 from tagalot.themes.api import (
@@ -61,6 +62,9 @@ _RESOURCE_COLUMNS = (
     Resource.mtime_ns,
     Resource.status,
 )
+
+MEMBER_RENDERER, MEMBER_RENDERER_VERSION = "archive-member", 1
+"""How a picture inside an archive is made, in its cache key (with its path inside)."""
 
 FALLBACK_ICON = "entity"
 """The icon shown when a chain ends without an :class:`Icon`."""
@@ -130,6 +134,60 @@ class ThumbnailResolver:
         if resolution._problems and self.report is not None:
             self.report(resolution._problems)
         return picture
+
+    def archive_thumbnails(
+        self, resource_id: int, names: Sequence[str]
+    ) -> list[tuple[str, Thumbnail | None]]:
+        """Thumbnails of pictures inside an archive (a gallery's archive group, #386), each
+        made and cached if needed, by the archive, the member's path, and the archive's
+        size and time; ``None`` for one that can't be read. Does I/O: call it from a
+        worker. A damaged archive is reported, never raised."""
+        with self.reader.connect() as conn:
+            archive = _Resolution(self, conn).resource(resource_id)
+        if archive is None or not archive.path:
+            return [(name, None) for name in names]
+        size = self.size
+        keys = {
+            name: thumb_key(
+                archive.id,
+                archive.size,
+                archive.mtime_ns,
+                f"{MEMBER_RENDERER}:{name}",
+                MEMBER_RENDERER_VERSION,
+                size,
+            )
+            for name in names
+        }
+        found: dict[str, Thumbnail | None] = {}
+        wanted = []
+        for name in names:
+            cached = self.cache.get(keys[name])
+            if cached is not None or self.failed(keys[name]):
+                found[name] = cached
+            else:
+                wanted.append(name)
+        problems: list[tuple[str, str]] = []
+        try:
+            for name, data in read_pictures(archive.path, wanted):
+                picture = None
+                if data is not None:
+                    try:
+                        picture = make_thumbnail(load_image_bytes(data, size), size)
+                    except Exception as e:  # corrupt or unsupported: the others still show
+                        problems.append(
+                            (f"{archive.path} \u203a {name}", f"{type(e).__name__}: {e}")
+                        )
+                if picture is None:
+                    self.mark_failed(keys[name])
+                else:
+                    self.cache.put(keys[name], size, picture)
+                found[name] = picture
+        except (ArchiveError, OSError) as e:
+            logger.warning("Can't read pictures in %s: %s", archive.path, e)
+            problems.append((archive.path, f"{type(e).__name__}: {e}"))
+        if problems and self.report is not None:
+            self.report(problems)
+        return [(name, found.get(name)) for name in names]
 
     # --- used by _Resolution ---
 
