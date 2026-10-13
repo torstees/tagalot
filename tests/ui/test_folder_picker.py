@@ -1,5 +1,6 @@
 """Folder pickers start where a folder was last chosen, and remember the choice."""
 
+import os
 from pathlib import Path
 from typing import Self
 
@@ -165,3 +166,13 @@ def test_saving_and_opening_start_where_a_file_was_last_saved(
     choose_open_file(None, "Import tags", "YAML files (*.yaml)", settings, path)
     assert opened == [str(exports)]
     assert settings.last_save_folder == tmp_path / "Other"
+
+
+def test_a_chosen_folder_has_this_systems_separators(
+    qtbot: QtBot, tmp_path: Path, picker: Picker
+) -> None:
+    r"""Qt's dialog answers ``E:/Books`` on Windows too; keep.toml gets ``E:\Books`` (#432)."""
+    picker.answers = ["E:/Books/Fantasy"]
+    chosen = choose_folder(None, "Watch a folder", Settings(), tmp_path / "settings.toml")
+    assert chosen == "E:/Books/Fantasy".replace("/", os.sep)
+    QThreadPool.globalInstance().waitForDone(5000)

@@ -85,10 +85,12 @@ def local_path(root_path: str, relpath: str, pathmod: ModuleType = os.path) -> s
     r"""Join this machine's root path and a stored POSIX relative path into a local path.
 
     This is the boundary conversion of AGENTS.md rule 6: ``\\nas\music`` + ``A/b.flac``
-    gives ``\\nas\music\A\b.flac`` on Windows. ``pathmod`` is for tests (``ntpath``,
-    ``posixpath``).
+    gives ``\\nas\music\A\b.flac`` on Windows. The result is normalized, so a root saved
+    as ``E:/Books`` (Qt's folder dialog, or pasted) gives ``E:\Books\A\b.pdf``, not a mix of
+    separators other programs may refuse (``explorer /select``, #432). ``pathmod`` is for
+    tests (``ntpath``, ``posixpath``).
     """
-    return str(pathmod.join(root_path, *relpath.split("/")))
+    return str(pathmod.normpath(pathmod.join(root_path, *relpath.split("/"))))
 
 
 def place_in_roots(path: str, roots: Mapping[str, str | None]) -> tuple[str, str] | None:
