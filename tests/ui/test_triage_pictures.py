@@ -102,3 +102,45 @@ def test_adding_the_cover_and_scanning_clears_it(qtbot: QtBot, window: MainWindo
     session.scan_all()  # the picture is read after its book, which names it: linked
     triage = _triage(qtbot, window, 0)
     assert triage.pictures_stack.currentIndex() == 1  # the empty state
+
+
+def test_ignoring_rows_from_the_tab(qtbot: QtBot, window: MainWindow) -> None:
+    _draw_field_notes(window)
+    triage = _triage(qtbot, window, 2)
+    titles = [p.title for p in triage.pictures.problems]
+    triage.pictures_table.selectRow(titles.index("The Lighthouse Keeper"))
+    assert triage.ignore_value.text() == "“lighthouse.jpg” in every file"
+    assert triage.ignore_type.text() == "Every Book"
+    assert not triage.stop_ignoring_button.isVisible()
+    with qtbot.waitSignal(window.tag_actions.changed):
+        triage.ignore_item.trigger()  # as choosing Ignore → For this item does
+    assert (
+        window.statusBar()
+        .currentMessage()
+        .startswith("Ignore The Lighthouse Keeper's missing cover.")
+    )
+    triage = _triage(qtbot, window, 1)
+    assert [p.title for p in triage.pictures.problems] == ["Field Notes"]
+
+    triage.pictures_table.selectRow(0)  # a damaged picture has no value to ignore
+    assert not triage.ignore_value.isEnabled()
+
+    triage.show_ignored.setChecked(True)
+    qtbot.waitUntil(lambda: len(triage.pictures.problems) == 2, timeout=5000)
+    assert triage.tabs.tabText(PICTURES_TAB) == "Pictures (1)"  # ignored rows aren't counted
+    row = [p.title for p in triage.pictures.problems].index("The Lighthouse Keeper")
+    assert triage.pictures.data(triage.pictures.index(row, 2)) == (
+        "lighthouse.jpg: not found (ignored for this item)"
+    )
+    triage.pictures_table.selectRow(row)
+    assert triage.stop_ignoring_button.isVisible()
+    assert triage.stop_ignoring_button.isEnabled()
+    assert not triage.ignore_button.isEnabled()
+    with qtbot.waitSignal(window.tag_actions.changed):
+        triage.stop_ignoring_button.click()
+    triage.show_ignored.setChecked(False)
+    _triage(qtbot, window, 2)
+
+    window.tag_actions.undo()  # Stop ignoring, undone: ignored again
+    qtbot.waitUntil(lambda: window.tag_actions.busy == 0, timeout=5000)
+    _triage(qtbot, window, 1)

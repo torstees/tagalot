@@ -38,4 +38,12 @@ Items whose pictures are missing or broken:
 
 **Open page** opens the item, and **Show the file** shows the file that names the picture (or the broken picture) in your file manager.
 
+**Ignore** leaves the selected rows off the list:
+
+- **For this item**: until the file names something else, or the broken picture changes.
+- **"TBD" in every file**: any item whose file names that value (case aside). Handy for a placeholder your template writes.
+- **Every Book** (or whichever type): no picture problems are listed for that type.
+
+Each is a step you can undo. Tick **Show ignored** to see ignored rows (greyed, saying how), and **Stop ignoring** to list one again. Placeholders such as `cover: None`, `null`, `N/A`, or `-` already mean "no cover", so they're never listed.
+
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

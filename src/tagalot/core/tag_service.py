@@ -43,6 +43,7 @@ from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
+from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
 from tagalot.core.tag_yaml import ImportPlan, import_tags
@@ -121,6 +122,7 @@ Step = (
     | ActionChange
     | DismissChange
     | IgnoreChange
+    | PictureIgnoreChange
     | MergeChange
     | NotDuplicateChange
     | SavedChange
@@ -444,6 +446,8 @@ class TagService:
             self.writer.run(lambda conn: restore_dismissals(conn, step, forward=forward))
         elif isinstance(step, IgnoreChange):
             self.writer.run(lambda conn: restore_ignored(conn, step, forward=forward))
+        elif isinstance(step, PictureIgnoreChange):
+            self.writer.run(lambda conn: restore_picture_ignores(conn, step, forward=forward))
         elif isinstance(step, ActionChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_action(conn, schema, step, forward=forward))

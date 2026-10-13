@@ -12,15 +12,20 @@ or can't be drawn.
   to read (``picture_failure``): corrupt or unsupported, with the error. Not listed once
   the file changes; removed when it is drawn.
 
+**Ignoring** (``picture_ignore``) leaves rows off the list: one item's row while it says the
+same (a changed value or file shows it again), a value files name for every item (a
+template's ``TBD``), or every item of a type. Each is one undo step
+(:class:`PictureIgnoreChange`); the list can show ignored rows, to stop ignoring them.
+
 Making the list stats the tried paths when nothing is known of them: call it from a worker.
 """
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, Connection, Select, exists, func, select
+from sqlalchemy import ColumnElement, Connection, Select, delete, exists, func, insert, select
 from sqlalchemy.orm import aliased
 
 from tagalot.core.models import (
@@ -28,6 +33,7 @@ from tagalot.core.models import (
     EntityResource,
     FileNotFound,
     PictureFailure,
+    PictureIgnore,
     Resource,
     ResourceStatus,
 )
@@ -73,6 +79,10 @@ class PictureProblem:
     tried: tuple[TriedPath, ...] = ()
     reason: str | None = None
     """Why nothing was looked for (not found), or the error (can't draw)."""
+    marker: str = ""
+    """What the row says, to ignore it for its item until that changes."""
+    ignored: str | None = None
+    """Why it is ignored (``item``, ``value``, or ``type``), when ignored rows are listed."""
 
     @property
     def summary(self) -> str:
@@ -87,20 +97,141 @@ class PictureProblem:
 
 
 def picture_problems(
-    conn: Connection, root_path: Callable[[str], str | None]
+    conn: Connection, root_path: Callable[[str], str | None], *, ignored: bool = False
 ) -> list[PictureProblem]:
-    """Every item picture not found or that can't be drawn, by item title. ``root_path``
-    gives a watched folder's path on this computer (``None`` when it has none), to look on
-    disk for a tried path no scan knows."""
-    found = [*_not_found(conn, root_path), *_cant_draw(conn)]
+    """Every item picture not found or that can't be drawn, by item title; with
+    ``ignored``, the ignored ones too, saying why. ``root_path`` gives a watched folder's
+    path on this computer (``None`` when it has none), to look on disk for a tried path no
+    scan knows."""
+    rules = picture_rules(conn)
+    found = []
+    for problem in [*_not_found(conn, root_path), *_cant_draw(conn)]:
+        why = ignored_by(problem, rules)
+        if why is None or ignored:
+            found.append(replace(problem, ignored=why))
     return sorted(found, key=lambda p: (p.title.casefold(), p.entity_id, p.kind, p.relpath))
 
 
 def count_picture_problems(conn: Connection) -> int:
-    """How many rows :func:`picture_problems` lists (without looking at the paths)."""
-    missing = select(func.count()).select_from(FileNotFound).where(_still_missing())
-    failed = select(func.count()).select_from(_failures().subquery())
-    return int(conn.scalar(missing) or 0) + int(conn.scalar(failed) or 0)
+    """How many rows :func:`picture_problems` lists, not ignored (without looking on disk)."""
+    return len(picture_problems(conn, lambda root: None))
+
+
+# --- ignoring ---
+
+ITEM: Literal["item"] = "item"
+VALUE: Literal["value"] = "value"
+TYPE: Literal["type"] = "type"
+PictureScope = Literal["item", "value", "type"]
+
+
+@dataclass(frozen=True)
+class PictureRule:
+    """One ``picture_ignore`` row (see :class:`~tagalot.core.models.PictureIgnore`)."""
+
+    scope: str
+    entity_id: int | None = None
+    marker: str | None = None
+    value: str | None = None
+    type: str | None = None
+
+
+def rule_for(problem: PictureProblem, scope: PictureScope) -> PictureRule:
+    """The rule that ignores ``problem`` for its item, its value everywhere, or its type."""
+    if scope == ITEM:
+        return PictureRule(ITEM, entity_id=problem.entity_id, marker=problem.marker)
+    if scope == VALUE:
+        if problem.kind != NOT_FOUND or not problem.written:
+            raise ValueError("only a value a file names can be ignored everywhere")
+        return PictureRule(VALUE, value=problem.written.strip().casefold())
+    return PictureRule(TYPE, type=problem.type)
+
+
+def ignored_by(problem: PictureProblem, rules: frozenset[PictureRule]) -> str | None:
+    """Which kind of rule ignores ``problem`` (``item``, ``value``, ``type``), if any."""
+    for scope in (ITEM, VALUE, TYPE):
+        try:
+            if rule_for(problem, scope) in rules:
+                return scope
+        except ValueError:
+            continue
+    return None
+
+
+def picture_rules(conn: Connection) -> frozenset[PictureRule]:
+    columns = (
+        PictureIgnore.scope,
+        PictureIgnore.entity_id,
+        PictureIgnore.marker,
+        PictureIgnore.value,
+        PictureIgnore.type,
+    )
+    return frozenset(PictureRule(*row) for row in conn.execute(select(*columns)))
+
+
+@dataclass(frozen=True)
+class PictureIgnoreChange:
+    """Rules added and removed by one ignore or stop-ignoring; one undo step."""
+
+    label: str
+    added: frozenset[PictureRule] = field(default_factory=frozenset)
+    removed: frozenset[PictureRule] = field(default_factory=frozenset)
+
+
+def ignore_pictures(
+    conn: Connection, problems: list[PictureProblem], scope: PictureScope, label: str
+) -> PictureIgnoreChange:
+    """Ignore these rows for their items, their values everywhere, or their types."""
+    rules = frozenset(rule_for(p, scope) for p in problems) - picture_rules(conn)
+    change = PictureIgnoreChange(label, added=rules)
+    restore_picture_ignores(conn, change, forward=True)
+    return change
+
+
+def stop_ignoring(conn: Connection, problem: PictureProblem, label: str) -> PictureIgnoreChange:
+    """Stop ignoring a row: remove every rule that leaves it off the list."""
+    rules = picture_rules(conn)
+    matching = set()
+    for scope in (ITEM, VALUE, TYPE):
+        try:
+            rule = rule_for(problem, scope)
+        except ValueError:
+            continue
+        if rule in rules:
+            matching.add(rule)
+    change = PictureIgnoreChange(label, removed=frozenset(matching))
+    restore_picture_ignores(conn, change, forward=True)
+    return change
+
+
+def restore_picture_ignores(
+    conn: Connection, change: PictureIgnoreChange, *, forward: bool
+) -> None:
+    """Apply (``forward``) or undo a :class:`PictureIgnoreChange`."""
+    add, remove = (change.added, change.removed) if forward else (change.removed, change.added)
+    for rule in remove:
+        conn.execute(
+            delete(PictureIgnore).where(
+                PictureIgnore.scope == rule.scope,
+                PictureIgnore.entity_id.is_not_distinct_from(rule.entity_id),
+                PictureIgnore.marker.is_not_distinct_from(rule.marker),
+                PictureIgnore.value.is_not_distinct_from(rule.value),
+                PictureIgnore.type.is_not_distinct_from(rule.type),
+            )
+        )
+    for rule in add:
+        gone = select(Entity.id).where(Entity.id == rule.entity_id)
+        if rule.entity_id is not None and conn.scalar(gone) is None:
+            continue  # an item deleted since can't be ignored
+        conn.execute(
+            insert(PictureIgnore).values(
+                scope=rule.scope,
+                entity_id=rule.entity_id,
+                marker=rule.marker,
+                value=rule.value,
+                type=rule.type,
+            )
+        )
 
 
 def _still_missing() -> ColumnElement[bool]:
@@ -145,6 +276,7 @@ def _not_found(conn: Connection, root_path: Callable[[str], str | None]) -> list
                 row.written,
                 paths,
                 row.reason,
+                marker=f"{NOT_FOUND}:{row.id}:{row.role}:{row.written}",
             )
         )
     return problems
@@ -192,6 +324,8 @@ def _failures() -> Select[*tuple[Any, ...]]:
             picture.root_id,
             picture.relpath,
             PictureFailure.error,
+            PictureFailure.size,
+            PictureFailure.mtime_ns,
         )
         .join(picture, picture.id == PictureFailure.resource_id)
         .join(EntityResource, EntityResource.resource_id == picture.id)
@@ -207,7 +341,16 @@ def _failures() -> Select[*tuple[Any, ...]]:
 def _cant_draw(conn: Connection) -> list[PictureProblem]:
     return [
         PictureProblem(
-            CANT_DRAW, entity_id, title, type_, role, rid, root_id, relpath, reason=error
+            CANT_DRAW,
+            row.entity_id,
+            row.title,
+            row.type,
+            row.role,
+            row.id,
+            row.root_id,
+            row.relpath,
+            reason=row.error,
+            marker=f"{CANT_DRAW}:{row.id}:{row.size}:{row.mtime_ns}",
         )
-        for entity_id, title, type_, role, rid, root_id, relpath, error in conn.execute(_failures())
+        for row in conn.execute(_failures())
     ]

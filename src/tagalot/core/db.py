@@ -223,8 +223,9 @@ def _v17_tag_icons(conn: Connection) -> None:
 
 
 def _v18_picture_problems(conn: Connection) -> None:
-    """Format 19: files named but not found, and pictures that can't be drawn (#426)."""
-    for name in ("file_not_found", "picture_failure"):
+    """Format 19: files named but not found, pictures that can't be drawn, and the rules
+    leaving them off Triage's list (#426)."""
+    for name in ("file_not_found", "picture_failure", "picture_ignore"):
         Base.metadata.tables[name].create(conn)
 
 

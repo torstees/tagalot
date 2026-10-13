@@ -581,6 +581,21 @@ class PictureFailure(Base):
     error: Mapped[str]
 
 
+class PictureIgnore(Base):
+    """A rule leaving rows off Triage's Pictures list (#426): one item's row while it says
+    the same (``item``: ``entity_id`` and the row's ``marker``), a value files name, case
+    aside, for every item (``value``), or every item of a type (``type``)."""
+
+    __tablename__ = "picture_ignore"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str]
+    entity_id: Mapped[int | None] = mapped_column(ForeignKey("entity.id", ondelete=CASCADE))
+    marker: Mapped[str | None]
+    value: Mapped[str | None]
+    type: Mapped[str | None]
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is ``core.saved_searches.SavedDefinition``'s JSON form:
     the page's search and its filter bar's, and how it was shown (§8, #127)."""

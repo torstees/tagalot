@@ -236,6 +236,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("DROP TABLE notes_folder_note")
         conn.exec_driver_sql("DROP TABLE file_not_found")
         conn.exec_driver_sql("DROP TABLE picture_failure")
+        conn.exec_driver_sql("DROP TABLE picture_ignore")
         # field_provenance as it was before notes: its CHECK knew three sources, and a row
         conn.exec_driver_sql("DROP TABLE field_provenance")
         conn.exec_driver_sql(
@@ -287,7 +288,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "note_ignored_key" in tables  # format 16 (#381)
         assert "notes_folder_note" in tables  # format 17 (#382)
         assert "icon" in {c["name"] for c in inspect(engine).get_columns("tag")}  # 18 (#398)
-        assert {"file_not_found", "picture_failure"} <= set(tables)  # format 19 (#426)
+        assert {"file_not_found", "picture_failure", "picture_ignore"} <= set(tables)  # 19
         with engine.begin() as conn:  # the rebuilt table kept its row and takes notes
             kept = conn.exec_driver_sql("SELECT entity_id, field, source FROM field_provenance")
             assert [tuple(r) for r in kept] == [(1, "title", "user")]

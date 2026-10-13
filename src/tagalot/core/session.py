@@ -77,6 +77,12 @@ from tagalot.core.online import (
     urlopen_reply,
 )
 from tagalot.core.online import Progress as OnlineProgress
+from tagalot.core.picture_problems import (
+    PictureProblem,
+    PictureScope,
+    ignore_pictures,
+    stop_ignoring,
+)
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.relations import add_related, move_related, remove_related
 from tagalot.core.root_admin import (
@@ -705,6 +711,25 @@ class KeepSession:
         if change.before != change.after:
             self.tags.record(change)
         return len(change.after)
+
+    def ignore_pictures(
+        self, problems: Sequence[PictureProblem], scope: PictureScope, label: str
+    ) -> str:
+        """Leave rows off Triage's Pictures list: for their items, their values everywhere,
+        or their types (#426); one undo step. Returns its label, or ``""`` if nothing
+        changed. Runs in a worker."""
+        change = self.writer.run(lambda conn: ignore_pictures(conn, list(problems), scope, label))
+        if change.added:
+            self.tags.record(change)
+        return change.label if change.added else ""
+
+    def stop_ignoring_picture(self, problem: PictureProblem, label: str) -> str:
+        """List an ignored Pictures row again, removing every rule that hides it; one undo
+        step. Returns its label, or ``""``. Runs in a worker."""
+        change = self.writer.run(lambda conn: stop_ignoring(conn, problem, label))
+        if change.removed:
+            self.tags.record(change)
+        return change.label if change.removed else ""
 
     def delete_items(self, ids: Sequence[int]) -> int:
         """Delete items (never their files); one undo step. Runs in a worker."""

@@ -57,6 +57,7 @@ CORE_TABLES = {
     "notes_folder_note",
     "file_not_found",
     "picture_failure",
+    "picture_ignore",
     "schema_version",
 }
 FTS_TABLES = {

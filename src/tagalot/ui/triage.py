@@ -14,7 +14,8 @@ Tabs, each with how many it holds:
   item, several, or an item with another note; with Open note and Show in file manager.
 - **Pictures:** items' pictures not found (a Markdown book's ``cover``), with the paths
   tried and what is there now, and pictures that can't be drawn (#426); with Open page,
-  Show the file, and Re-read from file.
+  Show the file, Re-read from file, and Ignore (for the item, the value everywhere, or
+  every item of the type); Show ignored lists ignored rows, to stop ignoring them.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -26,11 +27,14 @@ from dataclasses import dataclass
 
 import shiboken6
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QTableView,
@@ -42,7 +46,16 @@ from PySide6.QtWidgets import (
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
 from tagalot.core.models import ResourceStatus
-from tagalot.core.picture_problems import CANT_DRAW, PictureProblem, picture_problems
+from tagalot.core.picture_problems import (
+    CANT_DRAW,
+    ITEM,
+    NOT_FOUND,
+    TYPE,
+    VALUE,
+    PictureProblem,
+    PictureScope,
+    picture_problems,
+)
 from tagalot.core.roots import local_path
 from tagalot.core.search import count_matches
 from tagalot.core.search_spec import SearchSpec
@@ -78,6 +91,11 @@ _TITLES = {
     PICTURES_TAB: "Pictures",
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
+IGNORED_AS = {
+    ITEM: "ignored for this item",
+    VALUE: "ignored in every file",
+    TYPE: "ignored for its type",
+}
 
 ModelIndex = QModelIndex | QPersistentModelIndex
 
@@ -203,16 +221,20 @@ class PicturesModel(QAbstractTableModel):
         return None
 
     def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid() or role not in (
-            Qt.ItemDataRole.DisplayRole,
-            Qt.ItemDataRole.ToolTipRole,
-        ):
+        if not index.isValid():
             return None
         problem = self.problems[index.row()]
+        if role == Qt.ItemDataRole.ForegroundRole and problem.ignored:
+            return QPalette().color(QPalette.ColorRole.PlaceholderText)
+        if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return None
+        summary = problem.summary
+        if problem.ignored:
+            summary += f" ({IGNORED_AS[problem.ignored]})"
         return (
             problem.title,
             self.type_labels.get(problem.type, problem.type),
-            problem.summary,
+            summary,
             problem.relpath,
         )[index.column()]
 
@@ -258,6 +280,10 @@ class TriagePage(QWidget):
     """An item's page to open."""
     reread_requested = Signal(list)
     """Entity ids to read from their files again."""
+    ignore_requested = Signal(list, str, str)
+    """(Pictures rows, scope, label): leave them off the list (#426)."""
+    stop_ignoring_requested = Signal(object, str)
+    """(a Pictures row, label): list it again."""
 
     def __init__(
         self,
@@ -372,7 +398,7 @@ class TriagePage(QWidget):
         self.pictures_table.setObjectName("pictures")
         self.pictures_table.setModel(self.pictures)
         self.pictures_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.pictures_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.pictures_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.pictures_table.verticalHeader().hide()
         header = self.pictures_table.horizontalHeader()
         for column in (0, 1):
@@ -381,7 +407,7 @@ class TriagePage(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.pictures_table.doubleClicked.connect(lambda _: self._open_picture_item())
         self.pictures_table.selectionModel().selectionChanged.connect(
-            lambda *_: self._show_picture_details()
+            lambda *_: self._picture_selection_changed()
         )
         self.picture_details = QLabel(PICTURES_HINT)
         self.picture_details.setObjectName("picture_details")
@@ -406,6 +432,22 @@ class TriagePage(QWidget):
         reread = QPushButton("Re-read from file")
         reread.setToolTip("Read the item's files again, after fixing the file or a setting")
         reread.clicked.connect(self._reread_picture_item)
+        self.ignore_button = QPushButton("Ignore")
+        self.ignore_button.setToolTip("Leave the selected rows off this list (Edit → Undo)")
+        self.ignore_menu = QMenu(self.ignore_button)
+        self.ignore_item = self.ignore_menu.addAction("For this item")
+        self.ignore_item.triggered.connect(lambda: self._ignore_pictures(ITEM))
+        self.ignore_value = self.ignore_menu.addAction("This value in every file")
+        self.ignore_value.triggered.connect(lambda: self._ignore_pictures(VALUE))
+        self.ignore_type = self.ignore_menu.addAction("Every item of this type")
+        self.ignore_type.triggered.connect(lambda: self._ignore_pictures(TYPE))
+        self.ignore_button.setMenu(self.ignore_menu)
+        self.stop_ignoring_button = QPushButton("Stop ignoring")
+        self.stop_ignoring_button.setToolTip("List the selected ignored row again")
+        self.stop_ignoring_button.clicked.connect(self._stop_ignoring_picture)
+        self.show_ignored = QCheckBox("Show ignored")
+        self.show_ignored.setToolTip("List the rows you ignored too, greyed, to stop ignoring them")
+        self.show_ignored.toggled.connect(lambda _: self.refresh())
         self.pictures_note = QLabel(
             "Pictures items' files name that weren't found, and pictures that can't be drawn."
         )
@@ -416,7 +458,19 @@ class TriagePage(QWidget):
         self.pictures_stack = QStackedWidget()
         self.pictures_stack.addWidget(listed)
         self.pictures_stack.addWidget(self.pictures_empty)
-        pictures_tab = _tab(self.pictures_stack, [open_item, show_file, reread], self.pictures_note)
+        pictures_tab = _tab(
+            self.pictures_stack,
+            [
+                self.show_ignored,
+                open_item,
+                show_file,
+                reread,
+                self.ignore_button,
+                self.stop_ignoring_button,
+            ],
+            self.pictures_note,
+        )
+        self._picture_selection_changed()
 
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
@@ -436,19 +490,19 @@ class TriagePage(QWidget):
         tabs refresh with the window's other searches)."""
         session = self.session
 
-        known = _known(session)
+        known, show_ignored = _known(session), self.show_ignored.isChecked()
 
         def job() -> Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                pictures = picture_problems(conn, known)
+                pictures = picture_problems(conn, known, ignored=show_ignored)
                 counts = Counts(
                     count_unlinked(conn),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
                     count_note_problems(conn),
-                    len(pictures),
+                    sum(1 for p in pictures if not p.ignored),
                 )
                 return counts, unlinked_files(conn, MAX_FILES), note_problems(conn), pictures
 
@@ -477,7 +531,7 @@ class TriagePage(QWidget):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
         self.pictures.set_problems(pictures or [])
         self.pictures_stack.setCurrentIndex(0 if pictures else 1)
-        self._show_picture_details()
+        self._picture_selection_changed()
         self.notes.set_notes(notes or [])
         self.notes_stack.setCurrentWidget(self.notes_table if notes else self.notes_empty)
         self.files.set_files(files)
@@ -537,13 +591,70 @@ class TriagePage(QWidget):
             FileToOpen(note.resource_id, local_path(base, note.relpath), False), how
         )
 
-    def selected_picture(self) -> PictureProblem | None:
-        rows = self.pictures_table.selectionModel().selectedRows()
-        return self.pictures.problems[rows[0].row()] if rows else None
+    def selected_pictures(self) -> list[PictureProblem]:
+        rows = sorted({i.row() for i in self.pictures_table.selectionModel().selectedRows()})
+        return [self.pictures.problems[r] for r in rows]
 
-    def _show_picture_details(self) -> None:
-        problem = self.selected_picture()
+    def selected_picture(self) -> PictureProblem | None:
+        found = self.selected_pictures()
+        return found[0] if found else None
+
+    def _picture_selection_changed(self) -> None:
+        """Show the first selected row's details, and name what Ignore and Stop ignoring
+        would do."""
+        chosen = self.selected_pictures()
+        problem = chosen[0] if chosen else None
         self.picture_details.setText(PICTURES_HINT if problem is None else picture_details(problem))
+        listed = [p for p in chosen if not p.ignored]
+        self.ignore_button.setEnabled(bool(listed))
+        self.ignore_item.setText("For this item" if len(listed) < 2 else "For these items")
+        values = _values(listed)
+        self.ignore_value.setEnabled(bool(values))
+        self.ignore_value.setText(
+            f"\u201c{values[0]}\u201d in every file"
+            if len(values) == 1
+            else "These values in every file"
+        )
+        types = self._type_names(listed)
+        self.ignore_type.setText(
+            f"Every {types[0]}" if len(types) == 1 else "Every item of these types"
+        )
+        self.stop_ignoring_button.setVisible(self.show_ignored.isChecked())
+        self.stop_ignoring_button.setEnabled(problem is not None and problem.ignored is not None)
+
+    def _type_names(self, problems: list[PictureProblem]) -> list[str]:
+        labels = self.pictures.type_labels
+        return list(dict.fromkeys(labels.get(p.type, p.type) for p in problems))
+
+    def _ignore_pictures(self, scope: PictureScope) -> None:
+        listed = [p for p in self.selected_pictures() if not p.ignored]
+        if scope == VALUE:
+            listed = [p for p in listed if p.kind == NOT_FOUND and p.written]
+        if not listed:
+            return
+        if scope == ITEM:
+            first = listed[0]
+            what = f"missing {first.role}" if first.kind == NOT_FOUND else "damaged picture"
+            label = (
+                f"Ignore {first.title}'s {what}"
+                if len(listed) == 1
+                else f"Ignore {len(listed):,} pictures for their items"
+            )
+        elif scope == VALUE:
+            values = _values(listed)
+            label = (
+                f"Ignore \u201c{values[0]}\u201d in every file"
+                if len(values) == 1
+                else f"Ignore {len(values):,} values in every file"
+            )
+        else:
+            label = f"Ignore pictures of every {', '.join(self._type_names(listed))}"
+        self.ignore_requested.emit(listed, scope, label)
+
+    def _stop_ignoring_picture(self) -> None:
+        problem = self.selected_picture()
+        if problem is not None and problem.ignored is not None:
+            self.stop_ignoring_requested.emit(problem, f"Stop ignoring {problem.title}'s picture")
 
     def _open_picture_item(self) -> None:
         problem = self.selected_picture()
@@ -625,6 +736,15 @@ class TriagePage(QWidget):
             self.file_opener.act(FileToOpen(0, folder, True), OPEN)
 
 
+def _values(problems: list[PictureProblem]) -> list[str]:
+    """The values these not-found rows name, each once (case aside), as first written."""
+    found: dict[str, str] = {}
+    for p in problems:
+        if p.kind == NOT_FOUND and p.written:
+            found.setdefault(p.written.strip().casefold(), p.written.strip())
+    return list(found.values())
+
+
 def _known(session: KeepSession) -> Callable[[str], str | None]:
     def path(root_id: str) -> str | None:
         try:
@@ -635,7 +755,7 @@ def _known(session: KeepSession) -> Callable[[str], str | None]:
     return path
 
 
-def _tab(main: QWidget, buttons: list[QPushButton], note: QLabel | None = None) -> QWidget:
+def _tab(main: QWidget, buttons: list[QWidget], note: QLabel | None = None) -> QWidget:
     row = QHBoxLayout()
     if note is not None:
         row.addWidget(note, 1)

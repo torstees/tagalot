@@ -6,18 +6,28 @@ from datetime import timedelta
 
 from sqlalchemy import delete, select, update
 
+from tagalot.builtin_themes.books import Book
+from tagalot.core.assets import assets_folders
 from tagalot.core.models import Entity, PictureFailure, Resource
 from tagalot.core.picture_problems import (
     CANT_DRAW,
     HERE,
+    ITEM,
     MISSING_NOW,
     NOT_FOUND,
     NOT_SCANNED,
     NOT_THERE,
+    TYPE,
     UNREACHABLE,
+    VALUE,
+    PictureIgnoreChange,
     PictureProblem,
+    PictureScope,
     count_picture_problems,
+    ignore_pictures,
     picture_problems,
+    restore_picture_ignores,
+    stop_ignoring,
 )
 from tests.core.book_files import jpeg, write_markdown
 from tests.core.test_thumb_resolve import Env as ThumbEnv
@@ -166,3 +176,63 @@ def test_a_picture_that_cant_be_drawn(thumb_env: ThumbEnv) -> None:
     env.writer.run(lambda conn: None)
     with env.reader.connect() as conn:
         assert conn.scalar(select(PictureFailure.resource_id)) is None
+
+
+# --- ignoring (#426) ---
+
+
+def _ignore(env: Env, problems: list[PictureProblem], scope: PictureScope) -> PictureIgnoreChange:
+    return env.writer.run(lambda conn: ignore_pictures(conn, problems, scope, "Ignore"))
+
+
+def _listed(env: Env) -> dict[str, str | None]:
+    with env.reader.connect() as conn:
+        found = picture_problems(conn, lambda root: None, ignored=True)
+    return {p.title: p.ignored for p in found}
+
+
+def test_ignoring_a_row_for_its_item_until_it_changes(env: Env) -> None:
+    _story(env, "cover: c.jpg\n")
+    write_markdown(env.files / "Stories/other.md", "---\ntitle: Other\ncover: c.jpg\n---\n")
+    env.scan()
+    story = next(p for p in _problems(env) if p.title == "Story")
+    change = _ignore(env, [story], ITEM)
+    assert [p.title for p in _problems(env)] == ["Other"]
+    assert _listed(env) == {"Other": None, "Story": ITEM}
+    env.writer.run(lambda conn: restore_picture_ignores(conn, change, forward=False))
+    assert [p.title for p in _problems(env)] == ["Other", "Story"]  # undone
+    env.writer.run(lambda conn: restore_picture_ignores(conn, change, forward=True))
+    _story(env, "cover: d.jpg\n")
+    env.scan(T0 + timedelta(minutes=1))
+    assert [p.title for p in _problems(env)] == ["Other", "Story"]  # it says something else
+
+
+def test_ignoring_a_value_everywhere_or_a_type(env: Env) -> None:
+    _story(env, "cover: TBD\n")
+    write_markdown(env.files / "Stories/other.md", "---\ntitle: Other\ncover: tbd\n---\n")
+    write_markdown(env.files / "Stories/third.md", "---\ntitle: Third\ncover: x.jpg\n---\n")
+    env.scan()
+    story = next(p for p in _problems(env) if p.title == "Story")
+    _ignore(env, [story], VALUE)
+    assert [p.title for p in _problems(env)] == ["Third"]  # case aside
+    assert _listed(env) == {"Other": VALUE, "Story": VALUE, "Third": None}
+    [third] = _problems(env)
+    _ignore(env, [third], TYPE)
+    assert _problems(env) == []
+    assert _listed(env)["Third"] == TYPE
+
+    with env.reader.connect() as conn:
+        shown = picture_problems(conn, lambda root: None, ignored=True)
+    again = next(p for p in shown if p.title == "Story")
+    change = env.writer.run(lambda conn: stop_ignoring(conn, again, "Stop"))
+    assert {r.scope for r in change.removed} == {VALUE, TYPE}  # every rule hiding it
+    assert {p.title for p in _problems(env)} == {"Story", "Other", "Third"}
+
+
+def test_placeholders_are_no_value(env: Env) -> None:
+    for i, value in enumerate(("None", "null", "N/A", "'-'", "'[[]]'")):
+        _story(env, f"cover: {value}\nassets: None\n")
+        env.scan(T0 + timedelta(minutes=i))
+        assert _problems(env) == [], value
+        assert env.fields(Book, "Story")["assets"] is None
+    assert assets_folders("a/b.md", "None", ["null", "Shared"]) == ["Shared"]
