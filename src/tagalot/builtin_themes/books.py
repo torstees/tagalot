@@ -226,10 +226,11 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 5  # 5: extra; 4: assets; 3: synopsis; 2: authors
-    # 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text;
-    # 5: online
-    api_version = 12
+    id, name, version = "books", "Books", 6  # 6: covers not found; 5: extra; 4: assets; …
+    # 3: synopsis; 2: authors
+    # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
+    # 6: full_text; 5: online
+    api_version = 13
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -861,16 +862,26 @@ RELATIONSHIPS = ("writers", "artists", "comic_writers", "comic_artists")
 def cover_path(relpath: str, cover: str | None) -> str | None:
     """Where the picture front matter names is in the root: relative to the Markdown file's
     folder, or to the root with a leading ``/``; Obsidian's ``[[cover.jpg]]`` too. ``None``
-    for a web address or a path outside the root."""
+    for a web address or a path outside the root (:func:`not_a_path` says which)."""
     if not cover:
         return None
     cover = cover.strip().removeprefix("![[").removeprefix("[[").removesuffix("]]")
     cover = cover.replace("\\", "/")
-    if re.match(r"^[a-z][a-z0-9+.-]*:", cover, re.IGNORECASE):  # a web address, or C:/…
+    if not_a_path(cover):
         return None
     folder = "" if cover.startswith("/") else relpath.rpartition("/")[0]
     path = posixpath.normpath(posixpath.join(folder, cover.lstrip("/")))
     return None if path in (".", "..") or path.startswith("../") else path
+
+
+def not_a_path(cover: str) -> str | None:
+    """Why ``cover`` (as written, ``/`` separators) can't be looked for in a watched folder,
+    or ``None`` if it can: a web address, or a drive's path."""
+    if re.match(r"^[a-z]:(/|$)", cover, re.IGNORECASE):
+        return "It's a path on a drive, not inside the watched folder."
+    if re.match(r"^[a-z][a-z0-9+.-]*:", cover, re.IGNORECASE):
+        return "It's a web address: Tagalot only shows pictures in your folders."
+    return None
 
 
 def set_cover(
@@ -887,12 +898,19 @@ def set_cover(
             ctx.update(book, cover=None)
             for picture_id in ctx.linked(book, "cover"):
                 ctx.unlink(book, picture_id, "cover")
+        if cover and cover.strip():  # named, but not a picture in the folder (#426)
+            written = cover.strip()
+            reason = not_a_path(written.replace("\\", "/"))
+            ctx.not_found(book, resource, None, role="cover", written=written, reason=reason)
         return
     assets = ctx.get(book).fields.get("assets") or ""
     picture = ctx.resource_at(resource, target, assets=assets)
     ctx.update(book, cover=f"{resource.root_id}:{picture.relpath if picture else target}")
     if picture is not None:
         ctx.link(book, picture, "cover")
+    else:  # Triage lists it, with where it was looked for (#426)
+        assert cover is not None
+        ctx.not_found(book, resource, target, role="cover", written=cover.strip(), assets=assets)
 
 
 # --- what Open Library says ---

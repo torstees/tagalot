@@ -22,7 +22,7 @@ from tagalot.core.fingerprint import (
     pending_fingerprints,
     store_fingerprints,
 )
-from tagalot.core.ingest import IngestSession, IngestWarning
+from tagalot.core.ingest import IngestSession, IngestWarning, forget_not_found
 from tagalot.core.keep import RootConfig
 from tagalot.core.models import Resource, ResourceStatus, Root
 from tagalot.core.note_keys import sync_ignored
@@ -675,6 +675,7 @@ def _ingest(
 ) -> list[IngestWarning]:
     """One ingest transaction: the theme's ingest, its flush, and marking the batch done."""
     ctx = IngestSession(conn, schema, prepared, options)
+    forget_not_found(conn, [r.id for r in batch])
     ingester.ingest(batch, ctx)
     flushed = ctx.flush()
     conn.execute(

@@ -15,6 +15,7 @@ from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
+from tagalot.core.picture_problems import PictureProblem, PictureScope
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.relations import RelationError
 from tagalot.core.saved_searches import SavedDefinition
@@ -278,6 +279,24 @@ class TagActions(QObject):
         self._run(
             lambda: self.session.ignore_note_key(key),
             lambda change: f"{change.label}. Keep configuration → Notes lists the keys ignored.",
+        )
+
+    def ignore_pictures(
+        self, problems: list[PictureProblem], scope: PictureScope, label: str
+    ) -> None:
+        """Leave rows off Triage's Pictures list (#426); one undo step."""
+        self._run(
+            lambda: self.session.ignore_pictures(problems, scope, label),
+            lambda done: (
+                f"{done}. Edit \u2192 Undo, or Show ignored, brings it back." if done else ""
+            ),
+        )
+
+    def stop_ignoring_picture(self, problem: PictureProblem, label: str) -> None:
+        """List an ignored Pictures row again; one undo step."""
+        self._run(
+            lambda: self.session.stop_ignoring_picture(problem, label),
+            lambda done: f"{done}." if done else "",
         )
 
     def delete_items(self, ids: list[int]) -> None:

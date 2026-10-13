@@ -879,8 +879,17 @@ BOOK_MARKDOWN = {
         "status: first draft\n"
         "written: 2024-05-01\n"
         "cssclasses: wide\n"
+        "cover: lighthouse.jpg\n"
         "---\n"
         "Written on a train.\n\n# The Lighthouse Keeper\n\nIt was a dark night.\n"
+    ),
+    "Loose/Field Notes.md": (
+        "---\n"
+        "title: Field Notes\n"
+        "author: Ada Moss\n"
+        "cover: field-notes.jpg\n"
+        "---\n"
+        "# Field Notes\n\nBirds seen from the kitchen window.\n"
     ),
     "Royal Road/The Wandering Inn 01.md": (
         "---\n"
@@ -893,8 +902,9 @@ BOOK_MARKDOWN = {
     ),
 }
 """Markdown books for the books demo: one with YAML front matter, one titled by its heading
-whose other keys are Extra fields (#410; ``cssclasses`` is ignored), and one whose cover is
-in an assets folder (#418)."""
+whose other keys are Extra fields (#410; ``cssclasses`` is ignored) and whose cover isn't
+there, one whose cover is in an assets folder (#418), and one whose cover is damaged (both
+listed in Triage's Pictures, #426)."""
 
 BOOK_TAGS = {
     ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)
@@ -1299,6 +1309,8 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: bool
     (files / "Attachments/covers/wandering-inn.jpg").write_bytes(
         _cover((130, 80, 20), "The Wandering Inn")
     )
+    # Field Notes' cover: damaged, so it can't be drawn (Triage's Pictures, #426).
+    (files / "Loose/field-notes.jpg").write_bytes(_cover((90, 120, 60), "Field Notes")[:200])
     # A PDF: its document info, and a first page that becomes its cover.
     cover = Image.open(io.BytesIO(_cover((60, 60, 60), "Good Omens")))
     cover.save(

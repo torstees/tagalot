@@ -37,7 +37,7 @@ If your Markdown books keep their pictures in an attachments folder rather than 
 - **For a whole watched folder:** Keep configuration → Folders → **Assets folder**.
 - **For the whole keep:** Keep configuration → Keep → **Assets folder**, for folders that don't name their own.
 
-Beside the file is always looked at first, then the book's own assets folder, then the folder's, then the keep's. A default is a folder from the top of the watched folder, or from each file's own folder when it starts with `./` (`./_assets`). Nothing outside the watched folder is used. Changing a default reads that folder's books again at the next scan; after changing a book's own **Assets folder**, **Re-read from file** finds its cover.
+Beside the file is always looked at first, then the book's own assets folder, then the folder's, then the keep's. A default is a folder from the top of the watched folder, or from each file's own folder when it starts with `./` (`./_assets`). Nothing outside the watched folder is used. Changing a default reads that folder's books again at the next scan; after changing a book's own **Assets folder**, **Re-read from file** finds its cover. A cover that isn't found is listed in [Triage → Pictures](../guide/triage.md#pictures), with every place it was looked for. `cover: None` (or `null`, `N/A`, `-`) means no cover, and `assets: None` no assets folder.
 
 ## Genres and subjects as tags
 

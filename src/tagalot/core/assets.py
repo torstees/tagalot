@@ -18,6 +18,8 @@ leave it is dropped. Nothing here touches a disk.
 import posixpath
 from collections.abc import Iterable
 
+from tagalot.themes.readers import no_path
+
 ASSETS = "assets"
 """The front-matter key, and the field or Extra field, naming an item's assets folder."""
 
@@ -31,7 +33,7 @@ def _inside(path: str) -> str | None:
 
 
 def _clean(value: str | None) -> str:
-    return (value or "").strip().replace("\\", "/")
+    return "" if no_path(value) else (value or "").strip().replace("\\", "/")
 
 
 def clean_setting(value: str) -> str:

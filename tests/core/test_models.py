@@ -55,6 +55,9 @@ CORE_TABLES = {
     "note_key_removal",
     "note_ignored_key",
     "notes_folder_note",
+    "file_not_found",
+    "picture_failure",
+    "picture_ignore",
     "schema_version",
 }
 FTS_TABLES = {

@@ -526,6 +526,16 @@ def _scalar_year(value: Any) -> int | None:
     return _year(value) if isinstance(value, str) else None
 
 
+NO_PATH = frozenset({"none", "null", "nil", "n/a", "-", "\u2014", "[[]]", "![[]]"})
+"""Placeholders templates write for "no picture" or "no folder" (``cover: None``),
+case-folded: a path key with one of these has no value (#426)."""
+
+
+def no_path(value: str | None) -> bool:
+    """``value`` names no path: empty, or a placeholder (:data:`NO_PATH`)."""
+    return not value or value.strip().casefold() in NO_PATH
+
+
 def read_front_matter(path: str) -> dict[str, Any]:
     """A Markdown file's front matter (YAML between ``---`` lines, or TOML between ``+++``
     lines) and first heading:
@@ -537,7 +547,8 @@ def read_front_matter(path: str) -> dict[str, Any]:
     address); ``year`` (``year``, else ``date``); ``publisher``; ``language`` (or
     ``lang``); ``description`` (or ``summary``, ``synopsis``, ``blurb``, ``abstract``);
     ``cover`` (a picture's path, as written, relative to the file); ``assets`` (the folder
-    its pictures may be in instead, as written, #418); ``fields``, every
+    its pictures may be in instead, as written, #418) — each ``None`` for a placeholder
+    such as ``None``, ``null``, ``N/A``, or ``-`` (#426); ``fields``, every
     key and value as written, for a theme's own keys; and ``other``, the keys and values
     of ``fields`` it didn't read (:data:`FRONT_MATTER_READ`), for :meth:`IngestContext.extra`
     (#410). Keys are matched ignoring case. A file
@@ -560,6 +571,10 @@ def read_front_matter(path: str) -> dict[str, Any]:
             return None
         return " ".join(str(value).split()) or None
 
+    def place(*names: str) -> str | None:
+        value = words(*names)
+        return None if no_path(value) else value
+
     heading = next(
         (m.group(1).strip() for m in re.finditer(r"^#\s+(.+?)\s*#*\s*$", body, re.MULTILINE)),
         None,
@@ -581,8 +596,8 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "publisher": words("publisher"),
         "language": words("language", "lang"),
         "description": words(*DESCRIPTION_KEYS),
-        "cover": words("cover", "image"),
-        "assets": words("assets"),
+        "cover": place("cover", "image"),
+        "assets": place("assets"),
         "fields": fields,
         "other": {k: v for k, v in fields.items() if k.strip().casefold() not in FRONT_MATTER_READ},
     }

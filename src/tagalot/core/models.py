@@ -542,6 +542,60 @@ class NotesFolderNote(Base):
     """It is that item's note (else the item has another one)."""
 
 
+class FileNotFound(Base):
+    """A file an item's file names that wasn't found, such as a Markdown book's cover
+    (``IngestContext.not_found``, #426): listed in Triage with the paths tried. Replaced
+    when the naming file is read again; not listed once the item has a file in ``role``."""
+
+    __tablename__ = "file_not_found"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True, index=True
+    )
+    """The file that names it."""
+    role: Mapped[str] = mapped_column(primary_key=True)
+    written: Mapped[str]
+    """What the file says, as written."""
+    tried: Mapped[list[str]] = mapped_column(JSON, default=list)
+    """The root-relative paths looked in, in order (none when ``reason`` says why not)."""
+    reason: Mapped[str | None]
+    """Why nothing was looked for: a web address, a path outside the watched folder."""
+
+
+class PictureFailure(Base):
+    """A picture that couldn't be drawn for a thumbnail (corrupt or unsupported, #426):
+    listed in Triage for the items that have it. Ignored once the file changes; removed
+    when it is drawn."""
+
+    __tablename__ = "picture_failure"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    size: Mapped[int | None]
+    mtime_ns: Mapped[int | None]
+    """The file's size and time when it failed."""
+    error: Mapped[str]
+
+
+class PictureIgnore(Base):
+    """A rule leaving rows off Triage's Pictures list (#426): one item's row while it says
+    the same (``item``: ``entity_id`` and the row's ``marker``), a value files name, case
+    aside, for every item (``value``), or every item of a type (``type``)."""
+
+    __tablename__ = "picture_ignore"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str]
+    entity_id: Mapped[int | None] = mapped_column(ForeignKey("entity.id", ondelete=CASCADE))
+    marker: Mapped[str | None]
+    value: Mapped[str | None]
+    type: Mapped[str | None]
+
+
 class SavedSearch(Base):
     """A named search; ``definition`` is ``core.saved_searches.SavedDefinition``'s JSON form:
     the page's search and its filter bar's, and how it was shown (§8, #127)."""
