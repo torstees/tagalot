@@ -223,10 +223,15 @@ def _v17_tag_icons(conn: Connection) -> None:
 
 
 def _v18_picture_problems(conn: Connection) -> None:
-    """Format 19: files named but not found, pictures that can't be drawn, and the rules
-    leaving them off Triage's list (#426)."""
-    for name in ("file_not_found", "picture_failure", "picture_ignore"):
+    """Format 19: files named but not found, and pictures that can't be drawn (#426)."""
+    for name in ("file_not_found", "picture_failure"):
         Base.metadata.tables[name].create(conn)
+
+
+def _v19_picture_ignore(conn: Connection) -> None:
+    """Format 20: the rules leaving rows off Triage's Pictures list (#426). Keeps upgraded by
+    the first build of format 19 lack it; later ones have it already (#430)."""
+    Base.metadata.tables["picture_ignore"].create(conn, checkfirst=True)
 
 
 CORE_MIGRATIONS: Mapping[int, Migration] = {
@@ -248,6 +253,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     16: _v16_notes_folder,
     17: _v17_tag_icons,
     18: _v18_picture_problems,
+    19: _v19_picture_ignore,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 
