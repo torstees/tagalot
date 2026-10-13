@@ -52,6 +52,7 @@ COLUMN_WIDTH = 140
 MATCH_WIDTH = 360
 NUMERIC_WIDTH = 100
 BADGES_WIDTH = 90
+DESCRIPTION_WIDTH = 320
 """About four badges, then "+n"; wider shows more (#398)."""
 
 
@@ -67,10 +68,11 @@ def list_columns(
     type when several types are in scope, the item's tags (hidden unless the user shows
     them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
     every field the scoped types share that their pages show: card fields first, shown,
-    then the rest, hidden until the user shows them (#314). The Badges column (#398) is
-    shown unless ``badges`` is false (a keep whose tags have no icons), when it's offered
-    hidden."""
+    then the types' description (#414), shown, then the rest, hidden until the user shows
+    them (#314). The Badges column (#398) is shown unless ``badges`` is false (a keep whose
+    tags have no icons), when it's offered hidden."""
     tables = scoped_tables(schema, types)
+    described = {t.entity.description_field for t in tables} - {None}
     labels = {t.entity.title_label for t in tables}
     columns = [ResultColumn("title", labels.pop() if len(labels) == 1 else "Title")]
     if len(tables) != 1:
@@ -81,16 +83,22 @@ def list_columns(
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     if keywords:  # only in keeps whose files give keywords (§7)
         columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
-    fields = [f for f in scope_fields(schema, types) if f.spec.card or f.spec.detail]
+    fields = [
+        f
+        for f in scope_fields(schema, types)
+        if f.spec.card or f.spec.detail or f.name in described
+    ]
     columns.extend(
         ResultColumn(
             f.name,
             f.spec.label,
             numeric=f.type in (int, float),
             display=f.spec.display,
-            hidden_by_default=not f.spec.card,
+            hidden_by_default=not (f.spec.card or f.name in described),
+            description=f.name in described,
         )
-        for f in sorted(fields, key=lambda f: not f.spec.card)  # card fields first
+        # card fields first, then the description
+        for f in sorted(fields, key=lambda f: (not f.spec.card, f.name not in described))
     )
     return columns
 
@@ -319,6 +327,8 @@ def set_column_widths(table: ResultTable, columns: Sequence[ResultColumn]) -> No
             width = MATCH_WIDTH
         elif column.key == BADGES:
             width = BADGES_WIDTH
+        elif column.description:
+            width = DESCRIPTION_WIDTH
         table.start_widths[i] = NUMERIC_WIDTH if column.numeric else width
         table.setColumnWidth(i, table.start_widths[i])
         delegate = (

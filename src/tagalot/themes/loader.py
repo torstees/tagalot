@@ -29,6 +29,7 @@ from tagalot.themes.api import (
     API_VERSION,
     DetailView,
     Entity,
+    FieldInfo,
     OnlineSource,
     RoleImage,
     SearchView,
@@ -243,6 +244,16 @@ def validate_theme(theme: type[Theme]) -> list[str]:
                 problems.append(f"{names[entity]} has full_text = True but no primary role")
             if getattr(theme, "api_version", API_VERSION) < 6:
                 problems.append("a theme with full_text types must set api_version = 6 (or later)")
+    described = [e for e in entities if getattr(e, "description_field", None) is not None]
+    for entity in described:
+        name = entity.description_field
+        texts = {f.name for f in _safe_fields(entity) if f.type is str}
+        if not isinstance(name, str) or name not in texts:
+            problems.append(
+                f"{names[entity]}: description_field {name!r} isn't one of its text fields"
+            )
+    if described and getattr(theme, "api_version", API_VERSION) < 12:
+        problems.append("a theme with description_field must set api_version = 12 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]
@@ -367,10 +378,14 @@ def _card_problems(theme: type[Theme], declared: set[type[Entity]]) -> list[str]
 
 
 def _safe_field_names(entity: type[Entity]) -> set[str]:
+    return {f.name for f in _safe_fields(entity)}
+
+
+def _safe_fields(entity: type[Entity]) -> list[FieldInfo]:
     try:
-        return {f.name for f in entity_fields(entity)}
+        return entity_fields(entity)
     except ThemeDeclarationError:
-        return set()  # reported by the schema build
+        return []  # reported by the schema build
 
 
 def _add(

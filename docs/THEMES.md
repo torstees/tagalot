@@ -82,7 +82,7 @@ class Song(Entity):
   - `editable=False` stops people editing it on the item's page. Values people edit by hand always win: your `ingest` never overwrites them.
   - `detail=False` hides it from the item's page (a value you keep for yourself, like assets2d's picture hash).
   - `display` shows a number as `"bytes"` (3.0 MB) or `"duration"` (seconds as 3:25), and a text field as `"url"`: on the item's page, a web address (`http`/`https`) is a link that opens in the browser (needs `api_version = 3`).
-- **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys).
+- **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `description_field` (the text field that describes an item, such as `"description"` or `"abstract"`: Tagalot shows it in the preview strip, in grid cards' tooltips, and as a list column; `api_version = 12`); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys).
 - Every item also has a **title** (its name), **tags**, and **extra fields** people add themselves; you don't declare those.
 
 ## Files: roles
@@ -108,7 +108,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 11             # the theme API it needs
+    api_version = 12             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]

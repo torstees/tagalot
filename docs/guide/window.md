@@ -27,7 +27,7 @@ On the left, in four groups (click a heading to fold it; a folded one shows how 
 
 A search shows its items in one of three **layouts**, chosen with the buttons at the top right (remembered for each search):
 
-- **Grid:** thumbnails with a few lines under each, and the [icons of their tags](tags.md#tag-icons) along the bottom of each thumbnail (right-click for **Card lines** to choose which, and sizes). Make them bigger or smaller with **View → Thumbnail size**, Ctrl+wheel, or Ctrl+= and Ctrl+-.
+- **Grid:** thumbnails with a few lines under each, and the [icons of their tags](tags.md#tag-icons) along the bottom of each thumbnail (right-click for **Card lines** to choose which, and sizes). Point at a card to see its details and the start of its description. Make them bigger or smaller with **View → Thumbnail size**, Ctrl+wheel, or Ctrl+= and Ctrl+-.
 - **List:** columns. Click a column's heading to sort by it; right-click a heading to show or hide columns (every field can be a column, a **Tags** column lists each item's tags, and a **Badges** column shows their [icons](tags.md#tag-icons)). The Badges column shows once some tag has an icon.
 - **Tree:** containers with what they hold under them (an album and its songs), in the list's columns; right-click a heading to show or hide them.
 
@@ -37,7 +37,7 @@ Right-click an item for **Open page**, **Open file**, **Show in file manager**, 
 
 ## The preview strip
 
-Under the results, the **preview strip** shows the selected item: its thumbnail, title, kind, a few fields, and its file. Double-click it to open the page. **View → Preview** hides or shows it.
+Under the results, the **preview strip** shows the selected item: its thumbnail, title, kind, a few fields, its file, and the start of its description (a book's description, a paper's abstract, a movie's plot; point at it to read more). Double-click it to open the page. **View → Preview** hides or shows it.
 
 ## The Tags panel
 

@@ -316,6 +316,7 @@ class Movie(Entity):
     ]
     double_click = "open_file"
     card_lines = ("year", "quality")
+    description_field = "plot"
 
 
 @dataclass(frozen=True)
@@ -355,7 +356,7 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
-    api_version = 10  # TitleCard (8: ctx.note; 3: ctx.resource_at)
+    api_version = 12  # description_field (10: TitleCard; 8: ctx.note; 3: ctx.resource_at)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | {NFO})
     dirs = True

@@ -836,7 +836,15 @@ class SearchPage(QWidget):
             if f.spec.display is not None
         }
         self.grid.set_card_lines(lines)
-        self.model.set_extra_fields([key for shown in lines.values() for key, _ in shown])
+        self.grid.descriptions = {
+            table.type_id: table.entity.description_field
+            for table in scoped_tables(self.session.schema, types)
+            if table.entity.description_field
+        }
+        self.model.set_extra_fields(
+            [key for shown in lines.values() for key, _ in shown]
+            + list(self.grid.descriptions.values())
+        )
 
     def _shown_card_fields(self) -> list[str]:
         shown: dict[str, None] = {}

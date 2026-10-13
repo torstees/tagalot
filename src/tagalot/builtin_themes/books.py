@@ -158,6 +158,7 @@ class Book(Entity):
         role("cover", kinds={"image"}, thumbnail=True),
     ]
     card_lines = ("authors", "series")
+    description_field = "description"
     full_text = True  # its files' text can be searched (DESIGN.md §8); comics' can't
 
 
@@ -182,6 +183,7 @@ class Comic(Entity):
     link: str | None = field("Link", search="text", display="url")
     roles = [role("file", kinds={"any"}, many=True, primary=True, label="Files")]
     card_lines = ("series", "number")
+    description_field = "description"
 
 
 WORKS: tuple[type[Entity], ...] = (Book, Comic)
@@ -225,7 +227,9 @@ class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 5  # 5: extra; 4: assets; 3: synopsis; 2: authors
-    api_version = 11  # extra (10: TitleCard; 9: assets; 7: mobi; 6: full_text; 5: online)
+    # 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text;
+    # 5: online
+    api_version = 12
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS

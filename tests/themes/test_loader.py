@@ -207,7 +207,7 @@ def test_declaration_problems_are_all_reported(tmp_path: Path) -> None:
     for expected in [
         "the theme needs a name",
         "version must be a positive integer, not 0",
-        "needs theme API version 99; this Tagalot provides 11",
+        "needs theme API version 99; this Tagalot provides 12",
         "extension '.FLAC' must be lowercase",
         "extension 'mp3' must be lowercase and start with '.'",
         "Song: role art is declared twice",
@@ -284,6 +284,38 @@ def test_card_lines_and_thumbnail_sizes_are_checked() -> None:
     assert "thumbnail_default must be a whole number from 16 to thumbnail_max (512), not 1024" in (
         validate_theme(TooBig)
     )
+
+
+def test_a_description_field_is_a_text_field() -> None:
+    """``description_field`` (#414) names one of the type's text fields, from API 12."""
+
+    class Paper(Entity):
+        abstract: str | None = field("Abstract")
+        pages: int | None = field("Pages")
+        description_field = "abstract"
+
+    class Papers(Theme):
+        id, name = "papers", "Papers"
+        entities = [Paper]
+
+    assert validate_theme(Papers) == []
+
+    class Note(Entity):
+        pages: int | None = field("Pages")
+        description_field = "pages"
+
+    class Report(Entity):
+        description_field = "summary"
+
+    class Old(Theme):
+        id, name, api_version = "old", "Old", 11
+        entities = [Paper, Note, Report]
+
+    assert validate_theme(Old) == [
+        "Note: description_field 'pages' isn't one of its text fields",
+        "Report: description_field 'summary' isn't one of its text fields",
+        "a theme with description_field must set api_version = 12 (or later)",
+    ]
 
 
 def test_contents_sort_names_fields_of_what_the_type_contains() -> None:
