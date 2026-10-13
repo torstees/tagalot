@@ -15,6 +15,7 @@ from tagalot.core.models import Resource, ResourceStatus
 from tagalot.core.search import SearchHit
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import load_settings
+from tagalot.ui import file_actions
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.file_actions import OpenWithMenu
 from tagalot.ui.main_window import MainWindow
@@ -275,3 +276,40 @@ def test_ctrl_enter_in_a_list(
     QTest.keyClick(songs.table, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     assert isinstance(window.stack.currentWidget(), DetailPage)
     assert opened == []
+
+
+# --- Show in file manager says what it shows (#432) ---
+
+REVEAL = file_actions.FileOpener.reveal
+"""The real method: ``nothing_is_launched`` replaces it in every GUI test."""
+
+
+def test_show_in_file_manager_says_where_or_why_not(
+    qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[Command] = []
+
+    def start(command: Command) -> bool:
+        started.append(command)
+        return True
+
+    monkeypatch.setattr(window.files, "start", start)
+    monkeypatch.setattr(
+        file_actions, "reveal_command", lambda file: Command("files", ("--select", file.path))
+    )
+    messages: list[str] = []
+    window.files.message.connect(lambda text: messages.append(text))
+    there = tmp_path / "Books" / "Dune.epub"
+    there.parent.mkdir()
+    there.write_bytes(b"epub")
+
+    REVEAL(window.files, FileToOpen(1, str(there), False))
+    qtbot.waitUntil(lambda: bool(messages), timeout=5000)
+    assert started == [Command("files", ("--select", str(there)))]
+    assert messages == [f"Showing {there} in the file manager."]
+
+    gone = str(tmp_path / "Books" / "Gone.epub")
+    REVEAL(window.files, FileToOpen(2, gone, False))
+    qtbot.waitUntil(lambda: len(messages) == 2, timeout=5000)
+    assert len(started) == 1  # nothing to show: the file manager isn't started
+    assert messages[1].startswith(f"Can't show {gone}: it isn't there.")

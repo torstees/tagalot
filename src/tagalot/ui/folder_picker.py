@@ -8,6 +8,7 @@ remembered in ``settings.toml`` across sessions.
 from pathlib import Path
 
 import shiboken6
+from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QDialog, QFileDialog, QWidget
 
 from tagalot.core.settings import Settings, save_settings
@@ -112,7 +113,8 @@ def choose_folder(
     or ``""`` if cancelled. The choice is remembered (its parent, with ``remember_parent``:
     a keep folder is chosen to open it, but the folder holding keeps is where to look next)
     and saved in the background."""
-    folder = QFileDialog.getExistingDirectory(parent, title, start or start_folder(settings))
+    chosen_text = QFileDialog.getExistingDirectory(parent, title, start or start_folder(settings))
+    folder = QDir.toNativeSeparators(chosen_text)  # Qt gives E:/Books on Windows too (#432)
     if folder and settings is not None:
         chosen = Path(folder)
         settings.last_folder = chosen.parent if remember_parent else chosen

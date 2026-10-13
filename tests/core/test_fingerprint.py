@@ -81,6 +81,9 @@ def test_same_content_same_fingerprint(tmp_path: Path) -> None:
     [
         (ntpath, r"\\nas\music", "Artist/Album/01.flac", r"\\nas\music\Artist\Album\01.flac"),
         (ntpath, "M:\\Music\\", "a.flac", r"M:\Music\a.flac"),
+        (ntpath, "E:/Books", "A/b.pdf", r"E:\Books\A\b.pdf"),  # Qt's dialog, or pasted (#432)
+        (ntpath, "E:/Keeps\\library/", "A/b.pdf", r"E:\Keeps\library\A\b.pdf"),
+        (ntpath, "//nas/music", "a.flac", r"\\nas\music\a.flac"),
         (ntpath, r"\\?\UNC\nas\music", "a b/c.flac", r"\\?\UNC\nas\music\a b\c.flac"),
         (posixpath, "/Volumes/music", "Artist/01.flac", "/Volumes/music/Artist/01.flac"),
         (posixpath, "/mnt/nas/", "Björk/Hunter.flac", "/mnt/nas/Björk/Hunter.flac"),
