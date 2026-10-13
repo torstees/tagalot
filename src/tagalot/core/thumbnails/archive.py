@@ -14,7 +14,7 @@ import logging
 import re
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -61,6 +61,8 @@ class ArchiveReader(ABC):
 
     solid: bool = False
     """Whether reading a member means decompressing the ones before it."""
+    format: str = ""
+    """``"zip"``, ``"7z"``, or ``"rar"``."""
 
     @abstractmethod
     def members(self) -> list[ArchiveMember]:
@@ -148,10 +150,30 @@ def archive_image_bytes(path: str) -> bytes | None:
     return None
 
 
+def read_pictures(path: str, names: Sequence[str]) -> Iterator[tuple[str, bytes | None]]:
+    """The bytes of these pictures in the archive at ``path``, in the given order (``None``
+    for one that can't be read). Raises :class:`ArchiveError` or ``OSError`` when the
+    archive can't be opened."""
+    with open_archive(path) as archive:
+        known = {m.name: m for m in archive.members()}
+        for name in names:
+            member = known.get(name)
+            if member is None:
+                yield name, None
+                continue
+            try:
+                yield name, archive.read(member, MAX_MEMBER_BYTES)
+            except ArchiveError as e:
+                logger.info("Can't read %s in %s: %s", name, path, e)
+                yield name, None
+
+
 # --- formats ---
 
 
 class _ZipReader(ArchiveReader):
+    format = "zip"
+
     def __init__(self, path: str) -> None:
         try:
             self._zip = zipfile.ZipFile(path)
@@ -179,6 +201,8 @@ class _ZipReader(ArchiveReader):
 
 
 class _SevenZipReader(ArchiveReader):
+    format = "7z"
+
     def __init__(self, path: str) -> None:
         try:
             self._archive = py7zr.SevenZipFile(path)
@@ -209,6 +233,7 @@ class _SevenZipReader(ArchiveReader):
 
 
 class _RarReader(ArchiveReader):
+    format = "rar"
     _warned_no_tool = False
 
     def __init__(self, path: str) -> None:

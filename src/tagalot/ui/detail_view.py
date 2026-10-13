@@ -28,8 +28,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QThreadPool, Signal
-from PySide6.QtGui import QFont, QIcon, QImage, QPixmap
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
+from PySide6.QtGui import QFont, QImage
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -37,14 +37,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListView,
-    QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QSplitter,
     QTabWidget,
     QToolButton,
@@ -71,6 +67,7 @@ from tagalot.core.tags import entity_tags
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
+from tagalot.ui.gallery_view import GalleryView, fitted
 from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import TagsValue, badges_value
 from tagalot.ui.note_view import NoteView
@@ -81,7 +78,6 @@ from tagalot.ui.workers import run_in_pool
 HEADER_THUMBNAIL = 192
 """The header thumbnail's box, in pixels."""
 
-GALLERY_THUMBNAIL = 128
 
 NOTE_PICTURE_WIDTH = 480
 """A note's pictures are shown at most this wide, in pixels."""
@@ -582,7 +578,7 @@ class DetailPage(QWidget):
         if loaded is None:
             return  # requested: _thumbnail_ready shows it
         if loaded.image is not None:
-            self.thumbnail.setPixmap(_fitted(loaded.image, HEADER_THUMBNAIL))
+            self.thumbnail.setPixmap(fitted(loaded.image, HEADER_THUMBNAIL))
         else:
             self.thumbnail.setPixmap(icon_for(loaded.icon).pixmap(HEADER_THUMBNAIL // 2))
 
@@ -891,63 +887,10 @@ class DetailPage(QWidget):
         return menu
 
     def _gallery(self, section: DetailSection) -> QWidget:
-        gallery = QListWidget()
-        gallery.setViewMode(QListView.ViewMode.IconMode)
-        gallery.setIconSize(QSize(GALLERY_THUMBNAIL, GALLERY_THUMBNAIL))
-        gallery.setResizeMode(QListView.ResizeMode.Adjust)
-        gallery.setMovement(QListView.Movement.Static)
-        gallery.setWrapping(True)
-        gallery.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-        gallery.setMinimumHeight(GALLERY_THUMBNAIL + 48)
-        gallery.setObjectName(f"gallery_{section.title}")
-        items: dict[int, QListWidgetItem] = {}
-        files: dict[int, FileRow] = {}
-        for file in section.files:
-            item = QListWidgetItem(icon_for("image"), file.relpath.rpartition("/")[2])
-            item.setToolTip(file.relpath)
-            item.setData(Qt.ItemDataRole.UserRole, file.resource_id)
-            gallery.addItem(item)
-            items[file.resource_id] = item
-            files[file.resource_id] = file
-        # Like a file row: double-click (or Enter) opens the picture, right-click its menu.
-        gallery.itemActivated.connect(
-            lambda item: self._open_file(item.data(Qt.ItemDataRole.UserRole))
+        """The role's pictures in groups, archives' pictures included (#386)."""
+        return GalleryView(
+            section, self.session, self.entity_id, self.file_opener, self._file_menu, self._pool
         )
-        gallery.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        gallery.customContextMenuRequested.connect(
-            lambda point: self._gallery_menu(gallery, files, point)
-        )
-        if section.files:
-            self._load_gallery(gallery, items)
-        return gallery
-
-    def _gallery_menu(self, gallery: QListWidget, files: dict[int, FileRow], point: QPoint) -> None:
-        item = gallery.itemAt(point)
-        file = files.get(item.data(Qt.ItemDataRole.UserRole)) if item is not None else None
-        if file is not None:
-            self._file_menu(file).exec(gallery.viewport().mapToGlobal(point))
-
-    def _load_gallery(self, gallery: QListWidget, items: dict[int, QListWidgetItem]) -> None:
-        resolver = self.session.thumbnails
-        ids = list(items)
-
-        def job() -> list[tuple[int, QImage]]:
-            found = []
-            for resource_id in ids:
-                thumb = resolver.resource_thumbnail(resource_id)
-                if thumb is not None:
-                    image = QImage.fromData(thumb.data)
-                    if not image.isNull():
-                        found.append((resource_id, image))
-            return found
-
-        def done(images: list[tuple[int, QImage]]) -> None:
-            if not shiboken6.isValid(gallery):
-                return
-            for resource_id, image in images:
-                items[resource_id].setIcon(QIcon(_fitted(image, GALLERY_THUMBNAIL)))
-
-        run_in_pool(job, on_done=done, pool=self._pool)
 
     def _links(self, section: DetailSection) -> QWidget:
         """The related items as links, each with an x to remove it, and Add… (#260)."""
@@ -1030,19 +973,6 @@ def _file_label(file: FileRow) -> QLabel:
     label.setWordWrap(True)  # long paths wrap rather than widen the page
     label.setToolTip(file.path or "This root has no path on this computer")
     return label
-
-
-def _fitted(image: QImage, side: int) -> QPixmap:
-    """``image`` scaled down (never up) to fit a ``side`` square."""
-    pixmap = QPixmap.fromImage(image)
-    if pixmap.width() > side or pixmap.height() > side:
-        pixmap = pixmap.scaled(
-            side,
-            side,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-    return pixmap
 
 
 def _root_path(session: KeepSession) -> Callable[[str], str | None]:
