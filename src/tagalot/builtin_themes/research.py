@@ -166,6 +166,7 @@ class Paper(Entity):
         role("notes", kinds={"any"}, many=True, label="Notes"),
     ]
     card_lines = ("authors", "year")
+    description_field = "abstract"
     full_text = True  # its files' text can be searched (DESIGN.md §8)
 
 
@@ -185,7 +186,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
-    id, name, version, api_version = "research", "Research", 1, 6
+    id, name, version = "research", "Research", 1
+    api_version = 12  # description_field (6: full_text)
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
     # citation key comes from a bibliography).

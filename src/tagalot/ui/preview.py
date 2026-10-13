@@ -6,18 +6,19 @@
 └─────┘ Asset files > Aurora Studio/Backgrounds/forest.png
 ```
 
-One selected item shows its thumbnail, title, type, card fields, and primary file; several
-show how many; none shows a hint. The details load in a worker. Double-click opens the page.
+One selected item shows its thumbnail, title, type, card fields, primary file, and its
+description on one line (#414); several show how many; none shows a hint. The details load
+in a worker. Double-click opens the page.
 """
 
 import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, Signal
-from PySide6.QtGui import QFont, QMouseEvent, QPixmap
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QMouseEvent, QPixmap, QResizeEvent
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from tagalot.core.detail import Preview, load_preview
 from tagalot.core.session import KeepSession
-from tagalot.ui.models.results import display_value
+from tagalot.ui.models.results import display_value, one_line, wrapped
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -25,6 +26,30 @@ THUMBNAIL = 96
 """The strip's thumbnail box, in pixels."""
 
 HINT = "Select an item to preview it; double-click to open it."
+
+
+class ElidedLabel(QLabel):
+    """One line of plain text, cut with an ellipsis to the label's width; the whole text
+    is :attr:`full_text`."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+
+    def set_full_text(self, text: str) -> None:
+        self.full_text = text
+        self._elide()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self) -> None:
+        self.setText(
+            self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, self.width())
+        )
 
 
 class PreviewStrip(QFrame):
@@ -59,6 +84,7 @@ class PreviewStrip(QFrame):
         self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.facts = QLabel()
         self.file = QLabel()
+        self.description = ElidedLabel()
         for label in (self.facts, self.file):
             label.setStyleSheet("color: palette(placeholder-text);")
         for label in (self.title, self.facts, self.file):
@@ -68,6 +94,7 @@ class PreviewStrip(QFrame):
         text.addWidget(self.title)
         text.addWidget(self.facts)
         text.addWidget(self.file)
+        text.addWidget(self.description)
         text.addStretch(1)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -87,6 +114,7 @@ class PreviewStrip(QFrame):
         self.title.setText(HINT if count == 0 else f"{count:,} items selected")
         self.facts.clear()
         self.file.clear()
+        self._describe(None)
         self.thumbnail.clear()
 
     def show_selection(self, entity_ids: list[int]) -> None:
@@ -118,12 +146,18 @@ class PreviewStrip(QFrame):
             self.title.setText("This item no longer exists")
             self.facts.clear()
             self.file.clear()
+            self._describe(None)
             return
         self.title.setText(f"{preview.title} · {preview.type_label}")
         facts = [display_value(f.value, f.display) for f in preview.facts]
         self.facts.setText(" · ".join(f for f in facts if f))
         self.file.setText(preview.file or "")
         self.file.setToolTip(preview.file or "")
+        self._describe(preview.description)
+
+    def _describe(self, description: str | None) -> None:
+        self.description.set_full_text(one_line(description or ""))
+        self.description.setToolTip("\n".join(wrapped(description or "", lines=12)))
 
     def _show_thumbnail(self) -> None:
         if self.thumbnails is None or self.entity_id is None:

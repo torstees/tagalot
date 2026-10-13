@@ -61,6 +61,7 @@ from tagalot.ui.models.results import (
     ResultsModel,
     TagsValue,
     display_value,
+    wrapped,
 )
 from tagalot.ui.result_table import OUTLINE_COLOR
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
@@ -211,21 +212,10 @@ class CardDelegate(QStyledItemDelegate):
         option: QStyleOptionViewItem,
         index: QModelIndex | QPersistentModelIndex,
     ) -> bool:
-        found = self.grid.results_model().row(index.row(), load=False)
-        if found is None:
+        text = self.grid.card_tooltip(index.row())
+        if text is None:
             return False
-        lines = [found[0].title]
-        for key, label in self.grid.card_lines.get(found[0].type, ()):
-            value = display_value(found[1].get(key), self.grid.displays.get(key))
-            if value:
-                lines.append(f"{label}: {value}")
-        badges = found[1].get(BADGES)
-        if isinstance(badges, TagsValue) and badges.tooltip:
-            lines.append(badges.tooltip)
-        match = found[1].get(MATCH)
-        if self.grid.show_match and isinstance(match, MatchValue):
-            lines.append(f"{match.text} ({match.where})")
-        QToolTip.showText(event.globalPos(), "\n".join(lines), view)
+        QToolTip.showText(event.globalPos(), text, view)
         return True
 
 
@@ -256,6 +246,8 @@ class ResultGrid(QListView):
         """Cards end with where their documents matched (a search inside documents)."""
         self.displays: dict[str, str] = {}
         """Display formats of the card lines' fields, by field name."""
+        self.descriptions: dict[str, str] = {}
+        """Each type's description field, by type id: shown in the cards' tooltips (#414)."""
         self.drop_rows: set[int] = set()
         self.setViewMode(QListView.ViewMode.ListMode)
         self.setFlow(QListView.Flow.LeftToRight)
@@ -309,6 +301,32 @@ class ResultGrid(QListView):
 
     def max_card_lines(self) -> int:
         return max((len(v) for v in self.card_lines.values()), default=0)
+
+    def card_tooltip(self, row: int) -> str | None:
+        """The tooltip of a card: its title and card lines, its description wrapped and cut
+        after a few lines (#414), its badges' tags, and where its documents matched. ``None``
+        while the row isn't loaded."""
+        found = self.results_model().row(row, load=False)
+        if found is None:
+            return None
+        hit, values = found
+        lines = [hit.title]
+        for key, label in self.card_lines.get(hit.type, ()):
+            value = display_value(values.get(key), self.displays.get(key))
+            if value:
+                lines.append(f"{label}: {value}")
+        description = values.get(self.descriptions.get(hit.type, ""))
+        if isinstance(description, str) and description.strip():
+            lines.extend(["", *wrapped(description), ""])
+        badges = values.get(BADGES)
+        if isinstance(badges, TagsValue) and badges.tooltip:
+            lines.append(badges.tooltip)
+        match = values.get(MATCH)
+        if self.show_match and isinstance(match, MatchValue):
+            lines.append(f"{match.text} ({match.where})")
+        while not lines[-1]:
+            lines.pop()  # nothing after the description
+        return "\n".join(lines)
 
     def _apply_size(self) -> None:
         self.setGridSize(self.delegate.card_size() + QSize(4, 4))

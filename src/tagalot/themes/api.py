@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 11
+API_VERSION = 12
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -35,7 +35,8 @@ their text in :func:`read_document_text`); version 8 added notes
 (:meth:`IngestContext.note`); version 9 added assets folders (``assets`` of
 :meth:`IngestContext.resource_at`); version 10 added title cards (:class:`TitleCard`);
 version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
-:func:`read_front_matter`'s ``other``)."""
+:func:`read_front_matter`'s ``other``); version 12 added descriptions
+(:attr:`Entity.description_field`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -253,6 +254,10 @@ class Entity:
       in the background after scans and can be searched (DESIGN.md §8 *Search inside
       documents*; API version 6). The core reads them with :func:`read_document_text`, or
       :meth:`Theme.document_text`. It needs a primary role.
+    - ``description_field``: the name of the text field that describes an item of this type
+      (a book's ``"description"``, a paper's ``"abstract"``; API version 12). Tagalot shows
+      it under the selected item in the preview strip, in grid cards' tooltips, and as a
+      list column shown by default. Default: none.
     """
 
     label: ClassVar[str | None] = None
@@ -266,6 +271,7 @@ class Entity:
     type_id: ClassVar[str | None] = None
     made_by_hand: ClassVar[bool] = False
     full_text: ClassVar[bool] = False
+    description_field: ClassVar[str | None] = None
 
 
 def entity_label(entity: type[Entity]) -> str:

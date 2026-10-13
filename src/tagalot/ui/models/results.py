@@ -11,6 +11,7 @@ dropped, so a slow query never overwrites a newer one.
 
 import html
 import logging
+import textwrap
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -80,6 +81,9 @@ class ResultColumn:
     hidden_by_default: bool = False
     """Hidden until the user shows it from the header menu: a field that isn't on cards
     (#314)."""
+    description: bool = False
+    """The scoped types' description field (``description_field``, #414): shown by
+    default, wider, and on one line."""
 
 
 TAGS = "tags"
@@ -245,6 +249,21 @@ def display_value(value: object, display: str | None = None) -> str:
             return str(value)
 
 
+def one_line(text: str) -> str:
+    """``text`` on one line: its line breaks and runs of spaces as single spaces."""
+    return " ".join(text.split())
+
+
+def wrapped(text: str, width: int = 70, lines: int = 4) -> list[str]:
+    """``text`` wrapped to ``width`` characters, cut after ``lines`` lines with an
+    ellipsis: a description in a tooltip."""
+    found = textwrap.wrap(one_line(text), width)
+    if len(found) > lines:
+        found = found[:lines]
+        found[-1] = found[-1].rstrip(".,;: ") + "\u2026"
+    return found
+
+
 def cell_tooltip(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
     """The tooltip of one cell: the full tag paths for Tags, else the cell's text."""
     value = row[1].get(column.key)
@@ -260,7 +279,8 @@ def cell_text(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) ->
         return hit.title
     if column.key == "type":
         return type_labels.get(hit.type, hit.type)
-    return display_value(values.get(column.key), column.display)
+    text = display_value(values.get(column.key), column.display)
+    return one_line(text) if column.description else text
 
 
 class PreviewModel(QAbstractTableModel):

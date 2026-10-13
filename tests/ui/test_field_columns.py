@@ -1,6 +1,6 @@
-"""Every field as a list column (#314): card fields shown, the others hidden until the user
-shows them from the header menu, and remembered per view. On the books demo, whose Link,
-Description, and ISBN aren't card fields."""
+"""Every field as a list column (#314): card fields and the description (#414) shown, the
+others hidden until the user shows them from the header menu, and remembered per view. On
+the books demo, whose Link and ISBN aren't card fields."""
 
 import importlib.util
 from collections.abc import Iterator
@@ -66,9 +66,13 @@ def _shown(page: SearchPage) -> list[str]:
 def test_list_columns_offer_every_field(session: KeepSession) -> None:
     columns = {c.key: c for c in list_columns(session.schema, ("books.book",))}
     keys = list(columns)
-    assert keys[:5] == ["title", "badges", "tags", "authors", "series"]  # card fields first
+    # card fields first, then the description (#414)
+    assert keys[:6] == ["title", "badges", "tags", "authors", "series", "description"]
     assert not columns["authors"].hidden_by_default
-    for key in ("link", "description", "isbn", "sources", "year"):
+    assert not columns["description"].hidden_by_default
+    assert columns["description"].description
+    assert not columns["authors"].description
+    for key in ("link", "isbn", "sources", "year"):
         assert columns[key].hidden_by_default, key
     assert "cover" not in columns  # not shown on pages (detail=False): not offered either
 
@@ -89,20 +93,20 @@ def test_a_field_column_is_shown_from_the_menu_and_remembered(
     qtbot: QtBot, session: KeepSession
 ) -> None:
     page = _books(qtbot, session)
-    assert _shown(page) == ["Title", "Author", "Series"]
+    assert _shown(page) == ["Title", "Author", "Series", "Description"]
     actions = {a.text(): a for a in page.table.column_menu().actions()}
     assert {"Link", "Description", "ISBN", "Sources", "Year"} <= set(actions)
     assert not actions["Link"].isChecked()
     actions["Link"].setChecked(True)  # as clicking it in the header's menu does
-    assert _shown(page) == ["Title", "Author", "Series", "Link"]
+    assert _shown(page) == ["Title", "Author", "Series", "Description", "Link"]
     state = load_ui_state(session.keep.ui_state_path)
     assert state["shown_columns"] == {"view:Books": ["link"]}
 
     again = _books(qtbot, session)  # a new window for the keep restores the choice
-    assert _shown(again) == ["Title", "Author", "Series", "Link"]
+    assert _shown(again) == ["Title", "Author", "Series", "Description", "Link"]
     actions = {a.text(): a for a in again.table.column_menu().actions()}
     actions["Link"].setChecked(False)
-    assert _shown(again) == ["Title", "Author", "Series"]
+    assert _shown(again) == ["Title", "Author", "Series", "Description"]
     assert load_ui_state(session.keep.ui_state_path)["shown_columns"] == {"view:Books": []}
 
 
@@ -176,14 +180,14 @@ def test_the_tree_header_offers_the_columns_too(qtbot: QtBot, session: KeepSessi
     page.tree_button.click()
     header = page.tree.header()
     assert header.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
-    description = [c.key for c in page.table.columns].index("description")
-    assert header.isSectionHidden(description)
-    {a.text(): a for a in page.column_menu().actions()}["Description"].setChecked(True)
-    assert not header.isSectionHidden(description)
-    assert header.sectionSize(description) >= COLUMN_WIDTH
-    assert _shown(page)[-1] == "Description"  # and in the list
-    {a.text(): a for a in page.column_menu().actions()}["Description"].setChecked(False)
-    assert header.isSectionHidden(description)
+    link = [c.key for c in page.table.columns].index("link")
+    assert header.isSectionHidden(link)
+    {a.text(): a for a in page.column_menu().actions()}["Link"].setChecked(True)
+    assert not header.isSectionHidden(link)
+    assert header.sectionSize(link) >= COLUMN_WIDTH
+    assert _shown(page)[-1] == "Link"  # and in the list
+    {a.text(): a for a in page.column_menu().actions()}["Link"].setChecked(False)
+    assert header.isSectionHidden(link)
 
 
 def test_columns_move_in_the_list_and_the_tree(qtbot: QtBot, session: KeepSession) -> None:
@@ -196,7 +200,8 @@ def test_columns_move_in_the_list_and_the_tree(qtbot: QtBot, session: KeepSessio
     table.moveSection(table.visualIndex(series), table.visualIndex(authors))  # as a drag does
     shown = [i for i in range(table.count()) if not table.isSectionHidden(i)]
     order = sorted(shown, key=table.visualIndex)
-    assert [page.table.columns[i].label for i in order] == ["Title", "Series", "Author"]
+    labels = [page.table.columns[i].label for i in order]
+    assert labels == ["Title", "Series", "Author", "Description"]
     assert tree.visualIndex(series) < tree.visualIndex(authors)  # the tree follows
     tree.moveSection(tree.visualIndex(authors), tree.visualIndex(series))  # and back
     assert table.visualIndex(authors) < table.visualIndex(series)

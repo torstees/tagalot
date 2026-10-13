@@ -511,6 +511,8 @@ class Preview:
     """Its card fields, in declaration order."""
     file: str | None
     """Its primary file: the root's name, then the path inside it."""
+    description: str | None = None
+    """Its type's description field (``description_field``), if it has one and it's set."""
 
 
 def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Preview | None:
@@ -524,16 +526,21 @@ def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Previ
         return Preview(entity_id, row.type, row.title, (), None)
     entity = table.entity
     shown = [f for f in entity_fields(entity) if f.spec.card]
+    described = entity.description_field
     facts: tuple[FieldRow, ...] = ()
-    if shown:
+    description = None
+    if shown or described:
+        names = [f.name for f in shown] + ([described] if described else [])
         values = conn.execute(
-            select(*(table.table.c[f.name] for f in shown)).where(table.table.c.id == entity_id)
+            select(*(table.table.c[n] for n in names)).where(table.table.c.id == entity_id)
         ).first()
         if values is not None:
             facts = tuple(
                 FieldRow(f.name, f.spec.label, values[i], display=f.spec.display)
                 for i, f in enumerate(shown)
             )
+            if described and values[-1]:
+                description = str(values[-1])
     primary = next((r for r in entity.roles if r.primary), None)
     file = None
     if primary is not None:
@@ -547,4 +554,4 @@ def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Previ
         ).first()
         if found is not None:
             file = f"{found.name} {PATH_MARK} {found.relpath}" if found.relpath else found.name
-    return Preview(entity_id, entity_label(entity), row.title, facts, file)
+    return Preview(entity_id, entity_label(entity), row.title, facts, file, description)
