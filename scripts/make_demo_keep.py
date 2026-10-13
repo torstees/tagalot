@@ -874,8 +874,14 @@ BOOK_MARKDOWN = {
         "---\n"
         "# Arc 1: Good Morning Brother\n\nZorian's eyes abruptly shot open…\n"
     ),
-    "Loose/A Short Story.md": "Written on a train.\n\n"
-    "# The Lighthouse Keeper\n\nIt was a dark night.\n",
+    "Loose/A Short Story.md": (
+        "---\n"
+        "status: first draft\n"
+        "written: 2024-05-01\n"
+        "cssclasses: wide\n"
+        "---\n"
+        "Written on a train.\n\n# The Lighthouse Keeper\n\nIt was a dark night.\n"
+    ),
     "Royal Road/The Wandering Inn 01.md": (
         "---\n"
         "title: The Wandering Inn\n"
@@ -886,8 +892,9 @@ BOOK_MARKDOWN = {
         "# Volume 1\n\nThe inn was empty.\n"
     ),
 }
-"""Markdown books for the books demo: one with YAML front matter, one titled by its heading,
-and one whose cover is in an assets folder (#418)."""
+"""Markdown books for the books demo: one with YAML front matter, one titled by its heading
+whose other keys are Extra fields (#410; ``cssclasses`` is ignored), and one whose cover is
+in an assets folder (#418)."""
 
 BOOK_TAGS = {
     ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)

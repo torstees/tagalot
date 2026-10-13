@@ -13,6 +13,7 @@ from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import fts
+from tagalot.core.extra_keys import EXTRA
 from tagalot.core.ingest import TITLE, theme_text_source
 from tagalot.core.models import (
     Entity,
@@ -22,7 +23,6 @@ from tagalot.core.models import (
     NoteKeyRemoval,
     utcnow,
 )
-from tagalot.core.notes import EXTRA
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import FieldInfo, entity_label
 

@@ -29,6 +29,7 @@ from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, EXTRA, RESERVED_PREFIX, as_text
 from tagalot.core.ingest import TITLE, IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -54,14 +55,8 @@ logger = logging.getLogger(__name__)
 NOTE_EXTENSIONS = (".md", ".markdown")
 NOTE_NAMES = ("index", "readme")
 """A folder's note is named after the folder, else one of these, in this order."""
-DEFAULT_IGNORED_KEYS = frozenset({"cssclasses", "cssclass", "publish", "permalink", "position"})
-"""Keys editors add for themselves, never Extra fields (§9 *Notes*: built-in defaults)."""
-RESERVED_PREFIX = "tagalot-"
-"""Keys Tagalot reads itself (``tagalot-type``): never Extra fields."""
 MAX_NOTE = 1024 * 1024
 """Bytes of a note read; the rest of a longer one is left out."""
-EXTRA = "extra:"
-"""Provenance rows for an Extra field are named ``extra:<name>``."""
 
 
 def note_rank(relpath: str) -> int | None:
@@ -151,24 +146,6 @@ def map_note(
         elif (text := as_text(value)) is not None:
             found.extra[key] = text
     return found
-
-
-def as_text(value: Any) -> str | None:
-    """A front-matter value as an Extra field's text: lists joined with ``, ``, dates as
-    ``YYYY-MM-DD`` (and times as ``HH:MM``), yes/no as ``true``/``false``; ``None`` for a
-    table of keys, which isn't kept."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, datetime.datetime):
-        return value.strftime("%Y-%m-%d %H:%M")
-    if isinstance(value, datetime.date):
-        return value.isoformat()
-    if isinstance(value, int | float | str):
-        return " ".join(str(value).split()) or None
-    if isinstance(value, list | tuple):
-        parts = [t for item in value if (t := as_text(item)) is not None]
-        return ", ".join(parts) or None
-    return None
 
 
 def convert(value: Any, kind: type) -> Any:
@@ -358,7 +335,8 @@ def apply_note(
         conn.execute(update(table).where(table.c.id == entity.id).values(**writes))
         changed = True
 
-    # Extra fields: the note's, unless the user removed or edited them.
+    # Extra fields: the note's, unless the user removed or edited them, or the item's own
+    # file gives the key (#410: the file wins, as for fields).
     extras = dict(extra or {})
     removed = set(
         conn.scalars(select(NoteKeyRemoval.key).where(NoteKeyRemoval.entity_id == entity.id))
@@ -367,7 +345,10 @@ def apply_note(
         name[len(EXTRA) :]: source for name, source in sources.items() if name.startswith(EXTRA)
     }
     for name, text in given.extra.items():
-        if name.casefold() in removed or theirs.get(name) == FieldSource.USER:
+        if name.casefold() in removed or theirs.get(name) in (
+            FieldSource.USER,
+            FieldSource.EXTRACTED,
+        ):
             continue
         if name in extras and name not in theirs:
             continue  # the user's own field of that name

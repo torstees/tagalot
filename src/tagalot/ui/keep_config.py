@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.contents import ContentsStats
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
 from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig
 from tagalot.core.keep_settings import (
@@ -59,7 +60,6 @@ from tagalot.core.keep_settings import (
     with_option,
 )
 from tagalot.core.note_keys import NoteKeyError, check_key
-from tagalot.core.notes import DEFAULT_IGNORED_KEYS
 from tagalot.core.online import consent_text
 from tagalot.core.root_admin import (
     RemovalCounts,

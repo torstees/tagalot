@@ -508,6 +508,16 @@ DESCRIPTION_KEYS = ("description", "summary", "synopsis", "blurb", "abstract")
 given winning (#409)."""
 
 
+FRONT_MATTER_READ = frozenset(
+    {
+        "title", "authors", "author", "series", "series_index", "number", "series_number",
+        "universe", "tags", "keywords", "source", "url", "link", "year", "date", "publisher",
+        "language", "lang", *DESCRIPTION_KEYS, "cover", "image", "assets",
+    }
+)  # fmt: skip
+"""The keys :func:`read_front_matter` reads (case-folded); the rest are its ``other``."""
+
+
 def _scalar_year(value: Any) -> int | None:
     if isinstance(value, datetime.date):  # a datetime is a date too
         return value.year
@@ -527,8 +537,10 @@ def read_front_matter(path: str) -> dict[str, Any]:
     address); ``year`` (``year``, else ``date``); ``publisher``; ``language`` (or
     ``lang``); ``description`` (or ``summary``, ``synopsis``, ``blurb``, ``abstract``);
     ``cover`` (a picture's path, as written, relative to the file); ``assets`` (the folder
-    its pictures may be in instead, as written, #418); and ``fields``, every
-    key and value as written, for a theme's own keys. Keys are matched ignoring case. A file
+    its pictures may be in instead, as written, #418); ``fields``, every
+    key and value as written, for a theme's own keys; and ``other``, the keys and values
+    of ``fields`` it didn't read (:data:`FRONT_MATTER_READ`), for :meth:`IngestContext.extra`
+    (#410). Keys are matched ignoring case. A file
     without front matter gives just its heading. Raises ``ValueError`` for front matter
     that doesn't parse.
     """
@@ -572,6 +584,7 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "cover": words("cover", "image"),
         "assets": words("assets"),
         "fields": fields,
+        "other": {k: v for k, v in fields.items() if k.strip().casefold() not in FRONT_MATTER_READ},
     }
 
 

@@ -349,6 +349,9 @@ def _ingest_pending(
     Notes are kept from a theme that doesn't take Markdown, and from every theme once they
     are an item's note.
     """
+    if reread_notes and note_ignore_keys is not None:
+        # Before the files: other ignored keys read Markdown files again too (#410).
+        writer.run(partial(sync_ignored, keys=note_ignore_keys))
     with reader.connect() as conn:
         rows = conn.execute(
             select(
@@ -380,8 +383,6 @@ def _ingest_pending(
     if not reread_notes:
         return
     say(f"Looking for notes in {root.name}…")
-    if note_ignore_keys is not None:
-        writer.run(partial(sync_ignored, keys=note_ignore_keys))
     changes, problems = read_notes(reader, schema, root.id, path)
     report.ingest_warnings += problems
     if not changes:

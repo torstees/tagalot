@@ -1,4 +1,5 @@
-"""Front-matter keys that notes never make Extra fields (DESIGN.md §9 *Notes*, #381).
+"""Front-matter keys that notes, and Markdown files' own front matter (#410), never make
+Extra fields (DESIGN.md §9 *Notes*, #381).
 
 Three lists apply together (:func:`ignored_keys`): the built-in defaults, the user's
 (``settings.toml``, every keep), and the keep's (``keep.toml``). Keys are compared ignoring
@@ -9,7 +10,7 @@ case; ``tagalot-…`` keys are Tagalot's own and can't be ignored.
   again, which drops the Extra fields of keys now ignored and brings back those of keys no
   longer ignored.
 - **From an item's page** (:func:`ignore_note_key`): ignoring a key at once removes the
-  Extra fields that notes gave under it, in every item (one undo step,
+  Extra fields that notes and files gave under it, in every item (one undo step,
   :func:`restore_note_key`); fields the user added or edited stay.
 """
 
@@ -20,6 +21,7 @@ from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import fts
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, EXTRA, RESERVED_PREFIX
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.models import (
     Entity,
@@ -27,9 +29,10 @@ from tagalot.core.models import (
     FieldProvenance,
     FieldSource,
     NoteIgnoredKey,
+    Resource,
     utcnow,
 )
-from tagalot.core.notes import DEFAULT_IGNORED_KEYS, EXTRA, RESERVED_PREFIX
+from tagalot.core.notes import NOTE_EXTENSIONS
 from tagalot.core.theme_schema import ThemeSchema
 
 
@@ -64,11 +67,17 @@ def with_key(keys: Iterable[str], key: str, ignored: bool) -> list[str]:
 
 def sync_ignored(conn: Connection, keys: frozenset[str]) -> bool:
     """Remember ``keys`` as the ones notes are applied with; when they differ from the last
-    ones, mark every note file to be read again. Returns whether they differed."""
+    ones, mark every note file, and every Markdown file a theme reads (its front matter's
+    Extra fields, #410), to be read again. Returns whether they differed."""
     applied = set(conn.scalars(select(NoteIgnoredKey.key)))
     if applied == keys:
         return False
     conn.execute(update(EntityNote).where(EntityNote.resource_id.is_not(None)).values(size=None))
+    conn.execute(
+        update(Resource)
+        .where(Resource.ext.in_(NOTE_EXTENSIONS), Resource.ingested_at.is_not(None))
+        .values(ingested_at=None)
+    )
     conn.execute(delete(NoteIgnoredKey))
     if keys:
         conn.execute(sqlite_insert(NoteIgnoredKey), [{"key": k} for k in sorted(keys)])
@@ -82,8 +91,9 @@ class NoteKeyChange:
     label: str
     key: str
     """As the user listed it."""
-    removed: tuple[tuple[int, str, str], ...]
-    """``(entity, Extra field name, value)``: the notes' fields it removed."""
+    removed: tuple[tuple[int, str, str, FieldSource], ...]
+    """``(entity, Extra field name, value, provenance)``: the fields notes and files gave
+    that it removed."""
     listed: bool = False
     """The keep's list had the key already, so undoing leaves it there."""
 
@@ -91,24 +101,26 @@ class NoteKeyChange:
 def ignore_note_key(
     conn: Connection, schema: ThemeSchema, key: str, *, listed: bool = False
 ) -> NoteKeyChange:
-    """Ignore ``key`` in every note: remove the Extra fields notes gave under it (a DB
-    writer job). The caller adds it to ``keep.toml``."""
+    """Ignore ``key`` in every note and file: remove the Extra fields notes and files gave
+    under it (a DB writer job). The caller adds it to ``keep.toml``."""
     key = check_key(key)
     folded = key.casefold()
     found = conn.execute(
-        select(FieldProvenance.entity_id, FieldProvenance.field, Entity.extra)
+        select(
+            FieldProvenance.entity_id, FieldProvenance.field, FieldProvenance.source, Entity.extra
+        )
         .join(Entity, Entity.id == FieldProvenance.entity_id)
         .where(
             FieldProvenance.field.startswith(EXTRA, autoescape=True),
-            FieldProvenance.source == FieldSource.NOTE,
+            FieldProvenance.source.in_([FieldSource.NOTE, FieldSource.EXTRACTED]),
         )
     ).all()
     removed = tuple(
-        (entity_id, name, str(extra[name]))
-        for entity_id, field_name, extra in found
+        (entity_id, name, str(extra[name]), source)
+        for entity_id, field_name, source, extra in found
         if (name := field_name[len(EXTRA) :]).casefold() == folded and name in (extra or {})
     )
-    items = len({entity_id for entity_id, _, _ in removed})
+    items = len({entity_id for entity_id, _, _, _ in removed})
     label = f"Ignore {key!r} in every note" + (
         f" ({items} item{'s' if items != 1 else ''})" if items else ""
     )
@@ -123,8 +135,10 @@ def restore_note_key(
     """Remove the fields again (``forward``) or put them back, with their provenance, and
     remember the key as applied or not. Items deleted since are left out."""
     by_entity: dict[int, dict[str, str]] = {}
-    for entity_id, name, value in change.removed:
+    sources: dict[tuple[int, str], FieldSource] = {}
+    for entity_id, name, value, source in change.removed:
         by_entity.setdefault(entity_id, {})[name] = value
+        sources[entity_id, name] = source
     rows = conn.execute(select(Entity.id, Entity.extra).where(Entity.id.in_(by_entity))).all()
     for entity_id, extra in rows:
         fields = by_entity[entity_id]
@@ -150,7 +164,7 @@ def restore_note_key(
                     {
                         "entity_id": entity_id,
                         "field": EXTRA + n,
-                        "source": FieldSource.NOTE,
+                        "source": sources[entity_id, n],
                         "updated_at": utcnow(),
                     }
                     for n in fields

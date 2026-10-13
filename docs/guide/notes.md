@@ -76,6 +76,8 @@ Extra fields that came from the note are marked **• from the note**, and scans
 
 Each is one step you can undo.
 
+A Markdown book's own front matter gives Extra fields the same way, marked **• from the file** ([Books](../themes/books.md)). Edit, remove, and ignore them as above. When a book's file and its note give the same key, the file's value wins.
+
 ## Typing a note in Tagalot
 
 An item without a note file shows **Add a note** under its name. Click it, type (Markdown works: `**bold**`, lists, links), and press **Ctrl+Enter** or click away to save. **Esc** cancels; **Enter** starts a new line. The note is shown like a note file's, and **Search all** finds its words.
@@ -121,4 +123,4 @@ Some keys are housekeeping for your Markdown editor, not details of the item. Ke
 - **In this keep:** saved with the keep (in `keep.toml`), so they go where the keep goes.
 - **In all your keeps:** saved for you on this computer (in `settings.toml`).
 
-Edit the last two in [Keep configuration → Notes](keep-configuration.md#notes), one key per line; case doesn't matter. A change applies at the next scan (**F5**), which reads the notes again: a key you stop ignoring comes back as an Extra field. Keys starting with `tagalot-` are Tagalot's own and can't be ignored.
+Edit the last two in [Keep configuration → Notes](keep-configuration.md#notes), one key per line; case doesn't matter. A change applies at the next scan (**F5**), which reads the notes (and Markdown files' front matter) again: a key you stop ignoring comes back as an Extra field. Keys starting with `tagalot-` are Tagalot's own and can't be ignored.
