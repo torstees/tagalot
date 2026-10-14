@@ -196,6 +196,10 @@ class EntityResource(Base):
     """Made by hand (#243). Themes don't see it from the file's side (``entities_of``),
     can't unlink it, and can't displace it in a one-file role; it counts as the item's
     file everywhere else."""
+    by_folder: Mapped[bool] = mapped_column(default=False, server_default="0")
+    """Made by the core from a gallery role's ``folders`` (#387, ``core.gallery_fill``):
+    scans add and remove these as pictures come and go. Themes don't see it from the
+    file's side; a theme linking the same file in the role makes the link its own."""
 
 
 class EntityContains(Base):

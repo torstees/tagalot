@@ -62,7 +62,11 @@ _NEW_ENTITY = insert(_ENTITY)
 _LINKED_TO = (
     select(_ENTITY.c.id, _ENTITY.c.type)
     .join(_LINKS, _LINKS.c.entity_id == _ENTITY.c.id)
-    .where(_LINKS.c.resource_id == bindparam("resource"), _LINKS.c.by_user.is_(False))
+    .where(
+        _LINKS.c.resource_id == bindparam("resource"),
+        _LINKS.c.by_user.is_(False),
+        _LINKS.c.by_folder.is_(False),  # the core's, from a gallery's folders (#387)
+    )
     .distinct()
     .order_by(_ENTITY.c.id)
 )
@@ -70,7 +74,7 @@ _LINKED_TO_IN_ROLE = _LINKED_TO.where(_LINKS.c.role == bindparam("role"))
 _link = sqlite_insert(_LINKS)
 _LINK = _link.on_conflict_do_update(
     index_elements=["entity_id", "resource_id", "role"],
-    set_={"sort_order": _link.excluded.sort_order},
+    set_={"sort_order": _link.excluded.sort_order, "by_folder": False},  # the theme's now
 )
 _mark = sqlite_insert(_PROVENANCE)
 _MARK_EXTRACTED = _mark.on_conflict_do_update(
