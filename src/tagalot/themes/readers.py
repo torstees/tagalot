@@ -496,6 +496,102 @@ def _front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
     return data, body
 
 
+def front_matter_problems(text: str) -> list[str]:
+    """What is wrong with a Markdown text's front matter, for people (#438): a key given
+    twice (or twice in different case, which Tagalot reads as one key), with its lines, the
+    last value being the one used; or front matter that doesn't parse. Line numbers count
+    the file's lines. Not part of the theme API."""
+    lines = text.split("\n")
+    marker = lines[0].strip() if lines else ""
+    if marker not in ("---", "+++"):
+        return []
+    ends = ("---", "...") if marker == "---" else ("+++",)
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() in ends), None)
+    if end is None:
+        return []
+    block = "\n".join(lines[1:end])
+    if marker == "+++":
+        try:
+            data = tomllib.loads(block)
+        except tomllib.TOMLDecodeError as e:
+            return [f"The TOML front matter doesn't parse: {e}"]
+        return _case_twins(data)
+    import yaml
+
+    found: list[str] = []
+
+    class Checking(yaml.SafeLoader):
+        """Notes keys a mapping gives twice, ignoring case, as Tagalot reads them."""
+
+        def construct_mapping(self, node: Any, deep: bool = False) -> Any:
+            if isinstance(node, yaml.MappingNode):
+                found.extend(_twice(self, node))
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        yaml.load(block, Loader=Checking)
+    except yaml.YAMLError as e:
+        return [f"The YAML front matter doesn't parse: {_yaml_problem(e)}"]
+    return found
+
+
+def _twice(loader: Any, node: Any) -> list[str]:
+    import yaml
+
+    seen: dict[str, list[tuple[str, int, Any]]] = {}
+    for key_node, value_node in node.value:
+        if not isinstance(key_node, yaml.ScalarNode):
+            continue
+        key = str(loader.construct_scalar(key_node))
+        line = key_node.start_mark.line + 2  # the block starts on the file's second line
+        seen.setdefault(key.strip().casefold(), []).append((key, line, value_node))
+    problems = []
+    for given in seen.values():
+        if len(given) < 2:
+            continue
+        names = list(dict.fromkeys(key for key, _, _ in given))
+        lines = [line for _, line, _ in given]
+        where = _and([str(n) for n in lines])
+        last = given[-1][2]
+        value = (
+            f"the last, {last.value!r}, is used"
+            if isinstance(last, yaml.ScalarNode)
+            else "the last is used"
+        )
+        if len(names) == 1:
+            times = "twice" if len(given) == 2 else f"{len(given)} times"
+            problems.append(f"`{names[0]}` is given {times} (lines {where}); {value}.")
+        else:
+            keys = _and([f"`{n}`" for n in names])
+            problems.append(f"{keys} are one key to Tagalot (lines {where}); {value}.")
+    return problems
+
+
+def _case_twins(data: dict[str, Any]) -> list[str]:
+    """TOML keys that differ only in case (TOML itself refuses a key given twice)."""
+    seen: dict[str, list[str]] = {}
+    for key in data:
+        seen.setdefault(str(key).strip().casefold(), []).append(str(key))
+    return [
+        f"{_and([f'`{k}`' for k in keys])} are one key to Tagalot; the last is used."
+        for keys in seen.values()
+        if len(keys) > 1
+    ]
+
+
+def _and(words: list[str]) -> str:
+    if len(words) <= 2:
+        return " and ".join(words)
+    return ", ".join(words[:-1]) + ", and " + words[-1]
+
+
+def _yaml_problem(error: Exception) -> str:
+    """A YAML error in a line: what's wrong, and where in the file."""
+    problem = getattr(error, "problem", None) or str(error).splitlines()[0]
+    mark = getattr(error, "problem_mark", None)
+    return f"{problem} (line {mark.line + 2})" if mark is not None else str(problem)
+
+
 def split_front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
     """A Markdown text's front matter, parsed (``None`` when it has none), and the text
     after it; ``ValueError`` for front matter that doesn't parse. For the core's notes

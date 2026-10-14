@@ -914,8 +914,10 @@ BOOK_MARKDOWN = {
     "Loose/Field Notes.md": (
         "---\n"
         "title: Field Notes\n"
+        "year: 2019\n"
         "author: Ada Moss\n"
         "cover: field-notes.jpg\n"
+        "year: 2021\n"  # given twice: Triage → Markdown lists it (#438)
         "---\n"
         "# Field Notes\n\nBirds seen from the kitchen window.\n"
     ),
@@ -932,7 +934,7 @@ BOOK_MARKDOWN = {
 """Markdown books for the books demo: one with YAML front matter, one titled by its heading
 whose other keys are Extra fields (#410; ``cssclasses`` is ignored) and whose cover isn't
 there, one whose cover is in an assets folder (#418), and one whose cover is damaged (both
-listed in Triage's Pictures, #426)."""
+listed in Triage's Pictures, #426) and which gives ``year`` twice (Triage → Markdown, #438)."""
 
 BOOK_TAGS = {
     ("Genre", "Fantasy"): [],  # given by the books' own subjects (file keywords)

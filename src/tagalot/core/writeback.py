@@ -49,6 +49,7 @@ from tagalot.core.roots import local_path
 from tagalot.core.tags import TagTree
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.themes.api import EntityRef, Record, split_keywords
+from tagalot.themes.readers import front_matter_problems
 
 logger = logging.getLogger(__name__)
 
@@ -115,10 +116,15 @@ def read_block(style: str | None, block: str) -> dict[str, Any]:
             return tomllib.loads(block)
         except tomllib.TOMLDecodeError as e:
             raise WriteBackError(f"its TOML front matter doesn't parse: {e}") from e
+    from ruamel.yaml.constructor import DuplicateKeyError
     from ruamel.yaml.error import YAMLError
 
     try:
         data = _yaml().load(block)
+    except DuplicateKeyError as e:  # said plainly, as Triage → Markdown says it (#438)
+        found = front_matter_problems(f"---\n{block}\n---\n")
+        why = found[0] if found else "A key is given twice."
+        raise WriteBackError(f"its front matter gives a key twice: {why} Remove one first") from e
     except YAMLError as e:
         raise WriteBackError(f"its YAML front matter doesn't parse: {e}") from e
     if data is None:

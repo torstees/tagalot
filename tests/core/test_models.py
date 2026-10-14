@@ -58,6 +58,7 @@ CORE_TABLES = {
     "file_not_found",
     "picture_failure",
     "picture_ignore",
+    "markdown_problem",
     "schema_version",
 }
 FTS_TABLES = {

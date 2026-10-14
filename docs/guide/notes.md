@@ -33,7 +33,7 @@ Notes/
 - **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.
 
-Notes that match no item, or several, and notes for an item that already has a note, are listed in [Triage → Notes](triage.md#notes). A new item finds a note that was already there at the next scan, so you can write notes before their items appear.
+Notes that match no item, or several, and notes for an item that already has a note, are listed in [Triage → Markdown](triage.md#markdown), as is any Markdown file whose front matter gives a key twice or doesn't parse. A new item finds a note that was already there at the next scan, so you can write notes before their items appear.
 
 ## What a note gives
 

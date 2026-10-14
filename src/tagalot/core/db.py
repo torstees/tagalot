@@ -241,6 +241,18 @@ def _v20_folder_links(conn: Connection) -> None:
     )
 
 
+def _v21_markdown_problems(conn: Connection) -> None:
+    """Format 22: what is wrong with Markdown files' front matter (#438). Markdown files
+    are read again at the next scan, so the problems they already have are found."""
+    Base.metadata.tables["markdown_problem"].create(conn)
+    conn.execute(
+        text(
+            "UPDATE resource SET ingested_at = NULL "
+            "WHERE kind = 'file' AND ext IN ('.md', '.markdown')"
+        )
+    )
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -262,6 +274,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     18: _v18_picture_problems,
     19: _v19_picture_ignore,
     20: _v20_folder_links,
+    21: _v21_markdown_problems,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

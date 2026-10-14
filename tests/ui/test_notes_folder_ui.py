@@ -17,7 +17,7 @@ from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
-from tagalot.ui.triage import NOTES_TAB, TriagePage
+from tagalot.ui.triage import MARKDOWN_TAB, TriagePage
 from tagalot.ui.workers import ScanController
 from tests.ui.test_contents_search import SCRIPT, _open
 
@@ -115,8 +115,8 @@ def test_notes_on_pages_and_in_triage(
     window.navigation.select(NavTarget("triage", label="Triage"))
     triage = window.stack.currentWidget()
     assert isinstance(triage, TriagePage)
-    qtbot.waitUntil(lambda: triage.tabs.tabText(NOTES_TAB) == "Notes (1)", timeout=5000)
-    triage.tabs.setCurrentIndex(NOTES_TAB)
+    qtbot.waitUntil(lambda: triage.tabs.tabText(MARKDOWN_TAB) == "Markdown (1)", timeout=5000)
+    triage.tabs.setCurrentIndex(MARKDOWN_TAB)
     assert [n.relpath for n in triage.notes.notes] == ["Notes/Nobody.md"]
     assert triage.notes.data(triage.notes.index(0, 1)) == (
         "No item has this title or one of its aliases"
