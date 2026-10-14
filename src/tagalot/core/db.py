@@ -234,6 +234,13 @@ def _v19_picture_ignore(conn: Connection) -> None:
     Base.metadata.tables["picture_ignore"].create(conn, checkfirst=True)
 
 
+def _v20_folder_links(conn: Connection) -> None:
+    """Format 21: links the core makes from a gallery role's folders (#387)."""
+    conn.execute(
+        text("ALTER TABLE entity_resource ADD COLUMN by_folder BOOLEAN NOT NULL DEFAULT 0")
+    )
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -254,6 +261,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     17: _v17_tag_icons,
     18: _v18_picture_problems,
     19: _v19_picture_ignore,
+    20: _v20_folder_links,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 13
+API_VERSION = 14
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -37,7 +37,8 @@ their text in :func:`read_document_text`); version 8 added notes
 version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 :func:`read_front_matter`'s ``other``); version 12 added descriptions
 (:attr:`Entity.description_field`); version 13 added reporting files not found
-(:meth:`IngestContext.not_found`)."""
+(:meth:`IngestContext.not_found`); version 14 added gallery roles filled from folders
+(:func:`role`'s ``gallery`` and ``folders``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -201,6 +202,11 @@ class Role:
     thumbnail: bool = False
     """Tried early when resolving the entity's thumbnail."""
     label: str | None = None
+    gallery: bool = False
+    """Pictures that belong to the item, shown as a gallery (API version 14)."""
+    folders: tuple[str, ...] = ()
+    """Subfolders of the item's folder the core fills a gallery role from (API version
+    14)."""
 
 
 def role(
@@ -211,8 +217,21 @@ def role(
     primary: bool = False,
     thumbnail: bool = False,
     label: str | None = None,
+    gallery: bool = False,
+    folders: Iterable[str] = (),
 ) -> Role:
-    """Declare a role: ``role("poster", kinds={"image"}, thumbnail=True)``."""
+    """Declare a role: ``role("poster", kinds={"image"}, thumbnail=True)``.
+
+    A **gallery** role (``gallery=True``, which needs ``many=True`` and the ``image``
+    kind, with ``archive`` too to take archives) holds pictures that belong to the item:
+    a movie's screenshots, an album's scanned booklet. With ``folders=("Screenshots",
+    "Screens")`` the core fills it (DESIGN.md §9 *Galleries*, API version 14): every
+    picture (and, with the ``archive`` kind, archive) under those subfolders of the item's
+    folder, at any depth, and archives of those names beside them (``Screenshots.zip``).
+    The item's folder is its primary role's folder, else the folder of its primary file.
+    Names are compared ignoring case. Scans add and remove these links as pictures come
+    and go; your theme's own links in the role, and the user's, stay.
+    """
     try:
         parsed = frozenset(Kind(k) for k in kinds)
     except ValueError as e:
@@ -220,7 +239,18 @@ def role(
         raise ThemeDeclarationError(f"role {name!r}: {e}; kinds are {allowed}") from None
     if not parsed:
         raise ThemeDeclarationError(f"role {name!r} needs at least one kind")
-    return Role(name, parsed, many=many, primary=primary, thumbnail=thumbnail, label=label)
+    if isinstance(folders, str):
+        folders = (folders,)
+    return Role(
+        name,
+        parsed,
+        many=many,
+        primary=primary,
+        thumbnail=thumbnail,
+        label=label,
+        gallery=gallery,
+        folders=tuple(str(f) for f in folders),
+    )
 
 
 # --- Entities ---

@@ -30,6 +30,7 @@ from tagalot.themes.api import (
     DetailView,
     Entity,
     FieldInfo,
+    Kind,
     OnlineSource,
     RoleImage,
     SearchView,
@@ -254,6 +255,24 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             )
     if described and getattr(theme, "api_version", API_VERSION) < 12:
         problems.append("a theme with description_field must set api_version = 12 (or later)")
+    galleries = False
+    for entity in entities:
+        for gallery in entity.roles:
+            if not (getattr(gallery, "gallery", False) or getattr(gallery, "folders", ())):
+                continue
+            galleries = True
+            where = f"{names[entity]}.{gallery.name}"
+            if gallery.folders and not gallery.gallery:
+                problems.append(f"{where}: folders needs gallery=True")
+            if gallery.gallery and not gallery.many:
+                problems.append(f"{where}: a gallery role needs many=True")
+            if gallery.gallery and Kind.IMAGE not in gallery.kinds:
+                problems.append(f"{where}: a gallery role needs the image kind")
+            bad = [f for f in gallery.folders if not f.strip() or "/" in f or "\\" in f]
+            if bad:
+                problems.append(f"{where}: folders are names, not paths: {bad!r}")
+    if galleries and getattr(theme, "api_version", API_VERSION) < 14:
+        problems.append("a theme with gallery roles must set api_version = 14 (or later)")
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]

@@ -94,6 +94,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 - `primary=True`: the item's main file, the one Open file opens (at most one per type).
 - `thumbnail=True`: tried early for the item's thumbnail.
 - `label`: how the role is titled on the item's page (default: its name, capitalized).
+- `gallery=True` (`api_version = 14`): pictures that belong to the item (a movie's screenshots, an album's scans), shown on its page as a gallery with `Section.gallery(name)`. It needs `many=True` and the `image` kind; add `archive` to take archives, whose pictures the page shows too. With `folders=("Screenshots", "Screens")`, Tagalot fills it for you: every picture under those subfolders of the item's folder (any depth), and archives named like them beside them (`Screenshots.zip`), names compared ignoring case. Scans keep it up to date; your own links in the role, and the user's, stay.
 
 ## Containment and relationships
 
@@ -108,7 +109,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 13             # the theme API it needs
+    api_version = 14             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
