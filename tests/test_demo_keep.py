@@ -8,6 +8,7 @@ from types import ModuleType
 import pytest
 from sqlalchemy import select
 
+from tagalot.core.detail import load_detail
 from tagalot.core.models import Entity
 from tagalot.core.search import count_by_type, run_search
 from tagalot.core.search_spec import SearchSpec
@@ -262,3 +263,35 @@ def _inside(keep_dir: Path, text: str) -> list[str]:
             assert scope is not None
             hits = run_search(conn, spec, session.tag_cache.get(), contents=scope)
     return [h.title for h in hits]
+
+
+def _galleries(session: KeepSession, title: str) -> dict[str, list[str]]:
+    """The item's page's galleries: title -> file names."""
+    with session.reader.connect() as conn:
+        item = conn.scalar(select(Entity.id).where(Entity.title == title))
+        assert item is not None, title
+        detail = load_detail(conn, session.schema, item, session.root_path)
+    assert detail is not None
+    return {
+        s.title: sorted(f.relpath.rpartition("/")[2] for f in s.files)
+        for s in detail.sections
+        if s.kind == "gallery"
+    }
+
+
+def test_the_demos_have_galleries(tmp_path: Path) -> None:
+    """A movie's Screenshots folder and Screens.zip, an actor's photos beside her note, and
+    an album's scans and booklet (#389)."""
+    script = _script()
+    with KeepSession.open(script.make_movies_demo(tmp_path), Settings()) as session:
+        assert _galleries(session, "The Matrix") == {
+            "Screenshots": ["Screens.zip", "lobby 1.jpg", "lobby 2.jpg", "rooftop.jpg"]
+        }
+        assert _galleries(session, "Sigourney Weaver") == {
+            "Photos": ["ripley 1.jpg", "ripley 2.jpg"]
+        }
+        assert _galleries(session, "Al Pacino") == {}  # no photos: no empty gallery
+    with KeepSession.open(script.make_music_demo(tmp_path), Settings()) as session:
+        assert _galleries(session, "Kind of Blue") == {
+            "Scans": ["Booklet.zip", "back.jpg", "front.jpg"]
+        }

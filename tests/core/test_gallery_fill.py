@@ -272,3 +272,57 @@ def test_a_link_already_there_isnt_made_again(env: Env) -> None:
     env.writer.run(lambda conn: conn.execute(update(EntityResource).values(by_folder=False)))
     env.scan()  # nothing changed: the links stay, and aren't duplicated
     assert env.links() == {"Screenshots/a.png": (False, False)}
+
+
+def test_a_shared_folder_fills_no_one_and_pages_show_galleries(tmp_path: Path) -> None:
+    """Loose items side by side share a folder: its named subfolders are no one's (#389).
+    A page without a DetailView lists the type's galleries, but not an empty one."""
+    from tagalot.core.detail import default_detail_view, load_detail
+
+    class Clip(ThemeEntity):
+        roles = [
+            role("video", kinds={"video"}, primary=True),
+            role("stills", kinds={"image"}, many=True, gallery=True, folders=("Stills",)),
+            role("extras", kinds={"image"}, many=True, gallery=True, folders=("Extras",)),
+        ]
+
+    class Clips(Theme):
+        id, name, api_version = "clips", "Clips", 14
+        entities = [Clip]
+
+        def ingest(self, batch: Any, ctx: IngestContext) -> None:
+            for r in batch:
+                if r.ext == ".mp4":
+                    ctx.link(ctx.upsert(Clip, r.relpath, title=r.relpath), r, "video")
+
+    assert [s.name for s in default_detail_view(Clip, False).sections] == [
+        None,
+        "video",
+        "stills",
+        "extras",
+    ]
+    files = tmp_path / "files"
+    for rel in ("Trip/a.mp4", "Trip/b.mp4", "Trip/Stills/x.png", "Solo/c.mp4", "Solo/Stills/y.png"):
+        (files / rel).parent.mkdir(parents=True, exist_ok=True)
+        (files / rel).write_bytes(PNG)
+    keep, engine = open_keep_database(create_keep(tmp_path / "k", "C", ThemeRef("clips", 1)))
+    schema = open_theme(engine, keep, Clips).schema
+    reader = create_keep_engine(keep.db_path, read_only=True)
+    with DbWriter(engine) as writer:
+        root = RootConfig("r", "Clips", str(files))
+        scan_root(writer, reader, root, root.path, theme=Clips, schema=schema)
+        with reader.connect() as conn:
+            stills = conn.execute(
+                select(Entity.title, Resource.relpath)
+                .join(EntityResource, EntityResource.entity_id == Entity.id)
+                .join(Resource, Resource.id == EntityResource.resource_id)
+                .where(EntityResource.role == "stills")
+            ).all()
+            solo = conn.scalar(select(Entity.id).where(Entity.title == "Solo/c.mp4"))
+            assert solo is not None
+            detail = load_detail(conn, schema, solo, lambda root_id: str(files))
+    reader.dispose()
+    engine.dispose()
+    assert [tuple(r) for r in stills] == [("Solo/c.mp4", "Solo/Stills/y.png")]
+    assert detail is not None
+    assert [s.title for s in detail.sections if s.kind == "gallery"] == ["Stills"]  # no Extras

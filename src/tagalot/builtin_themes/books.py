@@ -156,6 +156,8 @@ class Book(Entity):
     roles = [
         role("file", kinds={"any"}, many=True, primary=True, label="Files"),
         role("cover", kinds={"image"}, thumbnail=True),
+        # Covers beside the book's note in the notes folder (#389, §9 *Galleries*).
+        role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers"),
     ]
     card_lines = ("authors", "series")
     description_field = "description"
@@ -228,9 +230,9 @@ class BooksTheme(Theme):
 
     id, name, version = "books", "Books", 6  # 6: covers not found; 5: extra; 4: assets; …
     # 3: synopsis; 2: authors
-    # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
-    # 6: full_text; 5: online
-    api_version = 13
+    # 14: gallery roles; 13: not_found; 12: description_field; 11: extra; 10: TitleCard;
+    # 9: assets; 7: mobi; 6: full_text; 5: online
+    api_version = 14
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -299,6 +301,7 @@ class BooksTheme(Theme):
             [
                 Section.fields(),
                 Section.role("file"),
+                Section.gallery("covers"),
                 Section.related("writers"),
                 Section.related("artists"),
             ],

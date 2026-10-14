@@ -270,6 +270,7 @@ def test_thumbnail_chains() -> None:
     ]
     assert [repr(p) for p in theme.thumbnail_chain(Actor)] == [
         "RoleImage('photo')",
+        "RoleImage('photos')",  # the first of its gallery (#389)
         "TitleCard(aspect=1)",
         "Icon('entity')",
     ]

@@ -537,6 +537,15 @@ def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     (files / "Miles Davis/Kind of Blue/cover.jpg").write_bytes(
         _cover((30, 60, 120), "Kind of Blue")
     )
+    # Its scans (#389): a Scans folder and a booklet's pages in an archive beside it.
+    for name, color in (("front", (30, 60, 120)), ("back", (20, 40, 90))):
+        scan = files / f"Miles Davis/Kind of Blue/Scans/{name}.jpg"
+        scan.parent.mkdir(parents=True, exist_ok=True)
+        scan.write_bytes(_cover(color, f"Kind of Blue: {name}"))
+    _picture_zip(
+        files / "Miles Davis/Kind of Blue/Booklet.zip",
+        {f"page {n}.jpg": ((50 + n * 20, 60, 90), f"Booklet page {n}") for n in (1, 2, 3)},
+    )
     _write_texts(files, MUSIC_NOTES)
 
     create_keep(
@@ -601,6 +610,25 @@ MOVIE_PICTURES = {
     "The Lord of the Rings/The Two Towers (2002)/poster.jpg": ((60, 60, 60), "Two Towers"),
 }
 """Posters and screenshots for the movies demo (The Matrix, Alien, and the rest have none)."""
+
+MOVIE_GALLERIES = {
+    "The.Matrix.1999.1080p/Screenshots/rooftop.jpg": ((30, 70, 40), "The Matrix: rooftop"),
+    "The.Matrix.1999.1080p/Screenshots/Lobby/lobby 1.jpg": ((20, 50, 30), "The Matrix: lobby"),
+    "The.Matrix.1999.1080p/Screenshots/Lobby/lobby 2.jpg": ((40, 80, 50), "The Matrix: lobby"),
+    "Notes/Actors/Sigourney Weaver/ripley 1.jpg": ((80, 70, 60), "Sigourney Weaver"),
+    "Notes/Actors/Sigourney Weaver/ripley 2.jpg": ((60, 70, 80), "Sigourney Weaver"),
+}
+"""Gallery pictures (#389): The Matrix's ``Screenshots`` folder, one at a deeper level, and
+photos beside an actor's note in the notes folder. The Matrix also has ``Screens.zip``
+(:data:`MOVIE_SCREENS_ZIP`)."""
+
+MOVIE_SCREENS_ZIP = {
+    "The.Matrix.1999.1080p/Screens.zip": {
+        "dojo.jpg": ((90, 60, 30), "The Matrix: dojo"),
+        "subway.jpg": ((50, 50, 70), "The Matrix: subway"),
+    }
+}
+"""Archives of screenshots beside a movie's ``Screenshots`` folder, by path: their pictures."""
 
 MOVIE_NFOS = {
     "Inception (2010)/movie.nfo": """<?xml version="1.0" encoding="UTF-8"?>
@@ -1368,6 +1396,12 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: boo
         (files / relpath).write_bytes(_cover(color, text))
     for relpath, text in MOVIE_NFOS.items():
         (files / relpath).write_text(text, encoding="utf-8")
+    for relpath, (color, text) in MOVIE_GALLERIES.items():
+        if notes or not relpath.startswith("Notes/"):
+            (files / relpath).parent.mkdir(parents=True, exist_ok=True)
+            (files / relpath).write_bytes(_cover(color, text))
+    for relpath, pictures in MOVIE_SCREENS_ZIP.items():
+        _picture_zip(files / relpath, pictures)
     photo = files / "Inception (2010)/.actors/Leonardo_DiCaprio.jpg"
     photo.parent.mkdir()
     photo.write_bytes(_cover((110, 90, 70), "Leonardo DiCaprio"))
@@ -1386,6 +1420,14 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: boo
         session.scan_all()
         _tag(session, MOVIE_TAGS, {}, {})
     return keep_dir
+
+
+def _picture_zip(path: Path, pictures: dict[str, tuple[tuple[int, int, int], str]]) -> None:
+    """A zip of demo pictures (a gallery's archive, #389): name -> (color, text)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, (color, text) in pictures.items():
+            archive.writestr(name, _cover(color, text))
 
 
 def _write_texts(files: Path, texts: dict[str, str]) -> None:

@@ -14,6 +14,10 @@ For art packs, game assets, and fonts: **artists** holding **images**, **fonts**
 
 An artist's folder can hold a [note](../guide/notes.md) named after it (`Aurora Studio/Aurora Studio.md`): a friendlier name (`title: Aurora Studio (Reykjavík)`), its `website`, `tags`, anything else as Extra fields, and a description shown on the artist's page.
 
+## Previews
+
+An artist's page has a **Previews** [gallery](../guide/item-pages.md#galleries): the pictures under a `Previews`, `Preview`, or `Samples` folder in its folder, and archives named like them. They're still assets of their own too.
+
 ## Searches
 
 All grids: **Assets** (images, fonts, and archives), **Artists**, **Images**, **Fonts** (by family, then style), and **Archives**. The asset searches inherit tags, so tagging an artist `Pixel art` makes all its assets match `Pixel art`.

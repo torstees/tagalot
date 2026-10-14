@@ -273,7 +273,11 @@ class Actor(Entity):
     born: date | None = field("Date of birth", search="range")
     country: str | None = field("Country", search="choice")
 
-    roles = [role("photo", kinds={"image"}, thumbnail=True)]
+    roles = [
+        role("photo", kinds={"image"}, thumbnail=True),
+        # Photos beside the actor's note in the notes folder (#389, §9 *Galleries*).
+        role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos"),
+    ]
 
 
 class Collection(Entity):
@@ -311,7 +315,14 @@ class Movie(Entity):
     roles = [
         role("video", kinds={"video"}, many=True, primary=True),
         role("poster", kinds={"image"}, thumbnail=True),
-        role("screenshot", kinds={"image"}, many=True),
+        role(
+            "screenshot",
+            kinds={"image", "archive"},
+            many=True,
+            gallery=True,
+            folders=("Screenshots", "Screens", "Stills"),  # at any depth, and their archives
+            label="Screenshots",
+        ),
         role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
@@ -356,9 +367,9 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
-    api_version = 12  # description_field (10: TitleCard; 8: ctx.note; 3: ctx.resource_at)
+    api_version = 14  # gallery roles (12: description_field; 10: TitleCard; 8: ctx.note)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
-    extensions = frozenset(VIDEO | IMAGE | {NFO})
+    extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
     entities = [Actor, Collection, Movie]
     containment = [contains(Collection, Movie)]
@@ -369,7 +380,7 @@ class MoviesTheme(Theme):
         SearchView("Movies", [Movie], inherit_tags=True),
         SearchView("Actors", [Actor]),
         SearchView("Collections", [Collection]),
-        DetailView(Actor, [Section.fields(), Section.related("cast")]),
+        DetailView(Actor, [Section.fields(), Section.gallery("photos"), Section.related("cast")]),
         DetailView(
             Movie,
             [
@@ -390,7 +401,7 @@ class MoviesTheme(Theme):
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
         if entity_type is Actor:
-            return [RoleImage("photo"), TitleCard(aspect=1), Icon("entity")]
+            return [RoleImage("photo"), RoleImage("photos"), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)
 
     # --- prepare (a worker): what the folders around each file say ---

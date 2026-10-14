@@ -154,11 +154,12 @@ MAX_ROWS = 200
 
 def default_detail_view(entity: type[ThemeEntity], is_container: bool) -> DetailView:
     """The page for a type the theme gave no :class:`DetailView`: its fields, its primary
-    role's files, and its contents if it can contain anything."""
+    role's files, its galleries (#389), and its contents if it can contain anything."""
     sections = [Section.fields()]
     primary = next((r for r in entity.roles if r.primary), None)
     if primary is not None:
         sections.append(Section.role(primary.name))
+    sections.extend(Section.gallery(r.name) for r in entity.roles if r.gallery)
     if is_container:
         sections.append(Section.contents())
     return DetailView(entity, sections)
@@ -341,6 +342,8 @@ def _load_section(
                 return None
             title = role.label or (section.name or "").replace("_", " ").capitalize()
             files = role_files(conn, entity_id, role.name, root_path)
+            if section.kind == "gallery" and not files:
+                return None  # no pictures: no empty box on the page (#389)
             return DetailSection(section.kind, title, files=files)
         case "contents":
             count = (

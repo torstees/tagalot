@@ -61,8 +61,8 @@ def test_a_screenshot_opens_from_the_gallery(
     window.open_entity(inception)
     page = window.stack.currentWidget()
     assert isinstance(page, DetailPage)
-    qtbot.waitUntil(lambda: page.findChild(QListWidget, "gallery_Screenshot") is not None)
-    gallery = page.findChild(QListWidget, "gallery_Screenshot")
+    qtbot.waitUntil(lambda: page.findChild(QListWidget, "gallery_Screenshots") is not None)
+    gallery = page.findChild(QListWidget, "gallery_Screenshots")
     assert gallery is not None
     assert [gallery.item(n).text() for n in range(gallery.count())] == [
         "still 1.jpg",
