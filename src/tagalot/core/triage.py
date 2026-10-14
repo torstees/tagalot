@@ -142,8 +142,26 @@ class UnlinkedFile:
     status: ResourceStatus
 
 
-def _unlinked_where() -> list[ColumnElement[bool]]:
+NotesFolder = tuple[str, str] | None
+"""The keep's notes folder: its root id and path (``""``: the whole root), if it has one."""
+
+
+def _outside_notes(notes: NotesFolder) -> list[ColumnElement[bool]]:
+    """Not in the notes folder, whose files aren't content (#382, #388): its notes are
+    listed under Notes, and its pictures are galleries' or nothing."""
+    if notes is None:
+        return []
+    root_id, path = notes
+    if not path:
+        return [Resource.root_id != root_id]
+    folder = path.casefold()
+    inside = func.lower(Resource.relpath).startswith(folder + "/", autoescape=True)
+    return [~and_(Resource.root_id == root_id, inside | (func.lower(Resource.relpath) == folder))]
+
+
+def _unlinked_where(notes: NotesFolder = None) -> list[ColumnElement[bool]]:
     return [
+        *_outside_notes(notes),
         Resource.kind == ResourceKind.FILE,
         Resource.status != ResourceStatus.MISSING,
         Resource.skipped.is_(False),
@@ -156,8 +174,10 @@ def _unlinked_where() -> list[ColumnElement[bool]]:
     ]
 
 
-def unlinked_files(conn: Connection, limit: int | None = None) -> list[UnlinkedFile]:
-    """Files no item uses, by folder and path."""
+def unlinked_files(
+    conn: Connection, limit: int | None = None, notes: NotesFolder = None
+) -> list[UnlinkedFile]:
+    """Files no item uses, by folder and path; not those in the notes folder."""
     query = (
         select(
             Resource.id,
@@ -168,17 +188,16 @@ def unlinked_files(conn: Connection, limit: int | None = None) -> list[UnlinkedF
             Resource.status,
         )
         .join(Root, Root.id == Resource.root_id)
-        .where(*_unlinked_where())
+        .where(*_unlinked_where(notes))
         .order_by(Root.name, Resource.relpath)
         .limit(limit)
     )
     return [UnlinkedFile(*row) for row in conn.execute(query)]
 
 
-def count_unlinked(conn: Connection) -> int:
-    return int(
-        conn.scalar(select(func.count()).select_from(Resource).where(*_unlinked_where())) or 0
-    )
+def count_unlinked(conn: Connection, notes: NotesFolder = None) -> int:
+    query = select(func.count()).select_from(Resource).where(*_unlinked_where(notes))
+    return int(conn.scalar(query) or 0)
 
 
 # --- the notes folder's notes (#382) ---

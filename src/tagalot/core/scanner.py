@@ -14,6 +14,7 @@ from sqlalchemy import Connection, bindparam, delete, exists, insert, select, up
 
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
+from tagalot.themes.api import KIND_EXTENSIONS, Kind
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ def walk_root(
                 elif entry.is_file():
                     ext = os.path.splitext(entry.name)[1].lower()
                     if in_notes(relpath, notes):
-                        if ext not in NOTE_EXTENSIONS:
+                        if ext not in NOTES_FOLDER_EXTENSIONS:
                             continue
                     elif (
                         wanted is not None
@@ -159,6 +160,13 @@ def walk_root(
             except OSError as e:
                 report(relpath, e)
         stack.extend(reversed(subdirs))  # pop in name order: depth-first, sorted
+
+
+NOTES_FOLDER_EXTENSIONS = frozenset(NOTE_EXTENSIONS) | (
+    KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.ARCHIVE]
+)
+"""What the notes folder records: its notes, and the pictures and archives of their
+galleries (#388). None of it is handed to the theme."""
 
 
 def in_notes(relpath: str, notes: str | None) -> bool:
@@ -265,7 +273,7 @@ def walk_scope(
             if any(excluded.match("/".join(parts[:n])) for n in range(1, len(parts) + 1)):
                 return False
         if in_notes(relpath, notes):
-            return kind is ResourceKind.FILE and ext.lower() in NOTE_EXTENSIONS
+            return kind is ResourceKind.FILE and ext.lower() in NOTES_FOLDER_EXTENSIONS
         if kind is ResourceKind.DIR:
             return dirs is True or (callable(dirs) and bool(dirs(relpath)))
         return wanted is None or ext.lower() in wanted or is_folder_note(relpath, dirs)

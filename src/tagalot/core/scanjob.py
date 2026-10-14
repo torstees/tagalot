@@ -22,7 +22,12 @@ from tagalot.core.fingerprint import (
     pending_fingerprints,
     store_fingerprints,
 )
-from tagalot.core.gallery_fill import fill_galleries, gallery_roles
+from tagalot.core.gallery_fill import (
+    fill_galleries,
+    fill_note_galleries,
+    first_galleries,
+    gallery_roles,
+)
 from tagalot.core.ingest import IngestSession, IngestWarning, forget_not_found
 from tagalot.core.keep import RootConfig
 from tagalot.core.models import Resource, ResourceStatus, Root
@@ -382,7 +387,9 @@ def _ingest_pending(
     pending = _read_last(reader, root, path, theme, pending)
     _ingest_files(writer, reader, root, theme, schema, when, report, say, options, pending)
     if gallery_roles(schema):  # gallery roles filled from folders (#387)
-        writer.run(partial(fill_galleries, schema=schema, root_id=root.id))
+        writer.run(
+            partial(fill_galleries, schema=schema, root_id=root.id, notes_folder=notes_folder)
+        )
     if not reread_notes:
         return
     say(f"Looking for notes in {root.name}…")
@@ -509,6 +516,10 @@ def scan_notes_folder(
     report.ingest_warnings += plan.warnings
     again, problems = writer.run(partial(apply_folder_notes, schema=schema, plan=plan))
     report.ingest_warnings += problems
+    if first_galleries(schema):  # the pictures beside a note go to its item (#388)
+        writer.run(
+            partial(fill_note_galleries, schema=schema, root_id=notes_root, notes_path=notes_path)
+        )
     if not again:
         return report
     writer.run(partial(_mark_pending, again))
