@@ -491,20 +491,23 @@ class TriagePage(QWidget):
         session = self.session
 
         known, show_ignored = _known(session), self.show_ignored.isChecked()
+        config = session.keep.config
+        notes = None if config.notes_root is None else (config.notes_root, config.notes_path)
 
         def job() -> Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
                 pictures = picture_problems(conn, known, ignored=show_ignored)
                 counts = Counts(
-                    count_unlinked(conn),
+                    count_unlinked(conn, notes),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
                     count_note_problems(conn),
                     sum(1 for p in pictures if not p.ignored),
                 )
-                return counts, unlinked_files(conn, MAX_FILES), note_problems(conn), pictures
+                files = unlinked_files(conn, MAX_FILES, notes)
+                return counts, files, note_problems(conn), pictures
 
         def done(result: Loaded) -> None:
             if shiboken6.isValid(self):

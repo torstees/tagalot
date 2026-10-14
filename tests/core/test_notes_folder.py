@@ -42,7 +42,10 @@ from tests.core.test_keep_toml import _config
 
 
 class Studio(ThemeEntity):
-    roles = [role("folder", kinds={"dir"}, primary=True)]
+    roles = [
+        role("folder", kinds={"dir"}, primary=True),
+        role("stills", kinds={"image"}, many=True, gallery=True, folders=("Stills",)),
+    ]
 
 
 class Clip(ThemeEntity):
@@ -51,6 +54,7 @@ class Clip(ThemeEntity):
 
 class Actor(ThemeEntity):
     born: int | None = field("Born")
+    roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True)]
 
 
 class Cast(Theme):
@@ -197,7 +201,10 @@ def test_the_notes_folder_is_read_only_for_notes(env: Env) -> None:
     assert not [p for p in Cast.seen if p.startswith("Notes")]  # nothing reaches the theme
     with env.reader.connect() as conn:
         recorded = set(conn.scalars(select(Resource.relpath)))
-    assert {p for p in recorded if p.startswith("Notes")} == {"Notes/Actors/Al Pacino.md"}
+    assert {p for p in recorded if p.startswith("Notes")} == {
+        "Notes/Actors/Al Pacino.md",
+        "Notes/Actors/pacino.png",  # a gallery's, maybe (#388); never content
+    }
     pacino = env.item("Al Pacino")
     assert pacino["born"] == 1940
     assert pacino["extra"] == {"award": "Oscar"}
