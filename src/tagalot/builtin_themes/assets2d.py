@@ -76,7 +76,17 @@ class Artist(Entity):
     folder: str | None = field("Folder", editable=False)
     """The artist folder's name, as its assets' ``artist`` says it (the title may be the
     note's friendlier name)."""
-    roles = [role("folder", kinds={"dir"}, primary=True)]
+    roles = [
+        role("folder", kinds={"dir"}, primary=True),
+        role(
+            "previews",
+            kinds={"image", "archive"},
+            many=True,
+            gallery=True,
+            folders=("Previews", "Preview", "Samples"),
+            label="Previews",
+        ),
+    ]
 
 
 class _Asset(Entity):

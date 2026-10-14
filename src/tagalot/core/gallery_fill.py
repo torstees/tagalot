@@ -7,7 +7,8 @@ ingested, :func:`fill_galleries` links to each item of the type, in that role, e
 picture (and, when the role takes archives, every archive) under those subfolders of the
 item's folder, at any depth, and the archives of those names beside them
 (``Screenshots.zip``). Names are compared ignoring case. The item's folder is its primary
-role's folder, else the folder of its primary file.
+role's folder, else the folder of its primary file; a folder several items of the type
+share (loose movies side by side) fills none of them.
 
 **The notes folder.** A folder or archive named like a notes-folder note, beside it
 (``Notes/Actors/Keanu Reeves/``, ``Keanu Reeves.zip``), fills the first gallery role of the
@@ -24,6 +25,7 @@ offline root aren't looked at: no scan runs.
 """
 
 import posixpath
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -106,7 +108,8 @@ def fill_galleries(
 
 
 def _folders(conn: Connection, gallery: _Gallery, root_id: str) -> dict[int, str]:
-    """Each item of the type with its primary file in this root: its folder."""
+    """Each item of the type with its primary file in this root: its folder, when no other
+    item of the type has the same one."""
     assert gallery.primary is not None
     rows = conn.execute(
         select(EntityResource.entity_id, Resource.relpath, Resource.kind)
@@ -124,7 +127,10 @@ def _folders(conn: Connection, gallery: _Gallery, root_id: str) -> dict[int, str
     for entity_id, relpath, kind in rows:
         if entity_id not in folders:
             folders[entity_id] = relpath if kind is ResourceKind.DIR else posixpath.dirname(relpath)
-    return folders
+    # A folder several items share (loose movies side by side) is no one's: its named
+    # subfolders can't be told apart (#389).
+    shared = Counter(f.casefold() for f in folders.values())
+    return {e: f for e, f in folders.items() if shared[f.casefold()] == 1}
 
 
 def _files(conn: Connection, root_id: str, folder: str) -> Iterable[tuple[int, str, str]]:

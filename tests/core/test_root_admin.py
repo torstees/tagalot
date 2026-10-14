@@ -234,8 +234,8 @@ def test_stop_watching_keeps_everything_and_watching_again_reconnects(
     assert (status.online, status.last_error, status.offline) == (
         False,
         "Not watched",
-        25,
-    )  # files and folders
+        29,
+    )  # files and folders (Kind of Blue's scans and booklet: #389)
 
     music.watch_again("music")
     [report] = music.scan_all()
@@ -243,7 +243,7 @@ def test_stop_watching_keeps_everything_and_watching_again_reconnects(
     assert _statuses(music) == {ResourceStatus.OK}
     with music.reader.connect() as conn:
         status = root_statuses(conn)["music"]
-    assert (status.online, status.last_error, status.files, status.offline) == (True, None, 25, 0)
+    assert (status.online, status.last_error, status.files, status.offline) == (True, None, 29, 0)
 
 
 def test_removing_the_root_with_its_items(music: KeepSession) -> None:

@@ -42,6 +42,7 @@ from tagalot.themes.api import (
     Kind,
     Record,
     ResourceInfo,
+    RoleImage,
     SearchView,
     SortBy,
     Theme,
@@ -73,6 +74,8 @@ class Artist(Entity):
 
     title_label = "Name"
     contents_sort = (SortBy("year"), SortBy("title"))
+    # Photos beside the artist's note in the notes folder (#389, §9 *Galleries*).
+    roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos")]
 
 
 class Album(Entity):
@@ -82,7 +85,17 @@ class Album(Entity):
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="choice")
     folder: str = field("Folder", search="text", editable=False)
-    roles = [role("folder", kinds={"dir"}, primary=True)]
+    roles = [
+        role("folder", kinds={"dir"}, primary=True),
+        role(
+            "scans",
+            kinds={"image", "archive"},
+            many=True,
+            gallery=True,
+            folders=("Scans", "Artwork", "Covers", "Booklet"),
+            label="Scans",
+        ),
+    ]
     card_lines = ("artist", "year")
     contents_sort = (SortBy("disc"), SortBy("track"), SortBy("title"))
 
@@ -138,7 +151,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 3  # 3: genres as file keywords (#295)
     # 2: songs record their bitrate; keeps read every file again once to fill it in.
-    extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS)
+    extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS | KIND_EXTENSIONS[Kind.ARCHIVE])
     dirs = True
     entities = [Artist, Album, Song]
     containment = [contains(Artist, Album), contains(Album, Song), contains(Artist, Song)]
@@ -251,7 +264,7 @@ class MusicTheme(Theme):
         if entity_type is Album:
             return [FolderImage(), EmbeddedAudioArt(), Icon("dir")]
         if entity_type is Artist:
-            return [ContentsThumbnail(), TitleCard(aspect=1), Icon("entity")]
+            return [RoleImage("photos"), ContentsThumbnail(), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)
 
     # --- reading files (scan worker) ---

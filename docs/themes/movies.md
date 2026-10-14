@@ -21,6 +21,8 @@ Actors have no folder: their notes go in the keep's [notes folder](../guide/note
 
 In a movie's folder, its **poster** is `poster.jpg` (or `folder`, `cover`, `movie`, `default`, or a picture named like the movie); its other pictures, and those in `screenshots`, `extrafanart`, `backdrops`… subfolders, are its **screenshots**. Beside loose videos, `Heat (1995)-poster.jpg` is that movie's poster and `-fanart`, `-landscape`, `-thumb`, `-banner` pictures are screenshots.
 
+A movie's page shows its screenshots as a [gallery](../guide/item-pages.md#galleries): also every picture under a `Screenshots`, `Screens`, or `Stills` folder at any depth, and archives named like them (`Screens.zip`). An actor's **Photos** gallery comes from the notes folder: `Notes/Actors/Al Pacino/` beside `Al Pacino.md`.
+
 ## Cast by hand
 
 A movie's page has **Cast**, an actor's **Filmography**: both with **Add…** (search for an actor or movie, or make a new actor) and **Remove from …**. What you add or remove by hand stays through later scans, whatever the `.nfo` says.

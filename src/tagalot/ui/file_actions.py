@@ -57,12 +57,13 @@ Lookup = Callable[[Callable[[FileToOpen | CannotOpen], None]], None]
 
 def file_kind(schema: ThemeSchema, type_id: str) -> str | None:
     """``"folder"`` when the type's primary role holds folders (an album), ``"file"`` when
-    it can link files, ``None`` when it has no roles (nothing to open)."""
+    it can link files, ``None`` when it has no roles but galleries (nothing to open: a
+    gallery's pictures open from the page, #389)."""
     try:
         entity = schema.by_type_id(type_id).entity
     except KeyError:
         return None
-    if not entity.roles:
+    if not [r for r in entity.roles if not r.gallery]:
         return None
     primary = next((r for r in entity.roles if r.primary), None)
     if primary is not None and primary.kinds is not None and set(primary.kinds) == {"dir"}:

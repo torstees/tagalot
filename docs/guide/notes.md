@@ -30,7 +30,7 @@ Notes/
 
 - **Which item:** the note's `title`, else its file name, or one of its `aliases`, matches the item's title. Case and accents don't matter (`Leon.md` finds "Léon").
 - **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label), else the name of the folder it's in (`Actors/`), else any kind. The key wins, so a note in the wrong folder can say what it's for.
-- **Nothing else is read there:** pictures and other files in the notes folder aren't items. Only its Markdown files are read, and only as notes.
+- **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.
 
 Notes that match no item, or several, and notes for an item that already has a note, are listed in [Triage → Notes](triage.md#notes). A new item finds a note that was already there at the next scan, so you can write notes before their items appear.

@@ -42,7 +42,8 @@ def test_the_dialog_lists_items_whose_roles_take_the_file(
 ) -> None:
     dialog = LinkDialog(session, "gem.png", [Kind.IMAGE])
     qtbot.addWidget(dialog)
-    assert list(dialog.types) == ["assets2d.image"]  # artists hold folders, fonts fonts…
+    # an image item, or an artist's previews (#389); fonts hold fonts…
+    assert list(dialog.types) == ["assets2d.artist", "assets2d.image"]
     qtbot.waitUntil(lambda: dialog.results.count() > 0, timeout=5000)
     dialog.search.setText("heart")
     dialog.look_up()
