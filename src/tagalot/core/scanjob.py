@@ -30,6 +30,12 @@ from tagalot.core.gallery_fill import (
 )
 from tagalot.core.ingest import IngestSession, IngestWarning, forget_not_found
 from tagalot.core.keep import RootConfig
+from tagalot.core.markdown_check import (
+    check_markdown,
+    doesnt_parse,
+    is_markdown,
+    record_markdown_problems,
+)
 from tagalot.core.models import Resource, ResourceStatus, Root
 from tagalot.core.note_keys import sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
@@ -381,6 +387,7 @@ def _ingest_pending(
         ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
         for rid, rel, kind, ext, size, mtime in rows
     ]
+    _check_markdown(writer, root, report, pending)
     pending, notes = _without_notes(reader, theme, pending, notes_folder)
     if notes:
         writer.run(partial(_mark_ingested, [r.id for r in notes], when))
@@ -417,6 +424,23 @@ def _ingest_pending(
             reread_notes=False,
             notes_folder=notes_folder,
         )
+
+
+def _check_markdown(
+    writer: DbWriter, root: RootConfig, report: ScanReport, pending: list[ResourceInfo]
+) -> None:
+    """Check the front matter of the Markdown files about to be read (#438): a key given
+    twice, or front matter that doesn't parse. Their problems replace what they had, and
+    are the scan's warnings."""
+    files = [r for r in pending if r.kind == "file" and is_markdown(r.ext) and r.path]
+    if not files:
+        return
+    found = {r.id: check_markdown(r.path) for r in files}
+    writer.run(partial(record_markdown_problems, found=found))
+    for resource in files:
+        for problem in found[resource.id]:
+            if not doesnt_parse(problem):  # that one is reported by whatever reads it
+                report.ingest_warnings.append(IngestWarning(root.id, resource.relpath, problem))
 
 
 def _without_notes(

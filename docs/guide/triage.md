@@ -25,9 +25,15 @@ Items whose files are all gone (missing, not just offline). **Show where they we
 
 Items whose files give [keywords](file-keywords.md) that match no tag, with a **Keywords** column. A button opens the File keywords page to map or ignore them.
 
-## Notes
+## Markdown
 
-Notes in the [notes folder](notes.md#the-notes-folder) that aren't an item's note, each with why: no item has its title or aliases; several items match (add `tagalot-type`, or an alias only one of them has); or the item it matches has another note. **Open note** opens it in your Markdown editor to fix it, and **Show in file manager** shows it in its folder. The list updates at the next scan.
+Markdown files that need attention, each with why:
+
+- **Notes** in the [notes folder](notes.md#the-notes-folder) that aren't an item's note: no item has its title or aliases; several items match (add `tagalot-type`, or an alias only one of them has); or the item it matches has another note.
+- **Front matter that gives a key twice:** `` `universe` is given twice (lines 7 and 21); the last, '', is used.`` Only one value can count, and Tagalot uses the last, so a forgotten empty `universe:` further down hides the one you meant. Keys that differ only in case (`Title` and `title`) count as twice too, since Tagalot reads them as one key.
+- **Front matter that doesn't parse**, with where it goes wrong (`expected ',' or ']'… (line 4)`). Tagalot reads the rest of the file as if it had no front matter.
+
+**Open file** opens it in your Markdown editor to fix it, and **Show in file manager** shows it in its folder. A file is checked whenever a scan reads it (when it's new or changed), so the list updates at the next scan after you fix it.
 
 ## Pictures
 

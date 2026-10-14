@@ -585,6 +585,19 @@ class PictureFailure(Base):
     error: Mapped[str]
 
 
+class MarkdownProblem(Base):
+    """What is wrong with a Markdown file's front matter (#438): keys given twice, or
+    front matter that doesn't parse. Replaced each time the file is read in a scan; listed
+    in Triage → Markdown."""
+
+    __tablename__ = "markdown_problem"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    problems: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
 class PictureIgnore(Base):
     """A rule leaving rows off Triage's Pictures list (#426): one item's row while it says
     the same (``item``: ``entity_id`` and the row's ``marker``), a value files name, case

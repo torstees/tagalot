@@ -10,8 +10,9 @@ Tabs, each with how many it holds:
 - **Missing files:** items whose files are all missing, a search page too, with Delete…
   and Show where they were, both also in an item's right-click menu.
 - **Unmatched keywords:** items with file keywords no tag matches (#295).
-- **Notes:** the notes folder's notes that aren't an item's note (#382): matching no
-  item, several, or an item with another note; with Open note and Show in file manager.
+- **Markdown:** the notes folder's notes that aren't an item's note (#382): matching no
+  item, several, or an item with another note; and Markdown files whose front matter gives
+  a key twice or doesn't parse (#438); with Open file and Show in file manager.
 - **Pictures:** items' pictures not found (a Markdown book's ``cover``), with the paths
   tried and what is there now, and pictures that can't be drawn (#426); with Open page,
   Show the file, Re-read from file, and Ignore (for the item, the value everywhere, or
@@ -42,9 +43,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy import Connection
 
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
+from tagalot.core.markdown_check import MarkdownFileProblem, markdown_problems
 from tagalot.core.models import ResourceStatus
 from tagalot.core.picture_problems import (
     CANT_DRAW,
@@ -67,7 +70,6 @@ from tagalot.core.triage import (
     UNTAGGED,
     NoteProblem,
     UnlinkedFile,
-    count_note_problems,
     count_unlinked,
     note_problems,
     unlinked_files,
@@ -81,13 +83,13 @@ from tagalot.ui.workers import run_in_pool
 MAX_FILES = 10_000
 """Unlinked files listed at once (the count shows them all)."""
 
-UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, NOTES_TAB, PICTURES_TAB = range(6)
+UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, MARKDOWN_TAB, PICTURES_TAB = range(6)
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
     MISSING_TAB: "Missing files",
     KEYWORDS_TAB: "Unmatched keywords",
-    NOTES_TAB: "Notes",
+    MARKDOWN_TAB: "Markdown",
     PICTURES_TAB: "Pictures",
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
@@ -110,7 +112,12 @@ class Counts:
     pictures: int = 0
 
 
-Loaded = tuple[Counts, list[UnlinkedFile], list[NoteProblem], list[PictureProblem]]
+MarkdownRow = NoteProblem | MarkdownFileProblem
+"""A row of the Markdown tab: a note that isn't an item's note, or a file whose front
+matter has problems (#438)."""
+
+
+Loaded = tuple[Counts, list[UnlinkedFile], list[MarkdownRow], list[PictureProblem]]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
 
@@ -155,16 +162,16 @@ class UnlinkedModel(QAbstractTableModel):
         return "offline" if file.status is ResourceStatus.OFFLINE else ""
 
 
-class NotesModel(QAbstractTableModel):
-    """The notes folder's notes that aren't items' notes: path, and why."""
+class MarkdownModel(QAbstractTableModel):
+    """Markdown files that need attention: path, and why."""
 
-    HEADERS = ("Note", "Why")
+    HEADERS = ("File", "Problem")
 
     def __init__(self) -> None:
         super().__init__()
-        self.notes: list[NoteProblem] = []
+        self.notes: list[MarkdownRow] = []
 
-    def set_notes(self, notes: list[NoteProblem]) -> None:
+    def set_notes(self, notes: list[MarkdownRow]) -> None:
         self.beginResetModel()
         self.notes = notes
         self.endResetModel()
@@ -363,9 +370,9 @@ class TriagePage(QWidget):
         open_keywords.clicked.connect(self.keywords_requested.emit)
         keywords_tab = _tab(self.keywords, [open_keywords])
 
-        self.notes = NotesModel()
+        self.notes = MarkdownModel()
         self.notes_table = QTableView()
-        self.notes_table.setObjectName("notes")
+        self.notes_table.setObjectName("markdown")
         self.notes_table.setModel(self.notes)
         self.notes_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.notes_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -374,18 +381,20 @@ class TriagePage(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.notes_table.doubleClicked.connect(lambda _: self._open_note(OPEN))
-        open_note = QPushButton("Open note")
-        open_note.setToolTip("Open the note in your Markdown editor, to fix its title or type")
+        open_note = QPushButton("Open file")
+        open_note.setToolTip("Open it in your Markdown editor, to fix it")
         open_note.clicked.connect(lambda: self._open_note(OPEN))
         reveal_note = QPushButton("Show in file manager")
         reveal_note.clicked.connect(lambda: self._open_note(REVEAL))
         self.notes_note = QLabel(
-            "Notes in the notes folder that aren't an item's note. A note is matched by its "
-            "title (or file name) and aliases, and typed by tagalot-type or its folder."
+            "Notes in the notes folder that aren't an item's note (a note is matched by its "
+            "title or file name and aliases, and typed by tagalot-type or its folder), and "
+            "Markdown files whose front matter gives a key twice or doesn't parse."
         )
         self.notes_note.setWordWrap(True)
         self.notes_empty = EmptyState(
-            "Every note has its item", "Notes in the notes folder each found one item."
+            "Nothing to fix in your Markdown",
+            "Every note found its item, and every file's front matter reads cleanly.",
         )
         self.notes_stack = QStackedWidget()
         self.notes_stack.addWidget(self.notes_table)
@@ -477,7 +486,7 @@ class TriagePage(QWidget):
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
         self.tabs.addTab(missing_tab, _TITLES[MISSING_TAB])
         self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
-        self.tabs.addTab(notes_tab, _TITLES[NOTES_TAB])
+        self.tabs.addTab(notes_tab, _TITLES[MARKDOWN_TAB])
         self.tabs.addTab(pictures_tab, _TITLES[PICTURES_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
@@ -503,11 +512,11 @@ class TriagePage(QWidget):
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
-                    count_note_problems(conn),
+                    len(markdown := _markdown_rows(conn)),
                     sum(1 for p in pictures if not p.ignored),
                 )
                 files = unlinked_files(conn, MAX_FILES, notes)
-                return counts, files, note_problems(conn), pictures
+                return counts, files, markdown, pictures
 
         def done(result: Loaded) -> None:
             if shiboken6.isValid(self):
@@ -519,7 +528,7 @@ class TriagePage(QWidget):
         self,
         counts: Counts,
         files: list[UnlinkedFile],
-        notes: list[NoteProblem] | None = None,
+        notes: list[MarkdownRow] | None = None,
         pictures: list[PictureProblem] | None = None,
     ) -> None:
         self.counts = counts
@@ -528,7 +537,7 @@ class TriagePage(QWidget):
             (UNTAGGED_TAB, counts.untagged),
             (MISSING_TAB, counts.missing),
             (KEYWORDS_TAB, counts.keywords),
-            (NOTES_TAB, counts.notes),
+            (MARKDOWN_TAB, counts.notes),
             (PICTURES_TAB, counts.pictures),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
@@ -578,7 +587,7 @@ class TriagePage(QWidget):
             FileToOpen(file.resource_id, local_path(base, file.relpath), False), how
         )
 
-    def selected_note(self) -> NoteProblem | None:
+    def selected_note(self) -> MarkdownRow | None:
         rows = self.notes_table.selectionModel().selectedRows()
         return self.notes.notes[rows[0].row()] if rows else None
 
@@ -588,7 +597,7 @@ class TriagePage(QWidget):
             return
         base = _known(self.session)(note.root_id)
         if base is None:
-            self.message.emit("The notes folder has no folder on this computer.")
+            self.message.emit("Its watched folder has no folder on this computer.")
             return
         self.file_opener.act(
             FileToOpen(note.resource_id, local_path(base, note.relpath), False), how
@@ -746,6 +755,12 @@ def _values(problems: list[PictureProblem]) -> list[str]:
         if p.kind == NOT_FOUND and p.written:
             found.setdefault(p.written.strip().casefold(), p.written.strip())
     return list(found.values())
+
+
+def _markdown_rows(conn: Connection) -> list[MarkdownRow]:
+    """The Markdown tab's rows, by path: notes first where a file is both."""
+    rows: list[MarkdownRow] = [*note_problems(conn), *markdown_problems(conn)]
+    return sorted(rows, key=lambda r: (r.relpath.casefold(), isinstance(r, MarkdownFileProblem)))
 
 
 def _known(session: KeepSession) -> Callable[[str], str | None]:
