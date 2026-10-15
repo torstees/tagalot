@@ -273,6 +273,7 @@ def validate_theme(theme: type[Theme]) -> list[str]:
                 problems.append(f"{where}: folders are names, not paths: {bad!r}")
     if galleries and getattr(theme, "api_version", API_VERSION) < 14:
         problems.append("a theme with gallery roles must set api_version = 14 (or later)")
+    problems.extend(_mirror_problems(theme, entities, names))
     problems.extend(_card_problems(theme, declared))
     problems.extend(_chain_problems(theme, entities, roles_of))
     option_names = [getattr(o, "name", None) for o in theme.options]
@@ -393,6 +394,50 @@ def _card_problems(theme: type[Theme], declared: set[type[Entity]]) -> list[str]
     for method in theme.card_methods():
         if not callable(getattr(theme, method, None)):
             problems.append(f"dashboard card {method!r} is not a method")
+    return problems
+
+
+def _mirror_problems(
+    theme: type[Theme], entities: Sequence[type[Entity]], names: dict[type[Entity], str]
+) -> list[str]:
+    """Fields that mirror links (``mirrors``, API version 15): a text field, of a
+    containment the theme declares for that type, or a relationship it is part of."""
+    problems: list[str] = []
+    mirrored = False
+    relationships = {r.name: r for r in theme.relationships}
+    for entity in entities:
+        for info in _safe_fields(entity):
+            mirror: object = info.spec.mirrors  # a theme may pass anything
+            if mirror is None:
+                if info.spec.many:
+                    problems.append(f"{names[entity]}.{info.name}: many needs mirrors")
+                continue
+            mirrored = True
+            where = f"{names[entity]}.{info.name}"
+            if info.type is not str:
+                problems.append(f"{where}: a field that mirrors a link must be text (str)")
+            if isinstance(mirror, type) and issubclass(mirror, Entity):
+                if not any(c.parent is mirror and c.child is entity for c in theme.containment):
+                    problems.append(
+                        f"{where}: mirrors {mirror.__name__}, but the theme doesn't declare "
+                        f"contains({mirror.__name__}, {entity.__name__})"
+                    )
+            elif isinstance(mirror, str):
+                rel = relationships.get(mirror)
+                if rel is None or entity not in (rel.a, rel.b):
+                    problems.append(f"{where}: mirrors {mirror!r}, which it isn't part of")
+                elif rel.ordered:
+                    problems.append(f"{where}: mirroring an ordered relationship isn't supported")
+                if info.spec.many:
+                    problems.append(f"{where}: many comes from the relationship, not the field")
+            else:
+                problems.append(
+                    f"{where}: mirrors must be a container type or a relationship's name"
+                )
+    if mirrored and getattr(theme, "api_version", API_VERSION) < 15:
+        problems.append(
+            "a theme with fields that mirror links must set api_version = 15 (or later)"
+        )
     return problems
 
 

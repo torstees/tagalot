@@ -123,7 +123,7 @@ class Series(Entity):
     """Works in reading order."""
 
     plural = "Series"
-    universe: str | None = field("Universe", search="choice", editable=False)
+    universe: str | None = field("Universe", search="choice", mirrors=Universe)
     contents_sort = (SortBy("series_index"), SortBy("title"))
     card_lines = ("universe",)
     # Covers beside its note in the notes folder (#439, §9 *Galleries*).
@@ -141,12 +141,12 @@ class Collection(Entity):
 class Book(Entity):
     """A book; its files (an EPUB from one store, another from a second) are its versions."""
 
-    authors: str | None = field("Author", card=True, search="choice", editable=False)
+    authors: str | None = field("Author", card=True, search="choice", mirrors="writers")
     """Its writers' names, as its files give them (the credits list them as people)."""
-    series: str | None = field("Series", card=True, search="choice", editable=False)
+    series: str | None = field("Series", card=True, search="choice", mirrors=Series)
     series_index: float | None = field("Number in series", search="range")
-    universe: str | None = field("Universe", search="choice", editable=False)
-    collections: str | None = field("Collections", search="text", editable=False)
+    universe: str | None = field("Universe", search="choice", mirrors=Universe)
+    collections: str | None = field("Collections", search="text", mirrors=Collection, many=True)
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
     language: str | None = field("Language", search="choice")
@@ -175,15 +175,15 @@ class Book(Entity):
 class Comic(Entity):
     """A comic issue or volume; its files are its versions."""
 
-    series: str | None = field("Series", card=True, search="choice", editable=False)
+    series: str | None = field("Series", card=True, search="choice", mirrors=Series)
     number: str | None = field("Number", card=True, search="text")
     """As written: ``12``, ``1.5``, ``Annual 1``."""
     volume: int | None = field("Volume", search="range")
     series_index: float | None = field("Reading order", search="range", detail=False)
     """The number as a number, for sorting a series (``Annual 1`` has none)."""
-    universe: str | None = field("Universe", search="choice", editable=False)
-    writers: str | None = field("Writer", card=True, search="choice", editable=False)
-    artists: str | None = field("Artist", search="choice", editable=False)
+    universe: str | None = field("Universe", search="choice", mirrors=Universe)
+    writers: str | None = field("Writer", card=True, search="choice", mirrors="comic_writers")
+    artists: str | None = field("Artist", search="choice", mirrors="comic_artists")
     story_arc: str | None = field("Story arc", search="choice")
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
@@ -238,9 +238,9 @@ class BooksTheme(Theme):
 
     id, name, version = "books", "Books", 6  # 6: covers not found; 5: extra; 4: assets; …
     # 3: synopsis; 2: authors
-    # 14: gallery roles; 13: not_found; 12: description_field; 11: extra; 10: TitleCard;
-    # 9: assets; 7: mobi; 6: full_text; 5: online
-    api_version = 14
+    # 15: fields that mirror links; 14: gallery roles; 13: not_found; 12: description_field;
+    # 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text; 5: online
+    api_version = 15
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -334,6 +334,16 @@ class BooksTheme(Theme):
             ],
         ),
     ]
+
+    def item_named(self, entity_type: type[Entity], name: str, ctx: IngestContext) -> EntityRef:
+        """An author, series, universe, or collection typed into a book's field (#440),
+        found or made as ``ingest`` makes them, so a later scan finds the same one."""
+        if entity_type is Author:
+            return author_ref(name, ctx)
+        found = named(entity_type, name, ctx)
+        if found is None:  # a name of nothing but punctuation: the default way
+            return super().item_named(entity_type, name, ctx)
+        return found
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         # Without a picture, a title card (#415).

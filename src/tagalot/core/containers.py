@@ -134,3 +134,9 @@ def _item(conn: Connection, entity_id: int) -> tuple[str, str]:
     if row is None:
         raise ContainerError("That item no longer exists; press F5.")
     return row.type, row.title
+
+
+def record_contains(conn: Connection, parent_id: int, child_id: int, *, added: bool) -> None:
+    """Remember that the user put ``child_id`` in ``parent_id`` (``added``) or took it out,
+    so scans keep it so (#440)."""
+    _record(conn, parent_id, child_id, added=added)

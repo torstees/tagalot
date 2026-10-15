@@ -408,3 +408,17 @@ def _write_note(conn: Connection, schema: ThemeSchema, entity_id: int, body: str
         )
     conn.execute(update(Entity).where(Entity.id == entity_id).values(updated_at=utcnow()))
     fts.sync_entities(conn, [entity_id], theme_text_source(schema))
+
+
+def write_field(
+    conn: Connection,
+    schema: ThemeSchema,
+    table: EntityTable,
+    entity_id: int,
+    name: str,
+    value: Any,
+    source: FieldSource | None = FieldSource.USER,
+) -> None:
+    """Write a field's value and its provenance, and keep the search index in step (for
+    edits made elsewhere in the core, such as a mirrored field's, #440)."""
+    _write(conn, schema, table, entity_id, name, value, source)

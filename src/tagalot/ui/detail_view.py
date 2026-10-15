@@ -805,6 +805,8 @@ class DetailPage(QWidget):
                 display=row.display,
             )
             value.setObjectName(f"field_{row.name}")
+            if row.hint:  # it follows another container (#440)
+                value.setToolTip(row.hint)
             value.committed.connect(
                 lambda new, name=row.name: self.field_edited.emit(self.entity_id, name, new)
             )

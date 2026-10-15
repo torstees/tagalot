@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 14
+API_VERSION = 15
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -38,7 +38,8 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 :func:`read_front_matter`'s ``other``); version 12 added descriptions
 (:attr:`Entity.description_field`); version 13 added reporting files not found
 (:meth:`IngestContext.not_found`); version 14 added gallery roles filled from folders
-(:func:`role`'s ``gallery`` and ``folders``)."""
+(:func:`role`'s ``gallery`` and ``folders``); version 15 added fields that mirror links
+(:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -102,6 +103,14 @@ class FieldSpec:
     display: str | None = None
     """How the value reads: ``"bytes"`` (3.0 MB) or ``"duration"`` (seconds as 3:25) for a
     number, ``"url"`` (a link that opens in the browser) for text."""
+    mirrors: "type[Entity] | str | None" = None
+    """The link this text field is a copy of (API version 15): a container type
+    (``Series``: the titles of the item's containers of that type, by a containment the
+    theme declares) or a relationship's name (``"writers"``: the items on its other side).
+    Editing the field changes the links."""
+    many: bool = False
+    """A mirrored containment field lists several containers, comma-separated (a book's
+    collections); a relationship's own ``many`` says so for it."""
     name: str = ""
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -116,6 +125,8 @@ def field(
     editable: bool = True,
     detail: bool = True,
     display: str | None = None,
+    mirrors: "type[Entity] | str | None" = None,
+    many: bool = False,
 ) -> Any:
     """Declare a field: ``year: int | None = field("Year", card=True, search="range")``.
 
@@ -123,7 +134,19 @@ def field(
     ``3.0 MB`` and ``"duration"`` shows seconds as ``3:25``; on a text field, ``"url"``
     shows a web address (``http`` or ``https``) as a link that opens in the browser on the
     item's page (API version 3). Sorting, filtering, and editing still use the value.
-    Typed ``Any`` so the declaration type-checks against its annotation.
+
+    ``mirrors`` makes a text field a copy of a link (API version 15): a container type, for
+    a containment the theme declares (``series: str | None = field("Series",
+    mirrors=Series)`` on Book, with ``contains(Series, Book)``), or a relationship's name
+    (``authors = field("Author", mirrors="writers")``). Your ``ingest``
+    still writes both the field and the link from the files, as before; what changes is
+    editing: the user types a name (or, with ``many=True`` for a containment, or a
+    relationship that has many, a comma-separated list), and the core finds or makes the
+    items with :meth:`Theme.item_named`, moves the item's links by hand (scans respect
+    them), and keeps the field as the user's. A containment field that the item gets
+    through another container (a book's universe through its series, when the theme
+    declares ``contains(Universe, Series)``) can't be edited on the item: it follows the
+    container. Typed ``Any`` so the declaration type-checks against its annotation.
     """
     if display is not None and display not in DISPLAY_FORMATS:
         raise ThemeDeclarationError(
@@ -136,7 +159,14 @@ def field(
     if not label.strip():
         raise ThemeDeclarationError("a field needs a label")
     return FieldSpec(
-        label, card=card, search=search, editable=editable, detail=detail, display=display
+        label,
+        card=card,
+        search=search,
+        editable=editable,
+        detail=detail,
+        display=display,
+        mirrors=mirrors,
+        many=many,
     )
 
 
@@ -1416,6 +1446,19 @@ class Theme:
         (not at all) to 1 (the same); pairs at or above :attr:`near_duplicate_threshold`
         are listed. Keep it quick: it runs for every pair sharing a key."""
         return 0.0
+
+    def item_named(self, entity_type: type[Entity], name: str, ctx: "IngestContext") -> EntityRef:
+        """The item of ``entity_type`` called ``name``, made if there is none: what the user
+        typed into a field that mirrors a link (:func:`field`'s ``mirrors``, API version 15).
+        Override it to find items the way your ``ingest`` makes them (with the same
+        :meth:`IngestContext.upsert` keys), so an edit and a later scan agree on one item.
+        The default: an item of that type with that title, else a new one keyed by its
+        title (``<type>:<title, case-folded>``)."""
+        found = ctx.find(entity_type, title=name)
+        if found:
+            return found[0]
+        key = f"{entity_type.__name__.lower()}:{' '.join(name.split()).casefold()}"
+        return ctx.upsert(entity_type, key, title=name)
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         """The providers tried, in order, for thumbnails of ``entity_type`` (DESIGN.md §10).
