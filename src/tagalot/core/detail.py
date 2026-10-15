@@ -18,6 +18,7 @@ from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.item_pictures import OwnPicture, own_picture
 from tagalot.core.keywords import ItemKeyword, item_keywords
+from tagalot.core.linked_fields import read_only_reason
 from tagalot.core.models import (
     LAST_POSITION,
     Entity,
@@ -89,6 +90,9 @@ class FieldRow:
     """The user set this value by hand (provenance ``user``): scans leave it alone."""
     display: str | None = None
     """The field's display format (``"bytes"``, ``"duration"``), if any."""
+    hint: str | None = None
+    """Why it can't be edited here, when it mirrors a link it gets through another
+    container (#440)."""
 
 
 @dataclass(frozen=True)
@@ -372,19 +376,23 @@ def _fields(
     values = conn.execute(
         select(*(table.c[f.name] for f in shown)).where(table.c.id == entity_id)
     ).first()
-    return tuple(
-        FieldRow(
-            f.name,
-            f.spec.label,
-            values[i] if values is not None else None,
-            f.type,
-            f.nullable,
-            f.spec.editable,
-            f.name in edited,
-            f.spec.display,
+    rows = []
+    for i, f in enumerate(shown):
+        why = read_only_reason(conn, schema, entity_id, f) if f.spec.mirrors else None
+        rows.append(
+            FieldRow(
+                f.name,
+                f.spec.label,
+                values[i] if values is not None else None,
+                f.type,
+                f.nullable,
+                f.spec.editable and why is None,
+                f.name in edited,
+                f.spec.display,
+                hint=why,
+            )
         )
-        for i, f in enumerate(shown)
-    )
+    return tuple(rows)
 
 
 def role_files(

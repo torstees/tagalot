@@ -238,3 +238,9 @@ def _item(conn: Connection, entity_id: int) -> tuple[str, str]:
     if row is None:
         raise RelationError("That item no longer exists; press F5.")
     return row.type, row.title
+
+
+def record_relation(conn: Connection, name: str, a_id: int, b_id: int, *, added: bool) -> None:
+    """Remember that the user related ``a_id`` and ``b_id`` (``added``) or unrelated them,
+    so scans keep it so (#440)."""
+    _record(conn, name, a_id, b_id, added=added)

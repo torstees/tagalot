@@ -81,7 +81,7 @@ class Artist(Entity):
 class Album(Entity):
     """A folder of songs."""
 
-    artist: str | None = field("Artist", card=True, search="choice", editable=False)
+    artist: str | None = field("Artist", card=True, search="choice", mirrors=Artist)
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="choice")
     folder: str = field("Folder", search="text", editable=False)
@@ -158,6 +158,12 @@ class MusicTheme(Theme):
 
     # Tags on an album count for its songs (tag an album "Calm" and Songs with Calm lists
     # its songs); Browse also lists a matching album's songs, under it in the tree.
+    def item_named(self, entity_type: type[Entity], name: str, ctx: IngestContext) -> EntityRef:
+        """An artist typed into an album's Artist (#440), as ``ingest`` makes them."""
+        if entity_type is Artist:
+            return artist_ref(name, ctx)
+        return super().item_named(entity_type, name, ctx)
+
     def blocking_keys(self, entity_type: type[Entity], record: Record) -> Iterable[str]:
         """Songs by the same artist with the same title (ignoring case and punctuation)."""
         if entity_type is not Song:

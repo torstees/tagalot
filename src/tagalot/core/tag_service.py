@@ -40,6 +40,7 @@ from tagalot.core.keywords import (
     restore_ignored,
     set_ignored,
 )
+from tagalot.core.linked_fields import edit_linked_field
 from tagalot.core.merge import MergeChange, restore_merge
 from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
@@ -71,6 +72,7 @@ from tagalot.core.tags import (
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.triage import DismissChange, restore_dismissals
 from tagalot.core.writer import DbWriter
+from tagalot.themes.api import FieldInfo
 
 logger = logging.getLogger(__name__)
 
@@ -328,13 +330,27 @@ class TagService:
             lambda conn: remove_alias(conn, tag_id, alias),
         )
 
-    def edit_field(self, entity_id: int, name: str, value: Any) -> FieldChange:
-        """Set a field (or ``"title"``) by hand: provenance ``user``, one undo step.
-        Raises :class:`~tagalot.core.fields.FieldEditError` for a value that doesn't fit."""
+    def edit_field(self, entity_id: int, name: str, value: Any) -> FieldChange | ActionChange:
+        """Set a field (or ``"title"``) by hand: provenance ``user``, one undo step. A field
+        that mirrors a link changes the links too (#440). Raises
+        :class:`~tagalot.core.fields.FieldEditError` for a value that doesn't fit."""
         schema = self.schema
         if schema is None:
             raise RuntimeError("field edits need the keep's schema")
-        change = self.writer.run(lambda conn: edit_field(conn, schema, entity_id, name, value))
+        theme = schema.theme()
+
+        def edit(conn: Connection) -> FieldChange | ActionChange:
+            mirrored = _mirrored(conn, schema, entity_id, name)
+            if mirrored is not None:
+                return edit_linked_field(conn, schema, theme, entity_id, mirrored, value)
+            return edit_field(conn, schema, entity_id, name, value)
+
+        done = self.writer.run(edit)
+        if isinstance(done, ActionChange):
+            if done.before != done.after:
+                self._push(done)
+            return done
+        change = done
         if change.before != change.after or change.source_before != change.source_after:
             self._push(change)
         return change
@@ -668,3 +684,16 @@ def _tag_values(row: TagRow) -> dict[str, Any]:
         "description": description,
         "types": types,
     }
+
+
+def _mirrored(conn: Connection, schema: ThemeSchema, entity_id: int, name: str) -> FieldInfo | None:
+    """The field ``name`` of the item, when it mirrors a link (#440)."""
+    type_id = conn.scalar(select(Entity.type).where(Entity.id == entity_id))
+    if type_id is None:
+        return None
+    try:
+        table = schema.by_type_id(type_id)
+    except KeyError:
+        return None
+    info = next((f for f in table.fields if f.name == name), None)
+    return info if info is not None and info.spec.mirrors is not None else None
