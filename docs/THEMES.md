@@ -76,12 +76,13 @@ class Song(Entity):
 ```
 
 - **Types:** `str`, `int`, `float`, `bool`, `date`, `datetime`, each optionally `| None`.
-- **`field(label, *, card, search, editable, detail, display, mirrors, many)`:**
+- **`field(label, *, card, search, editable, detail, display, mirrors, many, rating)`:**
   - `card=True` offers the field as a column and a card line.
   - `search` makes it filterable: `"text"` (contains, or starts with), `"range"` (numbers and dates, from–to), or `"choice"` (pick from its values).
   - `editable=False` stops people editing it on the item's page. Values people edit by hand always win: your `ingest` never overwrites them.
   - `detail=False` hides it from the item's page (a value you keep for yourself, like assets2d's picture hash).
   - `display` shows a number as `"bytes"` (3.0 MB) or `"duration"` (seconds as 3:25), and a text field as `"url"`: on the item's page, a web address (`http`/`https`) is a link that opens in the browser (needs `api_version = 3`).
+  - `rating` (`api_version = 16`) makes a `float` field a rating out of `5` (or `10`, for scores out of 10 such as a movie's `.nfo`): `rating: float | None = field("Rating", search="range", rating=5)`. It shows as five stars in half-star steps (3.5 out of 5 is ★★★½☆; out of 10, each point is a half star), and people set it by clicking the stars on the item's page. Store the number on its own scale; `read_rating(value, out_of=5)` reads one as files write it (`4`, `"4.5"`, `"8/10"`, `"★★★½"`) out of 5, to the nearest half, with 0 as unrated. What your `ingest` writes is the starting value: once someone rates an item, scans leave it alone.
   - `mirrors` (`api_version = 15`) says a text field is a copy of a link, so people can edit it: a container type (`series: str | None = field("Series", mirrors=Series)`, with `contains(Series, Book)` declared) or a relationship's name (`field("Author", mirrors="writers")`). Your `ingest` keeps writing both from the files. When someone types a name (several, comma-separated, for `many=True` or a relationship that has many; `;` when names contain commas), Tagalot finds or makes each item with your theme's `item_named(type, name, ctx)` (override it to use the same `upsert` keys your `ingest` does, so an edit and a scan agree on one item), moves the links by hand (your scans keep them), and keeps the field as theirs. A field the item gets through another container (a book's universe through its series, with `contains(Universe, Series)`) isn't editable on the item: it follows the container.
 - **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `description_field` (the text field that describes an item, such as `"description"` or `"abstract"`: Tagalot shows it in the preview strip, in grid cards' tooltips, and as a list column; `api_version = 12`); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys).
 - Every item also has a **title** (its name), **tags**, and **extra fields** people add themselves; you don't declare those.
@@ -110,7 +111,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 15             # the theme API it needs
+    api_version = 16             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]

@@ -18,6 +18,9 @@ Artist ⊃ Album (a folder)  ⊃ Song (one or more audio files: versions)
   albums' or songs'.
 - Tags are read with mutagen in :meth:`MusicTheme.prepare` (the scan worker); a file without
   tags is named from its file name ("01 - So What.mp3": track 1, "So What").
+- **Ratings** (#419, theme version 4) are out of 5: a song's starts from its file's
+  (:func:`song_rating`: ID3 ``POPM``, Vorbis ``RATING`` or ``FMPS_RATING``, MP4 ``rate``);
+  an album's is the user's own.
 """
 
 import logging
@@ -28,6 +31,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import mutagen
+from mutagen.easyid3 import EasyID3
+from mutagen.easymp4 import EasyMP4Tags
 
 from tagalot.themes.api import (
     FOLDER_IMAGE_EXTENSIONS,
@@ -53,6 +58,7 @@ from tagalot.themes.api import (
     contains,
     field,
     kind_of,
+    read_rating,
     role,
     stat,
     top_values,
@@ -73,6 +79,9 @@ class Artist(Entity):
     """Whoever an album or song is by."""
 
     title_label = "Name"
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (#419)."""
+    card_lines = ("rating",)
     contents_sort = (SortBy("year"), SortBy("title"))
     # Photos beside the artist's note in the notes folder (#389, §9 *Galleries*).
     roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos")]
@@ -84,6 +93,8 @@ class Album(Entity):
     artist: str | None = field("Artist", card=True, search="choice", mirrors=Artist)
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="choice")
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (files rate songs, not albums; #419)."""
     folder: str = field("Folder", search="text", editable=False)
     roles = [
         role("folder", kinds={"dir"}, primary=True),
@@ -96,7 +107,7 @@ class Album(Entity):
             label="Scans",
         ),
     ]
-    card_lines = ("artist", "year")
+    card_lines = ("artist", "year", "rating")
     contents_sort = (SortBy("disc"), SortBy("track"), SortBy("title"))
 
 
@@ -110,6 +121,8 @@ class Song(Entity):
     album: str | None = field("Album", card=True, search="choice")
     year: int | None = field("Year", search="range")
     genre: str | None = field("Genre", search="choice")
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """Out of 5: its file's rating to start with (:func:`song_rating`, #419)."""
     duration: float | None = field(
         "Length", card=True, search="range", editable=False, display="duration"
     )
@@ -118,7 +131,7 @@ class Song(Entity):
     folder: str = field("Folder", search="text", editable=False)
     roles = [role("audio", kinds={"audio"}, many=True, primary=True)]
     double_click = "open_file"
-    card_lines = ("artist", "duration")
+    card_lines = ("artist", "duration", "rating")
 
 
 class AlbumThumbnail(ThumbnailProvider):
@@ -149,7 +162,7 @@ class ContentsThumbnail(ThumbnailProvider):
 
 
 class MusicTheme(Theme):
-    id, name, version = "music", "Music", 3  # 3: genres as file keywords (#295)
+    id, name, version = "music", "Music", 4  # 4: ratings (#419); 3: genres as file keywords
     # 2: songs record their bitrate; keeps read every file again once to fill it in.
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS | KIND_EXTENSIONS[Kind.ARCHIVE])
     dirs = True
@@ -330,6 +343,7 @@ class MusicTheme(Theme):
             "year": tags.get("year"),
             "genre": tags.get("genre"),
             "duration": tags.get("duration"),
+            "rating": tags.get("rating"),
             "folder": folder,
         }
 
@@ -338,6 +352,7 @@ class MusicTheme(Theme):
             song = existing[0]
             before = ctx.get(song).fields
             values["bitrate"] = best_bitrate(ctx, song, resource, before, bitrate)
+            values["rating"] = kept_rating(ctx, song, resource, before, tags.get("rating"))
             ctx.update(song, title=title, **values)
             if before.get("artist") and before["artist"] != artist:
                 old_artist = artist_ref(before["artist"], ctx)
@@ -352,7 +367,9 @@ class MusicTheme(Theme):
         else:
             key = song_key(album_dir, disc, track, title)
             song = ctx.upsert(Song, key, title=title)  # found, or made with no values yet
-            values["bitrate"] = best_bitrate(ctx, song, resource, ctx.get(song).fields, bitrate)
+            before = ctx.get(song).fields  # another version may have made it
+            values["bitrate"] = best_bitrate(ctx, song, resource, before, bitrate)
+            values["rating"] = kept_rating(ctx, song, resource, before, tags.get("rating"))
             ctx.update(song, title=title, **values)
             ctx.link(song, resource, "audio", sort_order=0)
         # Its genres can become the user's tags (DESIGN.md §7 "File keywords").
@@ -514,6 +531,22 @@ def best_bitrate(
     return max(rates) if rates else None
 
 
+def kept_rating(
+    ctx: IngestContext,
+    song: EntityRef,
+    resource: ResourceInfo,
+    before: Mapping[str, Any],
+    read: float | None,
+) -> float | None:
+    """A song's rating after reading one of its files: the file's, else, while it has other
+    versions, the one it had (an MP3 without a rating doesn't clear its FLAC's, #419)."""
+    if read is not None:
+        return read
+    others = [r for r in ctx.linked(song, "audio") if r != resource.id]
+    kept = before.get("rating") if others else None
+    return float(kept) if isinstance(kept, int | float) else None
+
+
 def read_tags(path: str) -> dict[str, Any]:
     """An audio file's tags, with mutagen's common names."""
     audio = mutagen.File(path, easy=True)
@@ -540,7 +573,60 @@ def read_tags(path: str) -> dict[str, Any]:
     tags["duration"] = round(float(length), 1) if length else None
     bitrate = getattr(audio.info, "bitrate", None)
     tags["bitrate"] = round(bitrate / 1000) if bitrate else None  # bits a second -> kbps
+    tags["rating"] = song_rating(
+        popm=first(POPM_KEY),
+        rating=first("rating") or first(MP4_RATING_KEY),
+        fmps=first("fmps_rating"),
+    )
     return tags
+
+
+POPM_KEY = "tagalot_popm"
+MP4_RATING_KEY = "tagalot_rate"
+MP4_RATINGS = tuple(
+    f"----:com.apple.iTunes:{name}" for name in ("rate", "RATE", "rating", "RATING")
+)
+"""Where MP4 files keep a rating (iTunes' own isn't in the file)."""
+
+
+def _popm(id3: Any, key: str) -> list[str]:
+    """An MP3's ``POPM`` (popularimeter) ratings, 1 to 255, for the easy tags."""
+    return [str(frame.rating) for frame in id3.getall("POPM") if frame.rating]
+
+
+def _mp4_rating(mp4: Any, key: str) -> list[str]:
+    for atom in MP4_RATINGS:
+        if atom in mp4:
+            return [bytes(v).decode("utf-8", "replace") for v in mp4[atom]]
+    return []
+
+
+EasyID3.RegisterKey(POPM_KEY, _popm)  # type: ignore[no-untyped-call]
+EasyMP4Tags.RegisterKey(MP4_RATING_KEY, _mp4_rating)  # type: ignore[no-untyped-call]
+
+POPM_STARS = ((224, 5.0), (160, 4.0), (96, 3.0), (32, 2.0), (1, 1.0))
+"""``POPM`` values (0 to 255) as stars: the lowest value of each, as Windows Media Player
+and most players write them (1, 64, 128, 196, 255)."""
+
+
+def song_rating(
+    popm: str | None = None, rating: str | None = None, fmps: str | None = None
+) -> float | None:
+    """A song's rating out of 5, from its tags as text: ID3 ``POPM`` (1 to 255), a
+    ``RATING`` (Vorbis comments; MP4 ``rate``) out of 5 or, above 5, out of 100, or
+    ``FMPS_RATING`` (0 to 1). ``None`` when none rates it (0 is unrated)."""
+    if popm and popm.isdigit():
+        value = int(popm)
+        return next((stars for low, stars in POPM_STARS if value >= low), None)
+    if rating:
+        try:
+            number = float(rating)
+        except ValueError:
+            return read_rating(rating)  # "4/5", "★★★★"
+        return read_rating(number, out_of=5 if number <= 5 else 100)
+    if fmps:
+        return read_rating(fmps, out_of=1)
+    return None
 
 
 def _number(text: str | None) -> int | None:

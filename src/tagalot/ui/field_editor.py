@@ -8,7 +8,8 @@ Year:  [1995        ]         (Enter or clicking away saves; Esc cancels)
 :class:`EditableValue` shows a value and, when it may be edited, turns into a text box on
 double-click (or the pencil). What the user types is parsed for the field's type; a value
 that doesn't parse stays in the box with the reason, and a good one is reported with
-:attr:`EditableValue.committed`. Yes/no fields are a checkbox that saves when ticked.
+:attr:`EditableValue.committed`. Yes/no fields are a checkbox that saves when ticked, and
+ratings are five stars that save when clicked (clicking the rating it has clears it, #419).
 """
 
 import html
@@ -33,8 +34,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tagalot.core.formats import is_web_address
+from tagalot.core.formats import (
+    format_rating_number,
+    half_stars,
+    is_web_address,
+    rating_of,
+    rating_scale,
+)
 from tagalot.ui.models.results import display_value
+from tagalot.ui.stars import StarRating
 
 PENCIL = "✎"
 BOX_WIDTH = 280
@@ -174,6 +182,8 @@ class EditableValue(QWidget):
         layout.setSpacing(6)
 
         self.check: QCheckBox | None = None
+        self.stars: StarRating | None = None
+        self.scale = rating_scale(display)
         self.stack = _Stack()
         self.label = QLabel()
         self.label.setTextInteractionFlags(
@@ -194,6 +204,10 @@ class EditableValue(QWidget):
             self.check.setEnabled(editable)
             self.check.toggled.connect(self._toggled)
             layout.addWidget(self.check)
+        elif self.scale is not None:
+            self.stars = StarRating(editable=editable)
+            self.stars.chosen.connect(self._starred)
+            layout.addWidget(self.stars)
         else:
             layout.addWidget(self.stack)
 
@@ -224,6 +238,7 @@ class EditableValue(QWidget):
             blocked = self.check.blockSignals(True)
             self.check.setChecked(bool(value))
             self.check.blockSignals(blocked)
+        self._show_stars(value)
         self.stack.setCurrentWidget(self.label)
         self.box.setStyleSheet("")
         self.box.setToolTip("")
@@ -241,6 +256,16 @@ class EditableValue(QWidget):
             self.label.setText(display_value(value, self.display))
             self.label.setToolTip("")
 
+    def _show_stars(self, value: Any) -> None:
+        if self.stars is None or self.scale is None:
+            return
+        rated = isinstance(value, int | float) and not isinstance(value, bool)
+        self.stars.set_halves(half_stars(value, self.scale) if rated else 0)
+        tip = format_rating_number(value, self.scale) if rated else "Not rated"
+        if self.editable:
+            tip += "\nClick a star to rate (its left half for half a star); click again to clear"
+        self.stars.setToolTip(tip)
+
     def editing(self) -> bool:
         """Whether the text box is showing."""
         return self.stack.currentWidget() is self.box
@@ -248,7 +273,7 @@ class EditableValue(QWidget):
     # --- editing ---
 
     def start_editing(self) -> None:
-        if not self.editable or self.check is not None:
+        if not self.editable or self.check is not None or self.stars is not None:
             return
         self.box.setText(editor_text(self.value))
         self.box.setPlaceholderText(_expected(self.kind) if self.kind is not str else "")
@@ -277,6 +302,17 @@ class EditableValue(QWidget):
             self._show_text(value)  # at once; the page reloads
             self.committed.emit(value)
 
+    def _starred(self, halves: int) -> None:
+        """A star was clicked: that rating, or none when it is the rating already."""
+        if self.scale is None:
+            return
+        current = self.value
+        rated = isinstance(current, int | float) and not isinstance(current, bool)
+        same = rated and half_stars(current, self.scale) == halves
+        value = None if same else rating_of(halves, self.scale)
+        self._show_stars(value)  # at once; the page reloads
+        self.committed.emit(value)
+
     def _toggled(self, on: bool) -> None:
         if on != bool(self.value):
             self.committed.emit(on)
@@ -284,7 +320,9 @@ class EditableValue(QWidget):
     # --- hover and double-click ---
 
     def enterEvent(self, event: QEnterEvent) -> None:
-        self.pencil.setVisible(self.editable and self.check is None and not self.editing())
+        self.pencil.setVisible(
+            self.editable and self.check is None and self.stars is None and not self.editing()
+        )
         super().enterEvent(event)
 
     def leaveEvent(self, event: QEvent) -> None:

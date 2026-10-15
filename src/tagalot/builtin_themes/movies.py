@@ -300,7 +300,8 @@ class Movie(Entity):
     director: str | None = field("Director", search="text")
     runtime: float | None = field("Runtime", search="range", display="duration")
     """Seconds (an .nfo gives minutes; else the longest video's)."""
-    rating: float | None = field("Rating", search="range")
+    rating: float | None = field("Rating", search="range", card=True, rating=10)
+    """Out of 10, as ``.nfo`` files score; it shows as five stars (#419)."""
     plot: str | None = field("Plot", search="text")
     quality: str | None = field("Quality", card=True, search="choice", editable=False)
     """``4K``, ``1440p``, ``1080p``, ``720p``, or ``SD``, from the best version's picture."""
@@ -326,7 +327,7 @@ class Movie(Entity):
         role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
-    card_lines = ("year", "quality")
+    card_lines = ("year", "quality", "rating")
     description_field = "plot"
 
 
@@ -367,7 +368,7 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
-    api_version = 14  # gallery roles (12: description_field; 10: TitleCard; 8: ctx.note)
+    api_version = 16  # ratings (14: gallery roles; 12: description_field; 10: TitleCard; …)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True

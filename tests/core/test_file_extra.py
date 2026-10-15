@@ -175,7 +175,9 @@ def test_reading_the_front_matter_gives_the_other_keys(tmp_path: Path) -> None:
     path = tmp_path / "book.md"
     path.write_text(
         "---\nTitle: X\nAuthor: Y\nDate: 2020-01-01\nSynopsis: Z\nImage: c.jpg\n"
-        "status: draft\nRating: 4\n---\n",
+        "status: draft\nMood: calm\nRating: 4\n---\n",
         encoding="utf-8",
     )
-    assert read_front_matter(str(path))["other"] == {"status": "draft", "Rating": 4}
+    front = read_front_matter(str(path))
+    assert front["other"] == {"status": "draft", "Mood": "calm"}  # a rating is read (#419)
+    assert front["rating"] == 4.0

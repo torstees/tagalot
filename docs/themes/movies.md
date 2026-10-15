@@ -7,7 +7,7 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **Movie:** from a video's name (`Inception (2010)`, `Blade Runner [1982]`, `The.Matrix.1999.1080p.BluRay`). Videos side by side whose names differ only by a part, quality, or edition (`- 720p`, `cd2`, `part1`, `- Extended`) are one movie with several files. A folder named like a movie (`Inception (2010)/`), or whose videos are all one movie, is that movie's folder.
 - **Extras aren't movies:** names ending `-trailer`, `-sample`, `-featurette`, `-behindthescenes`, `-deleted`, `-interview`, `-scene`, `-short`, `-other`, and videos in `Extras`, `Featurettes`, `Trailers`, `Behind The Scenes`, and similar folders. [Triage](../guide/triage.md) lists them; **Skip in scans** hides them.
 - **Video details** (read with MediaInfo): length, resolution, quality (`4K`, `1440p`, `1080p`, `720p`, `SD`), video codec, and audio languages. A movie with several versions shows its best.
-- **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating, which win over the file name; the **cast** in order; and a **set**, which becomes a collection.
+- **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating (out of 10, shown as five stars: 7 is ★★★½☆), which win over the file name; the **cast** in order; and a **set**, which becomes a collection.
 - **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
 - **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
 

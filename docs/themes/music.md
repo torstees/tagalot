@@ -8,6 +8,7 @@ For audio files with tags: **artists** ⊃ **albums** ⊃ **songs**.
 
 - **Album:** a folder with audio in it. Disc folders (`CD1`, `Disc 2`, `Disk-3`) belong to their parent's album and give their songs a disc number. It's titled from its songs' album tag (else the folder name), with their year and genre.
 - **Song:** from the file's tags (title, track, disc, artist, album artist, album, year, genre, length, bitrate). Songs with the same album, disc, track, and title are one song whose files are its **versions** (`01 So What.flac` and `01 So What.mp3`). A file without tags is named from its file name (`01 - So What.mp3`: track 1, "So What").
+- **Rating:** songs and albums have a **Rating**, five stars with halves. A song's starts from its file's rating when it has one (as Windows Media Player, foobar2000, MusicBee, and others write it); an album's or an **artist**'s is yours. Once you rate one, yours stays. Ratings show on cards and as a list column; point at one for the number.
 - **Artist:** an album's artist is its songs' album artist (else their artist); when they disagree, it's **Various Artists** (a compilation). A song by someone other than its album's artist is also under its own artist.
 - Formats: MP3, FLAC, Ogg, Opus, M4A/AAC, WAV, WMA, AIFF.
 

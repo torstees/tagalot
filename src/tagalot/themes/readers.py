@@ -72,6 +72,31 @@ def _number(text: str | None) -> float | None:
         return None
 
 
+def read_rating(value: Any, out_of: float = 5) -> float | None:
+    """A rating as written (``4``, ``"4.5"``, ``"8/10"``, ``"★★★½"``), out of 5, to the
+    nearest half; ``None`` for no rating, 0 (unrated, as most programs write it), or one
+    that isn't a rating. ``out_of`` is what a bare number is out of (Calibre's are out of
+    10), and a number above it isn't a rating."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int | float):
+        number, scale = float(value), float(out_of)
+    else:
+        text = str(value).strip()
+        if text and set(text) <= set("\u2605\u2606\u00bd* "):  # stars, as Markdown writes them
+            number = text.count("\u2605") + text.count("*") + 0.5 * text.count("\u00bd")
+            scale = 5.0
+        else:
+            found = re.fullmatch(r"(\d+(?:\.\d+)?)\s*(?:/\s*(\d+(?:\.\d+)?))?", text)
+            if found is None:
+                return None
+            number = float(found.group(1))
+            scale = float(found.group(2)) if found.group(2) else float(out_of)
+    if scale <= 0 or not 0 < number <= scale:
+        return None
+    return round(number * 5 / scale * 2) / 2 or None
+
+
 # --- EPUB ---
 
 
@@ -98,8 +123,9 @@ def read_epub(path: str) -> dict[str, Any]:
     ``series`` and ``series_index`` (Calibre's meta, or EPUB 3 ``belongs-to-collection`` of
     type series); ``collections`` (other ``belongs-to-collection`` names, as sets);
     ``subjects`` (keywords); ``publisher``; ``language``; ``year``; ``isbn``;
-    ``description``; ``source`` (``dc:source``, often the web address it came from); and
-    ``cover`` (the cover image's path inside the file, or ``None``).
+    ``description``; ``source`` (``dc:source``, often the web address it came from);
+    ``rating`` (Calibre's ``calibre:rating``, out of 5 in half stars; Calibre writes it out
+    of 10); and ``cover`` (the cover image's path inside the file, or ``None``).
     """
     with zipfile.ZipFile(path) as book:
         opf_path = _opf_path(book)
@@ -123,7 +149,7 @@ def read_epub(path: str) -> dict[str, Any]:
         code = element.get(f"{_OPF}role") or refines.get(element.get("id") or "", {}).get("role")
         creators.append((name, _ROLES.get(code or "") if code else None))
 
-    series, series_index = None, None
+    series, series_index, rating = None, None, None
     collections: list[str] = []
     for element in meta:
         if _local(element.tag) != "meta":
@@ -133,6 +159,8 @@ def read_epub(path: str) -> dict[str, Any]:
             series = " ".join(content.split())
         elif name == "calibre:series_index":
             series_index = _number(content)
+        elif name == "calibre:rating":
+            rating = read_rating(content, out_of=10)
         elif element.get("property") == "belongs-to-collection" and _text(element):
             facts = refines.get(element.get("id") or "", {})
             if facts.get("collection-type") == "series" and series is None:
@@ -163,6 +191,7 @@ def read_epub(path: str) -> dict[str, Any]:
         "isbn": isbn,
         "description": _plain(_text(meta.find(f"{_DC}description"))),
         "source": _text(meta.find(f"{_DC}source")),
+        "rating": rating,
         "cover": _cover_href(package, meta, opf_path),
     }
 
@@ -245,7 +274,8 @@ def read_comic_info(path: str) -> dict[str, Any] | None:
     has none: ``series``, ``number`` (as written: "12", "1.5", "Annual 1"), ``volume``,
     ``title``, ``writers``, ``artists`` (pencils, inks, colors, covers), ``publisher``,
     ``imprint``, ``genres`` and ``tags`` (keywords), ``web``, ``year``, ``story_arc``,
-    ``series_group`` (a universe), and ``summary``."""
+    ``series_group`` (a universe), ``summary``, and ``rating`` (``CommunityRating``, out of
+    5)."""
     data = _comic_info_bytes(path)
     if data is None:
         return None
@@ -270,6 +300,7 @@ def read_comic_info(path: str) -> dict[str, Any] | None:
         "story_arc": field.get("storyarc"),
         "series_group": field.get("seriesgroup"),
         "summary": field.get("summary"),
+        "rating": read_rating(field.get("communityrating")),
     }
 
 
@@ -608,7 +639,7 @@ FRONT_MATTER_READ = frozenset(
     {
         "title", "authors", "author", "series", "series_index", "number", "series_number",
         "universe", "tags", "keywords", "source", "url", "link", "year", "date", "publisher",
-        "language", "lang", *DESCRIPTION_KEYS, "cover", "image", "assets",
+        "language", "lang", *DESCRIPTION_KEYS, "cover", "image", "assets", "rating",
     }
 )  # fmt: skip
 """The keys :func:`read_front_matter` reads (case-folded); the rest are its ``other``."""
@@ -644,7 +675,8 @@ def read_front_matter(path: str) -> dict[str, Any]:
     ``lang``); ``description`` (or ``summary``, ``synopsis``, ``blurb``, ``abstract``);
     ``cover`` (a picture's path, as written, relative to the file); ``assets`` (the folder
     its pictures may be in instead, as written, #418) — each ``None`` for a placeholder
-    such as ``None``, ``null``, ``N/A``, or ``-`` (#426); ``fields``, every
+    such as ``None``, ``null``, ``N/A``, or ``-`` (#426); ``rating`` (out of 5, as
+    :func:`read_rating` reads ``4``, ``4.5``, ``8/10``, or ``★★★★``); ``fields``, every
     key and value as written, for a theme's own keys; and ``other``, the keys and values
     of ``fields`` it didn't read (:data:`FRONT_MATTER_READ`), for :meth:`IngestContext.extra`
     (#410). Keys are matched ignoring case. A file
@@ -694,6 +726,7 @@ def read_front_matter(path: str) -> dict[str, Any]:
         "description": words(*DESCRIPTION_KEYS),
         "cover": place("cover", "image"),
         "assets": place("assets"),
+        "rating": read_rating(first("rating")),
         "fields": fields,
         "other": {k: v for k, v in fields.items() if k.strip().casefold() not in FRONT_MATTER_READ},
     }

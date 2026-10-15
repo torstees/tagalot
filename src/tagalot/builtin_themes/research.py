@@ -69,6 +69,7 @@ from tagalot.themes.api import (
     OnlineSource,
     Record,
     ResourceInfo,
+    SchemaOps,
     SearchView,
     Section,
     SortBy,
@@ -154,7 +155,8 @@ class Paper(Entity):
     url: str | None = field("Link", search="text", display="url")
     read_status: str | None = field("Read", search="choice")
     """The user's: Unread, Reading, Read."""
-    rating: int | None = field("Rating", search="range")
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's, out of 5 (theme version 2 made it a number with halves, #419)."""
     origins: str | None = field("Sources", editable=False, detail=False)
     """What each of its sources says, as JSON: ``{resource id: {field: [rank, value]}}``."""
     roles = [
@@ -165,7 +167,7 @@ class Paper(Entity):
         role("code", kinds={"any"}, many=True, label="Code"),
         role("notes", kinds={"any"}, many=True, label="Notes"),
     ]
-    card_lines = ("authors", "year")
+    card_lines = ("authors", "year", "rating")
     description_field = "abstract"
     full_text = True  # its files' text can be searched (DESIGN.md §8)
 
@@ -186,8 +188,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
-    id, name, version = "research", "Research", 1
-    api_version = 12  # description_field (6: full_text)
+    id, name, version = "research", "Research", 2  # 2: ratings out of 5, as stars
+    api_version = 16  # ratings (12: description_field; 6: full_text)
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's
     # citation key comes from a bibliography).
@@ -264,6 +266,10 @@ class ResearchTheme(Theme):
             ctx.message("No DOI, arXiv ID, or link to open.")
         elif len(papers) > MAX_PAGES:
             ctx.message(f"Opened the first {MAX_PAGES} papers' pages.")
+
+    def migrate_schema(self, from_version: int, ops: SchemaOps) -> None:
+        if from_version < 2:  # a whole number became a rating out of 5, with halves (#419)
+            ops.change_type(Paper, "rating")
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         if entity_type is Paper:

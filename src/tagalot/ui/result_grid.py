@@ -61,6 +61,7 @@ from tagalot.ui.models.results import (
     ResultsModel,
     TagsValue,
     display_value,
+    rating_text,
     wrapped,
 )
 from tagalot.ui.result_table import OUTLINE_COLOR
@@ -312,7 +313,8 @@ class ResultGrid(QListView):
         hit, values = found
         lines = [hit.title]
         for key, label in self.card_lines.get(hit.type, ()):
-            value = display_value(values.get(key), self.displays.get(key))
+            display = self.displays.get(key)
+            value = rating_text(values.get(key), display) or display_value(values.get(key), display)
             if value:
                 lines.append(f"{label}: {value}")
         description = values.get(self.descriptions.get(hit.type, ""))

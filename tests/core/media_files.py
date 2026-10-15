@@ -13,7 +13,7 @@ from pathlib import Path
 
 from mutagen.easyid3 import EasyID3
 from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC, ID3
+from mutagen.id3 import APIC, ID3, POPM
 from PIL import Image, ImageFont
 
 MP3_FRAME = bytes([0xFF, 0xFB, 0x90, 0x64]) + bytes(413)
@@ -36,10 +36,11 @@ def write_mp3(
     pictures: Sequence[tuple[int, bytes]] = (),
     tags: Mapping[str, str] | None = None,
     frames: int = 20,
+    popm: int | None = None,
 ) -> None:
-    """An MP3 with ID3 ``APIC`` frames of the given (picture type, image bytes), and ``tags``
-    by mutagen's easy names (``title``, ``albumartist``, ``tracknumber``…). Each frame is
-    about 26 ms."""
+    """An MP3 with ID3 ``APIC`` frames of the given (picture type, image bytes), ``tags``
+    by mutagen's easy names (``title``, ``albumartist``, ``tracknumber``…), and a ``POPM``
+    rating (1 to 255), as Windows Media Player writes one. Each frame is about 26 ms."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(MP3_FRAME * frames)
     if pictures:
@@ -52,6 +53,10 @@ def write_mp3(
         for name, value in tags.items():
             easy[name] = value
         easy.save(path)
+    if popm is not None:
+        id3 = ID3(path)
+        id3.add(POPM(email="Windows Media Player 9 Series", rating=popm, count=0))
+        id3.save(path)
 
 
 def write_flac(
