@@ -4,7 +4,7 @@ For papers, preprints, theses, chapters, and reports: **papers** with their **au
 
 ## What it makes
 
-- **Paper:** its kind (article, preprint, conference paper, chapter, book, thesis, report), year, venue, volume, issue, pages, DOI, arXiv ID, PubMed ID, citation key, abstract, and link; and your own **Read** status (Unread, Reading, Read) and rating. Its files: the paper (several: the preprint and the published version, a second download), bibliography files, supplements, data, code, and notes.
+- **Paper:** its kind (article, preprint, conference paper, chapter, book, thesis, report), year, venue, volume, issue, pages, DOI, arXiv ID, PubMed ID, citation key, abstract, and link; and your own **Read** status (Unread, Reading, Read) and **Rating** (five stars, with halves; a keep made before keeps the numbers it had, out of 5). Its files: the paper (several: the preprint and the published version, a second download), bibliography files, supplements, data, code, and notes.
 - **Author:** in each paper's order (first and last author matter); move them up or down by hand on a paper's page, and later scans keep your order.
 - **Venue:** a journal or conference, holding its papers (newest first).
 - **Project:** a reading list you make: **New project…** in the Projects search, **Add to project…** on papers, **Remove from …** on its page. Tag a project and, with Inherit tags, its papers match.

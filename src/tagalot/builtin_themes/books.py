@@ -147,6 +147,8 @@ class Book(Entity):
     series_index: float | None = field("Number in series", search="range")
     universe: str | None = field("Universe", search="choice", mirrors=Universe)
     collections: str | None = field("Collections", search="text", mirrors=Collection, many=True)
+    rating: float | None = field("Rating", search="range", rating=5)
+    """Out of 5: an EPUB's Calibre rating or front matter ``rating`` to start with (#419)."""
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
     language: str | None = field("Language", search="choice")
@@ -185,6 +187,8 @@ class Comic(Entity):
     writers: str | None = field("Writer", card=True, search="choice", mirrors="comic_writers")
     artists: str | None = field("Artist", search="choice", mirrors="comic_artists")
     story_arc: str | None = field("Story arc", search="choice")
+    rating: float | None = field("Rating", search="range", rating=5)
+    """Out of 5: ComicInfo's ``CommunityRating`` to start with (#419)."""
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
     imprint: str | None = field("Imprint", search="choice")
@@ -215,6 +219,7 @@ FRONT_MATTER_KEYS: Mapping[str, tuple[str, ...]] = {
     "description": ("description", "summary", "synopsis", "blurb", "abstract"),
     "link": ("url", "link"),
     "assets": ("assets",),
+    "rating": ("rating",),
 }
 """A book's editable fields and the front-matter keys they are written under: the first,
 unless the file already uses another."""
@@ -236,11 +241,12 @@ class ContentsThumbnail(ThumbnailProvider):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 6  # 6: covers not found; 5: extra; 4: assets; …
-    # 3: synopsis; 2: authors
-    # 15: fields that mirror links; 14: gallery roles; 13: not_found; 12: description_field;
-    # 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text; 5: online
-    api_version = 15
+    id, name, version = "books", "Books", 7  # 7: ratings; 6: covers not found; 5: extra; …
+    # 4: assets; 3: synopsis; 2: authors
+    # 16: ratings; 15: fields that mirror links; 14: gallery roles; 13: not_found;
+    # 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text;
+    # 5: online
+    api_version = 16
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
@@ -600,6 +606,7 @@ def book_work(relpath: str, details: Mapping[str, Any] | None) -> dict[str, Any]
         "source": meta.get("source"),
         "cover": meta.get("cover"),
         "assets": meta.get("assets"),
+        "rating": meta.get("rating"),
         "other": meta.get("other"),  # a Markdown file's other keys, as Extra fields (#410)
     }
 
@@ -615,7 +622,7 @@ def epub_details(epub: Mapping[str, Any]) -> dict[str, Any]:
     ]
     return {
         **{k: epub.get(k) for k in ("title", "series", "series_index", "year", "publisher")},
-        **{k: epub.get(k) for k in ("language", "isbn", "description")},
+        **{k: epub.get(k) for k in ("language", "isbn", "description", "rating")},
         "writers": [n for n, role in creators if role in (None, "writer")],
         "artists": [n for n, role in creators if role == "artist"],
         "collections": epub.get("collections") or [],
@@ -652,7 +659,7 @@ def pdf_details(info: Mapping[str, Any]) -> dict[str, Any]:
 def markdown_details(front: Mapping[str, Any]) -> dict[str, Any]:
     """What :func:`read_front_matter` found (its ``authors`` are writers)."""
     names = ("title", "series", "series_index", "universe", "keywords", "source", "link")
-    more = ("year", "publisher", "language", "description", "cover", "assets")
+    more = ("year", "publisher", "language", "description", "cover", "assets", "rating")
     return {
         **{k: front.get(k) for k in (*names, *more)},
         "writers": front.get("authors") or [],
@@ -726,6 +733,7 @@ def comic_work(relpath: str, info: Mapping[str, Any] | None) -> dict[str, Any]:
         "publisher": meta.get("publisher"),
         "imprint": meta.get("imprint"),
         "description": meta.get("summary"),
+        "rating": meta.get("rating"),
         "link": web,
         "source": urlsplit(web).hostname if web else None,
     }

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.formats import rating_scale
 from tagalot.core.search_spec import ChoiceFilter, FieldFilter, RangeFilter, TextFilter, TextMatch
 from tagalot.ui.field_editor import ParseError, editor_text, parse_value
 from tagalot.ui.models.results import display_value
@@ -178,6 +179,9 @@ class FieldFilterPopup(QFrame):
                 self.high.setText(editor_text(current.high))
             row = QHBoxLayout()
             unit = {"bytes": " number of bytes", "duration": " number of seconds"}
+            scale = rating_scale(field.display)
+            if scale is not None:  # stars are searched by the type's own numbers (#419)
+                unit[field.display or ""] = f" number out of {scale}"
             for label, box in (("From", self.low), ("To", self.high)):
                 box.setPlaceholderText("any" + unit.get(field.display or "", ""))
                 box.returnPressed.connect(self._apply)

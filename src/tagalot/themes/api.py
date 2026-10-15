@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 15
+API_VERSION = 16
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -39,7 +39,8 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 (:attr:`Entity.description_field`); version 13 added reporting files not found
 (:meth:`IngestContext.not_found`); version 14 added gallery roles filled from folders
 (:func:`role`'s ``gallery`` and ``folders``); version 15 added fields that mirror links
-(:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`)."""
+(:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`); version 16 added
+ratings shown as stars (:func:`field`'s ``rating``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -50,6 +51,9 @@ SEARCH_KINDS: frozenset[str] = frozenset(typing.get_args(SearchKind))
 DISPLAY_FORMATS: frozenset[str] = frozenset({"bytes", "duration", "url"})
 """How a field may be shown (:func:`field`'s ``display``): ``"bytes"`` and ``"duration"``
 for number fields, ``"url"`` for text fields."""
+
+RATING_SCALES: frozenset[int] = frozenset({5, 10})
+"""What a rating may be out of (:func:`field`'s ``rating``): 5, or 10 (a movie's score)."""
 
 
 class Kind(enum.StrEnum):
@@ -102,7 +106,10 @@ class FieldSpec:
     """Show in the detail page's fields section."""
     display: str | None = None
     """How the value reads: ``"bytes"`` (3.0 MB) or ``"duration"`` (seconds as 3:25) for a
-    number, ``"url"`` (a link that opens in the browser) for text."""
+    number, ``"url"`` (a link that opens in the browser) for text; ``"stars/5"`` or
+    ``"stars/10"`` for a rating (set by ``rating``)."""
+    rating: int | None = None
+    """What this rating is out of (API version 16): 5 or 10. It shows as five stars."""
     mirrors: "type[Entity] | str | None" = None
     """The link this text field is a copy of (API version 15): a container type
     (``Series``: the titles of the item's containers of that type, by a containment the
@@ -127,6 +134,7 @@ def field(
     display: str | None = None,
     mirrors: "type[Entity] | str | None" = None,
     many: bool = False,
+    rating: int | None = None,
 ) -> Any:
     """Declare a field: ``year: int | None = field("Year", card=True, search="range")``.
 
@@ -146,9 +154,23 @@ def field(
     them), and keeps the field as the user's. A containment field that the item gets
     through another container (a book's universe through its series, when the theme
     declares ``contains(Universe, Series)``) can't be edited on the item: it follows the
-    container. Typed ``Any`` so the declaration type-checks against its annotation.
+    container.
+
+    ``rating`` makes a ``float`` field a rating out of 5 or 10 (API version 16):
+    ``rating: float | None = field("Rating", search="range", rating=5)``. It shows as five
+    stars in lists, on cards, and on the item's page, in half stars (3.5 out of 5 is
+    ★★★½☆; out of 10, each point is a half star), and the item's page sets it by clicking
+    a star (its left half for the half). Searching a range uses the numbers. Use 5 unless
+    the files score out of 10 (a movie's ``.nfo``). Typed ``Any`` so the declaration
+    type-checks against its annotation.
     """
-    if display is not None and display not in DISPLAY_FORMATS:
+    if rating is not None:
+        if rating not in RATING_SCALES:
+            raise ThemeDeclarationError(f"rating={rating!r} must be 5 or 10")
+        if display is not None:
+            raise ThemeDeclarationError("a rating shows as stars: it takes no display")
+        display = f"stars/{rating}"
+    elif display is not None and display not in DISPLAY_FORMATS:
         raise ThemeDeclarationError(
             f"display={display!r} is not one of {', '.join(sorted(DISPLAY_FORMATS))}"
         )
@@ -167,6 +189,7 @@ def field(
         display=display,
         mirrors=mirrors,
         many=many,
+        rating=rating,
     )
 
 
@@ -1522,6 +1545,7 @@ from tagalot.themes.readers import (  # noqa: E402
     read_link_file,
     read_office_info,
     read_pdf_info,
+    read_rating,
     split_keywords,
     split_people,
 )
@@ -1538,6 +1562,7 @@ __all__ = [
     "MOBI_EXTENSIONS",
     "OPTION_TYPES",
     "PDFIUM",
+    "RATING_SCALES",
     "SEARCH_KINDS",
     "ActionContext",
     "ActionSpec",
@@ -1604,6 +1629,7 @@ __all__ = [
     "read_mobi",
     "read_office_info",
     "read_pdf_info",
+    "read_rating",
     "related",
     "role",
     "split_keywords",

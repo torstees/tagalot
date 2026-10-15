@@ -288,7 +288,14 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             infos = []  # reported by the table build below
         for info in infos:
             display = info.spec.display
-            if display == "url" and info.type is not str:
+            if info.spec.rating is not None:
+                if info.type is not float:
+                    problems.append(f"{names[entity]}.{info.name}: a rating must be a float field")
+                if getattr(theme, "api_version", API_VERSION) < 16:
+                    problems.append(
+                        f"{names[entity]}.{info.name}: a rating needs api_version = 16 (or later)"
+                    )
+            elif display == "url" and info.type is not str:
                 problems.append(
                     f"{names[entity]}.{info.name}: display='url' needs a text field (str)"
                 )

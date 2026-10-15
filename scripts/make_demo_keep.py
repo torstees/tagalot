@@ -76,7 +76,7 @@ from xml.sax.saxutils import escape
 import py7zr
 from mutagen.easyid3 import EasyID3
 from mutagen.flac import FLAC
-from mutagen.id3 import APIC, ID3
+from mutagen.id3 import APIC, ID3, POPM
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import Connection, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -454,6 +454,12 @@ SONGS: dict[str, tuple[dict[str, str], int]] = {
     "Untagged/03 - Lonely Road.mp3": ({}, 3),
     "Demo Tape.mp3": ({"title": "Demo Tape", "artist": "Garage Band"}, 2),
 }
+SONG_RATINGS = {
+    "Miles Davis/Kind of Blue/02 Freddie Freeloader.mp3": 196,  # four stars, as WMP writes it
+    "Nina Simone/Pastel Blues/02 Trouble in Mind.mp3": 255,  # five
+}
+"""Songs whose MP3s carry a rating (ID3 ``POPM``, 0 to 255; #419). So What's FLAC has a
+``RATING`` too."""
 MUSIC_TAGS = {
     ("Mood", "Calm"): ["Blue in Green", "Blue", "Trouble in Mind"],
     ("Mood", "Loud"): ["Tie Your Mother Down"],
@@ -484,6 +490,13 @@ def _mp3(path: Path, tags: dict[str, str], seconds: int, cover: bytes | None = N
         for name, value in tags.items():
             easy[name] = value
         easy.save(path)
+
+
+def _rate_mp3(path: Path, rating: int) -> None:
+    """Rate an MP3 as Windows Media Player does: a ``POPM`` frame, 1 to 255."""
+    id3 = ID3(path)
+    id3.add(POPM(email="Windows Media Player 9 Series", rating=rating, count=0))
+    id3.save(path)
 
 
 def _flac(path: Path, tags: dict[str, str], seconds: int) -> None:
@@ -528,10 +541,12 @@ def make_music_demo(scratch: Path = SCRATCH, *, reset: bool = False) -> Path:
     for relpath, (tags, seconds) in SONGS.items():
         cover = pastel if relpath.startswith("Nina Simone/") else None
         _mp3(files / relpath, _track_numbers(relpath, tags), seconds, cover)
+        if relpath in SONG_RATINGS:
+            _rate_mp3(files / relpath, SONG_RATINGS[relpath])
     so_what = "Miles Davis/Kind of Blue/01 So What.mp3"
     _flac(
         files / so_what.replace(".mp3", ".flac"),
-        _track_numbers(so_what, SONGS[so_what][0]),
+        {**_track_numbers(so_what, SONGS[so_what][0]), "rating": "90"},  # 4½ stars, of 100
         545,
     )
     (files / "Miles Davis/Kind of Blue/cover.jpg").write_bytes(
@@ -772,6 +787,7 @@ BOOK_EPUBS: dict[str, dict[str, Any]] = {
         "creators": [("Terry Pratchett", "aut")],
         "series": ("Discworld", 1),
         "subjects": ["Fantasy", "Humor"],
+        "rating": 8,  # Calibre's, out of 10: four stars
         "cover": ((40, 90, 150), "The Colour of Magic"),
     },
     "Humble Bundle/The Colour of Magic.epub": {  # the same book from another store
@@ -862,6 +878,7 @@ BOOK_COMICS: dict[str, dict[str, str] | None] = {
         "Genre": "Science Fiction, Space Opera",
         "Publisher": "Image",
         "Year": "2012",
+        "CommunityRating": "4.5",
     },
     "Comixology/Saga 002.cbz": {
         "Series": "Saga",
@@ -900,6 +917,7 @@ BOOK_MARKDOWN = {
         "url: https://example.com/mother-of-learning\n"
         "date: 2011-10-21\n"
         "cover: images/mol-cover.jpg\n"
+        "rating: 5\n"
         "synopsis: Zorian relives the same month at magic school, again and again.\n"
         "---\n"
         "# Arc 1: Good Morning Brother\n\nZorian's eyes abruptly shot open…\n"
@@ -997,6 +1015,8 @@ def _epub(path: Path, details: dict[str, Any]) -> None:
         name, index = details["series"]
         lines.append(f'<meta name="calibre:series" content="{escape(name)}"/>')
         lines.append(f'<meta name="calibre:series_index" content="{index}"/>')
+    if "rating" in details:
+        lines.append(f'<meta name="calibre:rating" content="{details["rating"]}"/>')
     if "epub3_series" in details:
         name, index = details["epub3_series"]
         lines.append(f'<meta property="belongs-to-collection" id="s">{escape(name)}</meta>')
