@@ -125,12 +125,16 @@ def test_the_built_in_themes_rate(theme: type[Theme]) -> None:
         if f.name == "rating"
     }
     expected = {
-        BooksTheme: {"Book": 5, "Comic": 5},
-        MusicTheme: {"Album": 5, "Song": 5},
+        BooksTheme: {"Author": 5, "Book": 5, "Comic": 5, "Series": 5, "Universe": 5},
+        MusicTheme: {"Album": 5, "Artist": 5, "Song": 5},
         MoviesTheme: {"Movie": 10},
         ResearchTheme: {"Paper": 5},
     }[theme]
-    assert {k: v for k, v in scales.items() if k in expected} == expected
+    assert scales == expected
+    for entity in theme.entities:  # in lists and on cards, at first (#419 review)
+        ratings = [f for f in entity_fields(entity) if f.name == "rating"]
+        assert all(f.spec.card for f in ratings), entity.__name__
+        assert ("rating" in entity.card_lines) == bool(ratings), entity.__name__
     assert Paper in ResearchTheme.entities
     assert Album in MusicTheme.entities
 
@@ -223,3 +227,17 @@ def test_audio_files_ratings(tmp_path: Path) -> None:
     write_mp3(tmp_path / "d.mp3", tags={"title": "D"})
     assert read_tags(str(tmp_path / "d.mp3"))["rating"] is None
     assert Song in MusicTheme.entities
+
+
+def test_a_rating_cells_tooltip_gives_the_number() -> None:
+    from typing import cast
+
+    from tagalot.ui.models.results import ResultColumn, Row, cell_text, cell_tooltip
+
+    column = ResultColumn("rating", "Rating", numeric=True, display="stars/5")
+    row = cast(Row, (None, {"rating": 3.5}))
+    assert cell_text(column, row, {}) == "★★★½☆"
+    assert cell_tooltip(column, row, {}) == "★★★½☆  3.5 out of 5"
+    movie = ResultColumn("rating", "Rating", numeric=True, display="stars/10")
+    assert cell_tooltip(movie, cast(Row, (None, {"rating": 8.8})), {}) == "★★★★½  8.8 out of 10"
+    assert cell_tooltip(column, cast(Row, (None, {"rating": None})), {}) == ""

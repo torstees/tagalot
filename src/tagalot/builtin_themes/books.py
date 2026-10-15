@@ -107,6 +107,9 @@ class Author(Entity):
     title_label = "Name"
     sort_name: str | None = field("Sort name", search="text")
     """``Pratchett, Terry``: how the Authors view sorts them."""
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (#419)."""
+    card_lines = ("rating",)
     # Photos beside the author's note in the notes folder (#439, §9 *Galleries*).
     roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos")]
 
@@ -114,7 +117,10 @@ class Author(Entity):
 class Universe(Entity):
     """Series and works sharing a world (Discworld, Cosmere, Marvel)."""
 
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (#419)."""
     contents_sort = (SortBy("title"),)
+    card_lines = ("rating",)
     # Covers beside its note in the notes folder (#439, §9 *Galleries*).
     roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
 
@@ -124,8 +130,10 @@ class Series(Entity):
 
     plural = "Series"
     universe: str | None = field("Universe", search="choice", mirrors=Universe)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (#419)."""
     contents_sort = (SortBy("series_index"), SortBy("title"))
-    card_lines = ("universe",)
+    card_lines = ("universe", "rating")
     # Covers beside its note in the notes folder (#439, §9 *Galleries*).
     roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
 
@@ -147,7 +155,7 @@ class Book(Entity):
     series_index: float | None = field("Number in series", search="range")
     universe: str | None = field("Universe", search="choice", mirrors=Universe)
     collections: str | None = field("Collections", search="text", mirrors=Collection, many=True)
-    rating: float | None = field("Rating", search="range", rating=5)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
     """Out of 5: an EPUB's Calibre rating or front matter ``rating`` to start with (#419)."""
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
@@ -169,7 +177,7 @@ class Book(Entity):
         # Covers beside the book's note in the notes folder (#389, §9 *Galleries*).
         role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers"),
     ]
-    card_lines = ("authors", "series")
+    card_lines = ("authors", "series", "rating")
     description_field = "description"
     full_text = True  # its files' text can be searched (DESIGN.md §8); comics' can't
 
@@ -187,7 +195,7 @@ class Comic(Entity):
     writers: str | None = field("Writer", card=True, search="choice", mirrors="comic_writers")
     artists: str | None = field("Artist", search="choice", mirrors="comic_artists")
     story_arc: str | None = field("Story arc", search="choice")
-    rating: float | None = field("Rating", search="range", rating=5)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
     """Out of 5: ComicInfo's ``CommunityRating`` to start with (#419)."""
     year: int | None = field("Year", search="range")
     publisher: str | None = field("Publisher", search="choice")
@@ -196,7 +204,7 @@ class Comic(Entity):
     sources: str | None = field("Sources", search="text", editable=False)
     link: str | None = field("Link", search="text", display="url")
     roles = [role("file", kinds={"any"}, many=True, primary=True, label="Files")]
-    card_lines = ("series", "number")
+    card_lines = ("series", "number", "rating")
     description_field = "description"
 
 

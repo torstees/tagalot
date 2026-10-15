@@ -155,7 +155,7 @@ class Paper(Entity):
     url: str | None = field("Link", search="text", display="url")
     read_status: str | None = field("Read", search="choice")
     """The user's: Unread, Reading, Read."""
-    rating: float | None = field("Rating", search="range", rating=5)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
     """The user's, out of 5 (theme version 2 made it a number with halves, #419)."""
     origins: str | None = field("Sources", editable=False, detail=False)
     """What each of its sources says, as JSON: ``{resource id: {field: [rank, value]}}``."""
@@ -167,7 +167,7 @@ class Paper(Entity):
         role("code", kinds={"any"}, many=True, label="Code"),
         role("notes", kinds={"any"}, many=True, label="Notes"),
     ]
-    card_lines = ("authors", "year")
+    card_lines = ("authors", "year", "rating")
     description_field = "abstract"
     full_text = True  # its files' text can be searched (DESIGN.md §8)
 

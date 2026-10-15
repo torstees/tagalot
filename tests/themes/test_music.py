@@ -476,6 +476,16 @@ def test_playlist_names_are_safe_file_names(tmp_path: Path) -> None:
     assert Path(playlist_path(Ctx(), "...")).name == "Playlist.m3u8"  # type: ignore[arg-type]
 
 
+def test_a_version_without_a_rating_keeps_the_songs(env: Env) -> None:
+    # The FLAC is read first and rates the song; the MP3 that joins it has no rating and
+    # doesn't clear it (#419).
+    so_what = {**KIND_OF_BLUE, "title": "So What", "tracknumber": "1", "RATING": "90"}
+    write_flac(env.files / "Miles Davis/Kind of Blue/01 So What.flac", tags=so_what)
+    env.scan()
+    assert env.versions("So What") == 2
+    assert env.fields(Song, "So What")["rating"] == 4.5
+
+
 def test_songs_record_the_best_bitrate_of_their_versions(env: Env) -> None:
     blue = env.files / "Miles Davis/Kind of Blue"
     mp3 = read_tags(str(blue / "01 So What.mp3"))["bitrate"]

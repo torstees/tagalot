@@ -300,7 +300,7 @@ class Movie(Entity):
     director: str | None = field("Director", search="text")
     runtime: float | None = field("Runtime", search="range", display="duration")
     """Seconds (an .nfo gives minutes; else the longest video's)."""
-    rating: float | None = field("Rating", search="range", rating=10)
+    rating: float | None = field("Rating", search="range", card=True, rating=10)
     """Out of 10, as ``.nfo`` files score; it shows as five stars (#419)."""
     plot: str | None = field("Plot", search="text")
     quality: str | None = field("Quality", card=True, search="choice", editable=False)
@@ -327,7 +327,7 @@ class Movie(Entity):
         role("nfo", kinds={"any"}, label="Details file"),
     ]
     double_click = "open_file"
-    card_lines = ("year", "quality")
+    card_lines = ("year", "quality", "rating")
     description_field = "plot"
 
 

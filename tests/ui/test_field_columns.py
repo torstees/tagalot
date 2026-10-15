@@ -67,7 +67,7 @@ def test_list_columns_offer_every_field(session: KeepSession) -> None:
     columns = {c.key: c for c in list_columns(session.schema, ("books.book",))}
     keys = list(columns)
     # card fields first, then the description (#414)
-    assert keys[:6] == ["title", "badges", "tags", "authors", "series", "description"]
+    assert keys[:7] == ["title", "badges", "tags", "authors", "series", "rating", "description"]
     assert not columns["authors"].hidden_by_default
     assert not columns["description"].hidden_by_default
     assert columns["description"].description
@@ -93,20 +93,20 @@ def test_a_field_column_is_shown_from_the_menu_and_remembered(
     qtbot: QtBot, session: KeepSession
 ) -> None:
     page = _books(qtbot, session)
-    assert _shown(page) == ["Title", "Author", "Series", "Description"]
+    assert _shown(page) == ["Title", "Author", "Series", "Rating", "Description"]
     actions = {a.text(): a for a in page.table.column_menu().actions()}
     assert {"Link", "Description", "ISBN", "Sources", "Year"} <= set(actions)
     assert not actions["Link"].isChecked()
     actions["Link"].setChecked(True)  # as clicking it in the header's menu does
-    assert _shown(page) == ["Title", "Author", "Series", "Description", "Link"]
+    assert _shown(page) == ["Title", "Author", "Series", "Rating", "Description", "Link"]
     state = load_ui_state(session.keep.ui_state_path)
     assert state["shown_columns"] == {"view:Books": ["link"]}
 
     again = _books(qtbot, session)  # a new window for the keep restores the choice
-    assert _shown(again) == ["Title", "Author", "Series", "Description", "Link"]
+    assert _shown(again) == ["Title", "Author", "Series", "Rating", "Description", "Link"]
     actions = {a.text(): a for a in again.table.column_menu().actions()}
     actions["Link"].setChecked(False)
-    assert _shown(again) == ["Title", "Author", "Series", "Description"]
+    assert _shown(again) == ["Title", "Author", "Series", "Rating", "Description"]
     assert load_ui_state(session.keep.ui_state_path)["shown_columns"] == {"view:Books": []}
 
 
@@ -201,7 +201,7 @@ def test_columns_move_in_the_list_and_the_tree(qtbot: QtBot, session: KeepSessio
     shown = [i for i in range(table.count()) if not table.isSectionHidden(i)]
     order = sorted(shown, key=table.visualIndex)
     labels = [page.table.columns[i].label for i in order]
-    assert labels == ["Title", "Series", "Author", "Description"]
+    assert labels == ["Title", "Series", "Author", "Rating", "Description"]
     assert tree.visualIndex(series) < tree.visualIndex(authors)  # the tree follows
     tree.moveSection(tree.visualIndex(authors), tree.visualIndex(series))  # and back
     assert table.visualIndex(authors) < table.visualIndex(series)

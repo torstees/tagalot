@@ -79,6 +79,9 @@ class Artist(Entity):
     """Whoever an album or song is by."""
 
     title_label = "Name"
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
+    """The user's own, out of 5 (#419)."""
+    card_lines = ("rating",)
     contents_sort = (SortBy("year"), SortBy("title"))
     # Photos beside the artist's note in the notes folder (#389, §9 *Galleries*).
     roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos")]
@@ -90,7 +93,7 @@ class Album(Entity):
     artist: str | None = field("Artist", card=True, search="choice", mirrors=Artist)
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="choice")
-    rating: float | None = field("Rating", search="range", rating=5)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
     """The user's own, out of 5 (files rate songs, not albums; #419)."""
     folder: str = field("Folder", search="text", editable=False)
     roles = [
@@ -104,7 +107,7 @@ class Album(Entity):
             label="Scans",
         ),
     ]
-    card_lines = ("artist", "year")
+    card_lines = ("artist", "year", "rating")
     contents_sort = (SortBy("disc"), SortBy("track"), SortBy("title"))
 
 
@@ -118,7 +121,7 @@ class Song(Entity):
     album: str | None = field("Album", card=True, search="choice")
     year: int | None = field("Year", search="range")
     genre: str | None = field("Genre", search="choice")
-    rating: float | None = field("Rating", search="range", rating=5)
+    rating: float | None = field("Rating", search="range", card=True, rating=5)
     """Out of 5: its file's rating to start with (:func:`song_rating`, #419)."""
     duration: float | None = field(
         "Length", card=True, search="range", editable=False, display="duration"
@@ -128,7 +131,7 @@ class Song(Entity):
     folder: str = field("Folder", search="text", editable=False)
     roles = [role("audio", kinds={"audio"}, many=True, primary=True)]
     double_click = "open_file"
-    card_lines = ("artist", "duration")
+    card_lines = ("artist", "duration", "rating")
 
 
 class AlbumThumbnail(ThumbnailProvider):
@@ -349,9 +352,7 @@ class MusicTheme(Theme):
             song = existing[0]
             before = ctx.get(song).fields
             values["bitrate"] = best_bitrate(ctx, song, resource, before, bitrate)
-            others = [r for r in ctx.linked(song, "audio") if r != resource.id]
-            if values["rating"] is None and others:  # another version may have rated it
-                values["rating"] = before.get("rating")
+            values["rating"] = kept_rating(ctx, song, resource, before, tags.get("rating"))
             ctx.update(song, title=title, **values)
             if before.get("artist") and before["artist"] != artist:
                 old_artist = artist_ref(before["artist"], ctx)
@@ -366,7 +367,9 @@ class MusicTheme(Theme):
         else:
             key = song_key(album_dir, disc, track, title)
             song = ctx.upsert(Song, key, title=title)  # found, or made with no values yet
-            values["bitrate"] = best_bitrate(ctx, song, resource, ctx.get(song).fields, bitrate)
+            before = ctx.get(song).fields  # another version may have made it
+            values["bitrate"] = best_bitrate(ctx, song, resource, before, bitrate)
+            values["rating"] = kept_rating(ctx, song, resource, before, tags.get("rating"))
             ctx.update(song, title=title, **values)
             ctx.link(song, resource, "audio", sort_order=0)
         # Its genres can become the user's tags (DESIGN.md §7 "File keywords").
@@ -526,6 +529,22 @@ def best_bitrate(
     kept = before.get("bitrate") if others else None
     rates = [r for r in (kept, read) if r]
     return max(rates) if rates else None
+
+
+def kept_rating(
+    ctx: IngestContext,
+    song: EntityRef,
+    resource: ResourceInfo,
+    before: Mapping[str, Any],
+    read: float | None,
+) -> float | None:
+    """A song's rating after reading one of its files: the file's, else, while it has other
+    versions, the one it had (an MP3 without a rating doesn't clear its FLAC's, #419)."""
+    if read is not None:
+        return read
+    others = [r for r in ctx.linked(song, "audio") if r != resource.id]
+    kept = before.get("rating") if others else None
+    return float(kept) if isinstance(kept, int | float) else None
 
 
 def read_tags(path: str) -> dict[str, Any]:

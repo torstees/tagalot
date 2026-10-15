@@ -30,7 +30,7 @@ from PySide6.QtCore import (
 )
 from sqlalchemy import ColumnElement, Connection
 
-from tagalot.core.formats import format_value
+from tagalot.core.formats import format_rating_number, format_stars, format_value, rating_scale
 from tagalot.core.keywords import keyword_index, keyword_key, keywords_of
 from tagalot.core.search import (
     MATCH_END,
@@ -264,11 +264,23 @@ def wrapped(text: str, width: int = 70, lines: int = 4) -> list[str]:
     return found
 
 
+def rating_text(value: object, display: str | None) -> str | None:
+    """A rating as stars and its number, for tooltips (``★★★½☆  3.5 out of 5``, #419);
+    ``None`` for anything else."""
+    scale = rating_scale(display)
+    if scale is None or isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return f"{format_stars(value, scale)}  {format_rating_number(value, scale)}"
+
+
 def cell_tooltip(column: ResultColumn, row: Row, type_labels: Mapping[str, str]) -> str:
     """The tooltip of one cell: the full tag paths for Tags, else the cell's text."""
     value = row[1].get(column.key)
     if isinstance(value, MatchValue):
         return f"{value.text}\n\n{value.where}"
+    rating = rating_text(value, column.display)
+    if rating is not None:
+        return rating
     return value.tooltip if isinstance(value, TagsValue) else cell_text(column, row, type_labels)
 
 

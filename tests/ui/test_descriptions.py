@@ -48,7 +48,8 @@ def test_a_cards_tooltip_shows_the_description(qtbot: QtBot, session: object) ->
     assert tooltip is not None
     lines = tooltip.split("\n")
     assert lines[:3] == ["Mother of Learning", "Author: nobody103", "Series: Mother of Learning"]
-    assert lines[3:] == ["", SYNOPSIS]  # set apart, and no blank line after it
+    assert lines[3] == "Rating: ★★★★★  5 out of 5"  # stars and the number (#419)
+    assert lines[4:] == ["", SYNOPSIS]  # set apart, and no blank line after it
     short = page.grid.card_tooltip(_row(page, "The Lighthouse Keeper"))
     assert short is not None
     assert "" not in short.split("\n")  # no description: no gap
