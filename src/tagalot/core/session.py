@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, Engine, and_, or_, select, update
+from sqlalchemy import Connection, Engine, and_, func, or_, select, update
 from sqlalchemy.exc import OperationalError
 
 from tagalot.core.actions import ActionResult, delete_items, run_action
@@ -48,6 +48,7 @@ from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.ingest import IngestSession
+from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_contents_index,
@@ -62,7 +63,7 @@ from tagalot.core.keep_settings import (
 from tagalot.core.keywords import any_keywords
 from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
-from tagalot.core.models import Entity, EntityResource, Root
+from tagalot.core.models import Entity, EntityResource, Resource, ResourceStatus, Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
 from tagalot.core.note_keys import NoteKeyChange, check_key, ignored_keys, with_key
 from tagalot.core.notes_folder import notes_folder_files
@@ -94,7 +95,7 @@ from tagalot.core.root_admin import (
     with_notes_writing,
     without_root,
 )
-from tagalot.core.roots import sync_roots
+from tagalot.core.roots import place_in_roots, sync_roots
 from tagalot.core.save_note import NewNote, plan_note, write_note
 from tagalot.core.saved_searches import (
     SavedDefinition,
@@ -711,6 +712,32 @@ class KeepSession:
         if change.before != change.after:
             self.tags.record(change)
         return len(change.after)
+
+    def set_picture(self, entity_id: int, resource_id: int | None, label: str) -> str:
+        """Make a file the item's own picture (``None``: use the usual picture again), as
+        the user chose (#439); one undo step. Returns its label. Raises
+        :class:`~tagalot.core.item_pictures.PictureError` for a file that can't be one.
+        Runs in a worker."""
+        change = self.writer.run(lambda conn: set_picture(conn, entity_id, resource_id, label))
+        if change.before != change.after:
+            self.tags.record(change)
+        return change.label
+
+    def picture_file(self, path: str) -> int | None:
+        """The resource of the file at ``path`` (this computer's path), if a watched folder
+        holds it and it was scanned. Runs in a worker."""
+        roots = {r.id: self._known_root_path(r.id) for r in self.keep.config.roots}
+        place = place_in_roots(path, roots)
+        if place is None:
+            return None
+        root_id, relpath = place
+        with self.reader.connect() as conn:
+            found = select(Resource.id).where(
+                Resource.root_id == root_id,
+                func.lower(Resource.relpath) == relpath.lower(),
+                Resource.status != ResourceStatus.MISSING,
+            )
+            return conn.scalar(found.limit(1))
 
     def ignore_pictures(
         self, problems: Sequence[PictureProblem], scope: PictureScope, label: str

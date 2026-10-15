@@ -52,6 +52,7 @@ Painted skies and dusk light, since 2009.
 
 - **`title`:** the item's name, in place of the folder's.
 - **`tags`** (or `keywords`): [file keywords](file-keywords.md). They become tags when they match tags you have.
+- **`cover`** (or `image`): the item's picture, a file relative to the note (`cover: pictures/pratchett.jpg`, or from the top of the watched folder with a leading `/`). It's shown for the item everywhere, before the picture the theme would choose. If the file isn't there, [Triage → Pictures](triage.md#pictures) lists it. In the notes folder, a picture named like the note beside it (`Terry Pratchett.jpg` beside `Terry Pratchett.md`) does the same without a key.
 - **A key matching one of the item's fields**, by its name or label (`year`, `Genre`): that field, where no file gives one. What the files themselves say still wins, and a note's value replaces one looked up online.
 - **Any other key** becomes an **Extra field**, marked "• from the note", unless it is [ignored](#keys-to-ignore).
 - **The body** shows under the item's title, and is searchable.

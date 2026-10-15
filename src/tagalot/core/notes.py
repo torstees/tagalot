@@ -48,7 +48,7 @@ from tagalot.core.models import (
 from tagalot.core.roots import local_path
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import EntityRef, FieldInfo, Kind
-from tagalot.themes.readers import split_front_matter, split_keywords
+from tagalot.themes.readers import no_path, split_front_matter, split_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,12 @@ class NoteValues:
     """Extra field name (as the note writes it) -> text."""
     body: str = ""
     problems: list[str] = field(default_factory=list)
+    picture: str | None = None
+    """The picture it names, as written (``cover``, else ``image``; #439)."""
+
+
+PICTURE_KEYS = ("cover", "image")
+"""A note's keys naming its item's picture, the first given winning: never fields."""
 
 
 def _key(text: str) -> str:
@@ -134,7 +140,15 @@ def map_note(
             continue
         if value is None or value == "" or value == []:
             continue
-        if folded == "title":
+        if folded in PICTURE_KEYS:
+            text = as_text(value)
+            if (
+                text
+                and not no_path(text)
+                and (found.picture is None or PICTURE_KEYS.index(folded) == 0)
+            ):
+                found.picture = text.strip()
+        elif folded == "title":
             found.title = as_text(value)
         elif folded in ("tags", "keywords"):
             found.keywords += split_keywords(value)
@@ -401,15 +415,13 @@ def apply_note(
             size=note.size if note else None,
             mtime_ns=note.mtime_ns if note else None,
             body=body or None,
+            picture=given.picture if note is not None else None,
             updated_at=utcnow(),
         )
+        kept = ("folder_id", "resource_id", "size", "mtime_ns", "body", "picture", "updated_at")
         conn.execute(
             upsert.on_conflict_do_update(
-                index_elements=["entity_id"],
-                set_={
-                    c: upsert.excluded[c]
-                    for c in ("folder_id", "resource_id", "size", "mtime_ns", "body", "updated_at")
-                },
+                index_elements=["entity_id"], set_={c: upsert.excluded[c] for c in kept}
             )
         )
     elif stored is not None:

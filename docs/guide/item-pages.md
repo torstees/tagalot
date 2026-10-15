@@ -35,6 +35,17 @@ Some kinds of item have a gallery of pictures on their page:
 - **On the page:** pictures directly in the gallery's folder come first, then a group for each subfolder, then one for each archive (`.zip`, `.7z`, `.rar`, `.cbz`…), whose pictures Tagalot reads without unpacking it. Double-click a picture to open it; one from an archive opens from a temporary copy, so the archive is never changed. An archive Tagalot can't read says why; a `.rar` needs unrar, 7-Zip, or bsdtar installed to look inside. A gallery with no pictures isn't shown.
 - **Scans keep it up to date:** pictures you add or delete come and go at the next scan. A picture you linked to the item by hand stays.
 
+## Its picture
+
+An item's picture (on its page, its card, and its row) is chosen in this order:
+
+1. **One you chose:** **More ▾ → Set picture…** picks a picture file in a watched folder (for an author, a series, anything), and right-clicking a picture file on a page offers **Use as its picture**. **More ▾ → Use the usual picture** forgets your choice. Both are steps you can undo.
+2. **Its note's:** a `cover` (or `image`) key in the item's [note](notes.md#what-a-note-gives), or, in the notes folder, a picture named like the note beside it.
+3. **The usual one:** what the kind of item shows (a book's cover, a movie's poster, an album's art).
+4. **Its gallery's first picture**, when there's no usual one (an author's photos), before a title card or icon.
+
+Point at the picture on the page to see where it comes from ("Its picture, chosen by you: …").
+
 ## Changing details
 
 Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** cancels. Numbers, dates (`2024-05-01`), and times are checked as you save, and a value that doesn't fit stays in the box with the reason. Yes/no fields are a checkbox. Some fields come from the file and can't be edited (a file's size, an image's width).

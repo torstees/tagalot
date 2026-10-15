@@ -113,6 +113,13 @@ class ThumbnailLoader(QObject):
         self._wanted.clear()
         self._running.clear()
 
+    def forget(self, entity_ids: list[int]) -> None:
+        """Forget these entities' thumbnails and load them again (their picture changed);
+        :attr:`ready` says when each is back."""
+        for entity_id in entity_ids:
+            self._loaded.pop(entity_id, None)
+            self.request(entity_id)
+
     @property
     def idle(self) -> bool:
         """Nothing is loading or waiting to load."""

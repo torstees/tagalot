@@ -492,7 +492,27 @@ class EntityNote(Base):
     size: Mapped[int | None]
     mtime_ns: Mapped[int | None]
     body: Mapped[str | None] = mapped_column(Text)
+    picture: Mapped[str | None]
+    """The picture the note names (``cover``, else ``image``), as written (#439)."""
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+
+class ItemPicture(Base):
+    """An item's own picture (#439), tried before its theme's thumbnail chain: one the user
+    chose (``user``), and one its note names or that is beside its note in the notes folder
+    (``note``, worked out at each scan by ``core.item_pictures``). An item can have both:
+    the user's is used."""
+
+    __tablename__ = "item_picture"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    source: Mapped[str] = mapped_column(primary_key=True)
+    """``user`` or ``note``."""
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), index=True
+    )
 
 
 class NoteKeyRemoval(Base):

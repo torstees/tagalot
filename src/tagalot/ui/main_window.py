@@ -38,6 +38,7 @@ from tagalot.core.activity import SCAN, Problem
 from tagalot.core.contents import ContentsResult
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.item_pictures import PICTURES
 from tagalot.core.keywords import (
     KeywordInfo,
     any_keywords,
@@ -213,6 +214,7 @@ class MainWindow(QMainWindow):
         self.files.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
+        self.tag_actions.pictures_changed.connect(self.thumbnails.forget)
         self.undo_action = QAction("Undo", self)
         self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self.undo_action.triggered.connect(self.tag_actions.undo)
@@ -534,6 +536,8 @@ class MainWindow(QMainWindow):
             detail.write_back_requested.connect(self.write_back)
             detail.look_up_requested.connect(self.look_up_online)
             detail.unlink_requested.connect(self.tag_actions.unlink_file)
+            detail.picture_requested.connect(self.set_picture)
+            detail.choose_picture_requested.connect(self.choose_picture)
             detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
             detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
             detail.file_tag_restore_requested.connect(self.restore_file_tag)
@@ -658,6 +662,7 @@ class MainWindow(QMainWindow):
         search.save_requested.connect(lambda: self.save_search(as_new=False, page=search))
         search.reread_requested.connect(self.reread)
         search.write_back_requested.connect(self.write_back)
+        search.choose_picture_requested.connect(self.choose_picture)
         search.look_up_requested.connect(self.look_up_online)
         search.new_item_requested.connect(self.new_container)
         search.add_to_requested.connect(self.add_to_container)
@@ -1168,6 +1173,53 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Import tags", f"Couldn't read {name}: {reason}.")
 
         run_in_pool(plan, on_done=planned, on_error=failed)
+
+    # --- an item's own picture (#439) ---
+
+    def _picture_label(self, entity_id: int, chosen: bool) -> str:
+        page = self.stack.currentWidget()
+        detail = getattr(page, "detail", None)
+        title = detail.title if detail is not None and detail.id == entity_id else None
+        if chosen:
+            return f"Set {title}'s picture" if title else "Set the item's picture"
+        return f"Use the usual picture for {title}" if title else "Use the usual picture"
+
+    def set_picture(self, entity_id: int, resource_id: int | None) -> None:
+        """Make a file the item's own picture, or use the usual one again; one undo step."""
+        label = self._picture_label(entity_id, resource_id is not None)
+        self.tag_actions.set_picture(entity_id, resource_id, label)
+
+    def choose_picture(self, entity_id: int) -> None:
+        """Set picture…: ask for a picture file in a watched folder, and use it."""
+        session = self.session
+        assert session is not None
+        path = self.choose_picture_file()
+        if not path:
+            return
+
+        def found(resource_id: int | None) -> None:
+            if resource_id is None:
+                self.statusBar().showMessage(
+                    f"Can't use {path}: choose a picture in a watched folder (scan first if "
+                    "it's new).",
+                    8000,
+                )
+            else:
+                self.set_picture(entity_id, resource_id)
+
+        run_in_pool(lambda: session.picture_file(path), on_done=found)
+
+    def choose_picture_file(self) -> str:
+        """Ask for a picture file (tests replace this)."""
+        assert self.session is not None
+        patterns = " ".join(f"*{ext}" for ext in sorted(PICTURES))
+        return choose_open_file(
+            self,
+            "Set picture",
+            f"Pictures ({patterns});;All files (*)",
+            self.session.settings,
+            self.files.settings_path,
+        )
 
     def choose_tag_file(self) -> str:
         """Ask for a tag file to import (tests replace this)."""

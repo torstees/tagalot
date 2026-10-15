@@ -22,6 +22,7 @@ from tagalot.core.models import (
     Entity,
     EntityContains,
     EntityResource,
+    ItemPicture,
     PictureFailure,
     Resource,
     ResourceKind,
@@ -296,7 +297,16 @@ class _Resolution:
         self, entity: EntityRef
     ) -> tuple[Thumbnail | None, str | None, int | None, Card | None]:
         tried: set[int] = set()
+        own = self._own(entity, tried)  # the user's choice, or its note's (#439)
+        if own is not None:
+            return own[0], None, own[1], None
+        gallery_tried = False
         for provider in self.owner.chain(entity.type):
+            if isinstance(provider, Icon | TitleCard) and not gallery_tried:
+                gallery_tried = True  # no picture from the chain: its gallery's first (#439)
+                found = self._gallery(entity, tried)
+                if found is not None:
+                    return found[0], None, found[1], None
             if isinstance(provider, Icon):
                 return None, provider.name, None, None
             if isinstance(provider, TitleCard):
@@ -315,7 +325,41 @@ class _Resolution:
             except Exception as e:  # a theme's provider must not break thumbnails
                 logger.warning("Thumbnail provider %r failed for entity %d", provider, entity.id)
                 self._problems.append((f"entity {entity.id}", f"{provider!r} failed: {e}"))
+        if not gallery_tried:
+            found = self._gallery(entity, tried)
+            if found is not None:
+                return found[0], None, found[1], None
         return None, FALLBACK_ICON, None, None
+
+    def _own(self, entity: EntityRef, tried: set[int]) -> tuple[Thumbnail, int] | None:
+        """The item's own picture (``item_picture``), when it can be drawn."""
+        resource_id = self.conn.scalar(  # the user's, else its note's
+            select(ItemPicture.resource_id)
+            .where(ItemPicture.entity_id == entity.id)
+            .order_by(ItemPicture.source != "user")
+            .limit(1)
+        )
+        resource = None if resource_id is None else self.resource(resource_id)
+        if resource is None:
+            return None
+        tried.add(resource.id)
+        picture = self.picture(resource)
+        return None if picture is None else (picture, resource.id)
+
+    def _gallery(self, entity: EntityRef, tried: set[int]) -> tuple[Thumbnail, int] | None:
+        """The first picture of the item's first gallery role that can be drawn."""
+        declared = self.owner.entity_type(entity.type)
+        role = next((r for r in declared.roles if r.gallery), None) if declared else None
+        if role is None:
+            return None
+        for resource in self.resources(entity, role.name):
+            if resource.id in tried:
+                continue
+            tried.add(resource.id)
+            picture = self.picture(resource)
+            if picture is not None:
+                return picture, resource.id
+        return None
 
     def _card(self, entity: EntityRef, provider: TitleCard) -> Card | None:
         """The entity's title card; ``None`` when it has no title."""

@@ -16,6 +16,7 @@ from tagalot.core.assets import ASSETS
 from tagalot.core.extra_keys import EXTRA
 from tagalot.core.fields import user_fields
 from tagalot.core.ingest import TITLE, merged_into
+from tagalot.core.item_pictures import OwnPicture, own_picture
 from tagalot.core.keywords import ItemKeyword, item_keywords
 from tagalot.core.models import (
     LAST_POSITION,
@@ -143,6 +144,8 @@ class EntityDetail:
     assets: str | None = None
     """Its own assets folder (#418): its ``assets`` field, else its Extra field of that
     name (a note's ``assets`` key), as written."""
+    picture: OwnPicture | None = None
+    """Its own picture, chosen by the user or given by its note (#439), if any."""
 
 
 PATH_MARK = "\u203a"
@@ -227,6 +230,7 @@ def load_detail(
         or "",
         note_file=note_file(conn, entity_id, root_path),
         assets=_assets(conn, table, entity_id, row.extra),
+        picture=own_picture(conn, entity_id),
     )
 
 

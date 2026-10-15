@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from tagalot.core.detail import load_detail
+from tagalot.core.item_pictures import own_picture
 from tagalot.core.models import Entity
 from tagalot.core.search import count_by_type, run_search
 from tagalot.core.search_spec import SearchSpec
@@ -291,6 +292,12 @@ def test_the_demos_have_galleries(tmp_path: Path) -> None:
             "Photos": ["ripley 1.jpg", "ripley 2.jpg"]
         }
         assert _galleries(session, "Al Pacino") == {}  # no photos: no empty gallery
+        with session.reader.connect() as conn:  # beside her note: her picture (#439)
+            weaver = conn.scalar(select(Entity.id).where(Entity.title == "Sigourney Weaver"))
+            assert weaver is not None
+            picture = own_picture(conn, weaver)
+        assert picture is not None
+        assert (picture.relpath, picture.source) == ("Notes/Actors/Sigourney Weaver.jpg", "note")
     with KeepSession.open(script.make_music_demo(tmp_path), Settings()) as session:
         assert _galleries(session, "Kind of Blue") == {
             "Scans": ["Booklet.zip", "back.jpg", "front.jpg"]

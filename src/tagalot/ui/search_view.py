@@ -168,6 +168,8 @@ class SearchPage(QWidget):
     add_to_requested = Signal(str, list)
     """Add to project… (#329): (the container type, the items to put in one)."""
     write_back_requested = Signal(list)
+    choose_picture_requested = Signal(int)
+    """Set picture… on an item (#439): ask for a picture file for it."""
     look_up_requested = Signal(list)
     """Look up online (#340): the selected items' ids."""
     """Write to file… on these items (#299)."""
@@ -533,6 +535,9 @@ class SearchPage(QWidget):
             if opens_file(self.session.schema, hit.type):
                 menu.setDefaultAction(open_file)
         menu.addSeparator()
+        set_picture = menu.addAction("Set picture…")
+        set_picture.setToolTip("Choose a picture file for this item (Edit → Undo)")
+        set_picture.triggered.connect(lambda: self.choose_picture_requested.emit(hit.id))
         add_reread_actions(menu, lambda replace: self._reread(hit, replace))
         for container in containers_for(self.session.schema, hit.type):  # Add to project…
             noun = entity_label(self.session.schema.by_type_id(container).entity).lower()
