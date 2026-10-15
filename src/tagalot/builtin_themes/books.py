@@ -107,12 +107,16 @@ class Author(Entity):
     title_label = "Name"
     sort_name: str | None = field("Sort name", search="text")
     """``Pratchett, Terry``: how the Authors view sorts them."""
+    # Photos beside the author's note in the notes folder (#439, §9 *Galleries*).
+    roles = [role("photos", kinds={"image", "archive"}, many=True, gallery=True, label="Photos")]
 
 
 class Universe(Entity):
     """Series and works sharing a world (Discworld, Cosmere, Marvel)."""
 
     contents_sort = (SortBy("title"),)
+    # Covers beside its note in the notes folder (#439, §9 *Galleries*).
+    roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
 
 
 class Series(Entity):
@@ -122,12 +126,16 @@ class Series(Entity):
     universe: str | None = field("Universe", search="choice", editable=False)
     contents_sort = (SortBy("series_index"), SortBy("title"))
     card_lines = ("universe",)
+    # Covers beside its note in the notes folder (#439, §9 *Galleries*).
+    roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
 
 
 class Collection(Entity):
     """An omnibus, anthology, or box set holding works."""
 
     contents_sort = (SortBy("series_index"), SortBy("title"))
+    # Covers beside its note in the notes folder (#439, §9 *Galleries*).
+    roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
 
 
 class Book(Entity):

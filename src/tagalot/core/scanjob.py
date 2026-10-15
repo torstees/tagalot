@@ -29,6 +29,7 @@ from tagalot.core.gallery_fill import (
     gallery_roles,
 )
 from tagalot.core.ingest import IngestSession, IngestWarning, forget_not_found
+from tagalot.core.item_pictures import fill_note_pictures
 from tagalot.core.keep import RootConfig
 from tagalot.core.markdown_check import (
     check_markdown,
@@ -402,28 +403,30 @@ def _ingest_pending(
     say(f"Looking for notes in {root.name}…")
     changes, problems = read_notes(reader, schema, root.id, path)
     report.ingest_warnings += problems
-    if not changes:
-        return
-    again, problems = writer.run(
-        partial(apply_notes, schema=schema, root_id=root.id, changes=changes)
-    )
-    report.ingest_warnings += problems
-    if again:  # a note stopped giving a value: the files give theirs again
-        writer.run(partial(_mark_pending, again))
-        _ingest_pending(
-            writer,
-            reader,
-            root,
-            path,
-            theme,
-            schema,
-            when,
-            report,
-            say,
-            options,
-            reread_notes=False,
-            notes_folder=notes_folder,
+    if changes:
+        again, problems = writer.run(
+            partial(apply_notes, schema=schema, root_id=root.id, changes=changes)
         )
+        report.ingest_warnings += problems
+        if again:  # a note stopped giving a value: the files give theirs again
+            writer.run(partial(_mark_pending, again))
+            _ingest_pending(
+                writer,
+                reader,
+                root,
+                path,
+                theme,
+                schema,
+                when,
+                report,
+                say,
+                options,
+                reread_notes=False,
+                notes_folder=notes_folder,
+            )
+    # The pictures notes give their items (#439): even with no note changed, a picture
+    # may have come or gone.
+    writer.run(partial(fill_note_pictures, root_id=root.id, notes_folder=notes_folder))
 
 
 def _check_markdown(
@@ -544,6 +547,8 @@ def scan_notes_folder(
         writer.run(
             partial(fill_note_galleries, schema=schema, root_id=notes_root, notes_path=notes_path)
         )
+    if notes_root is not None:  # and the picture named like it, beside it (#439)
+        writer.run(partial(fill_note_pictures, root_id=notes_root, notes_folder=notes_path))
     if not again:
         return report
     writer.run(partial(_mark_pending, again))

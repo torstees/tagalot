@@ -253,6 +253,18 @@ def _v21_markdown_problems(conn: Connection) -> None:
     )
 
 
+def _v22_item_pictures(conn: Connection) -> None:
+    """Format 23: items' own pictures, and the picture a note names (#439). Notes are read
+    again at the next scan, to find the pictures they name."""
+    Base.metadata.tables["item_picture"].create(conn)
+    # A keep older than format 15 made entity_note from today's model: it has it already.
+    columns = {row[1] for row in conn.execute(text("PRAGMA table_info(entity_note)"))}
+    if "picture" not in columns:
+        conn.execute(text("ALTER TABLE entity_note ADD COLUMN picture VARCHAR"))
+    conn.execute(text("UPDATE entity_note SET size = NULL"))
+    conn.execute(text("UPDATE notes_folder_note SET size = NULL"))
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -275,6 +287,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     19: _v19_picture_ignore,
     20: _v20_folder_links,
     21: _v21_markdown_problems,
+    22: _v22_item_pictures,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -13,6 +13,7 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
+from tagalot.core.item_pictures import PictureChange, PictureError
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
 from tagalot.core.picture_problems import PictureProblem, PictureScope
@@ -43,6 +44,8 @@ class TagActions(QObject):
 
     changed = Signal(str)
     message = Signal(str)
+    pictures_changed = Signal(list)
+    """Items whose own picture was set, cleared, or put back by undo (#439): entity ids."""
 
     def __init__(self, session: KeepSession, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -281,6 +284,15 @@ class TagActions(QObject):
             lambda change: f"{change.label}. Keep configuration → Notes lists the keys ignored.",
         )
 
+    def set_picture(self, entity_id: int, resource_id: int | None, label: str) -> None:
+        """Set an item's own picture, or go back to the usual one (#439); one undo step."""
+
+        def describe(done: str) -> str:
+            self.pictures_changed.emit([entity_id])
+            return f"{done}. Edit \u2192 Undo brings the last one back." if done else ""
+
+        self._run(lambda: self.session.set_picture(entity_id, resource_id, label), describe)
+
     def ignore_pictures(
         self, problems: list[PictureProblem], scope: PictureScope, label: str
     ) -> None:
@@ -409,10 +421,16 @@ class TagActions(QObject):
         )
 
     def undo(self) -> None:
-        self._run(self.session.tags.undo, lambda label: f"Undid: {label}." if label else "")
+        self._run(self.session.tags.undo, lambda label: self._replayed("Undid", label))
 
     def redo(self) -> None:
-        self._run(self.session.tags.redo, lambda label: f"Redid: {label}." if label else "")
+        self._run(self.session.tags.redo, lambda label: self._replayed("Redid", label))
+
+    def _replayed(self, what: str, label: str | None) -> str:
+        step = self.session.tags.last_replayed
+        if label and isinstance(step, PictureChange):  # its thumbnail is another now
+            self.pictures_changed.emit([step.entity_id])
+        return f"{what}: {label}." if label else ""
 
     @property
     def undo_label(self) -> str | None:
@@ -443,7 +461,13 @@ class TagActions(QObject):
             self.busy -= 1
             if isinstance(
                 error,
-                TagError | FieldEditError | ActionError | LinkError | RelationError | NoteKeyError,
+                TagError
+                | FieldEditError
+                | ActionError
+                | LinkError
+                | RelationError
+                | NoteKeyError
+                | PictureError,
             ):
                 self.message.emit(str(error))
             else:

@@ -617,6 +617,8 @@ MOVIE_GALLERIES = {
     "The.Matrix.1999.1080p/Screenshots/Lobby/lobby 2.jpg": ((40, 80, 50), "The Matrix: lobby"),
     "Notes/Actors/Sigourney Weaver/ripley 1.jpg": ((80, 70, 60), "Sigourney Weaver"),
     "Notes/Actors/Sigourney Weaver/ripley 2.jpg": ((60, 70, 80), "Sigourney Weaver"),
+    # beside her note, named like it: her own picture (#439)
+    "Notes/Actors/Sigourney Weaver.jpg": ((120, 80, 60), "Sigourney Weaver"),
 }
 """Gallery pictures (#389): The Matrix's ``Screenshots`` folder, one at a deeper level, and
 photos beside an actor's note in the notes folder. The Matrix also has ``Screens.zip``

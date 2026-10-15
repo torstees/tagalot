@@ -31,6 +31,7 @@ from tagalot.core.fields import (
     restore_field,
     restore_note,
 )
+from tagalot.core.item_pictures import PictureChange, restore_picture
 from tagalot.core.keywords import (
     IgnoreChange,
     apply_file_tags,
@@ -123,6 +124,7 @@ Step = (
     | DismissChange
     | IgnoreChange
     | PictureIgnoreChange
+    | PictureChange
     | MergeChange
     | NotDuplicateChange
     | SavedChange
@@ -151,6 +153,8 @@ class TagService:
         self.schema = schema
         self._undo: list[Step] = []
         self._redo: list[Step] = []
+        self.last_replayed: Step | None = None
+        """The step the last undo or redo replayed."""
         self.on_note_key: Callable[[str, bool], None] | None = None
         """Adds a key to the keep's ignored note keys (``True``) or takes it off, as undo
         and redo replay ignoring it (the session sets it; ``keep.toml`` isn't the DB's)."""
@@ -400,6 +404,7 @@ class TagService:
             return None
         change = self._undo.pop()
         self._replay(change, forward=False)
+        self.last_replayed = change
         self._redo.append(change)
         return change.label
 
@@ -409,6 +414,7 @@ class TagService:
             return None
         change = self._redo.pop()
         self._replay(change, forward=True)
+        self.last_replayed = change
         self._undo.append(change)
         return change.label
 
@@ -446,6 +452,8 @@ class TagService:
             self.writer.run(lambda conn: restore_dismissals(conn, step, forward=forward))
         elif isinstance(step, IgnoreChange):
             self.writer.run(lambda conn: restore_ignored(conn, step, forward=forward))
+        elif isinstance(step, PictureChange):
+            self.writer.run(lambda conn: restore_picture(conn, step, forward=forward))
         elif isinstance(step, PictureIgnoreChange):
             self.writer.run(lambda conn: restore_picture_ignores(conn, step, forward=forward))
         elif isinstance(step, ActionChange):

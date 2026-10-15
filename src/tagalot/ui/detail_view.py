@@ -54,6 +54,7 @@ from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
 from tagalot.core.ingest import TITLE
+from tagalot.core.item_pictures import USER, is_picture
 from tagalot.core.keep import KeepConfig
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
 from tagalot.core.models import FieldSource, ResourceStatus
@@ -178,6 +179,11 @@ class DetailPage(QWidget):
     """Write to file… on this item (#299)."""
     unlink_requested = Signal(int, int, str)
     """Remove a link made by hand: (entity id, resource id, role)."""
+    picture_requested = Signal(int, object)
+    """Make a file the item's own picture (#439): entity id, resource id, or ``None`` to
+    use the usual picture again."""
+    choose_picture_requested = Signal(int)
+    """Set picture…: ask for a picture file for this item."""
     relate_requested = Signal(int, str, str)
     """Add to a related section by hand (#260): (entity id, relationship name)."""
     unrelate_requested = Signal(int, str, list, str)
@@ -308,6 +314,24 @@ class DetailPage(QWidget):
             lambda: self.save_note_requested.emit(self.entity_id)
         )
         self.save_note_action.setVisible(False)
+        self.set_picture_action = more.addAction("Set picture\u2026")
+        self.set_picture_action.setObjectName("set_picture_action")
+        self.set_picture_action.setToolTip(
+            "Choose a picture file for this item, shown wherever it is (Edit \u2192 Undo)"
+        )
+        self.set_picture_action.triggered.connect(
+            lambda: self.choose_picture_requested.emit(self.entity_id)
+        )
+        self.usual_picture_action = more.addAction("Use the usual picture")
+        self.usual_picture_action.setObjectName("usual_picture_action")
+        self.usual_picture_action.setToolTip(
+            "Forget the picture you chose: its note's, or the theme's, is shown again"
+        )
+        self.usual_picture_action.triggered.connect(
+            lambda: self.picture_requested.emit(self.entity_id, None)
+        )
+        self.usual_picture_action.setVisible(False)
+        more.addSeparator()
         add_reread_actions(
             more, lambda replace: self.reread_requested.emit([self.entity_id], replace)
         )
@@ -398,6 +422,7 @@ class DetailPage(QWidget):
         else:
             self.title_value.editable = True
             self.title_value.field_label = detail.title_label.lower()
+            self._show_picture_source(detail)
             self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
             self._add_file_actions(detail)
@@ -865,9 +890,28 @@ class DetailPage(QWidget):
             opener = self.file_opener
             opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
 
+    def _show_picture_source(self, detail: EntityDetail) -> None:
+        """Say where the item's picture comes from, when it's its own (#439)."""
+        picture = detail.picture
+        mine = picture is not None and picture.source == USER
+        self.usual_picture_action.setVisible(mine)
+        if picture is None:
+            self.thumbnail.setToolTip("")
+            return
+        name = picture.relpath.rpartition("/")[2]
+        how = "chosen by you" if mine else "from its note"
+        self.thumbnail.setToolTip(f"Its picture, {how}: {name}")
+
     def _file_menu(self, file: FileRow) -> QMenu:
         """The right-click menu of one file row."""
         menu = QMenu(self)
+        if is_picture(file.relpath) and file.kind != "dir":
+            use = menu.addAction("Use as its picture")
+            use.setToolTip("Show this picture for the item wherever it is (Edit \u2192 Undo)")
+            use.triggered.connect(
+                lambda: self.picture_requested.emit(self.entity_id, file.resource_id)
+            )
+            menu.addSeparator()
         if self.file_opener is not None:
             add_file_actions(
                 menu,
