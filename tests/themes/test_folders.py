@@ -138,6 +138,31 @@ def test_a_collection_folder_is_not_a_folder_item(movies_env: Env) -> None:
     assert contents(movies_env) == {"Films": ["LOTR", "map.jpg"]}
 
 
+def extra(env: Env, title: str) -> dict[str, object]:
+    with env.reader.connect() as conn:
+        found = conn.scalar(select(Entity.extra).where(Entity.title == title))
+    return dict(found or {})
+
+
+def test_a_folder_takes_its_note(movies_env: Env) -> None:
+    files = movies_env.files
+    home_videos(files)
+    (files / "Home/Alice/Alice.md").write_text(
+        "---\nborn: 2018-03-14\n---\nOur daughter.\n", encoding="utf-8"
+    )
+    (files / "Home/Alice/3rd Birthday/3rd Birthday.md").write_text(
+        "---\ntitle: Alice's 3rd birthday\nplace: Grandma's garden\n---\nCake everywhere.\n",
+        encoding="utf-8",
+    )
+    movies_env.scan()
+    assert extra(movies_env, "Alice") == {"born": "2018-03-14"}
+    # A folder note's title names the folder; in a movie's own folder the movie reads the
+    # same note (its own, by ctx.note), keeping its title: a note only renames its folder.
+    assert extra(movies_env, "Alice's 3rd birthday") == {"place": "Grandma's garden"}
+    assert extra(movies_env, "party") == {"place": "Grandma's garden"}
+    assert contents(movies_env)["Alice's 3rd birthday"] == ["cake.jpg", "party"]
+
+
 def test_what_the_user_takes_out_stays_out(movies_env: Env) -> None:
     home_videos(movies_env.files)
     movies_env.scan()

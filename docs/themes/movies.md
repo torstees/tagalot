@@ -33,6 +33,8 @@ Every folder above a Picture or Archive becomes a **Folder**, up to the top of t
 
 Each Folder holds what's nearest under it, so `Home Movies` holds `Alice`, which holds `3rd Birthday`. A video in a folder with no pictures (`Home Movies/Bob/swim.mp4`) is held by the nearest Folder above it. Folders are worked out again after every scan: add a picture to a folder and it becomes a Folder holding the videos already there. A Folder whose pictures are all gone is removed at the next scan, unless you've tagged it.
 
+A Folder takes the [note](../guide/notes.md) inside it (`Alice/Alice.md`, or `index.md` or `README.md`), as an album or collection does: its `title` renames the Folder, its `tags` tag it (and so everything in it), its other keys become Extra fields, and its text shows on the Folder's page. In a movie's own folder, the movie reads the same note, so `3rd Birthday/3rd Birthday.md` describes both the Folder and the movie (the movie keeps its own title).
+
 ## Cast by hand
 
 A movie's page has **Cast**, an actor's **Filmography**: both with **Add…** (search for an actor or movie, or make a new actor) and **Remove from …**. What you add or remove by hand stays through later scans, whatever the `.nfo` says.
