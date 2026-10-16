@@ -148,13 +148,13 @@ def test_the_add_to_cast_dialog(qtbot: QtBot, session: KeepSession) -> None:
     pacino = _id(session, "Al Pacino")
     dialog = RelateDialog(session, "Heat", "movies.actor", "Cast", {pacino})
     qtbot.addWidget(dialog)
-    qtbot.waitUntil(lambda: dialog.results.count() == 6, timeout=5000)  # every actor
+    qtbot.waitUntil(lambda: dialog.results.count() == 8, timeout=5000)  # every person
     dialog.search.setText("al")
     dialog.look_up()
-    qtbot.waitUntil(lambda: dialog.results.item(0).text() == "New actor: al", timeout=5000)
+    qtbot.waitUntil(lambda: dialog.results.item(0).text() == "New person: al", timeout=5000)
     texts = [dialog.results.item(n).text() for n in range(dialog.results.count())]
     # Sigourney Weaver's note says "Alien": notes are searchable (#384's demo).
-    assert texts == ["New actor: al", "Al Pacino", "Sigourney Weaver"]
+    assert texts == ["New person: al", "Al Pacino", "Alice", "Sigourney Weaver"]
     assert not dialog.results.item(1).flags() & Qt.ItemFlag.ItemIsEnabled  # already there
     assert dialog.chosen() == (None, "al")
     dialog.search.setText("Al Pacino")
@@ -167,7 +167,7 @@ def test_the_add_to_cast_dialog(qtbot: QtBot, session: KeepSession) -> None:
     ("view", "count", "first"),
     [
         ("Movies", "12 items", "Alien"),
-        ("Actors", "6 items", "Al Pacino"),
+        ("People", "8 items", "Al Pacino"),  # actors, and Alice and Grandma (#449)
         ("Collections", "3 items", "Alien Collection"),
     ],
 )
@@ -190,13 +190,14 @@ def test_tags_on_a_collection_count_for_its_movies(
     qtbot.waitUntil(lambda: page.status.text() == "3 items", timeout=5000)
 
 
-def test_an_actor_page_lists_their_filmography(
+def test_a_persons_page_lists_their_movies(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _page_of(qtbot, window, session, "Leonardo DiCaprio")
     assert page.detail is not None
-    [section] = [s for s in page.detail.sections if s.kind == "related"]
-    assert section.title == "Filmography"
+    related = [s for s in page.detail.sections if s.kind == "related"]
+    assert [s.title for s in related] == ["Movies", "Pictures"]  # pictures by hand (#449)
+    section = related[0]
     assert [e.title for e in section.entities] == ["Inception"]
     assert page.findChild(QPushButton, "add_cast") is not None
     films = page.related["cast"]
@@ -230,3 +231,31 @@ def test_a_type_without_fields_shows_extra_fields_first(
 ) -> None:
     page = _page_of(qtbot, window, session, "The Lord of the Rings")  # a Collection
     assert _section_order(page)[0] == "section_extra"
+
+
+def test_a_pictures_page_lists_its_people(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _page_of(qtbot, window, session, "IMG_2041.jpg")
+    assert page.detail is not None
+    related = [s for s in page.detail.sections if s.kind == "related"]
+    assert [s.title for s in related] == ["People"]  # put in pictures by hand (#449)
+    assert page.findChild(QPushButton, "add_pictured") is not None
+
+
+def test_a_person_holds_the_folders_their_notes_name(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    page = _page_of(qtbot, window, session, "Grandma")
+    contents = page.contents
+    assert contents is not None
+    # Everything under the folder her note names is within her (#449).
+    qtbot.waitUntil(lambda: contents.status.text() == "4 items", timeout=5000)
+    qtbot.waitUntil(lambda: contents.model.hit(3) is not None, timeout=5000)
+    hits = [contents.model.hit(r) for r in range(4)]
+    assert sorted(h.title for h in hits if h) == [
+        "Alice's 3rd birthday",
+        "cake.jpg",
+        "party",
+        "presents.jpg",
+    ]

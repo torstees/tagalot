@@ -22,7 +22,7 @@ from tagalot.core.fingerprint import (
     pending_fingerprints,
     store_fingerprints,
 )
-from tagalot.core.folder_items import fill_folders, folder_table
+from tagalot.core.folder_items import fill_folders, folder_table, link_folder_fields
 from tagalot.core.gallery_fill import (
     fill_galleries,
     fill_note_galleries,
@@ -430,6 +430,8 @@ def _ingest_pending(
     # The pictures notes give their items (#439): even with no note changed, a picture
     # may have come or gone.
     writer.run(partial(fill_note_pictures, root_id=root.id, notes_folder=notes_folder))
+    if folder_table(schema) is not None:  # what folders' notes say they belong to (#449)
+        writer.run(partial(link_folder_fields, schema=schema, root_id=root.id))
 
 
 def _check_markdown(

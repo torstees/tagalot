@@ -19,7 +19,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 On the left, in four groups (click a heading to fold it; a folded one shows how many it hides):
 
 - **LIBRARY:** the [Dashboard](dashboard.md), and **Search all**, every item grouped by kind.
-- **SEARCHES:** the theme's searches (Albums, Songs; Movies, Actors; Papers, Authors…).
+- **SEARCHES:** the theme's searches (Albums, Songs; Movies, People; Papers, Authors…).
 - **SAVED:** your [saved searches](searching.md#saved-searches).
 - **TOOLS:** [Triage](triage.md), [Dedupe](dedupe.md), [File keywords](file-keywords.md) (with how many match no tag), and the [Tag manager](tags.md#the-tag-manager).
 

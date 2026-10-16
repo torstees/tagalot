@@ -15,11 +15,11 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes.movies import (
-    Actor,
     Collection,
     Movie,
     MovieName,
     MoviesTheme,
+    Person,
     Picture,
     is_extra,
     movie_name,
@@ -272,7 +272,7 @@ def test_thumbnail_chains() -> None:
         "RoleImage('screenshot')",
         "Icon('video')",
     ]
-    assert [repr(p) for p in theme.thumbnail_chain(Actor)] == [
+    assert [repr(p) for p in theme.thumbnail_chain(Person)] == [
         "RoleImage('photo')",
         "RoleImage('photos')",  # the first of its gallery (#389)
         "TitleCard(aspect=1)",
@@ -419,7 +419,7 @@ def test_nfo_files_give_details_cast_and_sets(env: Env) -> None:
     env.scan(T0 + timedelta(hours=2))
     assert _cast(env, "Heat") == ["Al Pacino"]
     assert _cast(env, "Inception") == ["Elliot Page", "Tom Hardy"]
-    actors = env.titles(Actor)
+    actors = env.titles(Person)
     assert "Robert De Niro" not in actors
     assert "Leonardo DiCaprio" in actors
     assert "Michael Mann" not in env.titles(Collection)  # empty: gone

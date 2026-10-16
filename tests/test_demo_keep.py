@@ -176,7 +176,7 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
             everything = count_by_type(conn, SearchSpec(), tree)
             scifi = count_by_type(conn, SearchSpec(include=_ids(tree, "Sci-Fi")), tree)
     assert everything == {
-        "movies.actor": 6,
+        "movies.actor": 8,  # Alice and Grandma, named by folders' notes (#449)
         "movies.archive": 2,  # Old scans.zip, Screens.zip (#446)
         "movies.collection": 3,
         "movies.folder": 8,  # folders above pictures: Home Movies, Alice, 3rd Birthday… (#447)

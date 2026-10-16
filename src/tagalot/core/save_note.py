@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from sqlalchemy import Connection, select
 
 from tagalot.core.keep import KeepConfig
-from tagalot.core.models import Entity, EntityNote, EntityTag
+from tagalot.core.models import Entity, EntityNote, EntityTag, Resource
 from tagalot.core.notes import NOTE_EXTENSIONS
 from tagalot.core.notes_folder import TYPE_KEY, type_names
 from tagalot.core.roots import local_path
@@ -114,11 +114,9 @@ def plan_note(
     if note is not None and note.resource_id is not None:
         raise SaveNoteError(f"The note of {row.title!r} is a file already.")
     entity = schema.by_type_id(row.type).entity
-    plural = entity_plural(entity)
-    folder = safe_name(plural)
-    typed = config.new_notes == "one-folder" or (
-        type_names(schema).get(search_key(folder)) != row.type
-    )
+    names = type_names(schema)
+    folder = _type_folder(conn, config, names, row.type) or safe_name(entity_plural(entity))
+    typed = config.new_notes == "one-folder" or names.get(search_key(folder)) != row.type
     name = safe_name(row.title) + NOTE_EXTENSIONS[0]
     in_folders = _join(config.notes_path, folder, name)
     in_one = _join(config.notes_path, name)
@@ -139,6 +137,25 @@ def plan_note(
     return NewNote(
         entity_id, row.title, config.notes_root, relpath, path, notes_folder, text, elsewhere
     )
+
+
+def _type_folder(
+    conn: Connection, config: KeepConfig, names: dict[str, str], type_id: str
+) -> str | None:
+    """A folder in the notes folder already holding notes, named for the type (any of its
+    names: ``Actors`` for the movies theme's People, #449), so new notes join the old; from the
+    files the keep recorded there, not the disk. The first in name order, or ``None``."""
+    assert config.notes_root is not None
+    inside = config.notes_path + "/" if config.notes_path else ""
+    query = select(Resource.relpath).where(Resource.root_id == config.notes_root)
+    if inside:
+        query = query.where(Resource.relpath > inside, Resource.relpath < inside[:-1] + "0")
+    found = set()
+    for relpath in conn.scalars(query):
+        first, _, rest = relpath[len(inside) :].partition("/")
+        if rest and names.get(search_key(first)) == type_id:
+            found.add(first)
+    return min(found, key=str.casefold) if found else None
 
 
 def _join(*parts: str) -> str:
