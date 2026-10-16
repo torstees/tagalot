@@ -27,7 +27,7 @@ Some kinds of item have a gallery of pictures on their page:
 | Movie | Screenshots | `Screenshots`, `Screens`, or `Stills` in its folder (and the theme's own: `extrafanart`, `-fanart.jpg`…) |
 | Album | Scans | `Scans`, `Artwork`, `Covers`, or `Booklet` in its folder |
 | 2D assets artist | Previews | `Previews`, `Preview`, or `Samples` in its folder |
-| Actor, music artist | Photos | the [notes folder](notes.md#the-notes-folder) |
+| Person (movies), music artist | Photos | the [notes folder](notes.md#the-notes-folder) |
 | Book | Covers | the [notes folder](notes.md#the-notes-folder) |
 | Book | Pictures | everything in its own folder, at any depth, when no other book or comic is in it (a story's renders) |
 

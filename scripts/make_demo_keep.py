@@ -717,7 +717,6 @@ MOVIE_TAGS = {
     ("Genre", "Crime"): ["Heat"],
     ("Genre", "Fantasy"): ["The Lord of the Rings"],
     ("Watched",): ["Heat", "Alien"],
-    ("People", "Alice"): ["Alice"],  # her folder (#447): her videos and photos count
 }
 
 
@@ -728,8 +727,21 @@ tagline: Your mind is the scene of the crime.
 ---
 Watched it twice in a week; the hallway fight is all practical effects.
 """,
+    # Folders' notes name the people they're about (#449): they hold the folders.
+    "Home Movies/Alice/Alice.md": """---
+people: [Alice]
+---
+Alice's first years, in video and pictures.
+""",
+    "Home Movies/Alice/3rd Birthday/3rd Birthday.md": """---
+title: Alice's 3rd birthday
+people: [Alice, Grandma]
+place: Grandma's garden
+---
+Cake everywhere.
+""",
 }
-"""Notes in the movies' own folders."""
+"""Notes in the movies' and folders' own folders."""
 
 MOVIE_NOTES_FOLDER = {
     "Notes/Actors/Sigourney Weaver.md": """---

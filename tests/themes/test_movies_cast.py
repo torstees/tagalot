@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import Connection, select
 
-from tagalot.builtin_themes.movies import Actor
+from tagalot.builtin_themes.movies import Person
 from tagalot.core.actions import ActionChange, restore_action
 from tagalot.core.models import Entity, UserRelation
 from tagalot.core.relations import RelationError, add_related, remove_related
@@ -67,7 +67,7 @@ def test_an_actor_removed_by_hand_stays_out(env: Env) -> None:
     assert _cast(env, "Heat") == ["Al Pacino"]
     _nfo_scan(env, 1)  # read again: he isn't brought back
     assert _cast(env, "Heat") == ["Al Pacino"]
-    assert "Robert De Niro" in env.titles(Actor)  # the theme deletes only actors it drops
+    assert "Robert De Niro" in env.titles(Person)  # the theme deletes only actors it drops
 
     env.writer.run(lambda c: restore_action(c, env.schema, change, forward=False))
     assert _cast(env, "Heat") == ["Al Pacino", "Robert De Niro"]
@@ -90,18 +90,18 @@ def test_a_new_actor_made_by_hand(env: Env) -> None:
     # Out of every cast, she still isn't deleted by a scan: the user made her.
     _run(env, lambda c: remove_related(c, env.schema, "cast", heat, [judd]))
     _nfo_scan(env, 1)
-    assert "Ashley Judd" in env.titles(Actor)
+    assert "Ashley Judd" in env.titles(Person)
 
     # Undoing the adding undoes the making.
     env.writer.run(lambda c: restore_action(c, env.schema, change, forward=False))
-    assert "Ashley Judd" not in env.titles(Actor)
+    assert "Ashley Judd" not in env.titles(Person)
 
 
 def test_from_the_actors_side(env: Env) -> None:
     _nfo_scan(env, 0)
     pacino, alien = _id(env, "Al Pacino"), _id(env, "Alien")
     change = _run(env, lambda c: add_related(c, env.schema, "cast", pacino, alien))
-    assert change.label == "Add 'Alien' to Al Pacino's filmography"
+    assert change.label == "Add 'Alien' to Al Pacino's movies"
     assert _cast(env, "Alien") == ["Al Pacino"]
 
 

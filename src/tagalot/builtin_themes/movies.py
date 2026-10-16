@@ -1,4 +1,10 @@
-"""Movies theme: Collection ⊃ Movie, and Actor ↔ Movie (the cast).
+"""Movies theme: Collection ⊃ Movie, and Person ↔ Movie (the cast).
+
+**People** (#449): the cast are People (``Person``, stored as the movies theme's actor type,
+``movies.actor``, so keeps need no change): actors in films, and the family in home videos.
+A person can be put in pictures by hand (``pictured``), and a Folder's note can name the
+people it is about (``people: [Alice]``): each is found or made, and holds the folder, so
+everything under it is "within" them and their tags count for it.
 
 A movie is one or more video files (#123), the way Plex and Kodi lay them out:
 
@@ -302,9 +308,13 @@ def is_collection(path: str, cache: dict[str, bool] | None = None) -> bool:
     return cache[path]
 
 
-class Actor(Entity):
-    """Someone in movies' casts."""
+class Person(Entity):
+    """Someone in movies and pictures: an actor in a film's cast, or the family in home
+    videos (#449). Stored as the type ``Actor`` was, so keeps from before know them."""
 
+    type_id = "movies.actor"
+    table_name = "movies_actor"
+    plural = "People"
     title_label = "Name"
     born: date | None = field("Date of birth", search="range")
     country: str | None = field("Country", search="choice")
@@ -400,6 +410,8 @@ class Folder(Entity):
     so a tag on it counts for everything inside."""
 
     folders_for = (Picture, Archive)
+    people: str | None = field("People", search="text", mirrors=Person, many=True)
+    """Who the folder is about: its note's ``people`` (#449). Each named holds the folder."""
     roles = [role("folder", kinds={"dir"}, primary=True)]
 
 
@@ -444,9 +456,11 @@ class MoviesTheme(Theme):
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
-    entities = [Actor, Collection, Movie, Picture, Archive, Folder]
+    entities = [Person, Collection, Movie, Picture, Archive, Folder]
     containment = [
         contains(Collection, Movie),
+        # A folder's note names the people it is about; they hold it (#449).
+        contains(Person, Folder),
         # Folders of pictures hold what's in them (#447); the core fills them.
         contains(Folder, Folder),
         contains(Folder, Collection),
@@ -454,18 +468,34 @@ class MoviesTheme(Theme):
         contains(Folder, Picture),
         contains(Folder, Archive),
     ]
-    relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]
+    relationships = [
+        related("cast", Person, Movie, label="Movies", reverse_label="Cast"),
+        # Who is in a picture, by hand (#449).
+        related("pictured", Person, Picture, label="Pictures", reverse_label="People"),
+    ]
     views = [
         # Tags on a collection count for its movies: tag a box set "Watched" and Movies
         # with Watched lists its films.
         SearchView("Movies", [Movie], inherit_tags=True),
-        SearchView("Actors", [Actor]),
+        SearchView("People", [Person]),
         SearchView("Collections", [Collection]),
         SearchView(
             "Pictures", [Picture, Archive], inherit_tags=True, default_sort=[SortBy("date")]
         ),
         SearchView("Folders", [Folder], inherit_tags=True),
-        DetailView(Actor, [Section.fields(), Section.gallery("photos"), Section.related("cast")]),
+        DetailView(
+            Person,
+            [
+                Section.fields(),
+                Section.gallery("photos"),
+                Section.related("cast"),
+                Section.related("pictured"),
+                Section.contents(),  # the folders about them, and what's in them
+            ],
+        ),
+        DetailView(
+            Picture, [Section.fields(), Section.role("picture"), Section.related("pictured")]
+        ),
         DetailView(
             Movie,
             [
@@ -480,16 +510,24 @@ class MoviesTheme(Theme):
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
         """A movie shows its poster, else its first screenshot; a collection its poster, else
-        one of its movies'; an actor their photo, else a title card."""
+        one of its movies'; a person their photo, else a title card."""
         if entity_type is Movie:
             return [RoleImage("poster"), RoleImage("screenshot"), Icon("video")]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
         if entity_type is Folder:  # its folder picture, else one of the first things in it
             return [FolderImage(), ContentsThumbnail(), Icon("dir")]
-        if entity_type is Actor:
+        if entity_type is Person:
             return [RoleImage("photo"), RoleImage("photos"), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)
+
+    def item_named(self, entity_type: type[Entity], name: str, ctx: IngestContext) -> EntityRef:
+        """A person named in a folder's note or typed into a field (#449) is the one an .nfo
+        cast names, keyed alike."""
+        if entity_type is Person and normalize(name):
+            found = ctx.find(Person, ingest_key=f"actor:{normalize(name)}")
+            return found[0] if found else actor_ref(name, ctx)  # as named before, kept
+        return super().item_named(entity_type, name, ctx)
 
     # --- prepare (a worker): what the folders around each file say ---
 
@@ -667,8 +705,13 @@ class MoviesTheme(Theme):
         for actor in ctx.related("cast", movie):
             if actor.id not in keep:
                 ctx.unrelate("cast", actor, movie)
-                if not ctx.related("cast", actor) and not ctx.linked(actor):
-                    ctx.delete(actor)  # in no movie, with no photo
+                if not (
+                    ctx.related("cast", actor)
+                    or ctx.related("pictured", actor)
+                    or ctx.linked(actor)
+                    or ctx.contents(actor)
+                ):
+                    ctx.delete(actor)  # in no movie or picture, with no photo or folder
         for actor in actors.values():
             ctx.relate("cast", actor, movie)
 
@@ -864,8 +907,8 @@ def _picture_kind(stem: str) -> str:
 
 
 def actor_ref(name: str, ctx: IngestContext) -> EntityRef:
-    """The actor of this name (ignoring case and punctuation), made if new."""
-    return ctx.upsert(Actor, f"actor:{normalize(name)}", title=name.strip())
+    """The person of this name (ignoring case and punctuation), made if new."""
+    return ctx.upsert(Person, f"actor:{normalize(name)}", title=name.strip())
 
 
 def read_nfo(path: str) -> dict[str, Any]:

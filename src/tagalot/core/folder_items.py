@@ -10,6 +10,12 @@ no longer wanted. Each folder item holds the items the theme lets it contain who
 files (or, for an item that is a folder, the folder) are nearest under it. The containment
 goes through :class:`IngestSession`, so what the user put in or took out by hand stays, and
 closure and the search index are kept in step.
+
+A folder item's fields that mirror a containment (``people: str | None = field("People",
+mirrors=Person, many=True)``, with ``contains(Person, Folder)``) are what its note says it
+belongs to: :func:`link_folder_fields`, after the notes are read, finds or makes each item
+named (:meth:`Theme.item_named`) and puts the folder in it, and takes it out of those of that
+type no longer named (#449: Alice's folder note names her).
 """
 
 import posixpath
@@ -18,6 +24,7 @@ from collections.abc import Iterable
 from sqlalchemy import Connection, select
 
 from tagalot.core.ingest import IngestSession
+from tagalot.core.linked_fields import names_in
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -177,5 +184,69 @@ def fill_folders(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
             continue
         ctx.uncontain(EntityRef(parent, folders.type_id), EntityRef(child, child_type))
         changed += 1
+    ctx.flush()
+    return changed
+
+
+def link_folder_fields(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
+    """Put each of the root's folder items in the items its mirrored fields name (as its
+    note gave them, or the user typed), and take it out of those of that type no longer
+    named; how many links changed. Runs in the writer, after the root's notes are read.
+    What the user put in or took out by hand stays."""
+    folders = folder_table(schema)
+    if folders is None:
+        return 0
+    theme = schema.theme
+    declared = {(c.parent, c.child) for c in theme.containment}
+    mirrored = [
+        f
+        for f in folders.fields
+        if isinstance(f.spec.mirrors, type) and (f.spec.mirrors, folders.entity) in declared
+    ]
+    if not mirrored:
+        return 0
+    role = _primary(folders)
+    assert role is not None
+    ids = list(
+        conn.scalars(
+            select(EntityResource.entity_id)
+            .join(Resource, Resource.id == EntityResource.resource_id)
+            .join(Entity, Entity.id == EntityResource.entity_id)
+            .where(
+                Entity.type == folders.type_id,
+                EntityResource.role == role.name,
+                Resource.root_id == root_id,
+            )
+        )
+    )
+    if not ids:
+        return 0
+    table = folders.table
+    rows = conn.execute(
+        select(table.c.id, *(table.c[f.name] for f in mirrored)).where(table.c.id.in_(ids))
+    ).all()
+    ctx = IngestSession(conn, schema)
+    instance = theme()
+    changed = 0
+    for row in rows:
+        folder = EntityRef(row[0], folders.type_id)
+        for position, info in enumerate(mirrored, start=1):
+            mirror = info.spec.mirrors
+            assert isinstance(mirror, type)
+            mirror_id = theme.type_id_of(mirror)
+            wanted = {instance.item_named(mirror, n, ctx).id for n in names_in(row[position])}
+            current = set(
+                conn.scalars(
+                    select(EntityContains.parent_id)
+                    .join(Entity, Entity.id == EntityContains.parent_id)
+                    .where(EntityContains.child_id == folder.id, Entity.type == mirror_id)
+                )
+            )
+            for parent in sorted(wanted - current):
+                ctx.contain(EntityRef(parent, mirror_id), folder)
+                changed += 1
+            for parent in sorted(current - wanted):
+                ctx.uncontain(EntityRef(parent, mirror_id), folder)
+                changed += 1
     ctx.flush()
     return changed

@@ -50,7 +50,7 @@ from tagalot.core.roots import local_path
 from tagalot.core.scanner import in_notes
 from tagalot.core.tags import search_key
 from tagalot.core.theme_schema import ThemeSchema
-from tagalot.themes.api import EntityRef, entity_label, entity_plural
+from tagalot.themes.api import EntityRef, entity_label, entity_plural, plural_of
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +67,16 @@ class FolderNoteMeta:
 
 
 def type_names(schema: ThemeSchema) -> dict[str, str]:
-    """Each way of naming a type (its class name, label, and plural, folded), to its id."""
+    """Each way of naming a type (its class name, label, and plural, and the end of its id
+    and that end's plural, folded), to its id. The id's name lasts when a type is renamed
+    (the movies theme's actors, shown as People since #449, still take ``Notes/Actors``)."""
     names: dict[str, str] = {}
     for entity, table in schema.entities.items():
         for name in (entity.__name__, entity_label(entity), entity_plural(entity)):
             names.setdefault(search_key(name), table.type_id)
-        names.setdefault(search_key(table.type_id.rpartition(".")[2]), table.type_id)
+        stored = table.type_id.rpartition(".")[2]
+        names.setdefault(search_key(stored), table.type_id)
+        names.setdefault(search_key(plural_of(stored)), table.type_id)
     return names
 
 
