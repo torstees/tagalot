@@ -29,6 +29,7 @@ Some kinds of item have a gallery of pictures on their page:
 | 2D assets artist | Previews | `Previews`, `Preview`, or `Samples` in its folder |
 | Actor, music artist | Photos | the [notes folder](notes.md#the-notes-folder) |
 | Book | Covers | the [notes folder](notes.md#the-notes-folder) |
+| Book | Pictures | everything in its own folder, at any depth, when no other book or comic is in it (a story's renders) |
 
 - **Folders:** every picture in such a subfolder of the item's folder counts, however deep (`Screenshots/Disc 2/Deleted/…`), and so does an archive named like one beside it (`Screens.zip`, `Booklet.rar`). Names are matched ignoring case. A folder that several items share (loose movies side by side) gives none of them a gallery, since Tagalot can't tell whose pictures they are.
 - **The notes folder:** a folder or archive named like an item's note, beside it (`Notes/Actors/Sigourney Weaver/`, `Sigourney Weaver.zip`), is that item's gallery. It follows the note: if the note stops matching the item, its gallery goes too.

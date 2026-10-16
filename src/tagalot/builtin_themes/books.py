@@ -43,6 +43,8 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 - **Folders** (#447): a folder above a Picture or Archive is a :class:`Folder` holding what's
   in it (works, pictures, archives, folders), made by the core after each scan: a story's
   folder holds the story and its renders.
+- **A book's own pictures** (#448): a book alone in its folder shows every picture and archive
+  in it, at any depth, as its **Pictures** gallery (the core fills it, ``own_folder``).
 - **Searching inside books:** a book is a document (``full_text``): when the keep searches
   inside documents, the text of its EPUBs, PDFs, Markdown, and office files is read after
   scans, and **In documents** finds books by what they say.
@@ -197,6 +199,15 @@ class Book(Entity):
         role("cover", kinds={"image"}, thumbnail=True),
         # Covers beside the book's note in the notes folder (#389, §9 *Galleries*).
         role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers"),
+        # Everything in the book's own folder: a story's renders beside it (#448).
+        role(
+            "pictures",
+            kinds={"image", "archive"},
+            many=True,
+            gallery=True,
+            own_folder=True,
+            label="Pictures",
+        ),
     ]
     card_lines = ("authors", "series", "rating")
     description_field = "description"
@@ -308,10 +319,11 @@ class BooksTheme(Theme):
 
     id, name, version = "books", "Books", 8  # 8: pictures; 7: ratings; 6: covers not found;
     # 5: extra; 4: assets; 3: synopsis; 2: authors
-    # 18: folders; 17: pictures; 16: ratings; 15: fields that mirror links; 14: gallery roles;
+    # 19: own folder galleries; 18: folders; 17: pictures; 16: ratings;
+    # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
     # 6: full_text; 5: online
-    api_version = 18
+    api_version = 19
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
@@ -392,6 +404,7 @@ class BooksTheme(Theme):
                 Section.fields(),
                 Section.role("file"),
                 Section.gallery("covers"),
+                Section.gallery("pictures"),
                 Section.related("writers"),
                 Section.related("artists"),
             ],

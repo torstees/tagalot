@@ -285,12 +285,19 @@ def validate_theme(theme: type[Theme]) -> list[str]:
     galleries = False
     for entity in entities:
         for gallery in entity.roles:
-            if not (getattr(gallery, "gallery", False) or getattr(gallery, "folders", ())):
+            own = getattr(gallery, "own_folder", False)
+            if not (getattr(gallery, "gallery", False) or getattr(gallery, "folders", ()) or own):
                 continue
             galleries = True
             where = f"{names[entity]}.{gallery.name}"
             if gallery.folders and not gallery.gallery:
                 problems.append(f"{where}: folders needs gallery=True")
+            if own and not gallery.gallery:
+                problems.append(f"{where}: own_folder needs gallery=True")
+            if own and gallery.folders:
+                problems.append(f"{where}: own_folder and folders can't be used together")
+            if own and getattr(theme, "api_version", API_VERSION) < 19:
+                problems.append(f"{where}: own_folder needs api_version = 19 (or later)")
             if gallery.gallery and not gallery.many:
                 problems.append(f"{where}: a gallery role needs many=True")
             if gallery.gallery and Kind.IMAGE not in gallery.kinds:

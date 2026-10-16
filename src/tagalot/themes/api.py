@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 18
+API_VERSION = 19
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -42,7 +42,8 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 (:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`); version 16 added
 ratings shown as stars (:func:`field`'s ``rating``); version 17 added pictures' and
 archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`oldest`);
-version 18 added folder items (:attr:`Entity.folders_for`)."""
+version 18 added folder items (:attr:`Entity.folders_for`); version 19 added gallery roles
+filled from the item's own folder (:func:`role`'s ``own_folder``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -262,6 +263,9 @@ class Role:
     folders: tuple[str, ...] = ()
     """Subfolders of the item's folder the core fills a gallery role from (API version
     14)."""
+    own_folder: bool = False
+    """The core fills the gallery role from everything in the item's own folder (API
+    version 19)."""
 
 
 def role(
@@ -274,6 +278,7 @@ def role(
     label: str | None = None,
     gallery: bool = False,
     folders: Iterable[str] = (),
+    own_folder: bool = False,
 ) -> Role:
     """Declare a role: ``role("poster", kinds={"image"}, thumbnail=True)``.
 
@@ -286,6 +291,12 @@ def role(
     The item's folder is its primary role's folder, else the folder of its primary file.
     Names are compared ignoring case. Scans add and remove these links as pictures come
     and go; your theme's own links in the role, and the user's, stay.
+
+    With ``own_folder=True`` instead (API version 19), the core fills it with every picture
+    (and archive) in the item's own folder, at any depth: the folder of its primary file,
+    when no other item of its type has a primary file in it or below it (a story's folder,
+    with its renders), never the top of a watched folder. Files the item has in its other
+    roles (its cover) aren't added.
     """
     try:
         parsed = frozenset(Kind(k) for k in kinds)
@@ -305,6 +316,7 @@ def role(
         label=label,
         gallery=gallery,
         folders=tuple(str(f) for f in folders),
+        own_folder=own_folder,
     )
 
 
