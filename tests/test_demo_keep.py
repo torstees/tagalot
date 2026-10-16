@@ -175,7 +175,13 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
         with session.reader.connect() as conn:
             everything = count_by_type(conn, SearchSpec(), tree)
             scifi = count_by_type(conn, SearchSpec(include=_ids(tree, "Sci-Fi")), tree)
-    assert everything == {"movies.actor": 6, "movies.collection": 3, "movies.movie": 9}
+    assert everything == {
+        "movies.actor": 6,
+        "movies.archive": 2,  # Old scans.zip, Screens.zip (#446)
+        "movies.collection": 3,
+        "movies.movie": 12,  # with Alice's home videos (#446)
+        "movies.picture": 9,  # family pictures, and screenshots folders' stills
+    }
     assert scifi == {"movies.movie": 3}
     with pytest.raises(FileExistsError, match="--reset"):
         script.make_movies_demo(tmp_path)
@@ -198,9 +204,11 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
             fantasy = count_by_type(conn, SearchSpec(include=_ids(tree, "Fantasy")), tree)
     assert everything == {
         "books.author": 15,  # Stephen Baxter, of a two-author creator; pirateaba (#418)
-        "books.book": 21,  # Small Gods: its EPUB and PDF are one book; Field Notes (#426)
+        "books.archive": 1,  # The Glass Tower's sketches (#446)
+        "books.book": 22,  # Small Gods: its EPUB and PDF are one book; Field Notes (#426)
         "books.collection": 1,
         "books.comic": 4,
+        "books.picture": 5,  # covers named by front matter, renders (#446)
         "books.series": 6,
         "books.universe": 2,
     }

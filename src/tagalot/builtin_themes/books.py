@@ -35,6 +35,11 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 - **Online details** (with the keep's consent): a book with an ISBN is looked up in Open
   Library, which fills in its year, publisher, language, and description where its files
   say nothing; what a file says always wins.
+- **Pictures and archives** (#446): every picture and archive (zip, 7z, rar) is an item of
+  its own, a :class:`Picture` or an :class:`Archive`, to tag and search: illustrations and
+  renders kept beside the writing. Calibre's ``cover.jpg`` beside ``metadata.opf`` isn't. A
+  picture's date is the oldest of its EXIF dates and the file's; an archive's the oldest of
+  its first files' and its own.
 - **Searching inside books:** a book is a document (``full_text``): when the keep searches
   inside documents, the text of its EPUBs, PDFs, Markdown, and office files is read after
   scans, and **In documents** finds books by what they say.
@@ -45,11 +50,14 @@ import logging
 import os
 import posixpath
 import re
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
 from tagalot.themes.api import (
+    KIND_EXTENSIONS,
     MOBI_EXTENSIONS,
     DetailView,
     Entity,
@@ -57,6 +65,7 @@ from tagalot.themes.api import (
     Icon,
     ImageFile,
     IngestContext,
+    Kind,
     OnlineResponse,
     OnlineSource,
     Record,
@@ -71,7 +80,9 @@ from tagalot.themes.api import (
     TitleCard,
     contains,
     field,
+    oldest,
     option,
+    read_archive,
     read_comic_info,
     read_epub,
     read_front_matter,
@@ -79,6 +90,7 @@ from tagalot.themes.api import (
     read_mobi,
     read_office_info,
     read_pdf_info,
+    read_picture,
     related,
     role,
     split_people,
@@ -97,7 +109,12 @@ BOOK_EXTENSIONS = (
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
 OPEN_LIBRARY = OnlineSource("Open Library", "openlibrary.org", "ISBNs")
 COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
-"""Pictures scanned so a Markdown book's front matter can name one as its cover."""
+"""Pictures a Markdown book's front matter can name as its cover."""
+PICTURE_EXTENSIONS = KIND_EXTENSIONS[Kind.IMAGE]
+ARCHIVE_EXTENSIONS = KIND_EXTENSIONS[Kind.ARCHIVE] - COMIC_EXTENSIONS
+"""Archives of their own (#446): a comic archive is a comic."""
+CALIBRE_METADATA = "metadata.opf"
+"""Beside it, Calibre's ``cover.jpg`` is a copy of the book's cover, not a picture of its own."""
 
 
 class Author(Entity):
@@ -246,19 +263,46 @@ class ContentsThumbnail(ThumbnailProvider):
                 yield found
 
 
+class Picture(Entity):
+    """A picture of its own (#446): an illustration, a render, a scan."""
+
+    date: datetime | None = field("Date", card=True, search="range")
+    """The oldest of its EXIF dates (taken, digitized) and the file's modified time."""
+    dimensions: str | None = field("Dimensions", card=True, editable=False)
+    width: int | None = field("Width", search="range", editable=False)
+    height: int | None = field("Height", search="range", editable=False)
+    folder: str = field("Folder", search="text", editable=False)
+    roles = [role("picture", kinds={"image"}, primary=True, thumbnail=True, label="File")]
+    double_click = "open_file"
+    card_lines = ("date", "dimensions")
+
+
+class Archive(Entity):
+    """A zip, 7z, or rar archive of its own (#446); its thumbnail is its best picture."""
+
+    date: datetime | None = field("Date", card=True, search="range")
+    """The oldest of its first files' dates and its own: an archive is often much newer
+    than what's in it."""
+    pictures: int | None = field("Pictures inside", card=True, search="range", editable=False)
+    folder: str = field("Folder", search="text", editable=False)
+    roles = [role("archive", kinds={"archive"}, primary=True, thumbnail=True, label="File")]
+    double_click = "open_file"
+    card_lines = ("date", "pictures")
+
+
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 7  # 7: ratings; 6: covers not found; 5: extra; …
-    # 4: assets; 3: synopsis; 2: authors
-    # 16: ratings; 15: fields that mirror links; 14: gallery roles; 13: not_found;
-    # 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi; 6: full_text;
-    # 5: online
-    api_version = 16
+    id, name, version = "books", "Books", 8  # 8: pictures; 7: ratings; 6: covers not found;
+    # 5: extra; 4: assets; 3: synopsis; 2: authors
+    # 17: pictures; 16: ratings; 15: fields that mirror links; 14: gallery roles;
+    # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
+    # 6: full_text; 5: online
+    api_version = 17
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
-    extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | COVER_EXTENSIONS
-    entities = [Author, Universe, Series, Collection, Book, Comic]
+    extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
+    entities = [Author, Universe, Series, Collection, Book, Comic, Picture, Archive]
     containment = [
         contains(Universe, Series),
         contains(Universe, Book),
@@ -318,6 +362,7 @@ class BooksTheme(Theme):
         SearchView("Series", [Series], inherit_tags=True),
         SearchView("Universes", [Universe]),
         SearchView("Collections", [Collection], inherit_tags=True),
+        SearchView("Pictures", [Picture, Archive], default_sort=[SortBy("date")]),
         DetailView(
             Book,
             [
@@ -438,6 +483,16 @@ class BooksTheme(Theme):
                 elif resource.ext in COMIC_EXTENSIONS:
                     info = read_comic_info(resource.path)
                     found[resource.id] = comic_work(resource.relpath, info)
+                elif resource.ext in PICTURE_EXTENSIONS:
+                    found[resource.id] = (
+                        {}  # a copy of its book's cover
+                        if calibre_cover(resource, folders)
+                        else {"own": own_details(read_picture, resource.path)}
+                    )
+                    continue
+                elif resource.ext in ARCHIVE_EXTENSIONS:
+                    found[resource.id] = {"own": own_details(read_archive, resource.path)}
+                    continue
             except Exception as e:  # a bad file is still a work, named from its file
                 fallback = book_work if resource.ext in BOOK_EXTENSIONS else comic_work
                 found[resource.id] = fallback(resource.relpath, None)
@@ -479,12 +534,16 @@ class BooksTheme(Theme):
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
         for resource in batch:
             work = ctx.prepared(resource)
-            if work:
+            if resource.ext in PICTURE_EXTENSIONS:
+                if resource.ext in COVER_EXTENSIONS:  # a cover read after its book
+                    key = f"{resource.root_id}:{resource.relpath}"
+                    for book in ctx.find(Book, cover=key):
+                        ctx.link(book, resource, "cover")
+                own_item(Picture, "picture", resource, ctx)
+            elif resource.ext in ARCHIVE_EXTENSIONS:
+                own_item(Archive, "archive", resource, ctx)
+            elif work:
                 self._ingest_work(resource, dict(work), ctx)
-            elif resource.ext in COVER_EXTENSIONS:  # a cover read after its book
-                key = f"{resource.root_id}:{resource.relpath}"
-                for book in ctx.find(Book, cover=key):
-                    ctx.link(book, resource, "cover")
 
     def _ingest_work(
         self, resource: ResourceInfo, work: dict[str, Any], ctx: IngestContext
@@ -1017,6 +1076,74 @@ def people_of(entity_type: type[Entity], record: Record) -> set[str]:
     """A work's writers (normalized), as its record lists them."""
     names = record.fields.get("authors" if entity_type is Book else "writers")
     return {normalize(n) for n in split(names)} - {""}
+
+
+def listing(path: str, folders: dict[str, list[str]]) -> list[str]:
+    """The names in the folder at ``path``, read once a batch (``folders``); none when it
+    can't be listed."""
+    if path not in folders:
+        try:
+            folders[path] = os.listdir(path)
+        except OSError:
+            folders[path] = []
+    return folders[path]
+
+
+def calibre_cover(resource: ResourceInfo, folders: dict[str, list[str]]) -> bool:
+    """``cover.jpg`` in a Calibre library's book folder (beside ``metadata.opf``)."""
+    name = posixpath.basename(resource.relpath)
+    if posixpath.splitext(name)[0].casefold() != "cover" or resource.path is None:
+        return False
+    names = listing(os.path.dirname(resource.path), folders)
+    return any(n.casefold() == CALIBRE_METADATA for n in names)
+
+
+def own_details(read: Callable[[str], dict[str, Any]], path: str) -> dict[str, Any]:
+    """What :func:`read_picture` or :func:`read_archive` says, or why it couldn't."""
+    try:
+        return read(path)
+    except Exception as e:  # still an item, without its details
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def own_item(
+    kind: type[Entity], role_name: str, resource: ResourceInfo, ctx: IngestContext
+) -> None:
+    """Make or update the Picture or Archive that is this file (#446), or, when it is no
+    longer one of its own, take it away."""
+    prepared = ctx.prepared(resource)
+    if prepared is None:
+        return  # not read (it couldn't be): left as it was
+    existing = ctx.entities_of(resource, role_name)
+    if "own" not in prepared:
+        for item in existing:
+            ctx.unlink(item, resource, role_name)
+            if not ctx.linked(item):
+                ctx.delete(item)
+        return
+    details = dict(prepared["own"])
+    error = details.pop("error", None)
+    if error:
+        ctx.warn(resource, f"Couldn't read its details: {error}")
+    folder, _, name = resource.relpath.rpartition("/")
+    modified = (
+        datetime.fromtimestamp(resource.mtime_ns / 1e9, UTC)
+        if resource.mtime_ns is not None
+        else None
+    )
+    values: dict[str, Any] = {"folder": folder}
+    if kind is Picture:
+        values["date"] = oldest(details.pop("taken", None), modified)
+        values.update(details)
+    else:
+        values["date"] = oldest(details.get("oldest"), modified)
+        values["pictures"] = details.get("pictures")
+    if existing:
+        ctx.update(existing[0], title=name, **values)
+        return
+    # Never-reused keys: a new file where another used to be is a new item.
+    item = ctx.upsert(kind, f"file:{uuid.uuid4().hex}", title=name, **values)
+    ctx.link(item, resource, role_name)
 
 
 SIBLING_EXTENSIONS = (BOOK_EXTENSIONS - LINK_EXTENSIONS) | COMIC_EXTENSIONS

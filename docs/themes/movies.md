@@ -1,6 +1,6 @@
 # Movies
 
-For video files named the way Plex, Kodi, and Jellyfin like them: **collections** ⊃ **movies**, and the **actors** in them.
+For video files named the way Plex, Kodi, and Jellyfin like them: **collections** ⊃ **movies**, and the **actors** in them. Home videos work too, with the pictures beside them.
 
 ## What it makes
 
@@ -10,6 +10,7 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating (out of 10, shown as five stars: 7 is ★★★½☆), which win over the file name; the **cast** in order; and a **set**, which becomes a collection.
 - **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
 - **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
+- **Picture** and **Archive:** every other picture, and every zip, 7z, or rar archive, is an item of its own that you can tag and search, such as the family pictures beside your home videos (see [Pictures](#pictures)).
 
 ## Notes
 
@@ -21,6 +22,8 @@ Actors have no folder: their notes go in the keep's [notes folder](../guide/note
 
 In a movie's folder, its **poster** is `poster.jpg` (or `folder`, `cover`, `movie`, `default`, or a picture named like the movie); its other pictures, and those in `screenshots`, `extrafanart`, `backdrops`… subfolders, are its **screenshots**. Beside loose videos, `Heat (1995)-poster.jpg` is that movie's poster and `-fanart`, `-landscape`, `-thumb`, `-banner` pictures are screenshots.
 
+Every picture that isn't a poster, an actor's photo, or Kodi's artwork is also a **Picture** of its own, and every archive an **Archive**. Kodi's artwork is a picture in an `extrafanart`, `backdrops`, or `.actors` folder, or, in a movie's folder, one named `fanart`, `banner`, `clearlogo`, `landscape`, `thumb`, `disc`, `logo`, and the like. So in `Alice/3rd Birthday/` with one video, the photos are the movie's screenshots and Pictures too. A Picture's **Date** is when it was taken (its EXIF), or the file's date when that is older or there is none. An archive's is the oldest date among its first 10 files, or its own if that's older, since an archive is often much newer than the pictures in it. You can change a date by hand, and scans keep your change.
+
 A movie's page shows its screenshots as a [gallery](../guide/item-pages.md#galleries): also every picture under a `Screenshots`, `Screens`, or `Stills` folder at any depth, and archives named like them (`Screens.zip`). An actor's **Photos** gallery comes from the notes folder: `Notes/Actors/Al Pacino/` beside `Al Pacino.md`.
 
 ## Cast by hand
@@ -29,7 +32,7 @@ A movie's page has **Cast**, an actor's **Filmography**: both with **Add…** (s
 
 ## Searches
 
-All grids, sorted by title: **Movies** (inheriting tags: tag a collection `Fantasy` and its movies match), **Actors**, and **Collections**. Movie cards show the year and quality; a collection lists its movies by year.
+All grids, sorted by title: **Movies** (inheriting tags: tag a collection `Fantasy` and its movies match), **Actors**, and **Collections**; and **Pictures** (pictures and archives), oldest first. Movie cards show the year and quality; a collection lists its movies by year.
 
 ## Genres as tags
 

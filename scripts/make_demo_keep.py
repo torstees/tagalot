@@ -589,6 +589,9 @@ MOVIE_FILES = [
     "The Lord of the Rings/Extras/Making of.mkv",
     "Home Movies/Beach day.mp4",
     "Home Movies/Birthday.mp4",
+    "Home Movies/Alice/First steps.mp4",
+    "Home Movies/Alice/Swimming.mp4",
+    "Home Movies/Alice/3rd Birthday/party.mp4",
 ]
 """Movie files for the movies demo: stand-ins, not real video. Those in
 :data:`MOVIE_VIDEOS` are a video's headers (MediaInfo reads them); the rest a few bytes."""
@@ -638,6 +641,28 @@ MOVIE_GALLERIES = {
 """Gallery pictures (#389): The Matrix's ``Screenshots`` folder, one at a deeper level, and
 photos beside an actor's note in the notes folder. The Matrix also has ``Screens.zip``
 (:data:`MOVIE_SCREENS_ZIP`)."""
+
+MOVIE_PHOTOS = {
+    "Home Movies/Alice/IMG_2041.jpg": (
+        (200, 150, 120),
+        "Alice, first steps",
+        "2019:05:12 10:31:04",
+    ),
+    "Home Movies/Alice/IMG_2057.jpg": ((120, 170, 210), "Alice at the pool", "2019:06:01 15:02:47"),
+    "Home Movies/Alice/3rd Birthday/cake.jpg": ((230, 120, 150), "The cake", "2021:03:14 16:20:00"),
+    "Home Movies/Alice/3rd Birthday/presents.jpg": ((150, 200, 110), "Presents", None),
+}
+"""Family pictures beside home videos (#446): Pictures of their own, dated by their EXIF
+(path -> color, text, date taken). The birthday's are its screenshots too."""
+
+MOVIE_PHOTO_ZIPS = {
+    "Home Movies/Alice/Old scans.zip": {
+        "scan 1.jpg": ((180, 170, 150), "Scanned print 1"),
+        "scan 2.jpg": ((170, 160, 140), "Scanned print 2"),
+    }
+}
+"""An archive of old scans (#446): its date is its files' (1998), not the zip's own."""
+SCANS_DATE = (1998, 7, 4, 12, 0, 0)
 
 MOVIE_SCREENS_ZIP = {
     "The.Matrix.1999.1080p/Screens.zip": {
@@ -906,6 +931,14 @@ BOOK_COMICS: dict[str, dict[str, str] | None] = {
 """Comic archives for the books demo, by path: their ComicInfo.xml fields."""
 
 BOOK_MARKDOWN = {
+    "Writing/The Glass Tower/The Glass Tower.md": (
+        "---\n"
+        "title: The Glass Tower\n"
+        "author: Ada Moss\n"
+        "status: second draft\n"
+        "---\n"
+        "# Chapter 1\n\nThe tower caught the morning light before anything else did.\n"
+    ),
     "Royal Road/Mother of Learning 01.md": (
         "---\n"
         "title: Mother of Learning\n"
@@ -1361,6 +1394,22 @@ def make_books_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: bool
     (files / "Attachments/covers/wandering-inn.jpg").write_bytes(
         _cover((130, 80, 20), "The Wandering Inn")
     )
+    # A story with the 3D renders made to illustrate it, and a zip of sketches (#446).
+    for name, color in (("tower", (70, 90, 160)), ("great hall", (150, 110, 60))):
+        (files / f"Writing/The Glass Tower/renders/{name}.png").parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        Image.open(io.BytesIO(_cover(color, f"Render: {name}"))).save(
+            files / f"Writing/The Glass Tower/renders/{name}.png"
+        )
+    _picture_zip(
+        files / "Writing/The Glass Tower/sketches.zip",
+        {
+            "sketch 1.jpg": ((220, 220, 210), "Sketch 1"),
+            "sketch 2.jpg": ((210, 210, 200), "Sketch 2"),
+        },
+        (2016, 2, 9, 21, 0, 0),
+    )
     # Field Notes' cover: damaged, so it can't be drawn (Triage's Pictures, #426).
     (files / "Loose/field-notes.jpg").write_bytes(_cover((90, 120, 60), "Field Notes")[:200])
     # A PDF: its document info, and a first page that becomes its cover.
@@ -1426,6 +1475,10 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: boo
             (files / relpath).write_bytes(_cover(color, text))
     for relpath, pictures in MOVIE_SCREENS_ZIP.items():
         _picture_zip(files / relpath, pictures)
+    for relpath, (color, text, taken) in MOVIE_PHOTOS.items():
+        (files / relpath).write_bytes(_photo(color, text, taken))
+    for relpath, pictures in MOVIE_PHOTO_ZIPS.items():
+        _picture_zip(files / relpath, pictures, SCANS_DATE)
     photo = files / "Inception (2010)/.actors/Leonardo_DiCaprio.jpg"
     photo.parent.mkdir()
     photo.write_bytes(_cover((110, 90, 70), "Leonardo DiCaprio"))
@@ -1446,12 +1499,29 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: boo
     return keep_dir
 
 
-def _picture_zip(path: Path, pictures: dict[str, tuple[tuple[int, int, int], str]]) -> None:
-    """A zip of demo pictures (a gallery's archive, #389): name -> (color, text)."""
+def _picture_zip(
+    path: Path,
+    pictures: dict[str, tuple[tuple[int, int, int], str]],
+    when: tuple[int, int, int, int, int, int] | None = None,
+) -> None:
+    """A zip of demo pictures (a gallery's archive, #389): name -> (color, text); ``when``
+    dates its members (else now)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
         for name, (color, text) in pictures.items():
-            archive.writestr(name, _cover(color, text))
+            member = name if when is None else zipfile.ZipInfo(name, when)
+            archive.writestr(member, _cover(color, text))
+
+
+def _photo(color: tuple[int, int, int], text: str, taken: str | None) -> bytes:
+    """A demo photo, a JPEG whose EXIF says when it was taken (``2019:05:12 10:31:04``)."""
+    image = Image.open(io.BytesIO(_cover(color, text)))
+    exif = Image.Exif()
+    if taken is not None:
+        exif.get_ifd(0x8769)[0x9003] = taken  # DateTimeOriginal
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG", exif=exif)
+    return buffer.getvalue()
 
 
 def _write_texts(files: Path, texts: dict[str, str]) -> None:

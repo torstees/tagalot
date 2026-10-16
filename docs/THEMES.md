@@ -111,7 +111,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 16             # the theme API it needs
+    api_version = 17             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -153,6 +153,8 @@ The API has readers for formats several themes want, so they all read them the s
 - **`read_bibliography(path)`**: the entries of a BibTeX/BibLaTeX (`.bib`), RIS (`.ris`), or CSL-JSON (`.json`) file, as Zotero, Better BibTeX, JabRef, and Mendeley export them, each with the same keys: `type`, `kind`, `citekey`, `title`, `authors` (in order), `editors`, `year`, `venue`, `volume`, `issue`, `pages`, `publisher`, `doi`, `arxiv`, `pmid`, `url`, `abstract`, `keywords`, and `files` (the paths it names, as the exporting computer wrote them).
 - **`read_office_info(path)`**: a Word (DOCX) or OpenDocument (ODT) file's `title`, `authors`, `subject`, `keywords`, `description`, `year`, `language`, and `format`; a Pages file gives only its preview. **`office_cover(path)`** gives the preview picture's bytes those formats keep.
 - **`read_link_file(path)`**: a `.url`, `.webloc`, or `.desktop` link's `url` and `title` (a `.desktop` file's `Name=`; else `None`).
+- **`read_picture(path)`** (API version 17): a picture's `width`, `height`, `dimensions` (`"1920 × 1080"`), and `taken`: the oldest of its EXIF dates (taken, digitized; else last changed), as an aware datetime, or `None`. Only the header is read.
+- **`read_archive(path, dated=10)`** (API version 17): a zip, 7z, or rar archive's `pictures` (how many it holds) and `oldest`: the earliest date among its first `dated` files, as the archive records them, or `None`. Only the listing is read. An archive is often much newer than what's in it, so a theme dating one takes **`oldest(...)`** of that and the file's own time: `oldest(*dates)` is the earliest of the datetimes given, skipping `None`.
 
 ### What `ctx` can do
 

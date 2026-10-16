@@ -20,6 +20,7 @@ from tagalot.builtin_themes.movies import (
     Movie,
     MovieName,
     MoviesTheme,
+    Picture,
     is_extra,
     movie_name,
     quality,
@@ -253,12 +254,12 @@ def test_posters_and_screenshots(env: Env) -> None:
             )
         )
     assert unlinked == [
-        "Alien.jpg",
         "Inception (2010)/Inception (2010)-trailer.mkv",
         "The Lord of the Rings/Extras/Making of.mkv",
-        "The Lord of the Rings/map.jpg",
-        "random.jpg",
     ]
+    # Pictures that are no one's art are items of their own (#446); a movie's screenshot
+    # in its screenshots folder is one too, but its folder.jpg (art) isn't.
+    assert env.titles(Picture) == ["Alien.jpg", "map.jpg", "random.jpg", "still 1.jpg"]
 
 
 def test_thumbnail_chains() -> None:
@@ -522,7 +523,7 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 4  # 2: video details; 3: genres as keywords; 4: notes
+    assert MoviesTheme.version == 5  # 2: video details; 3: genres; 4: notes; 5: pictures
 
 
 def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:

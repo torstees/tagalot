@@ -16,7 +16,9 @@ import zipfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import PurePosixPath
+from typing import Any
 
 import py7zr
 import py7zr.io
@@ -54,6 +56,9 @@ class ArchiveMember:
     """Uncompressed size in bytes."""
     is_dir: bool = False
     encrypted: bool = False
+    modified: datetime | None = None
+    """When it was last changed, as the archive records it (aware; zip and rar record local
+    time, read as this computer's), or ``None`` when it doesn't say (#446)."""
 
 
 class ArchiveReader(ABC):
@@ -182,7 +187,13 @@ class _ZipReader(ArchiveReader):
 
     def members(self) -> list[ArchiveMember]:
         return [
-            ArchiveMember(info.filename, info.file_size, info.is_dir(), bool(info.flag_bits & 1))
+            ArchiveMember(
+                info.filename,
+                info.file_size,
+                info.is_dir(),
+                bool(info.flag_bits & 1),
+                local_time(info.date_time),
+            )
             for info in self._zip.infolist()
         ]
 
@@ -213,7 +224,13 @@ class _SevenZipReader(ArchiveReader):
 
     def members(self) -> list[ArchiveMember]:
         return [
-            ArchiveMember(info.filename, info.uncompressed, info.is_directory, self._encrypted)
+            ArchiveMember(
+                info.filename,
+                info.uncompressed,
+                info.is_directory,
+                self._encrypted,
+                aware(info.creationtime),  # py7zr's name for the member's last-write time
+            )
             for info in self._archive.list()
         ]
 
@@ -246,7 +263,12 @@ class _RarReader(ArchiveReader):
     def members(self) -> list[ArchiveMember]:
         return [
             ArchiveMember(
-                info.filename or "", info.file_size or 0, info.is_dir(), info.needs_password()
+                info.filename or "",
+                info.file_size or 0,
+                info.is_dir(),
+                info.needs_password(),
+                # RAR5 records UTC (an aware mtime); RAR4 local time, as date_time says.
+                rar_time(info),
             )
             for info in self._rar.infolist()
         ]
@@ -268,6 +290,37 @@ class _RarReader(ArchiveReader):
 
     def close(self) -> None:
         self._rar.close()
+
+
+def local_time(parts: Any) -> datetime | None:
+    """A zip or rar ``date_time`` tuple (this computer's local time) as an aware datetime,
+    or ``None`` when it is missing or impossible (a zip's 1980-01-01 means "not recorded")."""
+    try:
+        when = datetime(*parts[:6])
+    except (TypeError, ValueError):
+        return None
+    if when <= datetime(1980, 1, 1):
+        return None
+    try:
+        return when.astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def aware(when: Any) -> datetime | None:
+    """``when`` as an aware datetime (a naive one is taken as UTC), or ``None``."""
+    if not isinstance(when, datetime):
+        return None
+    return when if when.tzinfo is not None else when.replace(tzinfo=UTC)
+
+
+def rar_time(info: Any) -> datetime | None:
+    """A rar member's time: RAR5 records UTC (an aware ``mtime``), RAR4 local time, as its
+    ``date_time`` says."""
+    when = getattr(info, "mtime", None)
+    if isinstance(when, datetime) and when.tzinfo is not None:
+        return when
+    return local_time(getattr(info, "date_time", None))
 
 
 class NoRarTool(ArchiveError):
