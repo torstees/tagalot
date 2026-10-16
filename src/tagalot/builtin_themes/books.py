@@ -40,6 +40,9 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
   renders kept beside the writing. Calibre's ``cover.jpg`` beside ``metadata.opf`` isn't. A
   picture's date is the oldest of its EXIF dates and the file's; an archive's the oldest of
   its first files' and its own.
+- **Folders** (#447): a folder above a Picture or Archive is a :class:`Folder` holding what's
+  in it (works, pictures, archives, folders), made by the core after each scan: a story's
+  folder holds the story and its renders.
 - **Searching inside books:** a book is a document (``full_text``): when the keep searches
   inside documents, the text of its EPUBs, PDFs, Markdown, and office files is read after
   scans, and **In documents** finds books by what they say.
@@ -62,6 +65,7 @@ from tagalot.themes.api import (
     DetailView,
     Entity,
     EntityRef,
+    FolderImage,
     Icon,
     ImageFile,
     IngestContext,
@@ -290,19 +294,29 @@ class Archive(Entity):
     card_lines = ("date", "pictures")
 
 
+class Folder(Entity):
+    """A folder of pictures and what's beside them (#447, DESIGN.md §9 *Folder items*): the
+    core makes one for every folder above a Picture or Archive, and it holds what's in it,
+    so a tag on it counts for everything inside."""
+
+    folders_for = (Picture, Archive)
+    roles = [role("folder", kinds={"dir"}, primary=True)]
+
+
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
     id, name, version = "books", "Books", 8  # 8: pictures; 7: ratings; 6: covers not found;
     # 5: extra; 4: assets; 3: synopsis; 2: authors
-    # 17: pictures; 16: ratings; 15: fields that mirror links; 14: gallery roles;
+    # 18: folders; 17: pictures; 16: ratings; 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
     # 6: full_text; 5: online
-    api_version = 17
+    api_version = 18
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
-    entities = [Author, Universe, Series, Collection, Book, Comic, Picture, Archive]
+    entities = [Author, Universe, Series, Collection, Book, Comic, Picture, Archive, Folder]
+    dirs = True  # folders of pictures are items (#447)
     containment = [
         contains(Universe, Series),
         contains(Universe, Book),
@@ -311,6 +325,12 @@ class BooksTheme(Theme):
         contains(Series, Comic),
         contains(Collection, Book),
         contains(Collection, Comic),
+        # Folders of pictures hold what's in them (#447); the core fills them.
+        contains(Folder, Folder),
+        contains(Folder, Book),
+        contains(Folder, Comic),
+        contains(Folder, Picture),
+        contains(Folder, Archive),
     ]
     relationships = [
         related("writers", Author, Book, label="Books", reverse_label="Written by"),
@@ -362,7 +382,10 @@ class BooksTheme(Theme):
         SearchView("Series", [Series], inherit_tags=True),
         SearchView("Universes", [Universe]),
         SearchView("Collections", [Collection], inherit_tags=True),
-        SearchView("Pictures", [Picture, Archive], default_sort=[SortBy("date")]),
+        SearchView(
+            "Pictures", [Picture, Archive], inherit_tags=True, default_sort=[SortBy("date")]
+        ),
+        SearchView("Folders", [Folder], inherit_tags=True),
         DetailView(
             Book,
             [
@@ -414,6 +437,8 @@ class BooksTheme(Theme):
             return [TitleCard(aspect=1), Icon("entity")]
         if entity_type in (Series, Universe, Collection):
             return [ContentsThumbnail(), Icon("entity")]
+        if entity_type is Folder:  # its folder picture, else one of the first things in it
+            return [FolderImage(), ContentsThumbnail(), Icon("dir")]
         return super().thumbnail_chain(entity_type)
 
     # --- writing back (Write to file…) ---

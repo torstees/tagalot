@@ -24,6 +24,9 @@ A movie is one or more video files (#123), the way Plex and Kodi lay them out:
   poster, and ``Heat (1995)-fanart.jpg`` (``-landscape``, ``-thumb``…) a screenshot.
 - A collection's folder picture (``poster``, ``folder``, ``cover``) is its poster.
 - An actor's photo is Kodi's ``.actors/First_Last.jpg`` in a movie's folder (#258).
+- **Folders** (#447): a folder above a Picture or Archive is a :class:`Folder` holding what's
+  in it (videos' movies, pictures, archives, folders), made by the core after each scan; a
+  movie's own folder with pictures is one too, holding the movie and its pictures.
 - **Every other picture and archive is an item of its own** (#446), a :class:`Picture` or an
   :class:`Archive`, to tag and search: family pictures beside home videos. Only posters,
   actors' photos, and Kodi's artwork (``fanart``, ``banner``, ``clearlogo``…, and the
@@ -66,6 +69,7 @@ from tagalot.themes.api import (
     DetailView,
     Entity,
     EntityRef,
+    FolderImage,
     Icon,
     IngestContext,
     Kind,
@@ -390,6 +394,15 @@ class Archive(Entity):
     card_lines = ("date", "pictures")
 
 
+class Folder(Entity):
+    """A folder of pictures and what's beside them (#447, DESIGN.md §9 *Folder items*): the
+    core makes one for every folder above a Picture or Archive, and it holds what's in it,
+    so a tag on it counts for everything inside."""
+
+    folders_for = (Picture, Archive)
+    roles = [role("folder", kinds={"dir"}, primary=True)]
+
+
 @dataclass(frozen=True)
 class Identity:
     """Which movie a file belongs to: its key, name, and the folder of its videos."""
@@ -427,12 +440,20 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 5  # 5: pictures; 4: notes; 3: genres as keywords
-    api_version = 17  # pictures (16: ratings; 14: gallery roles; 12: description_field; …)
+    api_version = 18  # folders (17: pictures; 16: ratings; 14: gallery roles; …)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
-    entities = [Actor, Collection, Movie, Picture, Archive]
-    containment = [contains(Collection, Movie)]
+    entities = [Actor, Collection, Movie, Picture, Archive, Folder]
+    containment = [
+        contains(Collection, Movie),
+        # Folders of pictures hold what's in them (#447); the core fills them.
+        contains(Folder, Folder),
+        contains(Folder, Collection),
+        contains(Folder, Movie),
+        contains(Folder, Picture),
+        contains(Folder, Archive),
+    ]
     relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]
     views = [
         # Tags on a collection count for its movies: tag a box set "Watched" and Movies
@@ -440,7 +461,10 @@ class MoviesTheme(Theme):
         SearchView("Movies", [Movie], inherit_tags=True),
         SearchView("Actors", [Actor]),
         SearchView("Collections", [Collection]),
-        SearchView("Pictures", [Picture, Archive], default_sort=[SortBy("date")]),
+        SearchView(
+            "Pictures", [Picture, Archive], inherit_tags=True, default_sort=[SortBy("date")]
+        ),
+        SearchView("Folders", [Folder], inherit_tags=True),
         DetailView(Actor, [Section.fields(), Section.gallery("photos"), Section.related("cast")]),
         DetailView(
             Movie,
@@ -461,6 +485,8 @@ class MoviesTheme(Theme):
             return [RoleImage("poster"), RoleImage("screenshot"), Icon("video")]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
+        if entity_type is Folder:  # its folder picture, else one of the first things in it
+            return [FolderImage(), ContentsThumbnail(), Icon("dir")]
         if entity_type is Actor:
             return [RoleImage("photo"), RoleImage("photos"), TitleCard(aspect=1), Icon("entity")]
         return super().thumbnail_chain(entity_type)

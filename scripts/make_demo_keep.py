@@ -717,6 +717,7 @@ MOVIE_TAGS = {
     ("Genre", "Crime"): ["Heat"],
     ("Genre", "Fantasy"): ["The Lord of the Rings"],
     ("Watched",): ["Heat", "Alien"],
+    ("People", "Alice"): ["Alice"],  # her folder (#447): her videos and photos count
 }
 
 

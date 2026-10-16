@@ -10,6 +10,7 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating (out of 10, shown as five stars: 7 is ★★★½☆), which win over the file name; the **cast** in order; and a **set**, which becomes a collection.
 - **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
 - **Actor:** from `.nfo` casts, or added by hand. Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
+- **Folder:** a folder with pictures or archives in it, or below it, holds what's there: movies, pictures, archives, and the folders inside. Tag `Home Movies/Alice` with `People/Alice`, and her videos and photos all count as tagged (see [Folders](#folders)).
 - **Picture** and **Archive:** every other picture, and every zip, 7z, or rar archive, is an item of its own that you can tag and search, such as the family pictures beside your home videos (see [Pictures](#pictures)).
 
 ## Notes
@@ -26,13 +27,19 @@ Every picture that isn't a poster, an actor's photo, or Kodi's artwork is also a
 
 A movie's page shows its screenshots as a [gallery](../guide/item-pages.md#galleries): also every picture under a `Screenshots`, `Screens`, or `Stills` folder at any depth, and archives named like them (`Screens.zip`). An actor's **Photos** gallery comes from the notes folder: `Notes/Actors/Al Pacino/` beside `Al Pacino.md`.
 
+## Folders
+
+Every folder above a Picture or Archive becomes a **Folder**, up to the top of the watched folder. A movie's own folder counts too: `Alice/3rd Birthday/`, with one video and some photos, is a Folder holding the movie and its photos, and tagging it tags both. So is a `Screenshots` folder with pictures in it. A collection's folder isn't a Folder, because the collection already holds its movies.
+
+Each Folder holds what's nearest under it, so `Home Movies` holds `Alice`, which holds `3rd Birthday`. A video in a folder with no pictures (`Home Movies/Bob/swim.mp4`) is held by the nearest Folder above it. Folders are worked out again after every scan: add a picture to a folder and it becomes a Folder holding the videos already there. A Folder whose pictures are all gone is removed at the next scan, unless you've tagged it.
+
 ## Cast by hand
 
 A movie's page has **Cast**, an actor's **Filmography**: both with **Add…** (search for an actor or movie, or make a new actor) and **Remove from …**. What you add or remove by hand stays through later scans, whatever the `.nfo` says.
 
 ## Searches
 
-All grids, sorted by title: **Movies** (inheriting tags: tag a collection `Fantasy` and its movies match), **Actors**, and **Collections**; and **Pictures** (pictures and archives), oldest first. Movie cards show the year and quality; a collection lists its movies by year.
+All grids, sorted by title: **Movies** (inheriting tags: tag a collection `Fantasy` and its movies match), **Actors**, and **Collections**; **Pictures** (pictures and archives, oldest first) and **Folders**, which, like Movies, count a folder's tags for what's in it. Movie cards show the year and quality; a collection lists its movies by year.
 
 ## Genres as tags
 

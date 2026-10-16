@@ -222,7 +222,10 @@ def test_a_scan_makes_movies_and_collections(env: Env) -> None:
     # A folder of movies' folders is a collection; the root and Misc aren't.
     assert env.titles(Collection) == ["The Lord of the Rings"]
     assert env.contents() == {
-        "The Lord of the Rings": ["The Fellowship of the Ring", "The Two Towers"]
+        # Folders of pictures hold what's in them (#447): Inception's own, with its stills.
+        "Inception (2010)": ["Inception", "screenshots"],
+        "The Lord of the Rings": ["The Fellowship of the Ring", "The Two Towers"],
+        "screenshots": ["still 1.jpg"],
     }
     assert env.roles("The Lord of the Rings") == {
         "folder": ["The Lord of the Rings"],

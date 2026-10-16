@@ -179,6 +179,7 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
         "movies.actor": 6,
         "movies.archive": 2,  # Old scans.zip, Screens.zip (#446)
         "movies.collection": 3,
+        "movies.folder": 8,  # folders above pictures: Home Movies, Alice, 3rd Birthday… (#447)
         "movies.movie": 12,  # with Alice's home videos (#446)
         "movies.picture": 9,  # family pictures, and screenshots folders' stills
     }
@@ -208,6 +209,7 @@ def test_creates_a_books_keep(tmp_path: Path) -> None:
         "books.book": 22,  # Small Gods: its EPUB and PDF are one book; Field Notes (#426)
         "books.collection": 1,
         "books.comic": 4,
+        "books.folder": 8,  # folders above pictures: Writing, The Glass Tower, renders… (#447)
         "books.picture": 5,  # covers named by front matter, renders (#446)
         "books.series": 6,
         "books.universe": 2,
