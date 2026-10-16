@@ -22,6 +22,7 @@ from tagalot.core.fingerprint import (
     pending_fingerprints,
     store_fingerprints,
 )
+from tagalot.core.folder_items import fill_folders, folder_table
 from tagalot.core.gallery_fill import (
     fill_galleries,
     fill_note_galleries,
@@ -398,6 +399,8 @@ def _ingest_pending(
         writer.run(
             partial(fill_galleries, schema=schema, root_id=root.id, notes_folder=notes_folder)
         )
+    if folder_table(schema) is not None:  # folders of pictures as items (#447)
+        writer.run(partial(fill_folders, schema=schema, root_id=root.id))
     if not reread_notes:
         return
     say(f"Looking for notes in {root.name}…")

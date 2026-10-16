@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 17
+API_VERSION = 18
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -41,7 +41,8 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 (:func:`role`'s ``gallery`` and ``folders``); version 15 added fields that mirror links
 (:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`); version 16 added
 ratings shown as stars (:func:`field`'s ``rating``); version 17 added pictures' and
-archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`oldest`)."""
+archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`oldest`);
+version 18 added folder items (:attr:`Entity.folders_for`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -343,6 +344,17 @@ class Entity:
       (a book's ``"description"``, a paper's ``"abstract"``; API version 12). Tagalot shows
       it under the selected item in the preview strip, in grid cards' tooltips, and as a
       list column shown by default. Default: none.
+    - ``folders_for``: makes this type the theme's **folder items** (API version 18; at
+      most one type, with a primary ``dir`` role, in a theme with ``dirs = True``). After
+      each scan the core makes one for every folder above a file of the types listed (the
+      folder it's in, and each folder above it, up to the top of the watched folder), except
+      a folder that is already another item's primary folder (a collection's), and takes
+      away those no longer wanted (unless the user tagged them). Each one holds the items
+      the theme lets it contain (``contains(Folder, Movie)``…) whose primary files are
+      nearest under it, and the folder items under it, so a tag on a folder counts for
+      everything inside in views with ``inherit_tags``. What the user puts in or takes out
+      by hand stays. ``folders_for = (Picture, Archive)``: folders of pictures (DESIGN.md
+      §9 *Folder items*).
     """
 
     label: ClassVar[str | None] = None
@@ -357,6 +369,7 @@ class Entity:
     made_by_hand: ClassVar[bool] = False
     full_text: ClassVar[bool] = False
     description_field: ClassVar[str | None] = None
+    folders_for: ClassVar[Sequence[type["Entity"]]] = ()
 
 
 def entity_label(entity: type[Entity]) -> str:

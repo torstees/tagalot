@@ -10,6 +10,7 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 - **Author:** one per spelling the files give ("Pratchett, Terry" as its sort name). [Merge](../guide/dedupe.md) two spellings to make them one; later files under either land on the merged author.
 - **Notes:** authors, series, and universes have no folder: their [notes](../guide/notes.md) go in the keep's [notes folder](../guide/notes.md#the-notes-folder), as `Notes/Authors/Terry Pratchett.md` (or anywhere in it with `tagalot-type: author`).
 - **Picture** and **Archive:** every picture, and every zip, 7z, or rar archive (comic archives are comics), is an item of its own that you can tag and search, such as the illustrations or 3D renders kept beside a story. A cover a Markdown book names is its cover and a Picture too; Calibre's `cover.jpg` beside `metadata.opf` is only a copy of its book's cover, so it isn't one. A Picture's **Date** is when it was taken (its EXIF), or the file's date when that is older or there is none. An archive's is the oldest date among its first 10 files, or its own if that's older. You can change a date by hand, and scans keep your change.
+- **Folder:** a folder with pictures or archives in it, or below it, holds what's there: books, comics, pictures, archives, and the folders inside. `Writing/The Glass Tower/` holds the story and its `renders` folder, and `Writing/` holds that. Tag the story's folder and its renders count as tagged too. Folders are worked out again after every scan; one whose pictures are all gone is removed, unless you've tagged it. A Folder takes the [note](../guide/notes.md) inside it (`The Glass Tower/index.md`, say), as a collection does.
 - **Series** (in reading order), **Universe** (series and works sharing a world: Discworld, Cosmere), and **Collection** (an omnibus or anthology).
 - **Credits:** a book's page shows **Written by** and **Art by**; an author's page their **Books**, **Comics**, **Illustrated**, and **Comic art**. Add and remove credits by hand; they stay.
 
@@ -21,7 +22,7 @@ What each format gives is in [File formats](../reference/file-formats.md). A Mar
 
 ## Searches
 
-**Books** (by author, series, and number) and **Comics** (by series, volume, and number), grids that inherit tags (tag a series and its books match); **Authors** (by sort name), **Series** (each opening to its works in reading order), **Universes**, **Collections**, and **Pictures** (pictures and archives, oldest first).
+**Books** (by author, series, and number) and **Comics** (by series, volume, and number), grids that inherit tags (tag a series and its books match); **Authors** (by sort name), **Series** (each opening to its works in reading order), **Universes**, **Collections**, **Pictures** (pictures and archives, oldest first), and **Folders**. Books, Comics, and Pictures count a folder's tags for what's in it.
 
 ## Sources
 

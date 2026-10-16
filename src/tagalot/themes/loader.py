@@ -15,7 +15,7 @@ import logging
 import pkgutil
 import sys
 import traceback
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
@@ -117,6 +117,32 @@ def load_theme_file(path: Path) -> ThemeCatalog:
     else:
         catalog.problems.append(ThemeProblem(str(path), "it isn't a .py file or a package"))
     return catalog
+
+
+def _folder_items_problems(
+    theme: type[Theme], entities: Sequence[type[Entity]], names: Mapping[type[Entity], str]
+) -> list[str]:
+    """What's wrong with the theme's folder items (``folders_for``, #447)."""
+    problems: list[str] = []
+    folder_types = [e for e in entities if getattr(e, "folders_for", ())]
+    if len(folder_types) > 1:
+        problems.append(
+            "only one type can be folder items: " + ", ".join(names[e] for e in folder_types)
+        )
+    for entity in folder_types:
+        primary = next((r for r in entity.roles if getattr(r, "primary", False)), None)
+        if primary is None or set(primary.kinds) != {"dir"}:
+            problems.append(f"{names[entity]}: folder items need a primary role of kind 'dir'")
+        for listed in entity.folders_for:
+            if listed not in entities:
+                problems.append(
+                    f"{names[entity]}: folders_for names a type the theme doesn't declare"
+                )
+        if not getattr(theme, "dirs", False):
+            problems.append(f"{names[entity]}: folder items need dirs = True")
+        if getattr(theme, "api_version", API_VERSION) < 18:
+            problems.append("a theme with folders_for must set api_version = 18 (or later)")
+    return problems
 
 
 def validate_theme(theme: type[Theme]) -> list[str]:
@@ -255,6 +281,7 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             )
     if described and getattr(theme, "api_version", API_VERSION) < 12:
         problems.append("a theme with description_field must set api_version = 12 (or later)")
+    problems += _folder_items_problems(theme, entities, names)
     galleries = False
     for entity in entities:
         for gallery in entity.roles:
