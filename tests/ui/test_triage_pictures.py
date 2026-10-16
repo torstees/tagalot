@@ -1,5 +1,6 @@
 """Triage's Pictures tab (#426), on the books demo: *The Lighthouse Keeper* names a cover
-that isn't there, and *Field Notes*' cover is damaged."""
+that isn't there, and *Field Notes*' cover is damaged (so its picture of its own, #446,
+can't be drawn either)."""
 
 from pathlib import Path
 
@@ -67,10 +68,14 @@ def test_the_pictures_tab_lists_covers_not_found_and_damaged(
     assert f"1. Loose/lighthouse.jpg: {NOT_THERE}" in details
 
     _draw_field_notes(window)
-    triage = _triage(qtbot, window, 2)
+    triage = _triage(qtbot, window, 3)
     kinds = {p.title: p.kind for p in triage.pictures.problems}
-    assert kinds == {"Field Notes": CANT_DRAW, "The Lighthouse Keeper": NOT_FOUND}
-    [notes] = [p for p in triage.pictures.problems if p.kind == CANT_DRAW]
+    assert kinds == {
+        "Field Notes": CANT_DRAW,
+        "field-notes.jpg": CANT_DRAW,  # the same file, as a Picture (#446)
+        "The Lighthouse Keeper": NOT_FOUND,
+    }
+    [notes] = [p for p in triage.pictures.problems if p.title == "Field Notes"]
     assert notes.relpath == "Loose/field-notes.jpg"
     triage.pictures_table.selectRow(triage.pictures.problems.index(notes))
     assert triage.picture_details.text().startswith("field-notes.jpg can't be drawn: ")
@@ -106,7 +111,7 @@ def test_adding_the_cover_and_scanning_clears_it(qtbot: QtBot, window: MainWindo
 
 def test_ignoring_rows_from_the_tab(qtbot: QtBot, window: MainWindow) -> None:
     _draw_field_notes(window)
-    triage = _triage(qtbot, window, 2)
+    triage = _triage(qtbot, window, 3)
     titles = [p.title for p in triage.pictures.problems]
     triage.pictures_table.selectRow(titles.index("The Lighthouse Keeper"))
     assert triage.ignore_value.text() == "“lighthouse.jpg” in every file"
@@ -119,15 +124,16 @@ def test_ignoring_rows_from_the_tab(qtbot: QtBot, window: MainWindow) -> None:
         .currentMessage()
         .startswith("Ignore The Lighthouse Keeper's missing cover.")
     )
-    triage = _triage(qtbot, window, 1)
-    assert [p.title for p in triage.pictures.problems] == ["Field Notes"]
+    triage = _triage(qtbot, window, 2)
+    titles = [p.title for p in triage.pictures.problems]
+    assert sorted(titles) == ["Field Notes", "field-notes.jpg"]
 
-    triage.pictures_table.selectRow(0)  # a damaged picture has no value to ignore
+    triage.pictures_table.selectRow(titles.index("Field Notes"))  # damaged: no value to ignore
     assert not triage.ignore_value.isEnabled()
 
     triage.show_ignored.setChecked(True)
-    qtbot.waitUntil(lambda: len(triage.pictures.problems) == 2, timeout=5000)
-    assert triage.tabs.tabText(PICTURES_TAB) == "Pictures (1)"  # ignored rows aren't counted
+    qtbot.waitUntil(lambda: len(triage.pictures.problems) == 3, timeout=5000)
+    assert triage.tabs.tabText(PICTURES_TAB) == "Pictures (2)"  # ignored rows aren't counted
     row = [p.title for p in triage.pictures.problems].index("The Lighthouse Keeper")
     assert triage.pictures.data(triage.pictures.index(row, 2)) == (
         "lighthouse.jpg: not found (ignored for this item)"
@@ -139,8 +145,8 @@ def test_ignoring_rows_from_the_tab(qtbot: QtBot, window: MainWindow) -> None:
     with qtbot.waitSignal(window.tag_actions.changed):
         triage.stop_ignoring_button.click()
     triage.show_ignored.setChecked(False)
-    _triage(qtbot, window, 2)
+    _triage(qtbot, window, 3)
 
     window.tag_actions.undo()  # Stop ignoring, undone: ignored again
     qtbot.waitUntil(lambda: window.tag_actions.busy == 0, timeout=5000)
-    _triage(qtbot, window, 1)
+    _triage(qtbot, window, 2)

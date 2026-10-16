@@ -166,7 +166,7 @@ def test_the_add_to_cast_dialog(qtbot: QtBot, session: KeepSession) -> None:
 @pytest.mark.parametrize(
     ("view", "count", "first"),
     [
-        ("Movies", "9 items", "Alien"),
+        ("Movies", "12 items", "Alien"),
         ("Actors", "6 items", "Al Pacino"),
         ("Collections", "3 items", "Alien Collection"),
     ],
@@ -183,7 +183,7 @@ def test_the_views(qtbot: QtBot, window: MainWindow, view: str, count: str, firs
 def test_tags_on_a_collection_count_for_its_movies(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    page = _search(qtbot, window, NavTarget("view", key="Movies", label="Movies"), "9 items")
+    page = _search(qtbot, window, NavTarget("view", key="Movies", label="Movies"), "12 items")
     tree = session.tag_cache.get()
     fantasy = next(t for t in tree if tree.node(t).name == "Fantasy")  # on the collection
     page.filter_bar.add_tag(fantasy)

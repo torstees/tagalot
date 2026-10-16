@@ -28,7 +28,7 @@ def _saved(window: MainWindow) -> dict[str, int]:
 def test_saving_opening_and_managing_a_search(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    movies = _search(qtbot, window, NavTarget("view", key="Movies", label="Movies"), "9 items")
+    movies = _search(qtbot, window, NavTarget("view", key="Movies", label="Movies"), "12 items")
     movies.filter_bar.add_tag(_tag(session, "Sci-Fi"))
     movies.filter_bar.add_tag(_tag(session, "Watched"), exclude=True)  # Alien
     qtbot.waitUntil(lambda: movies.status.text() == "2 items", timeout=5000)

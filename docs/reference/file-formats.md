@@ -6,8 +6,8 @@ What each theme reads from each kind of file. Tagalot only ever reads them.
 
 | Format | Read |
 |---|---|
-| JPEG, PNG, GIF, WebP, BMP, TIFF, PSD, TGA | size (width × height); thumbnails, turned upright by EXIF orientation |
-| ZIP, 7z, RAR (and CBZ, CB7, CBR) | the list of files (how many images); the thumbnail is the image named like a cover, preview, or thumb, else the first in natural order (`page2` before `page10`) |
+| JPEG, PNG, GIF, WebP, BMP, TIFF, PSD, TGA | size (width × height); thumbnails, turned upright by EXIF orientation; in the movies and books themes, the date taken (EXIF `DateTimeOriginal`, else `DateTimeDigitized`), as a Picture's date when it's older than the file's |
+| ZIP, 7z, RAR (and CBZ, CB7, CBR) | the list of files (how many images); the thumbnail is the image named like a cover, preview, or thumb, else the first in natural order (`page2` before `page10`); in the movies and books themes, the dates of the first 10 files, the oldest being an Archive's date when it's older than the archive's own |
 | TTF, OTF, WOFF, WOFF2 | family and style; a drawn sample as the thumbnail |
 
 Reading an image from a RAR needs a RAR tool (`unrar`, 7-Zip, or `bsdtar`); without one, RAR archives show an icon. A folder picture (`folder.jpg`, `cover.png`, `front.jpg`, `AlbumArt_…_Large.jpg`, `AlbumArtSmall.jpg`, as JPEG, PNG, or WebP) is used for albums and artists.

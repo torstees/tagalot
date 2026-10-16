@@ -24,6 +24,12 @@ A movie is one or more video files (#123), the way Plex and Kodi lay them out:
   poster, and ``Heat (1995)-fanart.jpg`` (``-landscape``, ``-thumb``…) a screenshot.
 - A collection's folder picture (``poster``, ``folder``, ``cover``) is its poster.
 - An actor's photo is Kodi's ``.actors/First_Last.jpg`` in a movie's folder (#258).
+- **Every other picture and archive is an item of its own** (#446), a :class:`Picture` or an
+  :class:`Archive`, to tag and search: family pictures beside home videos. Only posters,
+  actors' photos, and Kodi's artwork (``fanart``, ``banner``, ``clearlogo``…, and the
+  ``extrafanart`` and ``backdrops`` folders) aren't; a movie's other pictures are its
+  screenshots and Pictures too. A picture's date is the oldest of its EXIF dates and the
+  file's; an archive's the oldest of its first files' and its own.
 
 **Details from .nfo files** (#258): ``movie.nfo`` in a movie's folder, or an .nfo named like
 a movie's video, is Kodi's XML. It gives the title, year, plot, genre, director, runtime,
@@ -48,10 +54,11 @@ import logging
 import os
 import re
 import threading
+import uuid
 import xml.etree.ElementTree as ElementTree
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 from tagalot.themes.api import (
@@ -74,6 +81,9 @@ from tagalot.themes.api import (
     contains,
     field,
     kind_of,
+    oldest,
+    read_archive,
+    read_picture,
     related,
     role,
 )
@@ -82,6 +92,7 @@ logger = logging.getLogger(__name__)
 
 VIDEO = KIND_EXTENSIONS[Kind.VIDEO]
 IMAGE = KIND_EXTENSIONS[Kind.IMAGE]
+ARCHIVE = KIND_EXTENSIONS[Kind.ARCHIVE]
 
 EXTRAS_FOLDERS = frozenset(
     {
@@ -129,6 +140,27 @@ PICTURE_SUFFIX = re.compile(
     re.IGNORECASE,
 )
 """``Heat (1995)-poster``: a loose movie's picture, and which."""
+ARTWORK_NAMES = frozenset(
+    {
+        "fanart",
+        "banner",
+        "clearlogo",
+        "clearart",
+        "logo",
+        "landscape",
+        "thumb",
+        "disc",
+        "discart",
+        "keyart",
+        "characterart",
+        "background",
+        "backdrop",
+    }
+)
+"""Kodi's artwork in a movie's folder (``fanart.jpg``): a movie's art, not a picture of its
+own (#446)."""
+ARTWORK_FOLDERS = frozenset({"extrafanart", "backdrops", ACTORS_FOLDER})
+"""Folders of Kodi's artwork (and actors' photos), whose pictures aren't items (#446)."""
 
 
 @dataclass(frozen=True)
@@ -331,6 +363,33 @@ class Movie(Entity):
     description_field = "plot"
 
 
+class Picture(Entity):
+    """A picture of its own (#446): not a poster, an actor's photo, or Kodi's artwork."""
+
+    date: datetime | None = field("Date", card=True, search="range")
+    """The oldest of its EXIF dates (taken, digitized) and the file's modified time."""
+    dimensions: str | None = field("Dimensions", card=True, editable=False)
+    width: int | None = field("Width", search="range", editable=False)
+    height: int | None = field("Height", search="range", editable=False)
+    folder: str = field("Folder", search="text", editable=False)
+    roles = [role("picture", kinds={"image"}, primary=True, thumbnail=True, label="File")]
+    double_click = "open_file"
+    card_lines = ("date", "dimensions")
+
+
+class Archive(Entity):
+    """A zip, 7z, or rar archive of its own (#446); its thumbnail is its best picture."""
+
+    date: datetime | None = field("Date", card=True, search="range")
+    """The oldest of its first files' dates and its own: an archive is often much newer
+    than what's in it."""
+    pictures: int | None = field("Pictures inside", card=True, search="range", editable=False)
+    folder: str = field("Folder", search="text", editable=False)
+    roles = [role("archive", kinds={"archive"}, primary=True, thumbnail=True, label="File")]
+    double_click = "open_file"
+    card_lines = ("date", "pictures")
+
+
 @dataclass(frozen=True)
 class Identity:
     """Which movie a file belongs to: its key, name, and the folder of its videos."""
@@ -367,12 +426,12 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 4  # 3: genres as file keywords (#295); 4: notes
-    api_version = 16  # ratings (14: gallery roles; 12: description_field; 10: TitleCard; …)
+    id, name, version = "movies", "Movies", 5  # 5: pictures; 4: notes; 3: genres as keywords
+    api_version = 17  # pictures (16: ratings; 14: gallery roles; 12: description_field; …)
     # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
-    entities = [Actor, Collection, Movie]
+    entities = [Actor, Collection, Movie, Picture, Archive]
     containment = [contains(Collection, Movie)]
     relationships = [related("cast", Actor, Movie, label="Filmography", reverse_label="Cast")]
     views = [
@@ -381,6 +440,7 @@ class MoviesTheme(Theme):
         SearchView("Movies", [Movie], inherit_tags=True),
         SearchView("Actors", [Actor]),
         SearchView("Collections", [Collection]),
+        SearchView("Pictures", [Picture, Archive], default_sort=[SortBy("date")]),
         DetailView(Actor, [Section.fields(), Section.gallery("photos"), Section.related("cast")]),
         DetailView(
             Movie,
@@ -444,6 +504,10 @@ class MoviesTheme(Theme):
                         found[resource.id]["error"] = f"{type(e).__name__}: {e}"
                 elif kind_of(resource) is Kind.IMAGE:
                     found[resource.id] = self._picture(resource, videos, collections)
+                    if is_own_picture(resource.relpath, found[resource.id]):
+                        found[resource.id]["own"] = own_details(read_picture, resource.path)
+                elif kind_of(resource) is Kind.ARCHIVE:
+                    found[resource.id] = {"own": own_details(read_archive, resource.path)}
                 elif resource.relpath.lower().endswith(NFO):
                     found[resource.id] = self._nfo(resource, videos)
             except Exception as e:  # a folder we can't list: the file is still a movie
@@ -540,6 +604,9 @@ class MoviesTheme(Theme):
                 self._ingest_video(resource, ctx)
             elif kind_of(resource) is Kind.IMAGE:
                 self._ingest_picture(resource, ctx)
+                own_item(Picture, "picture", resource, ctx)
+            elif kind_of(resource) is Kind.ARCHIVE:
+                own_item(Archive, "archive", resource, ctx)
             elif resource.relpath.lower().endswith(NFO):
                 self._ingest_nfo(resource, ctx)
 
@@ -654,6 +721,73 @@ class MoviesTheme(Theme):
         parent = folder.rpartition("/")[0]
         if details.get("collection") and parent:
             ctx.contain(collection_ref(parent, ctx), movie)
+
+
+def is_own_picture(relpath: str, details: Mapping[str, Any]) -> bool:
+    """A picture is an item of its own unless it is a poster, an actor's photo, or Kodi's
+    artwork: named like it in a movie's folder or beside its video, or in its folders."""
+    if details.get("actor") or details.get("collection") or details.get("poster"):
+        return False
+    folders = [part.casefold() for part in relpath.split("/")[:-1]]
+    if any(part in ARTWORK_FOLDERS for part in folders):
+        return False
+    stem = stem_of(relpath.rpartition("/")[2])
+    if not details.get("movie"):
+        return True
+    # A movie's: its art, unless named like none (a poster's other candidates are art).
+    return (
+        stem.casefold() not in ARTWORK_NAMES | set(POSTER_NAMES)
+        and PICTURE_SUFFIX.match(stem) is None
+        and normalize(movie_name(stem).title) != normalize(details["title"])
+    )
+
+
+def own_details(read: Callable[[str], dict[str, Any]], path: str) -> dict[str, Any]:
+    """What :func:`read_picture` or :func:`read_archive` says, or why it couldn't."""
+    try:
+        return read(path)
+    except Exception as e:  # still an item, without its details
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
+def own_item(
+    kind: type[Entity], role_name: str, resource: ResourceInfo, ctx: IngestContext
+) -> None:
+    """Make or update the Picture or Archive that is this file (#446), or, when it is no
+    longer one of its own (it became a poster), take it away."""
+    prepared = ctx.prepared(resource)
+    if prepared is None:
+        return  # not read (it couldn't be): left as it was
+    existing = ctx.entities_of(resource, role_name)
+    if "own" not in prepared:
+        for item in existing:
+            ctx.unlink(item, resource, role_name)
+            if not ctx.linked(item):
+                ctx.delete(item)
+        return
+    details = dict(prepared["own"])
+    error = details.pop("error", None)
+    if error:
+        ctx.warn(resource, f"Couldn't read its details: {error}")
+    folder, _, name = resource.relpath.rpartition("/")
+    modified = (
+        datetime.fromtimestamp(resource.mtime_ns / 1e9, UTC)
+        if resource.mtime_ns is not None
+        else None
+    )
+    values: dict[str, Any] = {"folder": folder}
+    if kind is Picture:
+        values["date"] = oldest(details.pop("taken", None), modified)
+        values.update(details)
+    else:
+        values["date"] = oldest(details.get("oldest"), modified)
+        values["pictures"] = details.get("pictures")
+    if existing:
+        ctx.update(existing[0], title=name, **values)
+        return
+    # Never-reused keys: a new file where another used to be is a new item.
+    item = ctx.upsert(kind, f"file:{uuid.uuid4().hex}", title=name, **values)
+    ctx.link(item, resource, role_name)
 
 
 def collection_key(folder: str) -> str:

@@ -9,6 +9,7 @@ For ebooks, comics, stories, and documents: **books** and **comics**, their **au
 - **Rating:** books and comics have a **Rating**, five stars with halves. It starts from the file when it has one (an EPUB's Calibre rating, a comic's `CommunityRating`, a Markdown file's `rating: 4.5` in its front matter); once you rate an item, yours stays. You can rate **authors**, **series**, and **universes** too. Ratings show on cards and as a list column; point at one for the number.
 - **Author:** one per spelling the files give ("Pratchett, Terry" as its sort name). [Merge](../guide/dedupe.md) two spellings to make them one; later files under either land on the merged author.
 - **Notes:** authors, series, and universes have no folder: their [notes](../guide/notes.md) go in the keep's [notes folder](../guide/notes.md#the-notes-folder), as `Notes/Authors/Terry Pratchett.md` (or anywhere in it with `tagalot-type: author`).
+- **Picture** and **Archive:** every picture, and every zip, 7z, or rar archive (comic archives are comics), is an item of its own that you can tag and search, such as the illustrations or 3D renders kept beside a story. A cover a Markdown book names is its cover and a Picture too; Calibre's `cover.jpg` beside `metadata.opf` is only a copy of its book's cover, so it isn't one. A Picture's **Date** is when it was taken (its EXIF), or the file's date when that is older or there is none. An archive's is the oldest date among its first 10 files, or its own if that's older. You can change a date by hand, and scans keep your change.
 - **Series** (in reading order), **Universe** (series and works sharing a world: Discworld, Cosmere), and **Collection** (an omnibus or anthology).
 - **Credits:** a book's page shows **Written by** and **Art by**; an author's page their **Books**, **Comics**, **Illustrated**, and **Comic art**. Add and remove credits by hand; they stay.
 
@@ -20,7 +21,7 @@ What each format gives is in [File formats](../reference/file-formats.md). A Mar
 
 ## Searches
 
-**Books** (by author, series, and number) and **Comics** (by series, volume, and number), grids that inherit tags (tag a series and its books match); **Authors** (by sort name), **Series** (each opening to its works in reading order), **Universes**, and **Collections**.
+**Books** (by author, series, and number) and **Comics** (by series, volume, and number), grids that inherit tags (tag a series and its books match); **Authors** (by sort name), **Series** (each opening to its works in reading order), **Universes**, **Collections**, and **Pictures** (pictures and archives, oldest first).
 
 ## Sources
 

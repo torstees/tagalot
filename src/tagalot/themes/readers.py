@@ -892,3 +892,85 @@ def read_link_file(path: str) -> dict[str, Any]:
             return {"url": None, "title": entry.get("name") or None}
         return {"url": entry.get("url") or None, "title": entry.get("name") or None}
     raise ValueError(f"not a link file: {ext or 'no extension'}")
+
+
+# --- pictures and archives (#446) ---
+
+_EXIF_IFD = 0x8769
+_TAKEN = 0x9003  # DateTimeOriginal
+_DIGITIZED = 0x9004  # DateTimeDigitized
+_TAKEN_OFFSET = 0x9011  # OffsetTimeOriginal, "+02:00"
+_CHANGED = 0x0132  # DateTime: when the file was last changed
+DATED_MEMBERS = 10
+"""How many of an archive's first files :func:`read_archive` looks at for its date."""
+
+
+def exif_time(text: Any, offset: Any = None) -> datetime.datetime | None:
+    """An EXIF date (``2019:06:01 14:03:22``) as an aware datetime: at ``offset``
+    (``+02:00``) when given, else this computer's local time. ``None`` for a blank or
+    impossible one (``0000:00:00 00:00:00``)."""
+    if not isinstance(text, str):
+        return None
+    try:
+        when = datetime.datetime.strptime(text.strip().rstrip("\x00")[:19], "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
+    if isinstance(offset, str):
+        try:
+            zone = datetime.datetime.strptime(offset.strip().rstrip("\x00"), "%z").tzinfo
+            return when.replace(tzinfo=zone)
+        except ValueError:
+            pass
+    try:
+        return when.astimezone()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def oldest(*dates: datetime.datetime | None) -> datetime.datetime | None:
+    """The earliest of the aware datetimes given, or ``None`` when none is."""
+    found = [d for d in dates if d is not None]
+    return min(found) if found else None
+
+
+def read_picture(path: str) -> dict[str, Any]:
+    """A picture's ``width``, ``height``, ``dimensions`` (``1920 x 1080``, with a
+    multiplication sign), and ``taken``: the oldest of the dates its EXIF gives (taken,
+    digitized, else last changed), aware, or ``None``. Only the header is read (Pillow)."""
+    from PIL import Image
+
+    with Image.open(path) as image:
+        width, height = image.size
+        try:
+            exif = image.getexif()
+            details = exif.get_ifd(_EXIF_IFD)
+        except Exception:  # a broken EXIF block: the picture is still read
+            exif, details = None, {}
+    taken = oldest(
+        exif_time(details.get(_TAKEN), details.get(_TAKEN_OFFSET)),
+        exif_time(details.get(_DIGITIZED), details.get(_TAKEN_OFFSET)),
+    )
+    if taken is None and exif is not None:
+        taken = exif_time(exif.get(_CHANGED))
+    return {
+        "width": width,
+        "height": height,
+        "dimensions": f"{width} \u00d7 {height}",
+        "taken": taken,
+    }
+
+
+def read_archive(path: str, dated: int = DATED_MEMBERS) -> dict[str, Any]:
+    """A zip, 7z, or rar archive's ``pictures`` (how many it holds) and ``oldest``: the
+    earliest date among its first ``dated`` files, as the archive records them (aware, or
+    ``None``), since an archive is often much newer than what's in it. Only the listing is
+    read; nothing is extracted."""
+    from tagalot.core.thumbnails.archive import is_candidate_image, open_archive
+
+    with open_archive(path) as archive:
+        members = archive.members()
+    files = [m for m in members if not m.is_dir]
+    return {
+        "pictures": sum(1 for m in files if is_candidate_image(m)),
+        "oldest": oldest(*(m.modified for m in files[:dated])),
+    }

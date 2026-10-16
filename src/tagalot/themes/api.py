@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 16
+API_VERSION = 17
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -40,7 +40,8 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 (:meth:`IngestContext.not_found`); version 14 added gallery roles filled from folders
 (:func:`role`'s ``gallery`` and ``folders``); version 15 added fields that mirror links
 (:func:`field`'s ``mirrors`` and ``many``, :meth:`Theme.item_named`); version 16 added
-ratings shown as stars (:func:`field`'s ``rating``)."""
+ratings shown as stars (:func:`field`'s ``rating``); version 17 added pictures' and
+archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`oldest`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1537,14 +1538,17 @@ from tagalot.themes.readers import (  # noqa: E402
     epub_cover,
     find_identifiers,
     office_cover,
+    oldest,
     pdf_cover,
     pdf_text,
+    read_archive,
     read_comic_info,
     read_epub,
     read_front_matter,
     read_link_file,
     read_office_info,
     read_pdf_info,
+    read_picture,
     read_rating,
     split_keywords,
     split_people,
@@ -1616,10 +1620,12 @@ __all__ = [
     "kind_of",
     "mobi_cover",
     "office_cover",
+    "oldest",
     "option",
     "pdf_cover",
     "pdf_text",
     "plural_of",
+    "read_archive",
     "read_bibliography",
     "read_comic_info",
     "read_document_text",
@@ -1629,6 +1635,7 @@ __all__ = [
     "read_mobi",
     "read_office_info",
     "read_pdf_info",
+    "read_picture",
     "read_rating",
     "related",
     "role",
