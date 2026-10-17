@@ -12,6 +12,8 @@ from tagalot.core.handlers import (
     FileToOpen,
     choose_file,
     expand_command,
+    file_manager_command,
+    file_manager_name,
     files_to_open,
     open_with_command,
     program_command,
@@ -163,6 +165,26 @@ def test_program_commands_and_names() -> None:
     assert program_command(app, "darwin") == 'open -a "/Applications/Pixelmator Pro.app" "{path}"'
     assert program_name(program_command(app, "darwin")) == "Pixelmator Pro"
     assert program_name('"/usr/bin/gimp-2.10" "{path}"') == "gimp-2.10"
+
+
+def test_file_manager_commands_and_names() -> None:
+    """A file manager the user picks (#457): Directory Opus is told where to go through
+    dopusrt.exe beside it; others get the path."""
+    opus = "C:\\Program Files\\GPSoftware\\Directory Opus"
+    expected = f'"{opus}\\dopusrt.exe" /cmd Go "{{path}}"'
+    assert file_manager_command(f"{opus}\\dopus.exe", "win32") == expected
+    assert file_manager_command(f"{opus}\\DOpusRT.exe", "win32") == expected
+    assert file_manager_name(expected) == "Directory Opus"
+    file = FileToOpen(1, "E:\\Home\\a b.jpg", False)
+    assert expand_command(expected, file) == Command(
+        f"{opus}\\dopusrt.exe", ("/cmd", "Go", "E:\\Home\\a b.jpg")
+    )
+    other = "C:\\Tools\\xplorer2.exe"
+    assert file_manager_command(other, "win32") == f'"{other}" "{{path}}"'
+    assert file_manager_name(file_manager_command(other, "win32")) == "xplorer2"
+    app = "/Applications/Path Finder.app"
+    assert file_manager_command(app, "darwin") == 'open -a "/Applications/Path Finder.app" "{path}"'
+    assert file_manager_name(file_manager_command(app, "darwin")) == "Path Finder"
 
 
 def test_setting_and_removing_rules() -> None:

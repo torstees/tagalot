@@ -9,6 +9,9 @@ mapped paths). Commands start as detached processes, so nothing waits on the pro
 "Open with" is a submenu filled once the file is known: a program for this once, "Always
 open .ext files with…" (a per-user override in ``settings.toml``), and, when one applies,
 "Stop using <program> for .ext files".
+
+"File manager" chooses what Show in … uses (#457): the user's own file manager (a per-user
+``[file_manager] command`` template), or the system's.
 """
 
 import ctypes
@@ -33,6 +36,8 @@ from tagalot.core.handlers import (
     FileToOpen,
     choose_file,
     expand_command,
+    file_manager_command,
+    file_manager_name,
     files_to_open,
     open_with_command,
     program_command,
@@ -116,11 +121,29 @@ def add_file_actions(
     open_action = menu.addAction("Open folder" if folder else "Open file")
     open_action.setToolTip("Open it with its usual program")
     open_action.triggered.connect(lambda: lookup(lambda f: opener.act(f, OPEN)))
-    reveal = menu.addAction("Show in file manager")
+    reveal = menu.addAction(opener.reveal_label())
     reveal.triggered.connect(lambda: lookup(lambda f: opener.act(f, REVEAL)))
+    menu.addMenu(FileManagerMenu(opener, menu))
     if not folder:
         menu.addMenu(OpenWithMenu(opener, lookup, menu))
     return open_action
+
+
+class FileManagerMenu(QMenu):
+    """ "File manager": which one Show in … uses (#457), remembered for the user."""
+
+    def __init__(self, opener: "FileOpener", parent: QWidget | None) -> None:
+        super().__init__("File manager", parent)
+        choose = self.addAction("Use a different file manager\u2026")
+        choose.setObjectName("choose_file_manager")
+        choose.setToolTip("Choose the program Show in … uses, on this computer, for every keep")
+        choose.triggered.connect(opener.choose_file_manager)
+        command = opener.session.settings.file_manager
+        if command:
+            system = self.addAction("Use the system file manager")
+            system.setObjectName("system_file_manager")
+            system.setToolTip(f"Stop using {file_manager_name(command)}. The command: {command}")
+            system.triggered.connect(opener.use_system_file_manager)
 
 
 class OpenWithMenu(QMenu):
@@ -255,6 +278,33 @@ class FileOpener(QObject):
         self._save()
         self.message.emit(f"Open file uses the usual program for {rule.ext} files again.")
 
+    # --- the file manager (#457) ---
+
+    def reveal_label(self) -> str:
+        """``Show in file manager``, or ``Show in Directory Opus`` with the user's own."""
+        command = self.session.settings.file_manager
+        return f"Show in {file_manager_name(command)}" if command else "Show in file manager"
+
+    def choose_file_manager(self) -> None:
+        """Ask for a file manager, then show files in it from now on."""
+        program = self.pick_program("Show files in")
+        if not program:
+            return
+        command = file_manager_command(program, PLATFORM)
+        self.session.settings.file_manager = command
+        self._save()
+        self.message.emit(
+            f"Files are now shown in {file_manager_name(command)}. File manager \u2192 Use "
+            "the system file manager undoes it."
+        )
+
+    def use_system_file_manager(self) -> None:
+        if not self.session.settings.file_manager:
+            return
+        self.session.settings.file_manager = ""
+        self._save()
+        self.message.emit("Files are shown in the system's file manager again.")
+
     def _save(self) -> None:
         settings, path = self.session.settings, self.settings_path
 
@@ -293,14 +343,23 @@ class FileOpener(QObject):
                     "watched folder's path in Keep configuration."
                 )
                 return
-            command = reveal_command(file)
+            template = self.session.settings.file_manager
+            if template:  # the user's own (#457)
+                try:
+                    command: Command | None = expand_command(template, file)
+                except (CannotOpen, KeyError, IndexError, ValueError) as e:
+                    self.message.emit(f"The file manager command doesn't work: {e}")
+                    return
+                where = file_manager_name(template)
+            else:
+                command, where = reveal_command(file), "the file manager"
             if command is None:
                 if not QDesktopServices.openUrl(QUrl.fromLocalFile(reveal_folder(file))):
                     self.message.emit(f"Couldn't show {file.path} in the file manager.")
                     return
             elif not self.start(command):
                 return
-            self.message.emit(f"Showing {file.path} in the file manager.")
+            self.message.emit(f"Showing {file.path} in {where}.")
 
         run_in_pool(lambda: os.path.exists(file.path), on_done=shown, pool=self._pool)
 

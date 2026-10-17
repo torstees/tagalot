@@ -72,7 +72,7 @@ def test_a_songs_menu_opens_its_file(
 ) -> None:
     page = _search(qtbot, window, SONGS, "12 items")
     menu = page.item_menu(_hit(qtbot, page, "Freddie Freeloader"))
-    assert _labels(menu)[2:5] == ["Open file", "Show in file manager", "Open with"]
+    assert _labels(menu)[2:6] == ["Open file", "Show in file manager", "File manager", "Open with"]
     _action(menu, "Open file")
     _action(menu, "Show in file manager")
     submenu = _open_with(qtbot, menu)
@@ -132,7 +132,7 @@ def test_the_detail_page_opens_the_item_or_one_of_its_files(
     detail = _open(qtbot, window, session, "So What")
     assert isinstance(detail, DetailPage)
     more = detail.more_button.menu()
-    assert _labels(more)[:3] == ["Open file", "Show in file manager", "Open with"]
+    assert _labels(more)[:4] == ["Open file", "Show in file manager", "File manager", "Open with"]
     _action(more, "Open file")
     qtbot.waitUntil(lambda: len(opened) == 1, timeout=5000)
     assert Path(opened[0][1].path).suffix == ".flac"  # the first version
@@ -313,3 +313,58 @@ def test_show_in_file_manager_says_where_or_why_not(
     qtbot.waitUntil(lambda: len(messages) == 2, timeout=5000)
     assert len(started) == 1  # nothing to show: the file manager isn't started
     assert messages[1].startswith(f"Can't show {gone}: it isn't there.")
+
+
+# --- the user's own file manager (#457) ---
+
+
+def _submenu(menu: QMenu, title: str) -> QMenu:
+    found = next(a.menu() for a in menu.actions() if a.text() == title)
+    assert isinstance(found, QMenu)
+    return found
+
+
+def test_show_files_in_a_file_manager_of_your_own(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[Command] = []
+
+    def start(command: Command) -> bool:
+        started.append(command)
+        return True
+
+    monkeypatch.setattr(window.files, "start", start)
+    window.files.settings_path = tmp_path / "settings.toml"
+    opus = str(tmp_path / "Directory Opus" / "dopus.exe")
+    window.files.pick_program = lambda title: opus  # type: ignore[method-assign]
+    page = _search(qtbot, window, SONGS, "12 items")
+    menu = page.item_menu(_hit(qtbot, page, "Blue"))
+    assert _labels(_submenu(menu, "File manager")) == ["Use a different file manager\u2026"]
+    _action(_submenu(menu, "File manager"), "Use a different file manager\u2026")
+    runner = str(tmp_path / "Directory Opus" / "dopusrt.exe")
+    assert session.settings.file_manager == f'"{runner}" /cmd Go "{{path}}"'
+    assert "Files are now shown in Directory Opus" in window.statusBar().currentMessage()
+    qtbot.waitUntil(lambda: (tmp_path / "settings.toml").exists(), timeout=5000)
+    assert load_settings(tmp_path / "settings.toml").file_manager == session.settings.file_manager
+
+    # The menu names it, and Show in … runs it with the file.
+    menu = page.item_menu(_hit(qtbot, page, "Blue"))
+    assert "Show in Directory Opus" in _labels(menu)
+    messages: list[str] = []
+    window.files.message.connect(lambda text: messages.append(text))
+    song = next(Path(session.root_path(session.keep.config.roots[0].id)).rglob("*Blue*.mp3"))
+    REVEAL(window.files, FileToOpen(1, str(song), False))
+    qtbot.waitUntil(lambda: bool(messages), timeout=5000)
+    assert started == [Command(runner, ("/cmd", "Go", str(song)))]
+    assert messages == [f"Showing {song} in Directory Opus."]
+
+    # Back to the system's.
+    choices = _submenu(menu, "File manager")
+    assert _labels(choices)[-1] == "Use the system file manager"
+    _action(choices, "Use the system file manager")
+    assert session.settings.file_manager == ""
+    assert "Show in file manager" in _labels(page.item_menu(_hit(qtbot, page, "Blue")))

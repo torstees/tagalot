@@ -30,6 +30,7 @@ def _full_settings() -> Settings:
         recent_keeps=[Path(r"C:\Keeps\Music.keep"), Path("/home/ana/Art.keep")],
         theme_dirs=[Path(r"D:\tagalot-themes")],
         last_folder=Path(r"\\nas\music\New"),
+        file_manager=r'"C:\Program Files\GPSoftware\Directory Opus\dopusrt.exe" /cmd Go "{path}"',
         handlers=[
             HandlerOverride(ext=".psd", command=r'"C:\Tools\viewer.exe" "{path}"'),
             HandlerOverride(ext="FLAC", role="audio", command="foobar2000 /add {path}"),
@@ -241,6 +242,18 @@ command = 'notepad {{path}}'
         "#2 needs an ext",
     ]:
         assert expected in caplog.text
+
+
+def test_file_manager(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """``[file_manager] command`` (#457): a template, or nothing for the system's."""
+    path = tmp_path / "settings.toml"
+    path.write_text('[file_manager]\ncommand = "  xplorer2 {path}  "\n', encoding="utf-8")
+    assert load_settings(path).file_manager == "xplorer2 {path}"
+    assert "[file_manager]" not in dump_settings(Settings())
+    path.write_text("[file_manager]\ncommand = 5\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert load_settings(path).file_manager == ""
+    assert "must be a string" in caplog.text
 
 
 def test_last_save_folder(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
