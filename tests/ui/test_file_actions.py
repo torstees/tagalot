@@ -337,6 +337,8 @@ def test_show_files_in_a_file_manager_of_your_own(
         started.append(command)
         return True
 
+    # Directory Opus is Windows-only: on macOS a picked program is opened with `open -a`.
+    monkeypatch.setattr("tagalot.ui.file_actions.PLATFORM", "win32")
     monkeypatch.setattr(window.files, "start", start)
     window.files.settings_path = tmp_path / "settings.toml"
     opus = str(tmp_path / "Directory Opus" / "dopus.exe")
