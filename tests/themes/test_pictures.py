@@ -245,6 +245,43 @@ def test_kodi_artwork_folders_and_actors_are_not_pictures(movies_env: Env) -> No
     assert movies_env.titles(movies.Picture) == ["shot.jpg"]
 
 
+def test_folder_images_are_not_pictures(movies_env: Env) -> None:
+    """``folder.jpg`` and the like are a folder's look in Explorer, not pictures (#458)."""
+    files = movies_env.files
+    video(files / "Alice/beach.mp4")
+    video(files / "Alice/park.mp4")
+    write_image(files / "Alice/IMG_1.jpg")
+    for name in ("folder.jpg", "Cover.PNG", "front.jpg", "AlbumArt_{1}_Large.jpg"):
+        write_image(files / "Alice" / name)
+    write_image(files / "Alice/! Posters/folder.jpg")
+    movies_env.scan()
+    assert movies_env.titles(movies.Picture) == ["IMG_1.jpg"]
+    assert movies_env.titles(movies.Folder) == ["Alice"]  # ! Posters holds no picture
+
+
+def test_pictures_made_before_are_taken_away(movies_env: Env, monkeypatch: Any) -> None:
+    """A keep scanned by theme version 5 has its folder.jpg as a Picture: reading the file
+    again takes it away."""
+    write_image(movies_env.files / "Alice/folder.jpg")
+    write_image(movies_env.files / "Alice/IMG_1.jpg")
+    monkeypatch.setattr(movies, "is_folder_image", lambda relpath: False)
+    movies_env.scan()
+    assert movies_env.titles(movies.Picture) == ["IMG_1.jpg", "folder.jpg"]
+    monkeypatch.undo()
+    set_modified(movies_env.files / "Alice/folder.jpg", datetime(2030, 1, 1, tzinfo=UTC))
+    movies_env.scan()
+    assert movies_env.titles(movies.Picture) == ["IMG_1.jpg"]
+
+
+def test_a_books_folder_images_are_not_pictures(books_env: Env) -> None:
+    files = books_env.files
+    write_image(files / "Art/folder.jpg")
+    write_image(files / "Art/hero.png")
+    books_env.scan()
+    assert books_env.titles(books.Picture) == ["hero.png"]
+    assert books_env.titles(books.Folder) == ["Art"]
+
+
 def test_a_picture_and_its_details_follow_the_file(movies_env: Env) -> None:
     write_photo(movies_env.files / "trip/a.jpg", "2001:02:03 04:05:06")
     movies_env.scan()
@@ -277,13 +314,12 @@ def test_renders_beside_writing_are_pictures(books_env: Env) -> None:
     write_zip(files / "Comics/Saga 001.cbz", [("01.jpg", (2015, 3, 4, 0, 0, 0))])  # a comic
     write_image(files / "Calibre/Author/Book (1)/cover.jpg")  # Calibre's copy of a cover
     (files / "Calibre/Author/Book (1)/metadata.opf").write_text("<package/>", encoding="utf-8")
-    write_image(files / "Elsewhere/cover.jpg")  # not Calibre's: a picture
+    write_image(files / "Elsewhere/map.jpg")
     books_env.scan()
 
     assert books_env.titles(books.Book) == ["Story X"]
     assert books_env.titles(books.Comic) == ["Saga #1"]
-    assert books_env.titles(books.Picture) == ["cover.jpg", "hero.png", "ship.tif"]
-    assert books_env.files_of("cover.jpg") == {"picture": ["Elsewhere/cover.jpg"]}
+    assert books_env.titles(books.Picture) == ["hero.png", "map.jpg", "ship.tif"]
     assert books_env.titles(books.Archive) == ["sketches.zip"]
     hero = books_env.fields(books.Picture, "hero.png")
     assert (hero["dimensions"], hero["folder"]) == ("40 \u00d7 30", "Story X/renders")

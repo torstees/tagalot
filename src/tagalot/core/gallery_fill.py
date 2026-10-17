@@ -14,8 +14,9 @@ share (loose movies side by side) fills none of them.
 with every picture (and archive) under the item's folder, at any depth, when no other item
 of its type has a primary file in it or below it, and never from the top of a root: a
 story's folder with its renders. Files the item has in its other roles (its cover) aren't
-added, nor another item's own file (a comic archive beside a book), unless that item is a
-picture or archive of its own (a type the theme's folder items are made for, #447).
+added, nor a folder's image (``folder.jpg``, #458), nor another item's own file (a comic
+archive beside a book), unless that item is a picture or archive of its own (a type the
+theme's folder items are made for, #447).
 
 **The notes folder.** A folder or archive named like a notes-folder note, beside it
 (``Notes/Actors/Keanu Reeves/``, ``Keanu Reeves.zip``), fills the first gallery role of the
@@ -31,6 +32,7 @@ stays theirs), and a file linked in the role by either isn't linked again. Files
 offline root aren't looked at: no scan runs.
 """
 
+import fnmatch
 import posixpath
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -48,7 +50,7 @@ from tagalot.core.models import (
 )
 from tagalot.core.scanner import in_notes
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
-from tagalot.themes.api import KIND_EXTENSIONS, Kind, Role
+from tagalot.themes.api import FOLDER_IMAGE_NAMES, KIND_EXTENSIONS, Kind, Role
 
 IMAGES = KIND_EXTENSIONS[Kind.IMAGE]
 ARCHIVES = KIND_EXTENSIONS[Kind.ARCHIVE]
@@ -207,13 +209,20 @@ def _wanted(gallery: _Gallery, inside: str, ext: str) -> bool:
     ext = ext.lower()
     if ext not in gallery.extensions:
         return False
-    if gallery.own:  # anything in its own folder, at any depth
-        return True
+    if gallery.own:  # anything in its own folder, at any depth, but a folder's look
+        return not folder_image(inside)
     first, _, rest = inside.partition("/")
     if rest:  # under a named subfolder, at any depth
         return first.casefold() in gallery.names
     stem = posixpath.splitext(first)[0]
     return ext in ARCHIVES and stem.casefold() in gallery.names  # an archive beside them
+
+
+def folder_image(relpath: str) -> bool:
+    """A picture named as a folder's own (``folder.jpg``: :data:`FOLDER_IMAGE_NAMES`), which
+    is its folder's look rather than one of an own folder's pictures (#458)."""
+    stem = posixpath.splitext(relpath.rpartition("/")[2])[0].lower()
+    return any(fnmatch.fnmatchcase(stem, pattern) for pattern in FOLDER_IMAGE_NAMES)
 
 
 def _others_files(conn: Connection, gallery: _Gallery, root_id: str) -> set[int]:

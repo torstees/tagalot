@@ -69,6 +69,16 @@ def test_its_cover_and_a_comic_beside_it_are_not_its_pictures(env: Env) -> None:
     assert pictures(env, "Tale") == ["Tale/map.png"]
 
 
+def test_its_folders_image_is_not_one_of_its_pictures(env: Env) -> None:
+    """``folder.jpg`` is the folder's look in Explorer (#458)."""
+    story(env.files, "Tale", "Tale")
+    write_image(env.files / "Tale/map.png")
+    write_image(env.files / "Tale/folder.jpg")
+    write_image(env.files / "Tale/renders/Folder.png")
+    env.scan()
+    assert pictures(env, "Tale") == ["Tale/map.png"]
+
+
 def test_the_gallery_follows_the_folder(env: Env) -> None:
     story(env.files, "Tale", "Tale")
     write_image(env.files / "Tale/a.png")
