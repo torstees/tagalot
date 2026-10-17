@@ -29,6 +29,7 @@ from tagalot.core.models import (
     ResourceStatus,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.see_through import counts_in
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError, read_pictures
 from tagalot.core.thumbnails.cache import ThumbCache, thumb_key
@@ -108,6 +109,9 @@ class ThumbnailResolver:
         self.size = size
         self.report: Callable[[Sequence[tuple[str, str]]], None] | None = None
         """Told about files that couldn't be read (``(path, message)``), from workers."""
+        self.see_through: Callable[[], frozenset[str]] = frozenset
+        """The keep's see-through folder names, case-folded (#459): a folder's files include
+        those in its see-through folders."""
         self._theme = theme()
         self._types = {theme.type_id_of(e): e for e in theme.entities}
         self._chains: dict[str, list[ThumbnailProvider]] = {}
@@ -490,6 +494,13 @@ class _Resolution:
             query = query.where(Resource.ext.in_(sorted(extensions)))
         rows = self.conn.execute(query.order_by(Resource.relpath)).all()
         inside = [row for row in rows if "/" not in row.relpath[len(prefix) :]]
+        names = self.owner.see_through()
+        if names:  # then those in its see-through folders (#459)
+            inside += [
+                row
+                for row in rows
+                if "/" in row.relpath[len(prefix) :] and counts_in(row.relpath, names) == folder
+            ]
         return [info for info in map(self._info, inside) if info is not None]
 
     def thumbnail_of(self, entity: EntityRef) -> ResourceInfo | None:

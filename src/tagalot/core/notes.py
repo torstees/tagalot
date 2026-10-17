@@ -46,6 +46,7 @@ from tagalot.core.models import (
     utcnow,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.see_through import logical
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import EntityRef, FieldInfo, Kind
 from tagalot.themes.readers import no_path, split_front_matter, split_keywords
@@ -512,10 +513,13 @@ def note_sites(conn: Connection, schema: ThemeSchema, root_id: str) -> list[Note
     return list(sites.values())
 
 
-def note_files(conn: Connection, root_id: str) -> dict[str, NoteFile]:
+def note_files(
+    conn: Connection, root_id: str, see_through: frozenset[str] = frozenset()
+) -> dict[str, NoteFile]:
     """Each folder's note in the root: the best-named one (a ``.md`` before a
-    ``.markdown`` of the same name), by folder path."""
-    best: dict[str, tuple[tuple[int, bool, str], NoteFile]] = {}
+    ``.markdown`` of the same name), by folder path. A note in a see-through folder
+    (#459) is the note of the folder it counts as in, after one in that folder itself."""
+    best: dict[str, tuple[tuple[int, bool, bool, str], NoteFile]] = {}
     rows = conn.execute(
         select(Resource.id, Resource.relpath, Resource.size, Resource.mtime_ns).where(
             Resource.root_id == root_id,
@@ -527,11 +531,12 @@ def note_files(conn: Connection, root_id: str) -> dict[str, NoteFile]:
         )
     )
     for resource_id, relpath, size, mtime in rows:
-        rank = note_rank(relpath)
+        counted = logical(relpath, see_through)
+        rank = note_rank(counted)
         if rank is None:
             continue
-        folder = relpath.rpartition("/")[0]
-        order = (rank, not relpath.lower().endswith(".md"), relpath)
+        folder = counted.rpartition("/")[0]
+        order = (rank, counted != relpath, not relpath.lower().endswith(".md"), relpath)
         if folder not in best or order < best[folder][0]:
             best[folder] = (order, NoteFile(resource_id, relpath, size, mtime))
     return {folder: file for folder, (_, file) in best.items()}
@@ -545,14 +550,18 @@ def used_notes(conn: Connection) -> set[int]:
 
 
 def read_notes(
-    reader: Engine, schema: ThemeSchema, root_id: str, path: str
+    reader: Engine,
+    schema: ThemeSchema,
+    root_id: str,
+    path: str,
+    see_through: frozenset[str] = frozenset(),
 ) -> tuple[list[NoteChange], list[IngestWarning]]:
     """The root's notes that changed since they were last read, read (in the caller's
     thread: a worker's, never the DB writer's). A note that can't be read is reported and
     left as it was."""
     with reader.connect() as conn:
         sites = note_sites(conn, schema, root_id)
-        files = note_files(conn, root_id)
+        files = note_files(conn, root_id, see_through)
         stored = {
             entity_id: (resource_id, size, mtime)
             for entity_id, resource_id, size, mtime in conn.execute(

@@ -92,6 +92,7 @@ from tagalot.themes.api import (
     TitleCard,
     contains,
     field,
+    files_in,
     kind_of,
     oldest,
     read_archive,
@@ -247,17 +248,10 @@ def videos_in(path: str) -> list[str]:
         return []
 
 
-def images_in(path: str) -> list[str]:
-    """The names of the pictures directly in a folder."""
-    try:
-        with os.scandir(path) as entries:
-            return sorted(
-                e.name
-                for e in entries
-                if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE
-            )
-    except OSError:
-        return []
+def images_in(path: str, see_through: frozenset[str] = frozenset()) -> list[str]:
+    """The names of the pictures directly in a folder, and in its see-through folders
+    (#459)."""
+    return [n for n in files_in(path, see_through) if os.path.splitext(n)[1].lower() in IMAGE]
 
 
 def poster_rank(stem: str, movie: "MovieName | None" = None) -> int | None:
@@ -454,7 +448,7 @@ class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
     id, name, version = "movies", "Movies", 6  # 6: folder images; 5: pictures; 4: notes
-    api_version = 18  # folders (17: pictures; 16: ratings; 14: gallery roles; …)
+    api_version = 20  # see-through folders (18: folders; 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
     # keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
@@ -590,8 +584,9 @@ class MoviesTheme(Theme):
         """What a picture is: a movie's poster or screenshot, a collection's poster, or
         nothing (``{}``)."""
         assert resource.path is not None
-        folder_path = os.path.dirname(resource.path)
-        folder, _, filename = resource.relpath.rpartition("/")
+        # Where it counts as: its folder, or the one above its see-through folder (#459).
+        folder_path, folder = resource.folder_path, resource.folder
+        filename = resource.relpath.rpartition("/")[2]
         name = folder.rpartition("/")[2]
         if name.casefold() == ACTORS_FOLDER:
             return {"actor": stem_of(filename).replace("_", " ").strip()}
@@ -607,7 +602,9 @@ class MoviesTheme(Theme):
         found = videos(folder_path)
         if folder and is_movie_folder(name, found):
             identity = movie_identity(folder, True, stem_of(found[0]))
-            poster = best_poster(images_in(folder_path), identity.name) == filename
+            poster = (
+                best_poster(images_in(folder_path, resource.see_through), identity.name) == filename
+            )
             return _movie_picture(identity, poster)
         if found:  # beside loose videos: named after one of them
             match = PICTURE_SUFFIX.match(stem_of(filename))
@@ -622,7 +619,7 @@ class MoviesTheme(Theme):
                 return _movie_picture(identity, False)
             siblings = [
                 n
-                for n in images_in(folder_path)
+                for n in images_in(folder_path, resource.see_through)
                 if movie_name(_picture_base(stem_of(n))).key == key
                 and _picture_kind(stem_of(n)) == "poster"
             ]
@@ -631,7 +628,7 @@ class MoviesTheme(Theme):
         if (
             folder
             and is_collection(folder_path, collections)
-            and best_poster(images_in(folder_path)) == filename
+            and best_poster(images_in(folder_path, resource.see_through)) == filename
         ):
             return {"collection": folder}
         return {}
@@ -639,8 +636,8 @@ class MoviesTheme(Theme):
     def _nfo(self, resource: ResourceInfo, videos: Callable[[str], list[str]]) -> dict[str, Any]:
         """Which movie an .nfo is for, and what it says (or why it couldn't be read)."""
         assert resource.path is not None
-        folder_path = os.path.dirname(resource.path)
-        folder, _, filename = resource.relpath.rpartition("/")
+        folder_path, folder = resource.folder_path, resource.folder  # see-through: #459
+        filename = resource.relpath.rpartition("/")[2]
         found = videos(folder_path)
         stem = stem_of(filename)
         identity: Identity | None = None

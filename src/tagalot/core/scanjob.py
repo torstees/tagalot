@@ -5,6 +5,7 @@ a read-only engine, and every write goes through the :class:`~tagalot.core.write
 Thumbnails (step 7) arrive in M8.
 """
 
+import json
 import logging
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -38,7 +39,7 @@ from tagalot.core.markdown_check import (
     is_markdown,
     record_markdown_problems,
 )
-from tagalot.core.models import Resource, ResourceStatus, Root
+from tagalot.core.models import Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.note_keys import sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
@@ -59,6 +60,7 @@ from tagalot.core.scanner import (
     walk_root,
     walk_scope,
 )
+from tagalot.core.see_through import counts_in, hidden_dir, logical
 from tagalot.core.theme_options import effective_options
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
@@ -126,6 +128,7 @@ def scan_root(
     progress: Progress | None = None,
     note_ignore_keys: frozenset[str] | None = None,
     notes_folder: str | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -147,6 +150,11 @@ def scan_root(
 
     ``notes_folder`` is the keep's notes folder when it is in this root (``""``: the whole
     root): only its Markdown files are recorded, and none of it reaches the theme.
+
+    ``see_through`` are the keep's see-through folder names, case-folded (#459): such
+    folders, and those inside them, never reach the theme, and their files reach it as
+    their parent folder's (:attr:`ResourceInfo.folder`). When they differ from the names the
+    root was last ingested with, every file of the root is ingested again.
     """
     if (theme is None) != (schema is None):
         raise ValueError("pass both theme and schema, or neither")
@@ -181,10 +189,11 @@ def scan_root(
             dirs=dirs,
             on_error=on_read_error,
             notes=notes_folder,
+            see_through=see_through,
         )
     )
     with reader.connect() as conn:
-        scope = walk_scope(root.exclude, extensions, dirs, notes_folder)
+        scope = walk_scope(root.exclude, extensions, dirs, notes_folder, see_through)
         diff = diff_root(load_known(conn, root.id), entries, unreadable, scope)
     report.new, report.changed = len(diff.new), len(diff.changed)
     report.restored, report.missing = len(diff.restored), len(diff.missing)
@@ -225,9 +234,8 @@ def scan_root(
             logger.warning("Root %s: %s", root.id, problem)
             report.ingest_warnings.append(IngestWarning(root.id, None, problem))
         defaults = effective_options(theme, {}, {}).fingerprint(1)  # recorded before versions
-        if writer.run(
-            partial(_options_changed, root.id, options.fingerprint(theme.version), defaults)
-        ):
+        fingerprint = _fingerprint(options.fingerprint(theme.version), see_through)
+        if writer.run(partial(_options_changed, root.id, fingerprint, defaults)):
             say(f"Theme options changed: ingesting {root.name} again…")
         _ingest_pending(
             writer,
@@ -242,8 +250,9 @@ def scan_root(
             options.values,
             note_ignore_keys=note_ignore_keys,
             notes_folder=notes_folder,
+            see_through=see_through,
         )
-        writer.run(partial(_record_options, root.id, options.fingerprint(theme.version)))
+        writer.run(partial(_record_options, root.id, fingerprint))
     logger.info(
         "Scanned %s: %d new, %d changed, %d restored, %d missing, %d moved, %d fingerprinted, "
         "%d ingested, %d ingest errors",
@@ -298,6 +307,14 @@ def _options_changed(root_id: str, fingerprint: str, defaults: str, conn: Connec
     return bool(marked)
 
 
+def _fingerprint(options: str, see_through: frozenset[str]) -> str:
+    """What a root's files were ingested with: the theme's option values and, when there are
+    any, the see-through folder names (#459), so a change to either reads them again."""
+    if not see_through:
+        return options  # as recorded before see-through folders
+    return f"{options}|see_through={json.dumps(sorted(see_through))}"
+
+
 def _record_options(root_id: str, fingerprint: str, conn: Connection) -> None:
     conn.execute(update(Root).where(Root.id == root_id).values(ingest_options=fingerprint))
 
@@ -317,6 +334,7 @@ def ingest_pending(
     markdown_assets: str = "",
     when: datetime | None = None,
     progress: Progress | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> ScanReport:
     """Ingest the root's pending resources now, without walking it (re-reading chosen files,
     DESIGN.md §6). The root's theme options apply as in a scan."""
@@ -335,6 +353,7 @@ def ingest_pending(
         report,
         progress or (lambda message: None),
         options.values,
+        see_through=see_through,
     )
     return report
 
@@ -354,6 +373,7 @@ def _ingest_pending(
     reread_notes: bool = True,
     note_ignore_keys: frozenset[str] | None = None,
     notes_folder: str | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> None:
     """Hand every pending resource of the root to the theme, in batches, then read the
     root's notes that changed (§9 *Notes*).
@@ -385,26 +405,30 @@ def _ingest_pending(
             )
             .order_by(Resource.relpath)
         ).all()
-    pending = [
-        ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
-        for rid, rel, kind, ext, size, mtime in rows
-    ]
+    hidden = {
+        rid
+        for rid, rel, kind, *_ in rows
+        if kind is ResourceKind.DIR and hidden_dir(rel, see_through)
+    }
+    if hidden:  # see-through folders: never the theme's (#459)
+        writer.run(partial(_mark_ingested, sorted(hidden), when))
+    pending = [_resource(root.id, path, row, see_through) for row in rows if row[0] not in hidden]
     _check_markdown(writer, root, report, pending)
     pending, notes = _without_notes(reader, theme, pending, notes_folder)
     if notes:
         writer.run(partial(_mark_ingested, [r.id for r in notes], when))
-    pending = _read_last(reader, root, path, theme, pending)
+    pending = _read_last(reader, root, path, theme, pending, see_through)
     _ingest_files(writer, reader, root, theme, schema, when, report, say, options, pending)
     if gallery_roles(schema):  # gallery roles filled from folders (#387)
         writer.run(
             partial(fill_galleries, schema=schema, root_id=root.id, notes_folder=notes_folder)
         )
     if folder_table(schema) is not None:  # folders of pictures as items (#447)
-        writer.run(partial(fill_folders, schema=schema, root_id=root.id))
+        writer.run(partial(fill_folders, schema=schema, root_id=root.id, see_through=see_through))
     if not reread_notes:
         return
     say(f"Looking for notes in {root.name}…")
-    changes, problems = read_notes(reader, schema, root.id, path)
+    changes, problems = read_notes(reader, schema, root.id, path, see_through)
     report.ingest_warnings += problems
     if changes:
         again, problems = writer.run(
@@ -426,6 +450,7 @@ def _ingest_pending(
                 options,
                 reread_notes=False,
                 notes_folder=notes_folder,
+                see_through=see_through,
             )
     # The pictures notes give their items (#439): even with no note changed, a picture
     # may have come or gone.
@@ -462,7 +487,11 @@ def _without_notes(
     in the notes folder (#382)."""
     accepts = theme.extensions
     held = {r.id for r in pending if in_notes(r.relpath, notes_folder)}
-    candidates = [r for r in pending if r.kind == "file" and note_rank(r.relpath) is not None]
+    candidates = [
+        r
+        for r in pending
+        if r.kind == "file" and note_rank(logical(r.relpath, r.see_through)) is not None
+    ]
     if candidates:
         with reader.connect() as conn:
             used = used_notes(conn)
@@ -535,6 +564,7 @@ def scan_notes_folder(
     theme_options: Mapping[str, Any] | None = None,
     markdown_assets: str = "",
     progress: Progress | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> ScanReport:
     """Match the keep's notes folder's notes to items and apply them (§9 *The notes
     folder*), after its roots were scanned, so a new item finds a note already there. With
@@ -571,6 +601,7 @@ def scan_notes_folder(
                 theme_options=theme_options,
                 markdown_assets=markdown_assets,
                 progress=progress,
+                see_through=see_through,
             )
             report.ingest_errors += done.ingest_errors
             report.ingest_warnings += done.ingest_warnings
@@ -589,6 +620,7 @@ def _read_last(
     path: str,
     theme: type[Theme],
     pending: list[ResourceInfo],
+    see_through: frozenset[str] = frozenset(),
 ) -> list[ResourceInfo]:
     """``pending`` with the theme's ``read_last`` files after the others; when there are
     others, with every one of the root's ``read_last`` files, read again, so a library
@@ -629,13 +661,29 @@ def _read_last(
             )
             .order_by(Resource.relpath)
         ).all()
-    late += [
-        ResourceInfo(rid, root.id, rel, kind.value, ext, size, mtime, local_path(path, rel))
-        for rid, rel, kind, ext, size, mtime in rows
-        if rid not in seen
-    ]
+    late += [_resource(root.id, path, row, see_through) for row in rows if row[0] not in seen]
     late.sort(key=order)
     return first + late
+
+
+def _resource(
+    root_id: str, path: str, row: Sequence[Any], see_through: frozenset[str]
+) -> ResourceInfo:
+    """A stored resource as the theme gets it: with the folder it counts as in, inside a
+    see-through folder (#459)."""
+    rid, rel, kind, ext, size, mtime = row
+    return ResourceInfo(
+        rid,
+        root_id,
+        rel,
+        kind.value,
+        ext,
+        size,
+        mtime,
+        local_path(path, rel),
+        counts_in(rel, see_through) if kind is ResourceKind.FILE else None,
+        see_through,
+    )
 
 
 def _ingest_batch(

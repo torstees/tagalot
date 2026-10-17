@@ -18,6 +18,7 @@ from tagalot.core.keep import (
     ONLINE_ANSWERS,
     KeepConfig,
     KeepError,
+    clean_names,
     validate_keep_config,
 )
 from tagalot.core.note_keys import NoteKeyError, check_key
@@ -74,6 +75,12 @@ def with_markdown_assets(config: KeepConfig, assets: str) -> KeepConfig:
     except ValueError as e:
         raise KeepError(str(e)) from None
     return replace(config, markdown_assets=cleaned, roots=copy.deepcopy(config.roots))
+
+
+def with_see_through(config: KeepConfig, names: Iterable[str]) -> KeepConfig:
+    """``config`` with these see-through folder names (``[folders] see_through``, #459),
+    trimmed, each once (case aside), in order."""
+    return replace(config, see_through=clean_names(names), roots=copy.deepcopy(config.roots))
 
 
 def with_note_ignore_keys(config: KeepConfig, keys: Iterable[str]) -> KeepConfig:

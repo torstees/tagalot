@@ -47,6 +47,7 @@ from tagalot.core.contents import (
 from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
+from tagalot.core.folder_items import tagged_hidden
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
@@ -57,6 +58,7 @@ from tagalot.core.keep_settings import (
     with_note_ignore_keys,
     with_online_lookups,
     with_option,
+    with_see_through,
     with_thumbnail_max,
     with_thumbnails_after_scan,
 )
@@ -106,6 +108,7 @@ from tagalot.core.saved_searches import (
 from tagalot.core.scanjob import Progress, ScanReport, scan_notes_folder, scan_root
 from tagalot.core.search import ContentsScope
 from tagalot.core.search_spec import SearchSpec
+from tagalot.core.see_through import names_of
 from tagalot.core.settings import Settings
 from tagalot.core.tag_service import TagService
 from tagalot.core.tags import TagTreeCache
@@ -230,6 +233,7 @@ class KeepSession:
         )
         # From now on, root paths follow the configuration (roots added, moved, overridden).
         thumbnails.root_path = session.root_path
+        thumbnails.see_through = lambda: session.see_through
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
         with reader.connect() as conn:
@@ -277,6 +281,7 @@ class KeepSession:
                     progress=progress,
                     note_ignore_keys=self.note_ignore_keys,
                     notes_folder=config.notes_path if root.id == config.notes_root else None,
+                    see_through=self.see_through,
                 )
             )
             self.problems.add(problems_from_report(reports[-1]))
@@ -294,9 +299,15 @@ class KeepSession:
                 theme_options=config.theme_options,
                 markdown_assets=config.markdown_assets,
                 progress=progress,
+                see_through=self.see_through,
             )
             self.problems.add(problems_from_report(notes))
         return reports
+
+    @property
+    def see_through(self) -> frozenset[str]:
+        """The keep's see-through folder names, case-folded (#459)."""
+        return names_of(self.keep.config.see_through)
 
     def _had_notes_folder(self) -> bool:
         """Notes from a notes folder are recorded (to let go of when it is gone)."""
@@ -319,6 +330,7 @@ class KeepSession:
             replace_edits=replace_edits,
             theme_options=self.keep.config.theme_options,
             markdown_assets=self.keep.config.markdown_assets,
+            see_through=self.see_through,
         )
         change = report.change
         if change.before != change.after:
@@ -535,6 +547,17 @@ class KeepSession:
         """Set the keep's default assets folder (#418); it applies to pictures and links on
         items' pages at once, and to covers at the next scan. Runs in a worker."""
         self.save_config(with_markdown_assets(self.keep.config, assets))
+
+    def set_see_through(self, names: Iterable[str]) -> None:
+        """Set the keep's see-through folder names (#459); they apply at the next scan,
+        which reads every file again. Runs in a worker."""
+        self.save_config(with_see_through(self.keep.config, names))
+
+    def tagged_hidden_folders(self, names: Iterable[str]) -> int:
+        """How many folder items the user tagged these see-through names would take away
+        (#459). Runs in a worker."""
+        with self.reader.connect() as conn:
+            return tagged_hidden(conn, self.schema, names_of(names))
 
     def set_note_ignore_keys(self, keys: Iterable[str]) -> None:
         """Set the keep's ignored note keys; they apply at the next scan, which reads the

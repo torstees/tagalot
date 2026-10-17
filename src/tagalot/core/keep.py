@@ -149,6 +149,23 @@ class KeepConfig:
     per type) or ``"one-folder"`` (typed by ``tagalot-type``)."""
     markdown_assets: str = ""
     """``[markdown] assets``: the assets folder of roots that name none (#418)."""
+    see_through: list[str] = field(default_factory=list)
+    """``[folders] see_through``: names of folders that are never items, their files
+    counting as their parent folder's (#459, §6 *See-through folders*). Matched exactly,
+    case aside."""
+
+
+def clean_names(names: Iterable[str]) -> list[str]:
+    """Folder names as kept: trimmed, without empty ones or repeats (case aside), in the
+    order given."""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        name = name.strip().strip("/\\").strip()
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            kept.append(name)
+    return kept
 
 
 def load_keep_config(path: Path) -> KeepConfig:
@@ -214,6 +231,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[notes]", *notes_lines]
     if config.markdown_assets:
         lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
+    if config.see_through:
+        lines += ["", "[folders]", f"see_through = {toml_list(config.see_through)}"]
     for root in config.roots:
         lines += [
             "",
@@ -242,7 +261,17 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     reader = _Reader(path)
     reader.warn_unknown(
         data,
-        {"keep", "theme", "roots", "thumbnails", "online", "contents", "notes", "markdown"},
+        {
+            "keep",
+            "theme",
+            "roots",
+            "thumbnails",
+            "online",
+            "contents",
+            "notes",
+            "markdown",
+            "folders",
+        },
         "top level",
     )
 
@@ -323,6 +352,15 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         reader.warn_unknown(markdown, {"assets"}, "[markdown]")
         markdown_assets = _assets(path, markdown, "[markdown]")
 
+    see_through: list[str] = []
+    if "folders" in data:
+        folders = reader.table(data, "folders")
+        reader.warn_unknown(folders, {"see_through"}, "[folders]")
+        names = folders.get("see_through", [])
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise KeepConfigError(path, "[folders] see_through must be a list of strings")
+        see_through = clean_names(names)
+
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
         raise KeepConfigError(path, "roots must be written as [[roots]] tables")
@@ -395,6 +433,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         notes_writable=notes_writable,
         new_notes=new_notes,
         markdown_assets=markdown_assets,
+        see_through=see_through,
     )
 
 

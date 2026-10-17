@@ -11,6 +11,8 @@ validates every theme) can import it freely.
 import enum
 import fnmatch
 import json
+import os
+import posixpath
 import re
 import types
 import typing
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 19
+API_VERSION = 20
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -43,7 +45,9 @@ version 11 added Extra fields from files (:meth:`IngestContext.extra`, and
 ratings shown as stars (:func:`field`'s ``rating``); version 17 added pictures' and
 archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`oldest`);
 version 18 added folder items (:attr:`Entity.folders_for`); version 19 added gallery roles
-filled from the item's own folder (:func:`role`'s ``own_folder``)."""
+filled from the item's own folder (:func:`role`'s ``own_folder``); version 20 added
+see-through folders (:attr:`ResourceInfo.folder`, :attr:`ResourceInfo.folder_path`,
+:attr:`ResourceInfo.see_through`, :func:`files_in`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -668,6 +672,55 @@ class ResourceInfo:
     mtime_ns: int | None
     path: str
     """This machine's path to the file, for reading."""
+    counts_in: str | None = None
+    """The folder the file counts as in when it is inside a see-through folder (#459): the
+    nearest folder above that isn't one, root-relative (``""``, the top). ``None``: its own.
+    Use :attr:`folder` rather than this."""
+    see_through: frozenset[str] = frozenset()
+    """The keep's see-through folder names, case-folded (``[folders] see_through``): for
+    looking around on disk with :func:`files_in`."""
+
+    @property
+    def folder(self) -> str:
+        """The root-relative folder the file counts as in: its own, or, when it is inside a
+        see-through folder (``Heat (1995)/! Posters/poster.jpg``), the nearest folder above
+        that isn't one (``Heat (1995)``). Judge what a file is by this folder."""
+        return posixpath.dirname(self.relpath) if self.counts_in is None else self.counts_in
+
+    @property
+    def folder_path(self) -> str:
+        """This machine's path to :attr:`folder`."""
+        path = os.path.dirname(self.path)
+        if self.counts_in is not None:
+            real = posixpath.dirname(self.relpath)
+            for _ in range(_depth(real) - _depth(self.counts_in)):
+                path = os.path.dirname(path)
+        return path
+
+
+def _depth(folder: str) -> int:
+    return folder.count("/") + 1 if folder else 0
+
+
+def files_in(path: str, see_through: Iterable[str] = ()) -> list[str]:
+    """The names of the files directly in the folder at ``path``, and in its see-through
+    folders at any depth (``see_through``: :attr:`ResourceInfo.see_through`), sorted; none
+    when it can't be listed. What a file is judged beside (#459)."""
+    names = frozenset(n.casefold() for n in see_through)
+    found: list[str] = []
+    folders = [(path, False)]  # (folder, inside a see-through one)
+    while folders:
+        folder, inside = folders.pop()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if entry.is_file():
+                        found.append(entry.name)
+                    elif entry.is_dir() and (inside or entry.name.casefold() in names):
+                        folders.append((entry.path, True))
+        except OSError:
+            continue
+    return sorted(found)
 
 
 class IngestContext(Protocol):
@@ -1641,6 +1694,7 @@ __all__ = [
     "entity_plural",
     "epub_cover",
     "field",
+    "files_in",
     "find_identifiers",
     "kind_of",
     "mobi_cover",

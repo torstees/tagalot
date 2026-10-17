@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.contents import ContentsStats
 from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
 from tagalot.core.formats import format_bytes
-from tagalot.core.keep import KeepError, RootConfig
+from tagalot.core.keep import KeepError, RootConfig, clean_names
 from tagalot.core.keep_settings import (
     MIN_THUMBNAIL_SIZE,
     with_markdown_assets,
@@ -339,6 +339,18 @@ class KeepConfigWindow(QWidget):
             lambda: self._set_markdown_assets(self.keep_assets.text())
         )
         form.addRow("Assets folder:", self.keep_assets)
+        self.see_through = QPlainTextEdit()
+        self.see_through.setObjectName("see_through")
+        self.see_through.setPlaceholderText("! Posters")
+        self.see_through.setMaximumHeight(80)
+        self.see_through.setToolTip(
+            "Folders with these names are never items: the files in them count as their "
+            "parent folder's (a poster in Heat (1995)/! Posters is Heat's). One name per line, "
+            "matched exactly, case aside. Saved when you leave the box; the next scan (F5) "
+            "reads the keep's files again."
+        )
+        self.see_through.installEventFilter(self)
+        form.addRow("See-through folders:", self.see_through)
         self.keep_options = QGroupBox("Theme options")
         self.keep_options.setToolTip(
             "The theme's settings for this keep; a folder can override them (Folders tab). "
@@ -570,6 +582,8 @@ class KeepConfigWindow(QWidget):
         config = self.session.keep.config
         self.keep_name.setText(config.name)
         self.keep_assets.setText(config.markdown_assets)
+        if not self.see_through.hasFocus():
+            self.see_through.setPlainText("\n".join(config.see_through))
         self.setWindowTitle(f"Configure {config.name}")
         self.theme_size.blockSignals(True)
         self.theme_size.setChecked(config.thumbnail_max is None)
@@ -874,6 +888,8 @@ class KeepConfigWindow(QWidget):
                 self.set_keep_ignore_keys(self.keep_ignore_keys.toPlainText().splitlines())
             elif watched is self.user_ignore_keys:
                 self.set_user_ignore_keys(self.user_ignore_keys.toPlainText().splitlines())
+            elif watched is self.see_through:
+                self.set_see_through(self.see_through.toPlainText().splitlines())
         return super().eventFilter(watched, event)
 
     def _choose_notes_folder(self) -> None:
@@ -1007,6 +1023,40 @@ class KeepConfigWindow(QWidget):
             lambda: session.set_note_ignore_keys(keys),
             "Saved the keys this keep ignores in notes; they apply at the next scan (F5).",
         )
+
+    def set_see_through(self, lines: list[str]) -> None:
+        """Save the keep's see-through folder names (#459), once the user agreed to lose
+        the tagged folder items they take away, if any."""
+        names = clean_names(lines)
+        session = self.session
+        if names == session.keep.config.see_through:
+            return
+
+        def counted(tagged: object) -> None:
+            if not shiboken6.isValid(self):
+                return
+            if isinstance(tagged, int) and tagged and not self.confirm_see_through(tagged):
+                self.see_through.setPlainText("\n".join(session.keep.config.see_through))
+                return
+            self._run(
+                lambda: session.set_see_through(names),
+                "Saved the see-through folders; the next scan (F5) reads the keep's files again.",
+            )
+
+        run_in_pool(lambda: session.tagged_hidden_folders(names), on_done=counted, pool=self._pool)
+
+    def confirm_see_through(self, tagged: int) -> bool:
+        folders = "1 folder you tagged is" if tagged == 1 else f"{tagged:,} folders you tagged are"
+        answer = QMessageBox.question(
+            self,
+            "See-through folders",
+            f"{folders} named like this, or inside one. At the next scan they stop being "
+            "items, and their tags go with them; what's in them counts as their parent "
+            "folder's.\n\nNo files on disk are changed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def set_user_ignore_keys(self, lines: list[str]) -> None:
         """Save the keys every keep ignores in notes (``settings.toml``)."""

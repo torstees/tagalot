@@ -16,6 +16,9 @@ mirrors=Person, many=True)``, with ``contains(Person, Folder)``) are what its no
 belongs to: :func:`link_folder_fields`, after the notes are read, finds or makes each item
 named (:meth:`Theme.item_named`) and puts the folder in it, and takes it out of those of that
 type no longer named (#449: Alice's folder note names her).
+
+See-through folders (#459) are never folder items, even tagged ones, and what is in them
+counts as their parent folder's.
 """
 
 import posixpath
@@ -34,6 +37,7 @@ from tagalot.core.models import (
     ResourceKind,
     ResourceStatus,
 )
+from tagalot.core.see_through import folder_of, hidden_dir
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import EntityRef, Role
 
@@ -57,9 +61,15 @@ def _above(path: str) -> Iterable[str]:
         path = posixpath.dirname(path)
 
 
-def fill_folders(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
+def fill_folders(
+    conn: Connection,
+    schema: ThemeSchema,
+    root_id: str,
+    see_through: frozenset[str] = frozenset(),
+) -> int:
     """Bring the root's folder items and what they hold up to date; how many items or
-    edges changed. Runs in the writer, after the root's files are ingested."""
+    edges changed. Runs in the writer, after the root's files are ingested.
+    ``see_through``: the keep's see-through folder names, case-folded (#459)."""
     folders = folder_table(schema)
     if folders is None:
         return 0
@@ -95,8 +105,13 @@ def fill_folders(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
                 existing[relpath] = entity_id
             else:
                 owned[relpath] = type_id
-        # A file: the folder it's in; a folder: the one above it.
-        places.setdefault(entity_id, (type_id, []))[1].append(posixpath.dirname(relpath))
+        # A file: the folder it counts as in; a folder: the one above it.
+        place = (
+            posixpath.dirname(relpath)
+            if kind is ResourceKind.DIR
+            else folder_of(relpath, see_through)
+        )
+        places.setdefault(entity_id, (type_id, []))[1].append(place)
 
     wanted: set[str] = set()
     for type_id, paths in places.values():
@@ -110,7 +125,11 @@ def fill_folders(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
             .distinct()
         )
     )
-    wanted |= {path for path, entity_id in existing.items() if entity_id in tagged}
+    wanted |= {
+        path
+        for path, entity_id in existing.items()
+        if entity_id in tagged and not hidden_dir(path, see_through)
+    }
 
     dirs = dict(
         conn.execute(
@@ -186,6 +205,29 @@ def fill_folders(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
         changed += 1
     ctx.flush()
     return changed
+
+
+def tagged_hidden(conn: Connection, schema: ThemeSchema, see_through: frozenset[str]) -> int:
+    """How many folder items the user tagged are see-through folders (or in one) by these
+    names: those the next scan takes away, with their tags (#459)."""
+    folders = folder_table(schema)
+    if folders is None or not see_through:
+        return 0
+    role = _primary(folders)
+    assert role is not None
+    rows = conn.execute(
+        select(Entity.id, Resource.relpath)
+        .join(EntityResource, EntityResource.entity_id == Entity.id)
+        .join(Resource, Resource.id == EntityResource.resource_id)
+        .join(EntityTag, EntityTag.entity_id == Entity.id)
+        .where(
+            Entity.type == folders.type_id,
+            EntityResource.role == role.name,
+            EntityTag.by_file.is_(False),
+        )
+        .distinct()
+    ).all()
+    return len({entity_id for entity_id, path in rows if hidden_dir(path, see_through)})
 
 
 def link_folder_fields(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
