@@ -150,6 +150,8 @@ class SearchPage(QWidget):
     shown_columns_changed = Signal(list)
     """The column keys the user showed (of those hidden by default), to remember it."""
     selection_changed = Signal()
+    counted = Signal(int)
+    """How many items the search found, once counted (a contents tab's label, #456)."""
     """The selected items may be different (a click, new results, grouped or not)."""
     layout_changed = Signal(str)
     """The user switched to ``"list"``, ``"grid"``, or ``"tree"`` (to remember it)."""
@@ -656,6 +658,7 @@ class SearchPage(QWidget):
         self._show_layout_buttons()
         total = sum(g.count for g in groups)
         self.status.setText(count_text(total) if total else "Nothing found")
+        self.counted.emit(total)
         if not total:
             self._show_empty()
 
@@ -1011,6 +1014,7 @@ class SearchPage(QWidget):
 
     def _counted(self, total: int) -> None:
         self.status.setText(count_text(total) if total else "Nothing found")
+        self.counted.emit(total)
         if not total:
             self._show_empty()
         elif self.showing_empty():

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QThreadPool
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QPushButton, QScrollArea, QTabWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
@@ -14,7 +14,7 @@ from tagalot.core.settings import Settings
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.workers import ScanController
-from tests.ui.test_contents_search import _open
+from tests.ui.test_contents_search import _open, _tabs
 from tests.ui.test_tree_toggles import _tree_row, _tree_titles
 from tests.ui.test_within import _search
 
@@ -81,6 +81,26 @@ def test_an_album_page_lists_its_songs_in_track_order(
     qtbot.waitUntil(lambda: contents.model.hit(2) is not None, timeout=5000)
     hits = [contents.model.hit(r) for r in range(3)]
     assert [h.title for h in hits if h] == ["So What", "Freddie Freeloader", "Blue in Green"]
+
+
+def test_an_albums_scans_are_a_tab_after_its_songs(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """With searches below the sections, a gallery is a tab there too, last (#456)."""
+    detail = _open(qtbot, window, session, "Kind of Blue")
+    qtbot.waitUntil(lambda: _tabs(detail) == ["Songs (3)", "Scans (3)"], timeout=5000)
+    assert detail.findChild(QWidget, "section_gallery") is None  # not a section above
+    tabs = detail.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+    scans = tabs.widget(1)
+    assert isinstance(scans, QScrollArea)
+    assert scans.objectName() == "gallery_tab_Scans"
+    tabs.setCurrentIndex(1)
+    detail.refresh()  # made again, and still shown
+    qtbot.waitUntil(lambda: tabs.tabText(tabs.currentIndex()) == "Scans (3)", timeout=5000)
+    shown = tabs.currentWidget()
+    assert shown is not None
+    assert shown.objectName() == "gallery_tab_Scans"
 
 
 def test_play_album_from_its_page(

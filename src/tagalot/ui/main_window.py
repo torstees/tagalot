@@ -526,6 +526,8 @@ class MainWindow(QMainWindow):
                 thumbnails=self.thumbnails,
                 make_contents=self._contents_search,
             )
+            detail.recall_tab = self._recall_tab
+            detail.remember_tab = self._remember_tab
             detail.open_entity.connect(self.open_entity)
             detail.field_edited.connect(self.tag_actions.edit_field)
             detail.extra_edited.connect(self.tag_actions.edit_extra)
@@ -703,6 +705,19 @@ class MainWindow(QMainWindow):
         page = self._search_page(title, spec, key, layout="grid")
         page.empty.set_compact(True)  # a small place: no knight
         return page
+
+    def _recall_tab(self, type_id: str) -> str | None:
+        """The tab last used on an item page of this type (#456)."""
+        found = self._ui_state.get("detail_tabs", {}).get(type_id)
+        return found if isinstance(found, str) else None
+
+    def _remember_tab(self, type_id: str, key: str) -> None:
+        tabs = self._ui_state.setdefault("detail_tabs", {})
+        if tabs.get(type_id) == key:
+            return
+        tabs[type_id] = key
+        if self.session is not None:
+            save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _contents_in_search(self, detail: DetailPage) -> None:
         """Search all, listing only a detail page's contents (a Within chip)."""

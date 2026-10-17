@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, QThreadPool
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QTabWidget, QWidget
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
@@ -72,6 +72,13 @@ def _contents(qtbot: QtBot, page: DetailPage, count: str) -> SearchPage:
     return contents
 
 
+def _tabs(page: DetailPage) -> list[str]:
+    """The tabs below the sections that are shown."""
+    tabs = page.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+    return [tabs.tabText(i) for i in range(tabs.count()) if tabs.isTabVisible(i)]
+
+
 def _titles(contents: SearchPage) -> list[str]:
     hits = [contents.model.hit(r) for r in range(contents.model.rowCount())]
     return sorted(h.title for h in hits if h is not None)
@@ -81,16 +88,12 @@ def test_an_artists_page_lists_its_assets(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _open(qtbot, window, session, AURORA)
-    contents = _contents(qtbot, page, "7 items")
-    assert _titles(contents) == [
-        "Aileron-Regular.ttf",
-        "UI pack.zip",
-        "dusk sky.png",
-        "folder.jpg",
-        "forest.png",
-        "gem.png",
-        "heart.png",
-    ]
+    # A tab of each kind it holds, counted (#456); the first shown.
+    qtbot.waitUntil(
+        lambda: _tabs(page) == ["Images (5)", "Fonts (1)", "Archives (1)"], timeout=5000
+    )
+    contents = _contents(qtbot, page, "5 items")
+    assert _titles(contents) == ["dusk sky.png", "folder.jpg", "forest.png", "gem.png", "heart.png"]
     assert contents.results.currentWidget() is contents.grid  # contents start as a grid
     assert page.findChild(QWidget, "section_contents") is None  # no separate count
     assert contents in window.search_pages()  # refreshed with the others
@@ -99,7 +102,7 @@ def test_an_artists_page_lists_its_assets(
 def test_the_contents_have_their_own_filters(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "7 items")
+    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "5 items")
     contents.filter_bar.text_edit.setText("sky")
     contents.filter_bar.text_edit.returnPressed.emit()
     qtbot.waitUntil(lambda: contents.status.text() == "1 item", timeout=5000)
@@ -110,7 +113,7 @@ def test_tagging_applies_to_selected_contents_else_the_page(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _open(qtbot, window, session, "Kenji Sato")
-    contents = _contents(qtbot, page, "4 items")
+    contents = _contents(qtbot, page, "3 items")
     tree = session.tag_cache.get()
     favorites = tree.find_child(None, "Favorites")
     assert favorites is not None
@@ -124,7 +127,7 @@ def test_tagging_applies_to_selected_contents_else_the_page(
 
     # An asset selected: it is tagged, not the artist again.
     qtbot.waitUntil(lambda: contents.model.hit(0) is not None, timeout=5000)
-    titles = [getattr(contents.model.hit(r), "title", None) for r in range(4)]
+    titles = [getattr(contents.model.hit(r), "title", None) for r in range(3)]
     row = titles.index("tileset.png")
     contents.table.selectionModel().select(
         contents.model.index(row, 0),
@@ -145,7 +148,7 @@ def test_tagging_applies_to_selected_contents_else_the_page(
 def test_opening_an_asset_from_the_contents(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    contents = _contents(qtbot, _open(qtbot, window, session, "Kenji Sato"), "4 items")
+    contents = _contents(qtbot, _open(qtbot, window, session, "Kenji Sato"), "3 items")
     qtbot.waitUntil(lambda: contents.model.hit(0) is not None, timeout=5000)
     hit = contents.model.hit(0)
     assert hit is not None
@@ -161,10 +164,36 @@ def test_opening_an_asset_from_the_contents(
 def test_the_contents_layout_is_remembered_per_type(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
-    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "7 items")
+    contents = _contents(qtbot, _open(qtbot, window, session, AURORA), "5 items")
     contents.list_button.click()
     assert load_ui_state(session.keep.ui_state_path)["layouts"] == {
-        "contents:assets2d.artist": "list"
+        "contents:assets2d.artist:assets2d.image": "list"
     }
-    other = _contents(qtbot, _open(qtbot, window, session, "Kenji Sato"), "4 items")
+    other = _contents(qtbot, _open(qtbot, window, session, "Kenji Sato"), "3 items")
     assert other.results.currentWidget() is other.table  # another artist, the same choice
+
+
+def test_the_last_tab_used_is_chosen_again(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """A type of page opens on the tab last used on one (#456); a tab it lacks is skipped."""
+    page = _open(qtbot, window, session, AURORA)
+    qtbot.waitUntil(
+        lambda: _tabs(page) == ["Images (5)", "Fonts (1)", "Archives (1)"], timeout=5000
+    )
+    tabs = page.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+    tabs.setCurrentIndex(2)  # Archives
+    assert load_ui_state(session.keep.ui_state_path)["detail_tabs"] == {
+        "assets2d.artist": "contents:assets2d.archive"
+    }
+    contents = page.contents
+    assert contents is not None
+    qtbot.waitUntil(lambda: contents.status.text() == "1 item", timeout=5000)
+    assert _titles(contents) == ["UI pack.zip"]
+
+    kenji = _open(qtbot, window, session, "Kenji Sato")
+    other = kenji.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(other, QTabWidget)
+    qtbot.waitUntil(lambda: other.tabText(other.currentIndex()) == "Archives (1)", timeout=5000)
+    qtbot.waitUntil(lambda: _tabs(kenji) == ["Images (3)", "Archives (1)"], timeout=5000)
