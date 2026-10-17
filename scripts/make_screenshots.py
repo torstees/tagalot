@@ -23,8 +23,10 @@ if sys.platform == "win32" and "QT_QPA_FONTDIR" not in os.environ:
     os.environ["QT_QPA_FONTDIR"] = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 
 from PySide6.QtCore import QItemSelectionModel, QThreadPool
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QTabWidget, QWidget
+from sqlalchemy import select
 
+from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import load_themes
@@ -176,6 +178,30 @@ def books(app: QApplication, keep: Path) -> None:
     shoot(app, keep, steps)
 
 
+def movies(app: QApplication, keep: Path) -> None:
+    def steps(window: MainWindow, session: KeepSession) -> None:
+        with session.reader.connect() as conn:  # the person, not her folder
+            alice = conn.scalar(
+                select(Entity.id).where(Entity.title == "Alice", Entity.type == "movies.actor")
+            )
+        assert alice is not None
+        window.open_entity(alice)
+        settle(app, 2)
+        detail = window.stack.currentWidget()
+        if isinstance(detail, DetailPage):  # her note's details, over what her folders hold
+            detail.splitter.setSizes([330, 290])
+            tabs = detail.findChild(QTabWidget, "bottom_tabs")
+            if tabs is not None:
+                movies = [i for i in range(tabs.count()) if tabs.tabText(i).startswith("Movies")]
+                tabs.setCurrentIndex(movies[0] if movies else tabs.currentIndex())
+            if detail.contents is not None:  # room for the thumbnails
+                detail.contents.set_preview_visible(False)
+        settle(app, 2)
+        save(window, "movies-person")
+
+    shoot(app, keep, steps)
+
+
 def research(app: QApplication, keep: Path) -> None:
     def steps(window: MainWindow, session: KeepSession) -> None:
         window.navigation.select(NavTarget("view", key="Papers", label="Papers"))
@@ -223,6 +249,7 @@ def main() -> int:
         music(app, script.make_music_demo(base))
         assets(app, script.make_assets_demo(base))
         books(app, script.make_books_demo(base))
+        movies(app, script.make_movies_demo(base))
         research(app, script.make_research_demo(base))
     launcher(app)
     return 0

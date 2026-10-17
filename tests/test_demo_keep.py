@@ -188,6 +188,29 @@ def test_creates_a_movies_keep(tmp_path: Path) -> None:
         script.make_movies_demo(tmp_path)
 
 
+def test_alices_note_is_hers_and_her_folders_is_the_folders(tmp_path: Path) -> None:
+    """The person Alice takes her note from the notes folder; her folder's note describes
+    the Folder (docs: Notes, *Where a note goes*)."""
+    script = _script()
+    with (
+        KeepSession.open(script.make_movies_demo(tmp_path), Settings()) as session,
+        session.reader.connect() as conn,
+    ):
+        alice = {
+            type_: load_detail(conn, session.schema, id_, session.root_path)
+            for id_, type_ in conn.execute(
+                select(Entity.id, Entity.type).where(Entity.title == "Alice")
+            )
+        }
+    person, folder = alice["movies.actor"], alice["movies.folder"]
+    assert person is not None
+    assert folder is not None
+    born = [f.value for s in person.sections for f in s.fields if f.name == "born"]
+    assert [str(value) for value in born] == ["2022-01-30"]
+    assert person.note_body.startswith("Our youngest.")
+    assert folder.note_body.startswith("Alice's first years")
+
+
 def test_creates_a_books_keep(tmp_path: Path) -> None:
     script = _script()
     keep_dir = script.make_books_demo(tmp_path)

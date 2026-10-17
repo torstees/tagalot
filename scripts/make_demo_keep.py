@@ -772,9 +772,16 @@ first film: Critters 3
 Cobb in Inception.
 """,
     "Notes/Actors/Keanu Reeves.md": "Not in this keep's movies: Triage → Notes lists it.\n",
+    # The person Alice, apart from her folder's note, which describes the Folder.
+    "Notes/People/Alice.md": """---
+born: 2022-01-30
+---
+Our youngest. Her folders hold the home videos and photos.
+""",
 }
 """The movies demo's notes folder (``Notes``, chosen in ``keep.toml``): actors' notes in a
-subfolder and typed by ``tagalot-type``, and one that matches no item."""
+subfolder and typed by ``tagalot-type``, a person's from a folder's note in ``People/``,
+and one that matches no item."""
 
 
 def _mkv(size: tuple[int, int], seconds: float, languages: list[str]) -> bytes:
