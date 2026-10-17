@@ -307,3 +307,15 @@ def test_see_through_folders_in_keep_configuration(
     assert "next scan" in saved.args[0]
     assert load_keep_config(session.keep.toml_path).see_through == ["! Posters", "3rd Birthday"]
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+
+
+def test_a_person_holding_nothing_has_no_contents_tabs(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """An actor holds no folders: their credits and photos, no empty contents tab (#456)."""
+    page = _page_of(qtbot, window, session, "Sigourney Weaver")
+    tabs = page.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+    qtbot.waitUntil(lambda: len(page._counts) == 5, timeout=5000)  # all counted
+    shown = [tabs.tabText(i) for i in range(tabs.count()) if tabs.isTabVisible(i)]
+    assert shown == ["Movie credits", "Picture credits", "Photos (2)"]

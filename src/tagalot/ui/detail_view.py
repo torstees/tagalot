@@ -532,7 +532,7 @@ class DetailPage(QWidget):
 
     def _contents_counted(self, type_id: str, label: str, total: int) -> None:
         """Show a contents tab's count, and hide it while it has nothing (unless all of
-        them have nothing: then the first stays, saying so)."""
+        them have nothing and there are no other tabs: then the first stays, saying so)."""
         if self._tabs is None or not shiboken6.isValid(self._tabs):
             return
         self._counts[type_id] = total
@@ -543,8 +543,14 @@ class DetailPage(QWidget):
         self._tabs.setTabText(index, f"{label} ({total:,})" if total else label)
         typed = [t for t in self.contents_pages if t]
         empty = {t for t in typed if self._counts.get(t) == 0}
+        # All empty: the first says so, unless other tabs fill the place (an actor's).
+        others = any(
+            not self._tab_keys.get(id(self._tabs.widget(i)), "").startswith("contents:")
+            for i in range(self._tabs.count())
+        )
         for t in typed:
-            shown = t not in empty or (len(empty) == len(typed) and t == typed[0])
+            alone = len(empty) == len(typed) and t == typed[0] and not others
+            shown = t not in empty or alone
             self._tabs.setTabVisible(self._tabs.indexOf(self.contents_pages[t]), shown)
         self._choose_tab()
 
