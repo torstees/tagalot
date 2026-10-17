@@ -50,6 +50,8 @@ In the movies demo, The Return of the King's poster is in its `! Posters` folder
 Actors are **People** now, so the family in your home videos can be people too.
 
 - **Named by a folder's note:** `Home Movies/Alice/Alice.md` with `people: [Alice]` (several: `people: [Alice, Grandma]`) makes the person Alice, or finds her (by name, as an `.nfo`'s cast does). Alice then holds that Folder. Her page lists everything under it: videos, pictures, archives, and folders. **Within** Alice searches it, and a tag on Alice counts for all of it in the Movies and Pictures views. A folder can be held by several people, and a person dropped from the note lets go of it at the next scan.
+
+  The folder's note describes the **Folder**, not Alice: its title, body, and any other keys (a `born:` date, say) are the Folder's, and `tagalot-type` doesn't change that. Alice's own details go in her note in the notes folder, `Notes/People/Alice.md` (or `Notes/Actors/Alice.md`), as for any person. See [Notes: where a note goes](../guide/notes.md#where-a-note-goes).
 - **In movies:** a movie's page has **Cast**, a person's **Movie credits**: both with **Add…** (search for a person or movie, or make a new person) and **Remove from …**.
 - **In pictures:** a picture's page has **People**, a person's **Picture credits**, with **Add…** and **Remove from …** the same way.
 
