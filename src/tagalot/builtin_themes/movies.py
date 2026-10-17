@@ -59,6 +59,7 @@ several versions shows its best one's (the most pixels), and the longest runtime
 runtime wins over the files'.
 """
 
+import fnmatch
 import logging
 import os
 import re
@@ -71,6 +72,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from tagalot.themes.api import (
+    FOLDER_IMAGE_NAMES,
     KIND_EXTENSIONS,
     DetailView,
     Entity,
@@ -451,9 +453,10 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 5  # 5: pictures; 4: notes; 3: genres as keywords
+    id, name, version = "movies", "Movies", 6  # 6: folder images; 5: pictures; 4: notes
     api_version = 18  # folders (17: pictures; 16: ratings; 14: gallery roles; …)
-    # 2: videos' details (runtime, resolution, codec, audio); keeps read every file once.
+    # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
+    # keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
     entities = [Person, Collection, Movie, Picture, Archive, Folder]
@@ -793,9 +796,12 @@ class MoviesTheme(Theme):
 
 
 def is_own_picture(relpath: str, details: Mapping[str, Any]) -> bool:
-    """A picture is an item of its own unless it is a poster, an actor's photo, or Kodi's
-    artwork: named like it in a movie's folder or beside its video, or in its folders."""
+    """A picture is an item of its own unless it is a poster, an actor's photo, Kodi's
+    artwork (named like it in a movie's folder or beside its video, or in its folders), or a
+    folder's image anywhere (#458)."""
     if details.get("actor") or details.get("collection") or details.get("poster"):
+        return False
+    if is_folder_image(relpath):
         return False
     folders = [part.casefold() for part in relpath.split("/")[:-1]]
     if any(part in ARTWORK_FOLDERS for part in folders):
@@ -809,6 +815,14 @@ def is_own_picture(relpath: str, details: Mapping[str, Any]) -> bool:
         and PICTURE_SUFFIX.match(stem) is None
         and normalize(movie_name(stem).title) != normalize(details["title"])
     )
+
+
+def is_folder_image(relpath: str) -> bool:
+    """A picture named as a folder's own (``folder.jpg``, ``cover.png``: Explorer's and
+    music players' names, :data:`FOLDER_IMAGE_NAMES`): its folder's look, never a Picture of
+    its own (#458)."""
+    stem = os.path.splitext(relpath.rpartition("/")[2])[0].lower()
+    return any(fnmatch.fnmatchcase(stem, pattern) for pattern in FOLDER_IMAGE_NAMES)
 
 
 def own_details(read: Callable[[str], dict[str, Any]], path: str) -> dict[str, Any]:

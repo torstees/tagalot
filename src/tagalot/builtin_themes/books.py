@@ -51,6 +51,7 @@ Universe ⊃ Book, Comic              Collection ⊃ Book, Comic
 """
 
 import difflib
+import fnmatch
 import logging
 import os
 import posixpath
@@ -62,6 +63,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from tagalot.themes.api import (
+    FOLDER_IMAGE_NAMES,
     KIND_EXTENSIONS,
     MOBI_EXTENSIONS,
     DetailView,
@@ -317,8 +319,8 @@ class Folder(Entity):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 8  # 8: pictures; 7: ratings; 6: covers not found;
-    # 5: extra; 4: assets; 3: synopsis; 2: authors
+    id, name, version = "books", "Books", 9  # 9: folder images; 8: pictures; 7: ratings;
+    # 6: covers not found; 5: extra; 4: assets; 3: synopsis; 2: authors
     # 19: own folder galleries; 18: folders; 17: pictures; 16: ratings;
     # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
@@ -523,8 +525,8 @@ class BooksTheme(Theme):
                     found[resource.id] = comic_work(resource.relpath, info)
                 elif resource.ext in PICTURE_EXTENSIONS:
                     found[resource.id] = (
-                        {}  # a copy of its book's cover
-                        if calibre_cover(resource, folders)
+                        {}  # a copy of its book's cover, or its folder's look (#458)
+                        if calibre_cover(resource, folders) or is_folder_image(resource.relpath)
                         else {"own": own_details(read_picture, resource.path)}
                     )
                     continue
@@ -1125,6 +1127,14 @@ def listing(path: str, folders: dict[str, list[str]]) -> list[str]:
         except OSError:
             folders[path] = []
     return folders[path]
+
+
+def is_folder_image(relpath: str) -> bool:
+    """A picture named as a folder's own (``folder.jpg``, ``cover.png``: Explorer's and
+    music players' names, :data:`FOLDER_IMAGE_NAMES`): its folder's look, never a Picture of
+    its own (#458)."""
+    stem = os.path.splitext(relpath.rpartition("/")[2])[0].lower()
+    return any(fnmatch.fnmatchcase(stem, pattern) for pattern in FOLDER_IMAGE_NAMES)
 
 
 def calibre_cover(resource: ResourceInfo, folders: dict[str, list[str]]) -> bool:

@@ -651,9 +651,11 @@ MOVIE_PHOTOS = {
     "Home Movies/Alice/IMG_2057.jpg": ((120, 170, 210), "Alice at the pool", "2019:06:01 15:02:47"),
     "Home Movies/Alice/3rd Birthday/cake.jpg": ((230, 120, 150), "The cake", "2021:03:14 16:20:00"),
     "Home Movies/Alice/3rd Birthday/presents.jpg": ((150, 200, 110), "Presents", None),
+    "Home Movies/Alice/folder.jpg": ((240, 200, 90), "Alice", None),
 }
 """Family pictures beside home videos (#446): Pictures of their own, dated by their EXIF
-(path -> color, text, date taken). The birthday's are its screenshots too."""
+(path -> color, text, date taken). The birthday's are its screenshots too. ``folder.jpg``
+is Alice's folder's look, not a Picture (#458)."""
 
 MOVIE_PHOTO_ZIPS = {
     "Home Movies/Alice/Old scans.zip": {

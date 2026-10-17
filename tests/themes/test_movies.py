@@ -526,7 +526,7 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 5  # 2: video details; 3: genres; 4: notes; 5: pictures
+    assert MoviesTheme.version == 6  # 2: video details; 3: genres; 4: notes; 5: pictures
 
 
 def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:
