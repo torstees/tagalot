@@ -10,6 +10,9 @@ nothing here writes under a root (AGENTS.md rule 1).
 - Per-user overrides (``[[handlers]]`` in ``settings.toml``) are command templates:
   :func:`expand_command` turns one into a command for a file, and :func:`program_command`
   writes one for a program the user picked.
+- The user's file manager (``[file_manager] command``, #457) is a template too:
+  :func:`file_manager_command` writes it for a program the user picked, and
+  :func:`file_manager_name` names it for menus.
 """
 
 import ntpath
@@ -187,6 +190,35 @@ def program_command(program: str, platform: str = sys.platform) -> str:
     return f'"{program}" "{{path}}"'
 
 
+KNOWN_FILE_MANAGERS: dict[str, tuple[str, str, str]] = {
+    "dopus": ("Directory Opus", "dopusrt.exe", '/cmd Go "{path}"'),
+    "dopusrt": ("Directory Opus", "dopusrt.exe", '/cmd Go "{path}"'),
+}
+"""File managers that need more than a path (program stem, case aside -> their name, the
+program to run beside the one picked, and its arguments): Directory Opus is told where to
+go through ``dopusrt.exe`` (#457)."""
+
+
+def file_manager_command(program: str, platform: str = sys.platform) -> str:
+    """The template that shows files in ``program``, a file manager the user picked: one it
+    knows how to tell where to go (:data:`KNOWN_FILE_MANAGERS`), else the program with the
+    path."""
+    known = KNOWN_FILE_MANAGERS.get(_stem(program))
+    if known is None or platform == "darwin":
+        return program_command(program, platform)
+    _, runner, args = known
+    beside = _folder(program)
+    join = ntpath.join if "\\" in program else posixpath.join
+    return f'"{join(beside, runner) if beside else runner}" {args}'
+
+
+def file_manager_name(template: str) -> str:
+    """The name of the file manager a template runs, for menus: ``Directory Opus``."""
+    words = split_command(template)
+    known = KNOWN_FILE_MANAGERS.get(_stem(words[0])) if words else None
+    return known[0] if known is not None else program_name(template)
+
+
 def program_name(template: str) -> str:
     """A short name for the program a template runs, for menus: ``Krita``."""
     words = split_command(template)
@@ -197,6 +229,11 @@ def program_name(template: str) -> str:
     name = _name(words[0].rstrip("/\\"))
     stem, ext = posixpath.splitext(name)
     return stem if ext.lower() in (".exe", ".app", ".bat", ".cmd") and stem else name
+
+
+def _stem(program: str) -> str:
+    """A program's name without folders or extension, case-folded: ``dopusrt``."""
+    return posixpath.splitext(_name(program.rstrip("/\\")))[0].casefold()
 
 
 def _name(path: str) -> str:

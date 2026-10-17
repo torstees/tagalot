@@ -68,6 +68,9 @@ class Settings:
     note_ignore_keys: list[str] = field(default_factory=list)
     """``[notes] ignore_keys``: front-matter keys notes never make Extra fields, in every
     keep (DESIGN.md §9 *Notes*)."""
+    file_manager: str = ""
+    """``[file_manager] command``: the command template Show in file manager runs (#457,
+    DESIGN.md §11), with ``{path}``, ``{dir}``, ``{name}``; ``""``, the system's."""
 
     def add_recent_keep(self, keep_dir: Path) -> None:
         """Move ``keep_dir`` to the front of the recent list, dropping duplicates and extras."""
@@ -188,6 +191,8 @@ def dump_settings(settings: Settings) -> str:
         lines.append(f"command = {toml_str(handler.command)}")
     if settings.note_ignore_keys:
         lines += ["", "[notes]", f"ignore_keys = {toml_list(settings.note_ignore_keys)}"]
+    if settings.file_manager:
+        lines += ["", "[file_manager]", f"command = {toml_str(settings.file_manager)}"]
     return "\n".join(lines) + "\n"
 
 
@@ -227,6 +232,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         "root_overrides",
         "handlers",
         "notes",
+        "file_manager",
     }
     for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
@@ -293,6 +299,16 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         logger.warning("%s: ignoring unknown key %r in [notes]", path, key)
     keys = _string_list(path, notes, "ignore_keys")
     settings.note_ignore_keys = [k.strip() for k in keys if k.strip()]
+
+    manager = data.get("file_manager", {})
+    command = manager.get("command", "") if isinstance(manager, dict) else None
+    if isinstance(manager, dict):
+        for key in sorted(set(manager) - {"command"}):
+            logger.warning("%s: ignoring unknown key %r in [file_manager]", path, key)
+    if isinstance(command, str):
+        settings.file_manager = command.strip()
+    else:
+        logger.warning("%s: [file_manager] command must be a string; ignoring it", path)
     return settings
 
 

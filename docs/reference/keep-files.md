@@ -79,6 +79,7 @@ It holds:
 - **recent keeps** (the launcher's list, at most 10);
 - **On this computer** paths: `[root_overrides.<keep id>]`, a folder id → this computer's path;
 - **programs for opening files** (Open with → Always open .ext files with…): `[[handlers]]` tables with `ext`, an optional `role`, and a `command` such as `"C:\Tools\viewer.exe" "{path}"` (placeholders `{path}`, `{dir}`, and `{name}`);
+- **your file manager** (File manager → Use a different file manager…): `[file_manager]` with a `command` template, the same placeholders; for Directory Opus, `"C:\Program Files\GPSoftware\Directory Opus\dopusrt.exe" /cmd Go "{path}"`. Without it, Show in file manager uses your computer's;
 - **extra themes folders** (`theme_dirs`);
 - the folder last chosen in a folder picker.
 

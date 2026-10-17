@@ -63,6 +63,7 @@ Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** can
 
 - **Open file** opens an item's file with your computer's program for it (an album's folder opens as a folder).
 - **Show in file manager** opens its folder with the file selected, and the status bar says which file. If the file isn't where Tagalot expects it, the status bar says so instead: scan again, or check the watched folder's path in Keep configuration.
+- **File manager ▸ Use a different file manager…** picks the program Show in … uses from now on, in every keep, such as Directory Opus when it isn't your computer's default. The menu then says **Show in Directory Opus**. **Use the system file manager** goes back. It's saved in your [settings](../reference/keep-files.md#settingstoml), where you can change its command, for example to `{dir}` if your file manager can't select a file.
 - **Open with ▸ Choose a program…** picks a program just this once; **Always open .ext files with…** makes it the program Tagalot uses for that kind of file (saved in your [settings](../reference/keep-files.md#settingstoml); **Stop using…** undoes that).
 
 If the file can't be opened, the status bar says why: it's missing, its folder is offline, or the folder has no path on this computer.
