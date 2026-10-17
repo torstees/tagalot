@@ -626,8 +626,19 @@ MOVIE_PICTURES = {
         "The Fellowship",
     ),
     "The Lord of the Rings/The Two Towers (2002)/poster.jpg": ((60, 60, 60), "Two Towers"),
+    # In a see-through folder (#459): The Return of the King's poster, and the birthday's.
+    "The Lord of the Rings/The Return of the King (2003)/! Posters/poster.jpg": (
+        (90, 70, 30),
+        "The Return of the King",
+    ),
+    "Home Movies/Alice/3rd Birthday/! Posters/folder.jpg": ((230, 160, 190), "3rd Birthday"),
 }
-"""Posters and screenshots for the movies demo (The Matrix, Alien, and the rest have none)."""
+"""Posters and screenshots for the movies demo (The Matrix, Alien, and the rest have none).
+``! Posters`` is a see-through folder (:data:`MOVIE_SEE_THROUGH`): its pictures count as
+their parent folder's."""
+
+MOVIE_SEE_THROUGH = ["! Posters"]
+"""The movies demo's see-through folders (#459): never items, their files their parent's."""
 
 MOVIE_GALLERIES = {
     "The.Matrix.1999.1080p/Screenshots/rooftop.jpg": ((30, 70, 40), "The Matrix: rooftop"),
@@ -1509,6 +1520,7 @@ def make_movies_demo(scratch: Path = SCRATCH, *, reset: bool = False, notes: boo
     with KeepSession.open(keep_dir, Settings()) as session:
         if notes:
             session.set_notes_folder("movies", "Notes")
+        session.set_see_through(MOVIE_SEE_THROUGH)
         session.scan_all()
         _tag(session, MOVIE_TAGS, {}, {})
     return keep_dir

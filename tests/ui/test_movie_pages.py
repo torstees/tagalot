@@ -6,14 +6,18 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtWidgets import QListWidget, QPushButton
+from PySide6.QtCore import QEvent, Qt, QThreadPool
+from PySide6.QtGui import QFocusEvent
+from PySide6.QtWidgets import QApplication, QListWidget, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
+from tagalot.builtin_themes import movies
+from tagalot.core.keep import load_keep_config
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.tags import add_tag, tag_entities
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
@@ -259,3 +263,44 @@ def test_a_person_holds_the_folders_their_notes_name(
         "party",
         "presents.jpg",
     ]
+
+
+def test_see_through_folders_in_keep_configuration(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = window.configure_keep()
+    assert config.see_through.toPlainText() == "! Posters"  # the demo's (#459)
+    folder = session.theme.type_id_of(movies.Folder)
+    with session.reader.connect() as conn:
+        birthday = conn.scalar(
+            select(Entity.id).where(Entity.type == folder, Entity.title == "Alice's 3rd birthday")
+        )
+    assert birthday is not None
+    tag = session.writer.run(lambda conn: add_tag(conn, None, "Party"))
+    session.writer.run(lambda conn: tag_entities(conn, [birthday], [tag]))
+
+    asked: list[str] = []
+
+    def answer(button: QMessageBox.StandardButton) -> object:
+        def question(parent: object, title: str, text: str, *args: object) -> object:
+            asked.append(text)
+            return button
+
+        return question
+
+    # A tagged folder would go: asked first, and Cancel keeps the names as they were.
+    monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.Cancel))
+    config.see_through.setPlainText("! Posters\n3rd Birthday")
+    QApplication.sendEvent(config.see_through, QFocusEvent(QEvent.Type.FocusOut))
+    qtbot.waitUntil(lambda: bool(asked), timeout=5000)
+    assert asked[0].startswith("1 folder you tagged is")
+    assert config.see_through.toPlainText() == "! Posters"
+    assert load_keep_config(session.keep.toml_path).see_through == ["! Posters"]
+
+    monkeypatch.setattr(QMessageBox, "question", answer(QMessageBox.StandardButton.Yes))
+    config.see_through.setPlainText("! Posters\n3rd Birthday\n")
+    with qtbot.waitSignal(config.changed, timeout=5000) as saved:
+        QApplication.sendEvent(config.see_through, QFocusEvent(QEvent.Type.FocusOut))
+    assert "next scan" in saved.args[0]
+    assert load_keep_config(session.keep.toml_path).see_through == ["! Posters", "3rd Birthday"]
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)

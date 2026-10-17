@@ -35,6 +35,16 @@ Each Folder holds what's nearest under it, so `Home Movies` holds `Alice`, which
 
 A Folder takes the [note](../guide/notes.md) inside it (`Alice/Alice.md`, or `index.md` or `README.md`), as an album or collection does: its `title` renames the Folder, its `tags` tag it (and so everything in it), its other keys become Extra fields, and its text shows on the Folder's page. In a movie's own folder, the movie reads the same note, so `3rd Birthday/3rd Birthday.md` describes both the Folder and the movie (the movie keeps its own title).
 
+### See-through folders
+
+If your folders each have a folder just for Explorer's sake, such as `! Posters` with a movie's posters and notes, list its name under **See-through folders** in the keep's settings ([Keep tab](../guide/keep-configuration.md#keep)). Such a folder is never a Folder, and its files count as its parent's:
+
+- `Heat (1995)/! Posters/poster.jpg` is Heat's poster, and other pictures there are its screenshots. A `movie.nfo` there is Heat's too.
+- `3rd Birthday/! Posters/folder.jpg` is the `3rd Birthday` Folder's thumbnail, and its other pictures are among that Folder's contents.
+- A note there named for the parent (`3rd Birthday/! Posters/3rd Birthday.md`) is the parent's note.
+
+In the movies demo, The Return of the King's poster is in its `! Posters` folder.
+
 ## People
 
 Actors are **People** now, so the family in your home videos can be people too.

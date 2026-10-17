@@ -112,7 +112,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 19             # the theme API it needs
+    api_version = 20             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -135,6 +135,8 @@ class MusicTheme(Theme):
 ## Reading files: `prepare` and `ingest`
 
 A scan hands your theme **batches** of new and changed files and folders, as `ResourceInfo` values: `id`, `root_id`, `relpath` (POSIX, relative to the root), `kind` (`"file"` or `"dir"`), `ext`, `size`, `mtime_ns`, and `path` (this computer's path, for reading).
+
+Judge a file by `resource.folder`, the folder it **counts as in** (`api_version = 20`): its own, or, when it is inside one of the keep's see-through folders (a `! Posters` folder the user listed), the nearest folder above that isn't one. `resource.folder_path` is this computer's path to it. When you look around on disk, `files_in(resource.folder_path, resource.see_through)` lists that folder's files with those in its see-through folders, so `Heat (1995)/! Posters/poster.jpg` is judged beside `Heat (1995)/Heat.mkv`. See-through folders themselves never reach your theme.
 
 - **`prepare(batch)`** runs first, in a worker, with **no database**. Read the files here: tags, image sizes, the first line of a text file. Return `{resource id: whatever ingest needs}`. Catch a bad file and return an error marker for it rather than raising; one bad file must never stop a scan. Several `prepare` calls run at once on different threads, each with a few resources, so keep anything it remembers in local variables, not on `self` or in module globals.
 - **`ingest(batch, ctx)`** then runs in the database writer, inside a transaction: turn files into items, links, containment, and fields through `ctx`. Keep it quick, and don't read files here.

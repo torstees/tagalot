@@ -73,6 +73,7 @@ def reextract(
     theme_options: dict[str, Any] | None = None,
     markdown_assets: str = "",
     when: datetime | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> ReextractReport:
     """Read the files of ``entity_ids`` again, now. Runs in a worker (it reads files)."""
     ids = sorted(set(entity_ids))
@@ -116,6 +117,7 @@ def reextract(
             theme_options=theme_options,
             markdown_assets=markdown_assets,
             when=when,
+            see_through=see_through,
         )
         report.errors.extend(result.ingest_errors)
     with reader.connect() as conn:

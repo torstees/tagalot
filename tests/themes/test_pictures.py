@@ -130,12 +130,14 @@ class Env:
     schema: ThemeSchema
     files: Path
     theme: type[Theme]
+    see_through: frozenset[str] = frozenset()
+    """The keep's see-through folder names, case-folded (#459)."""
 
     def scan(self) -> None:
         root = RootConfig("r", "Files", str(self.files))
         scan_root(
             self.writer, self.reader, root, root.path, when=T0, theme=self.theme,
-            schema=self.schema,
+            schema=self.schema, see_through=self.see_through,
         )  # fmt: skip
 
     def titles(self, kind: type) -> list[str]:

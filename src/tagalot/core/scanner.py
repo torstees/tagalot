@@ -14,6 +14,7 @@ from sqlalchemy import Connection, bindparam, delete, exists, insert, select, up
 
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
+from tagalot.core.see_through import logical
 from tagalot.themes.api import KIND_EXTENSIONS, Kind
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ def walk_root(
     dirs: DirRule = False,
     on_error: ErrorHandler | None = None,
     notes: str | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> Iterator[WalkEntry]:
     """Yield the files (and optionally directories) under ``root_path``.
 
@@ -103,6 +105,8 @@ def walk_root(
       ``extensions`` say, when its folder is one ``dirs`` lists (:func:`is_folder_note`).
     - ``notes``: the notes folder in this root (§9 *The notes folder*; ``""`` is the whole
       root): only its Markdown files are listed, whatever ``extensions`` and ``dirs`` say.
+    - ``see_through``: see-through folder names, case-folded (#459): a note in one is its
+      parent folder's.
     - Symlinked folders and junctions are not followed; symlinked files are included.
     - Unreadable folders and files go to ``on_error`` and the walk continues.
 
@@ -146,7 +150,7 @@ def walk_root(
                     elif (
                         wanted is not None
                         and ext not in wanted
-                        and not is_folder_note(relpath, dirs)
+                        and not is_folder_note(relpath, dirs, see_through)
                     ):
                         continue
                     st = entry.stat()
@@ -180,8 +184,10 @@ def in_notes(relpath: str, notes: str | None) -> bool:
     return path == folder or path.startswith(folder + "/")
 
 
-def is_folder_note(relpath: str, dirs: DirRule) -> bool:
-    """Whether a file is named as the note of a folder the walk lists (#379)."""
+def is_folder_note(relpath: str, dirs: DirRule, see_through: frozenset[str] = frozenset()) -> bool:
+    """Whether a file is named as the note of a folder the walk lists (#379): in a
+    see-through folder (#459), of the folder it counts as in."""
+    relpath = logical(relpath, see_through)
     folder = relpath.rpartition("/")[0]
     if not folder or note_rank(relpath) is None:
         return False
@@ -260,6 +266,7 @@ def walk_scope(
     extensions: Collection[str] | None = None,
     dirs: DirRule = False,
     notes: str | None = None,
+    see_through: frozenset[str] = frozenset(),
 ) -> InScope:
     """Whether :func:`walk_root` with these settings would list a path, if it's there: not
     excluded (itself or a folder above it, since excluded folders are pruned), a wanted
@@ -276,7 +283,7 @@ def walk_scope(
             return kind is ResourceKind.FILE and ext.lower() in NOTES_FOLDER_EXTENSIONS
         if kind is ResourceKind.DIR:
             return dirs is True or (callable(dirs) and bool(dirs(relpath)))
-        return wanted is None or ext.lower() in wanted or is_folder_note(relpath, dirs)
+        return wanted is None or ext.lower() in wanted or is_folder_note(relpath, dirs, see_through)
 
     return in_scope
 
