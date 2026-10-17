@@ -50,10 +50,10 @@ In the movies demo, The Return of the King's poster is in its `! Posters` folder
 Actors are **People** now, so the family in your home videos can be people too.
 
 - **Named by a folder's note:** `Home Movies/Alice/Alice.md` with `people: [Alice]` (several: `people: [Alice, Grandma]`) makes the person Alice, or finds her (by name, as an `.nfo`'s cast does). Alice then holds that Folder. Her page lists everything under it: videos, pictures, archives, and folders. **Within** Alice searches it, and a tag on Alice counts for all of it in the Movies and Pictures views. A folder can be held by several people, and a person dropped from the note lets go of it at the next scan.
-- **In movies:** a movie's page has **Cast**, a person's **Movies**: both with **Add…** (search for a person or movie, or make a new person) and **Remove from …**.
-- **In pictures:** a picture's page has **People**, a person's **Pictures**, with **Add…** and **Remove from …** the same way.
+- **In movies:** a movie's page has **Cast**, a person's **Movie credits**: both with **Add…** (search for a person or movie, or make a new person) and **Remove from …**.
+- **In pictures:** a picture's page has **People**, a person's **Picture credits**, with **Add…** and **Remove from …** the same way.
 
-What you add or remove by hand stays through later scans, whatever the `.nfo` or a note says.
+What you add or remove by hand stays through later scans, whatever the `.nfo` or a note says. A person's page keeps them apart: **Movie credits** and **Picture credits** are what you or the `.nfo` linked them to, and the **Movies**, **Pictures**, and **Folders** tabs are what's under the folders they hold.
 
 ## Searches
 

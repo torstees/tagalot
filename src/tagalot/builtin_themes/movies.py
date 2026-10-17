@@ -466,9 +466,9 @@ class MoviesTheme(Theme):
         contains(Folder, Archive),
     ]
     relationships = [
-        related("cast", Person, Movie, label="Movies", reverse_label="Cast"),
+        related("cast", Person, Movie, label="Movie credits", reverse_label="Cast"),
         # Who is in a picture, by hand (#449).
-        related("pictured", Person, Picture, label="Pictures", reverse_label="People"),
+        related("pictured", Person, Picture, label="Picture credits", reverse_label="People"),
     ]
     views = [
         # Tags on a collection count for its movies: tag a box set "Watched" and Movies

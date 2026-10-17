@@ -101,7 +101,7 @@ def test_from_the_actors_side(env: Env) -> None:
     _nfo_scan(env, 0)
     pacino, alien = _id(env, "Al Pacino"), _id(env, "Alien")
     change = _run(env, lambda c: add_related(c, env.schema, "cast", pacino, alien))
-    assert change.label == "Add 'Alien' to Al Pacino's movies"
+    assert change.label == "Add 'Alien' to Al Pacino's movie credits"
     assert _cast(env, "Alien") == ["Al Pacino"]
 
 

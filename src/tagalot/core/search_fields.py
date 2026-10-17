@@ -65,6 +65,18 @@ def contents_order(
     return tuple(k for k in keys if k.field in fields) or (SortKey("title"),), fields
 
 
+def type_contents_order(schema: ThemeSchema, container: str, type_id: str) -> tuple[SortKey, ...]:
+    """How a container of type ``container`` orders its items of one type (a contents tab,
+    #456): its ``contents_sort`` keys that type has a field for, else by title."""
+    sort, _ = contents_order(schema, container)
+    try:
+        columns = schema.by_type_id(type_id).table.c
+    except KeyError:
+        return (SortKey("title"),)
+    kept = tuple(k for k in sort if k.field in CORE_FIELDS or k.field in columns)
+    return kept or (SortKey("title"),)
+
+
 def scoped_tables(schema: ThemeSchema, types: Sequence[str]) -> list[EntityTable]:
     """The entity tables a search covers: those of ``types``, or every type if it is empty.
 

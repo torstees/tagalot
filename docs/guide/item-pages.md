@@ -13,7 +13,8 @@ Double-click an item (or press Enter) for its page; for kinds that open their fi
 - **Files:** each file it links, with its folder and size, and whether it's **offline** or **missing**. Right-click a file for Open file, Show in file manager, and Open with.
 - **From the file:** the keywords its files gave and what became of each (see [File keywords](file-keywords.md)).
 - **Related items:** a movie's cast, a book's writers, a paper's authors in order, what a paper cites: each a small search of its own, with **Add…** to add one by hand and **Remove from …** on its items' menus. What you add or remove by hand stays that way through later scans.
-- **Contents:** for an item that holds others (an artist, an album, a series), a search of what it holds, with its own filter bar.
+- **Contents:** for an item that holds others (an artist, an album, a series), a search of what it holds, with its own filter bar. An item that can hold several kinds of thing has a tab for each, with how many it holds: an artist's page has **Albums (2)** and **Songs (21)**, the songs including those in its albums. Kinds it holds none of have no tab. **Show in search** lists all of it at once in Search all.
+- **Tabs:** related items, contents, and galleries share the area below the sections as tabs, galleries last (**Scans (3)**). Tagging applies to what you've selected in the tab shown. The next page of the same kind opens on the tab you used last.
 - **More ▾:** Open file, Show in file manager, Open with, Open note (when it has one), Save as note… (when the [notes folder](notes.md#save-as-note) takes new notes), Re-read from file, Look up online and Write to file… (when the keep offers them), and the theme's commands also appear as buttons.
 
 Tagging on a page applies to the page's item, or to the items selected in its contents.

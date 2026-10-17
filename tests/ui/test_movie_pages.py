@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent, Qt, QThreadPool
 from PySide6.QtGui import QFocusEvent
-from PySide6.QtWidgets import QApplication, QListWidget, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QListWidget, QMessageBox, QPushButton, QTabWidget
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
@@ -200,7 +200,8 @@ def test_a_persons_page_lists_their_movies(
     page = _page_of(qtbot, window, session, "Leonardo DiCaprio")
     assert page.detail is not None
     related = [s for s in page.detail.sections if s.kind == "related"]
-    assert [s.title for s in related] == ["Movies", "Pictures"]  # pictures by hand (#449)
+    # By hand (#449); "credits", apart from the Movies and Pictures under their folders (#456).
+    assert [s.title for s in related] == ["Movie credits", "Picture credits"]
     section = related[0]
     assert [e.title for e in section.entities] == ["Inception"]
     assert page.findChild(QPushButton, "add_cast") is not None
@@ -251,18 +252,20 @@ def test_a_person_holds_the_folders_their_notes_name(
     qtbot: QtBot, window: MainWindow, session: KeepSession
 ) -> None:
     page = _page_of(qtbot, window, session, "Grandma")
-    contents = page.contents
-    assert contents is not None
-    # Everything under the folder her note names is within her (#449).
-    qtbot.waitUntil(lambda: contents.status.text() == "4 items", timeout=5000)
-    qtbot.waitUntil(lambda: contents.model.hit(3) is not None, timeout=5000)
-    hits = [contents.model.hit(r) for r in range(4)]
-    assert sorted(h.title for h in hits if h) == [
-        "Alice's 3rd birthday",
-        "cake.jpg",
-        "party",
-        "presents.jpg",
-    ]
+    # Everything under the folder her note names is within her (#449), a tab of each type
+    # with any, after those she was added to by hand (#456).
+    tabs = page.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+
+    def shown() -> list[str]:
+        return [tabs.tabText(i) for i in range(tabs.count()) if tabs.isTabVisible(i)]
+
+    expected = ["Movie credits", "Picture credits", "Movies (1)", "Pictures (2)", "Folders (1)"]
+    qtbot.waitUntil(lambda: shown() == expected, timeout=5000)
+    pictures = page.contents_pages[session.theme.type_id_of(movies.Picture)]
+    qtbot.waitUntil(lambda: pictures.model.hit(1) is not None, timeout=5000)
+    hits = [pictures.model.hit(r) for r in range(2)]
+    assert sorted(h.title for h in hits if h) == ["cake.jpg", "presents.jpg"]
 
 
 def test_see_through_folders_in_keep_configuration(

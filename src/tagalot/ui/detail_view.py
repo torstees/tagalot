@@ -17,7 +17,10 @@ Contents                 5 items
 
 A header with the thumbnail and title, then the theme's sections top to bottom in a scroll
 area. A container's contents are a search of their own below it (``within`` the entity),
-with a filter bar and the usual layouts; a splitter divides the page between them.
+with a filter bar and the usual layouts; a splitter divides the page between them. Below
+the sections, several searches are tabs: the contents split by type (an artist's Albums and
+Songs, each counted, empty ones hidden, #456), related sections, then galleries; the tab last
+used on a type of page is chosen again.
 Everything is read in a worker (:func:`~tagalot.core.detail.load_detail`); related entities
 are links that open their own pages.
 """
@@ -61,10 +64,11 @@ from tagalot.core.models import FieldSource, ResourceStatus
 from tagalot.core.note_markdown import find_links, read_pictures, renderable
 from tagalot.core.roots import local_path
 from tagalot.core.search import POSITION
-from tagalot.core.search_fields import contained_types, contents_order
+from tagalot.core.search_fields import contained_types, contents_order, type_contents_order
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import entity_tags
+from tagalot.themes.api import entity_plural
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
@@ -228,14 +232,26 @@ class DetailPage(QWidget):
         merge brings its page back to it."""
         self.thumbnails = thumbnails
         self._make_contents = make_contents
-        self.contents: SearchPage | None = None
-        """The search of a container's contents, once the page knows it is one."""
+        self.contents_pages: dict[str, SearchPage] = {}
+        """The searches of a container's contents, once the page knows it is one: one for
+        all of it (``""``), or one per contained type (#456), by type id."""
         self.related: dict[str, SearchPage] = {}
         """Each related section's search, by relationship name (#125)."""
         self._bottom: QWidget | None = None
         """What sits below the sections: one embedded search, or tabs of several."""
         self._tabs: QTabWidget | None = None
         self._bottom_label = ""
+        self._bottom_key = ""
+        self._tab_keys: dict[int, str] = {}
+        """Each tab's widget (by ``id``) -> what it is, remembered as the last tab used:
+        ``contents:<type>``, ``related:<name>``, ``gallery:<title>``."""
+        self._gallery_tabs: list[QWidget] = []
+        """The galleries shown as tabs (made again on each refresh)."""
+        self._counts: dict[str, int] = {}
+        """Each contents tab's count, by type id, once counted."""
+        self.recall_tab: Callable[[str], str | None] = lambda type_id: None
+        """The tab last used on a page of this type (the window remembers it)."""
+        self.remember_tab: Callable[[str, str], None] = lambda type_id, key: None
         self._pool = pool
         self._generation = 0
         self.detail: EntityDetail | None = None
@@ -431,10 +447,19 @@ class DetailPage(QWidget):
             self._show_action_buttons(detail)
             self._show_breadcrumbs(detail)
             extras = self._extra_widget(detail)
+            # With searches below the sections, galleries are tabs there too, last (#456).
+            tabbed = self._make_contents is not None and any(
+                s.kind == "contents" or (s.kind == "related" and s.relationship and s.other_type)
+                for s in detail.sections
+            )
+            galleries: list[DetailSection] = []
             for section in detail.sections:
                 if section.kind == "contents" and self._show_contents(detail):
                     continue
                 if section.kind == "related" and self._show_related(section):
+                    continue
+                if section.kind == "gallery" and tabbed:
+                    galleries.append(section)
                     continue
                 widget = self._section_widget(section)
                 if widget is not None:
@@ -447,33 +472,81 @@ class DetailPage(QWidget):
                 self._sections.addWidget(
                     self._titled("From the file", self._keywords(detail), "section_keywords")
                 )
+            self._show_gallery_tabs(galleries)
+            self._choose_tab()
             self._show_thumbnail()
         self.loaded.emit()
 
+    @property
+    def contents(self) -> SearchPage | None:
+        """The contents search shown: the current tab's, else the first."""
+        shown = self._tabs.currentWidget() if self._tabs is not None else self._bottom
+        pages = list(self.contents_pages.values())
+        if isinstance(shown, SearchPage) and shown in pages:
+            return shown
+        return pages[0] if pages else None
+
     def _show_contents(self, detail: EntityDetail) -> bool:
-        """Put the search of the entity's contents below the sections (once). False when
-        the window gave no way to make one: then the section shows a count."""
+        """Put the search of the entity's contents below the sections (once): one search,
+        or, when it can hold several types, a tab of each (#456). False when the window gave
+        no way to make one: then the section shows a count."""
         if self._make_contents is None:
             return False
-        if self.contents is None:
-            types = tuple(contained_types(self.session.schema, detail.type))
-            sort, _ = contents_order(self.session.schema, detail.type)
-            spec = SearchSpec(types=types, within=self.requested_id, sort=sort)
-            self.contents = self._make_contents(f"contents:{detail.type}", spec, "Contents")
-            self.contents.selection_changed.connect(self.selection_changed)
-            in_search = QPushButton("Show in search")
-            in_search.setFlat(True)
-            in_search.setCursor(Qt.CursorShape.PointingHandCursor)
-            in_search.setToolTip("Open Search all with a Within chip for these contents")
-            in_search.clicked.connect(lambda: self.show_in_search.emit(self.entity_id))
-            self.contents.header_row.insertWidget(1, in_search)
-            if detail.type in hand_made_types(self.session.schema):  # a project (#329)
-                self.contents.add_menu_action(
-                    f"Remove from {detail.title}",
-                    lambda ids: self.uncontain_requested.emit(self.entity_id, ids),
-                )
-            self._embed(self.contents, "Contents")
+        if not self.contents_pages:
+            schema = self.session.schema
+            types = tuple(contained_types(schema, detail.type))
+            if not types:
+                sort, _ = contents_order(schema, detail.type)
+                spec = SearchSpec(types=types, within=self.requested_id, sort=sort)
+                page = self._make_contents(f"contents:{detail.type}", spec, "Contents")
+                self._contents_page(detail, page, "", "Contents")
+            for type_id in types:
+                sort = type_contents_order(schema, detail.type, type_id)
+                spec = SearchSpec(types=(type_id,), within=self.requested_id, sort=sort)
+                label = entity_plural(schema.by_type_id(type_id).entity)
+                # One type keeps the layout remembered for the container's contents.
+                key = f"contents:{detail.type}" + (f":{type_id}" if len(types) > 1 else "")
+                self._contents_page(detail, self._make_contents(key, spec, label), type_id, label)
         return True
+
+    def _contents_page(
+        self, detail: EntityDetail, page: SearchPage, type_id: str, label: str
+    ) -> None:
+        """Set up one contents search and put it below the sections."""
+        self.contents_pages[type_id] = page
+        page.selection_changed.connect(self.selection_changed)
+        in_search = QPushButton("Show in search")
+        in_search.setFlat(True)
+        in_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        in_search.setToolTip("Open Search all with a Within chip for these contents")
+        in_search.clicked.connect(lambda: self.show_in_search.emit(self.entity_id))
+        page.header_row.insertWidget(1, in_search)
+        if detail.type in hand_made_types(self.session.schema):  # a project (#329)
+            page.add_menu_action(
+                f"Remove from {detail.title}",
+                lambda ids: self.uncontain_requested.emit(self.entity_id, ids),
+            )
+        if type_id:  # a tab of one type: counted, and hidden while empty (#456)
+            page.counted.connect(lambda total: self._contents_counted(type_id, label, total))
+        self._embed(page, label, f"contents:{type_id or detail.type}")
+
+    def _contents_counted(self, type_id: str, label: str, total: int) -> None:
+        """Show a contents tab's count, and hide it while it has nothing (unless all of
+        them have nothing: then the first stays, saying so)."""
+        if self._tabs is None or not shiboken6.isValid(self._tabs):
+            return
+        self._counts[type_id] = total
+        page = self.contents_pages[type_id]
+        index = self._tabs.indexOf(page)
+        if index < 0:
+            return
+        self._tabs.setTabText(index, f"{label} ({total:,})" if total else label)
+        typed = [t for t in self.contents_pages if t]
+        empty = {t for t in typed if self._counts.get(t) == 0}
+        for t in typed:
+            shown = t not in empty or (len(empty) == len(typed) and t == typed[0])
+            self._tabs.setTabVisible(self._tabs.indexOf(self.contents_pages[t]), shown)
+        self._choose_tab()
 
     def _show_related(self, section: DetailSection) -> bool:
         """A related section (a movie's cast, an actor's filmography) as a search of its own
@@ -515,7 +588,7 @@ class DetailPage(QWidget):
                     lambda ids: self.move_requested.emit(self.entity_id, name, ids, 1),
                 )
             self.related[key] = page
-            self._embed(page, section.title)
+            self._embed(page, section.title, f"related:{key}")
         return True
 
     def _orders(self, name: str) -> bool:
@@ -526,10 +599,12 @@ class DetailPage(QWidget):
             return False
         return self.session.schema.theme.type_id_of(link.relationship.b) == self.detail.type
 
-    def _embed(self, page: SearchPage, label: str) -> None:
-        """Put an embedded search below the sections; with more than one, as tabs."""
+    def _embed(self, page: QWidget, label: str, key: str) -> None:
+        """Put an embedded search (or a gallery) below the sections; with more than one, as
+        tabs. ``key`` names it for remembering the last tab used."""
+        self._tab_keys[id(page)] = key
         if self._bottom is None:
-            self._bottom, self._bottom_label = page, label
+            self._bottom, self._bottom_label, self._bottom_key = page, label, key
             self.splitter.addWidget(page)
             self.splitter.setStretchFactor(0, 2)
             self.splitter.setStretchFactor(1, 3)
@@ -537,14 +612,84 @@ class DetailPage(QWidget):
         if self._tabs is None:
             first = self._bottom
             self._tabs = QTabWidget()
+            self._tabs.setObjectName("bottom_tabs")
             self.splitter.replaceWidget(self.splitter.indexOf(first), self._tabs)
             self._tabs.addTab(first, self._bottom_label)
             self._bottom = self._tabs
+            self._tabs.currentChanged.connect(self._tab_changed)
         self._tabs.addTab(page, label)
+
+    def _show_gallery_tabs(self, galleries: Sequence[DetailSection]) -> None:
+        """The galleries as the last tabs below the sections (#456), made again on each
+        refresh; the tab shown stays."""
+        current = self._current_key()
+        restoring = self._choosing
+        self._choosing = True  # not the user's choice: don't remember it
+        try:
+            for old in self._gallery_tabs:
+                if self._tabs is not None:
+                    self._tabs.removeTab(self._tabs.indexOf(old))
+                self._tab_keys.pop(id(old), None)
+                old.deleteLater()
+            self._gallery_tabs = []
+            for section in galleries:
+                area = QScrollArea()
+                area.setObjectName(f"gallery_tab_{section.title}")
+                area.setWidgetResizable(True)
+                area.setFrameShape(QFrame.Shape.NoFrame)
+                area.setWidget(self._gallery(section))
+                count = len(section.files)
+                label = f"{section.title} ({count:,})" if count else section.title
+                self._embed(area, label, f"gallery:{section.title}")
+                self._gallery_tabs.append(area)
+            if current is not None:
+                self._select_key(current)
+        finally:
+            self._choosing = restoring
+
+    def _current_key(self) -> str | None:
+        if self._tabs is None:
+            return None
+        current = self._tabs.currentWidget()
+        return self._tab_keys.get(id(current)) if current is not None else None
+
+    def _select_key(self, key: str) -> bool:
+        """Show the tab of ``key`` if it is there and visible."""
+        if self._tabs is None:
+            return False
+        for index in range(self._tabs.count()):
+            widget = self._tabs.widget(index)
+            if self._tab_keys.get(id(widget)) == key and self._tabs.isTabVisible(index):
+                self._tabs.setCurrentIndex(index)
+                return True
+        return False
+
+    _choosing = False
+
+    def _choose_tab(self) -> None:
+        """Show the tab last used on a page of this type, once it is there (#456)."""
+        if self._tabs is None or self.detail is None:
+            return
+        wanted = self.recall_tab(self.detail.type)
+        if wanted is None or wanted == self._current_key():
+            return
+        self._choosing = True
+        try:
+            self._select_key(wanted)
+        finally:
+            self._choosing = False
+
+    def _tab_changed(self, index: int) -> None:
+        if self._choosing or self.detail is None or self._tabs is None or index < 0:
+            return
+        key = self._current_key()
+        if key is not None and self._tabs.isVisible():
+            self.remember_tab(self.detail.type, key)
+        self.selection_changed.emit()
 
     def embedded(self) -> list[SearchPage]:
         """The searches below the sections: contents, then related sections."""
-        return ([self.contents] if self.contents is not None else []) + list(self.related.values())
+        return list(self.contents_pages.values()) + list(self.related.values())
 
     def _show_breadcrumbs(self, detail: EntityDetail) -> None:
         """The containers above the entity, each a link to its page."""
