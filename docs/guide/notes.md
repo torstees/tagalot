@@ -15,11 +15,26 @@ Aurora Studio/
 
 `index.md` and `README.md` work too (and `.markdown`), so a folder you already describe for another program needs nothing new. When a folder has more than one, the one named after the folder wins, then `index`, then `README`.
 
-This works for items that *are* folders: an artist in the [2D assets](../themes/assets2d.md) theme, an album in [Music](../themes/music.md), a collection in [Movies](../themes/movies.md). Notes are read at the next scan, and read again whenever you change them.
+This works for items that *are* folders: an artist in the [2D assets](../themes/assets2d.md) theme, an album in [Music](../themes/music.md), a collection or a Folder in [Movies](../themes/movies.md). Notes are read at the next scan, and read again whenever you change them.
+
+> **A note inside a folder always describes that folder's item, never anything else.** Its title, fields, and body belong to the folder's item, even when the note is about someone or something else. `tagalot-type` is ignored there; it is read only in the [notes folder](#the-notes-folder).
+>
+> For example, in the [Movies](../themes/movies.md#people) theme, `Home Movies/Alice/Alice.md` describes the **Folder** "Alice", not the person Alice. Its `people: [Alice]` *links* the person to the folder, and that's all it does for her. A `born:` date there becomes an Extra field of the folder. Alice's own details go in her note in the notes folder:
+>
+> ```
+> Home Movies/
+>   Alice/
+>     Alice.md            ← the Folder "Alice": people: [Alice], what the folder holds
+> Notes/
+>   People/
+>     Alice.md            ← the person Alice: born: 2022-01-30
+> ```
+>
+> This keeps a person apart from their folders, since a person can hold several (`Alice/`, `Holidays/Alice/`), each with its own note.
 
 ## The notes folder
 
-Items with no folder of their own (an actor, an author, a music artist) take their notes from the keep's **notes folder**. Choose it in [Keep configuration → Notes](keep-configuration.md#notes): a folder inside a watched folder, or one anywhere else, which Tagalot then watches for notes only. Tagalot never treats a folder as the notes folder because of its name.
+Items with no folder of their own (a person, an author, a music artist) take their notes from the keep's **notes folder**, and only from there: a note in a folder they're linked to describes that folder (above). Choose it in [Keep configuration → Notes](keep-configuration.md#notes): a folder inside a watched folder, or one anywhere else, which Tagalot then watches for notes only. Tagalot never treats a folder as the notes folder because of its name.
 
 ```
 Notes/
@@ -29,7 +44,7 @@ Notes/
 ```
 
 - **Which item:** the note's `title`, else its file name, or one of its `aliases`, matches the item's title. Case and accents don't matter (`Leon.md` finds "Léon").
-- **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the name of the folder it's in (`Actors/`), else any kind. The key wins, so a note in the wrong folder can say what it's for.
+- **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the name of the folder it's in (`Actors/`), else any kind. The key wins, so a note in the wrong folder can say what it's for. The key is read only in the notes folder: it can't turn a note inside an item's folder into a note for something else.
 - **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.
 
