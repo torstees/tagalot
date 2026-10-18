@@ -146,6 +146,15 @@ def _select(page: TagManagerPage, session: KeepSession, name: str) -> None:
     assert page.select_tag(tag_id)
 
 
+def _manager_icon(page: TagManagerPage, name: str) -> str | None:
+    """The icon of the tag called ``name`` in the tree the Tag manager shows."""
+    tree = page.model.tree
+    if tree is None:
+        return None
+    [tag_id] = [t for t in tree if tree.node(t).name == name]
+    return tree.node(tag_id).icon
+
+
 def _wait_status(qtbot: QtBot, window: MainWindow, expected: str) -> None:
     def check() -> None:
         assert window.statusBar().currentMessage() == expected
@@ -170,6 +179,9 @@ def test_setting_an_icon_in_the_tag_manager(qtbot: QtBot, session: KeepSession) 
     details.icon_edit.editingFinished.emit()  # as Enter, or leaving the box, does
     _wait_status(qtbot, window, f"Set the icon of 'People' to {FAMILY_ICON}.")
     qtbot.waitUntil(lambda: f"{FAMILY_ICON} People" in _panel_names(window), timeout=5000)
+    # The manager reloads its own tree in a worker, apart from the panel: wait for it too,
+    # or Family's note is worked out from the tree before the change (seen on Windows CI).
+    qtbot.waitUntil(lambda: _manager_icon(page, "People") == FAMILY_ICON, timeout=5000)
     _select(page, session, "Family")
     assert details.icon_note.text() == f"{FAMILY_ICON} from 'People'"
 
