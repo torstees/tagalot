@@ -39,6 +39,7 @@ from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.badges import BadgeDelegate
 from tagalot.ui.dnd import dragged_tags
+from tagalot.ui.hover import outline_hover
 from tagalot.ui.models.results import (
     BADGES,
     KEYWORDS,
@@ -161,6 +162,7 @@ class ResultTable(QTableView):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._header_menu)
         header.sectionResized.connect(self._section_resized)
+        self.hover = outline_hover(self)
 
     def selectionCommand(
         self, index: QModelIndex | QPersistentModelIndex, event: QEvent | None = None

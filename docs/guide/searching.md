@@ -2,6 +2,8 @@
 
 Every page of results (Search all, the theme's searches, an item's contents) has the same **filter bar** above it.
 
+In the results, the item under the mouse has a thin outline; selected items are filled. Only filled items are selected.
+
 ![Songs with the Calm tag whose names or fields contain "blue"](../images/screens/searching.png)
 
 ## Text
