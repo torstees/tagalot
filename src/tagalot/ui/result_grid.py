@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.ui.badges import badge_side, paint_badges
 from tagalot.ui.dnd import dragged_tags
+from tagalot.ui.hover import outline_hover
 from tagalot.ui.models.results import (
     BADGES,
     MATCH,
@@ -282,6 +283,7 @@ class ResultGrid(QListView):
         if loader is not None:
             loader.ready.connect(lambda _id: self._repaint.start())
         self._apply_size()
+        self.hover = outline_hover(self)
 
     def results_model(self) -> ResultsModel:
         model = self.model()
