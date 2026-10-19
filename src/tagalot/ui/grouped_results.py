@@ -14,7 +14,7 @@ that type's own columns, and "Show all N →" when there are more. :func:`load_g
 a worker; :class:`GroupedResults` shows its result.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, Qt, Signal
@@ -263,6 +263,7 @@ class GroupedResults(QScrollArea):
             section.hit_activated.connect(self.hit_activated)
             section.item_menu_requested.connect(self.item_menu_requested)
             section.table.selectionModel().selectionChanged.connect(self.selection_changed)
+            section.table.selection_replaced.connect(self._only_in(section))
             section.toggled.connect(self._remember_fold)
             self._layout.insertWidget(self._layout.count() - 1, section)
             self.sections.append(section)
@@ -274,6 +275,17 @@ class GroupedResults(QScrollArea):
                         | QItemSelectionModel.SelectionFlag.Rows,
                     )
         self.selection_changed.emit()
+
+    def _only_in(self, chosen: TypeSection) -> Callable[[], None]:
+        """Clear every section but ``chosen``: a plain click or key there replaces the whole
+        selection, as in any list; Ctrl and Shift add to it across sections (#469)."""
+
+        def clear_others() -> None:
+            for section in self.sections:
+                if section is not chosen:
+                    section.table.clearSelection()
+
+        return clear_others
 
     def set_hidden_columns(self, hidden: Iterable[str], shown: Iterable[str] = ()) -> None:
         """Hide ``hidden`` in every section, and show ``shown`` of the columns hidden by

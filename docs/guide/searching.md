@@ -49,7 +49,7 @@ The knight says what's in the way: your chips and text (remove a chip, try other
 
 ## Search all
 
-**Search all** lists every match grouped by kind, a section each (`▾ Albums (40)`), with the first few of each; **Show all** narrows to that kind with an **Only:** chip. When only one kind matches, its full list shows directly.
+**Search all** lists every match grouped by kind, a section each (`▾ Albums (40)`), with the first few of each; **Show all** narrows to that kind with an **Only:** chip. When only one kind matches, its full list shows directly. A click in any section selects just that item, as in any list; **Ctrl**+click or **Shift**+click adds to the selection, across sections too, so you can tag an artist and an album together.
 
 ## Saved searches
 
