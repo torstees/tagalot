@@ -17,7 +17,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import load_themes
 from tagalot.ui.filter_bar import ScopeChip
-from tagalot.ui.grouped_results import PREVIEW_ROWS, load_groups
+from tagalot.ui.grouped_results import PREVIEW_ROWS, TypeSection, load_groups
 from tagalot.ui.models.results import TagsValue
 from tagalot.ui.search_view import SearchPage
 
@@ -216,6 +216,46 @@ def test_the_selection_spans_every_section(page: SearchPage) -> None:
     page.selected_entity_ids(got.append)
     hits = [artists.model.hit(0), albums.model.hit(1)]
     assert got == [[h.id for h in hits if h is not None]]
+
+
+def _click(section: TypeSection, row: int, modifier: Qt.KeyboardModifier | None = None) -> None:
+    table = section.table
+    rect = table.visualRect(table.model().index(row, 0))
+    QTest.mouseClick(
+        table.viewport(),
+        Qt.MouseButton.LeftButton,
+        modifier or Qt.KeyboardModifier.NoModifier,
+        rect.center(),
+    )
+
+
+def _selected(page: SearchPage) -> list[str]:
+    got: list[list[int]] = []
+    page.selected_entity_ids(got.append)
+    titles = {
+        hit.id: hit.title
+        for section in page.groups.sections
+        for row in range(section.model.rowCount())
+        if (hit := section.model.hit(row)) is not None
+    }
+    return sorted(titles[i] for i in got[0])
+
+
+def test_a_click_in_one_section_replaces_the_selection_in_all(page: SearchPage) -> None:
+    """A plain click or key replaces the whole selection; Ctrl adds across sections (#469)."""
+    artists, albums, _ = page.groups.sections
+    _click(artists, 0)
+    artist, album, other = artists.model.hit(0), albums.model.hit(1), albums.model.hit(0)
+    assert artist is not None
+    assert album is not None
+    assert other is not None
+    assert _selected(page) == [artist.title]
+    _click(albums, 1)
+    assert _selected(page) == [album.title]
+    _click(artists, 0, Qt.KeyboardModifier.ControlModifier)
+    assert _selected(page) == sorted([artist.title, album.title])
+    QTest.keyClick(albums.table, Qt.Key.Key_Up)  # a key moves the selection the same way
+    assert _selected(page) == [other.title]
 
 
 def test_refreshed_sections_keep_their_selection(qtbot: QtBot, page: SearchPage) -> None:

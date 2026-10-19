@@ -2,7 +2,16 @@
 
 from collections.abc import Iterable, Sequence
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    QRect,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QDragEnterEvent,
     QDragLeaveEvent,
@@ -131,6 +140,9 @@ class ResultTable(QTableView):
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
     """A column's key and whether the user made it visible (from the header menu)."""
+    selection_replaced = Signal()
+    """A click or key is about to replace the selection (not Ctrl or Shift): Search all
+    clears its other sections then (#469)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -149,6 +161,14 @@ class ResultTable(QTableView):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._header_menu)
         header.sectionResized.connect(self._section_resized)
+
+    def selectionCommand(
+        self, index: QModelIndex | QPersistentModelIndex, event: QEvent | None = None
+    ) -> QItemSelectionModel.SelectionFlag:
+        command = super().selectionCommand(index, event)
+        if event is not None and command & QItemSelectionModel.SelectionFlag.Clear:
+            self.selection_replaced.emit()
+        return command
 
     # --- columns ---
 
