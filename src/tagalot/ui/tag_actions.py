@@ -132,13 +132,19 @@ class TagActions(QObject):
 
         self._run(run, lambda _: message)
 
-    def import_tags(self, text: str, name: str, delete_unused: bool) -> None:
-        """Import a YAML tag file as one undoable step (#395)."""
+    def import_tags(
+        self, text: str, name: str, delete_unused: bool, match_items: bool = False
+    ) -> None:
+        """Import a YAML tag file as one undoable step (#395), and the tags it gives items
+        (#396)."""
         tags = self.session.tags
 
         def work() -> ImportPlan | None:
-            plan = tags.import_tags(text, name, delete_unused=delete_unused)
-            return plan if plan.changes else None
+            plan = tags.import_tags(
+                text, name, delete_unused=delete_unused, match_items=match_items
+            )
+            changed = plan.changes or (match_items and plan.tags_removed)
+            return plan if changed else None
 
         self._run(work, lambda plan: plan_summary(plan) if plan else "No tags changed.")
 

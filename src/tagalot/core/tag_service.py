@@ -240,16 +240,19 @@ class TagService:
             lambda conn: set_tag_description(conn, tag_id, description),
         )
 
-    def import_tags(self, text: str, name: str, *, delete_unused: bool = False) -> ImportPlan:
+    def import_tags(
+        self, text: str, name: str, *, delete_unused: bool = False, match_items: bool = False
+    ) -> ImportPlan:
         """Import a YAML tag file (``name`` is how the step reads in Undo) as one undoable
         step; returns what it did (#395). Changing a tag's ``applies_to`` can take it off
-        items, so every tag's uses are in the step's scope."""
+        items, and the file can tag items (#396), so every tag's uses are in the step's
+        scope."""
         schema = self.schema
         assert schema is not None
         return self._record(
             lambda tree: f"Import tags from {name!r}",
             lambda tree: tree,
-            lambda conn: import_tags(conn, text, schema, delete_unused),
+            lambda conn: import_tags(conn, text, schema, delete_unused, match_items),
         )
 
     # --- tagging entities ---
@@ -500,7 +503,9 @@ class TagService:
             result = op(conn)
             apply_file_tags(conn)  # a rename, alias, or type change changes what matches
             tags_after, aliases_after = _tag_tables(conn)
-            links_after = _links(conn, tag_ids)
+            # Tags the operation made can have uses already (an import tagging items, #396).
+            made = frozenset(r[0] for r in tags_after) - frozenset(r[0] for r in tags_before)
+            links_after = _links(conn, tag_ids | made)
             removals_after = _removals(conn, tag_ids)
             change = TagChange(
                 label=label(tree),
