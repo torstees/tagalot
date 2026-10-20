@@ -114,12 +114,24 @@ def is_candidate_image(member: ArchiveMember) -> bool:
 
 
 def natural_key(text: str) -> tuple[tuple[int, int, str], ...]:
-    """Sort key putting ``page2`` before ``page10``; case-insensitive."""
-    return tuple(
-        (0, int(part), "") if part.isdigit() else (1, 0, part)
-        for part in re.split(r"(\d+)", text.lower())
-        if part
-    )
+    """Sort key putting ``page2`` before ``page10``, case-insensitive, and ordering as
+    Explorer does, in each folder of a path: a name starting with punctuation (``!cover``,
+    ``_art``) before numbers, and numbers before letters, so a picture named to come first
+    does (#499)."""
+    key: list[tuple[int, int, str]] = []
+    for level, name in enumerate(text.lower().split("/")):
+        if level:
+            key.append(_FOLDER_END)
+        for part in re.split(r"(\d+)", name):
+            if part.isdigit():
+                key.append((1, int(part), ""))
+            elif part:
+                key.append((2 if part[0].isalnum() else 0, 0, part))
+    return tuple(key)
+
+
+_FOLDER_END = (-1, 0, "")
+"""Between a path's folders: what follows is compared as a name of its own."""
 
 
 def image_members(members: Sequence[ArchiveMember]) -> list[ArchiveMember]:
