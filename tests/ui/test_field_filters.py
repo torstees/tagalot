@@ -176,6 +176,6 @@ def test_sizes_read_as_sizes_everywhere(
     assert _chip_texts(page) == ["Size \u2265 2.0 KB"]
 
     detail = _open(qtbot, window, session, "forest.png")
-    size = detail.findChild(EditableValue, "field_size")
+    size = detail.details.findChild(EditableValue, "field_size")
     assert isinstance(size, EditableValue)
     assert size.label.text().endswith(("KB", "MB"))
