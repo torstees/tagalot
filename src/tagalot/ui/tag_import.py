@@ -69,7 +69,14 @@ def items_text(plan: ImportPlan, match: bool) -> str:
     line += f": {_count(plan.tags_added, 'tag')} to add"
     if match:
         line += f", {_count(plan.tags_removed, 'tag')} to take off"
-    return line + "."
+    line += "."
+    if plan.items and not plan.tags_added and not (match and plan.tags_removed):
+        line += " The items found already have the file's tags"
+        if plan.tags_removed:  # only the checkbox would change something
+            line += f" (and {_count(plan.tags_removed, 'other')} of yours, which ticking "
+            line += "the last box takes off)"
+        line += "."
+    return line
 
 
 def report_text(plan: ImportPlan) -> str:
@@ -160,5 +167,7 @@ class TagImportDialog(QDialog):
         self.summary.setText(summary_text(plan) + (f"\n{items}" if items else ""))
         self.report.setPlainText(report_text(plan))
         removing = self.match_items() and plan.tags_removed > 0
-        self.import_button.setEnabled((plan.changes or removing) and not plan.unreadable)
+        able = (plan.changes or removing) and not plan.unreadable
+        self.import_button.setEnabled(able)
+        self.import_button.setToolTip("" if able else "Nothing in this file would change the keep")
         self.delete_box.setEnabled(not plan.unreadable)

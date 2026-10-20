@@ -15,10 +15,11 @@ from tagalot.core.models import Entity, EntityTag
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.tag_yaml import ImportPlan
 from tagalot.core.tags import PATH_SEPARATOR
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
-from tagalot.ui.tag_import import TagImportDialog
+from tagalot.ui.tag_import import TagImportDialog, items_text
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.workers import ScanController
 
@@ -259,3 +260,17 @@ def test_matching_the_file_takes_other_tags_off(
     _page(window).import_button.click()
     qtbot.waitUntil(lambda: not any(e == entity_id for e, _ in _tagged(session)), timeout=5000)
     assert (entity_id, tag_id) not in _tagged(session)
+
+
+def test_the_preview_says_why_there_is_nothing_to_import() -> None:
+    """Items found that already have their tags, and one not found: nothing to do, and the
+    preview says so (found in review)."""
+    plan = ImportPlan(items=12, not_found=("Book “Made Up”",))
+    assert items_text(plan, False) == (
+        "12 items found, 1 not found: 0 tags to add. The items found already have the file's tags."
+    )
+    others = ImportPlan(items=12, tags_removed=2)
+    assert items_text(others, False).endswith(
+        "(and 2 others of yours, which ticking the last box takes off)."
+    )
+    assert items_text(others, True) == "12 items found: 0 tags to add, 2 tags to take off."
