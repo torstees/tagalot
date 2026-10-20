@@ -37,7 +37,7 @@ Right-click an item for **Open page**, **Open file**, **Show in file manager**, 
 
 ## The preview
 
-Under the navigation on the left, the **preview** shows the selected item: its thumbnail, title, kind, a few fields, its file, and the start of its description (a book's description, a paper's abstract, a movie's plot; point at it to read more). It stays in view while you tag, and the results get the window's full height. Double-click it to open the page. Drag the line above it to make it taller or shorter; it keeps that height. **View → Preview** hides or shows it.
+Under the navigation on the left, the **preview** shows the selected item: its thumbnail, title, kind, a few fields, its file, and the start of its description (a book's description, a paper's abstract, a movie's plot; point at it to read more). With several items selected, it says how many and lists their names (the first 25). It stays in view while you tag, and the results get the window's full height. Double-click it to open the page. Drag the line above it to make it taller or shorter; it keeps that height. **View → Preview** hides or shows it.
 
 ## The Tags panel
 

@@ -12,7 +12,8 @@ A misty forest at dawn…
 ```
 
 One selected item shows its thumbnail, title, type, card fields, primary file, and the
-start of its description (#414); several show how many; none shows a hint. The details
+start of its description (#414); several show how many and list their titles (#497); none
+shows a hint. The details
 load in a worker. Double-click opens the page.
 """
 
@@ -21,7 +22,7 @@ from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont, QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from tagalot.core.detail import Preview, load_preview
+from tagalot.core.detail import Preview, load_preview, load_titles
 from tagalot.core.session import KeepSession
 from tagalot.ui.models.results import display_value, wrapped
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
@@ -31,6 +32,8 @@ THUMBNAIL = 160
 """The height of the preview's picture, in pixels (it is as wide as the panel allows)."""
 DESCRIPTION_LINES = 6
 """How much of the description the preview shows; its tooltip has more."""
+LISTED = 25
+"""How many of several selected items the preview names (#497); it says how many more."""
 
 HINT = "Select an item to preview it; double-click to open it."
 
@@ -96,12 +99,14 @@ class PreviewStrip(QFrame):
         self.facts = QLabel()
         self.file = ElidedLabel(mode=Qt.TextElideMode.ElideMiddle)  # a path: keep its name
         self.description = QLabel()
+        self.listed = QLabel()
+        """The titles of several selected items, one a line (#497)."""
         for label in (self.facts, self.file):
             label.setStyleSheet("color: palette(placeholder-text);")
-        for label in (self.title, self.facts, self.description):
+        for label in (self.title, self.facts, self.description, self.listed):
             label.setWordWrap(True)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        for label in (self.title, self.facts, self.file, self.description):
+        for label in (self.title, self.facts, self.file, self.description, self.listed):
             label.setTextFormat(Qt.TextFormat.PlainText)  # titles and paths are shown as is
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout = QVBoxLayout(self)
@@ -112,6 +117,7 @@ class PreviewStrip(QFrame):
         layout.addWidget(self.facts)
         layout.addWidget(self.file)
         layout.addWidget(self.description)
+        layout.addWidget(self.listed)
         layout.addStretch(1)
         self.setToolTip("Double-click to open the item's page")
         if thumbnails is not None:
@@ -128,11 +134,15 @@ class PreviewStrip(QFrame):
         self._describe(None)
         self.thumbnail.clear()
         self.thumbnail.hide()  # the words go at the top
+        self.listed.clear()
+        self.listed.hide()
 
     def show_selection(self, entity_ids: list[int]) -> None:
         """Preview the one selected item, or say how many are selected."""
         if len(entity_ids) != 1:
             self.show_count(len(entity_ids))
+            if len(entity_ids) > 1:
+                self._list(entity_ids)
             return
         self._generation += 1
         entity_id = entity_ids[0]
@@ -152,6 +162,27 @@ class PreviewStrip(QFrame):
 
         run_in_pool(job, on_done=done, pool=self._pool)
         self._show_thumbnail()
+
+    def _list(self, entity_ids: list[int]) -> None:
+        """Name the first of several selected items, in a worker (#497)."""
+        generation, session = self._generation, self.session
+        shown = entity_ids[:LISTED]
+
+        def job() -> list[str]:
+            with session.reader.connect() as conn:
+                return load_titles(conn, shown)
+
+        def done(titles: list[str]) -> None:
+            if not shiboken6.isValid(self) or generation != self._generation:
+                return
+            lines = [f"\u2022 {title}" for title in titles]
+            more = len(entity_ids) - len(shown)
+            if more:
+                lines.append(f"and {more:,} more")
+            self.listed.setText("\n".join(lines))
+            self.listed.setVisible(bool(lines))
+
+        run_in_pool(job, on_done=done, pool=self._pool)
 
     def _show(self, preview: Preview | None) -> None:
         self.preview = preview

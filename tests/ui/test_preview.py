@@ -8,7 +8,7 @@ from tagalot.core.ui_state import load_ui_state
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import PREVIEW_HEIGHT, MainWindow
 from tagalot.ui.navigation import NavTarget
-from tagalot.ui.preview import HINT, PreviewStrip
+from tagalot.ui.preview import HINT, LISTED, PreviewStrip
 from tagalot.ui.search_view import SearchPage
 from tests.ui.test_contents_search import _open, session, window
 from tests.ui.test_within import _search
@@ -51,8 +51,23 @@ def test_one_selected_item_is_previewed(qtbot: QtBot, window: MainWindow) -> Non
     _select(page, ["forest.png", "gem.png"])
     qtbot.waitUntil(lambda: strip.title.text() == "2 items selected", timeout=5000)
     assert strip.facts.text() == ""
+    # Several are named (#497).
+    qtbot.waitUntil(lambda: strip.listed.isVisible(), timeout=5000)
+    assert sorted(strip.listed.text().split("\n")) == ["• forest.png", "• gem.png"]
     _select(page, [])
     qtbot.waitUntil(lambda: strip.title.text() == HINT, timeout=5000)
+    assert not strip.listed.isVisible()
+
+
+def test_a_long_selection_names_the_first_and_counts_the_rest(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    window.preview.show_selection(list(range(1, 200)))
+    qtbot.waitUntil(lambda: window.preview.listed.isVisible(), timeout=5000)
+    lines = window.preview.listed.text().split("\n")
+    assert window.preview.title.text() == "199 items selected"
+    assert len(lines) <= LISTED + 1
+    assert lines[-1] == f"and {199 - LISTED:,} more"
 
 
 def test_double_click_the_strip_opens_the_page(qtbot: QtBot, window: MainWindow) -> None:
