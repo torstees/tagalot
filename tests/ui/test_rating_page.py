@@ -25,7 +25,7 @@ def test_rating_a_book_on_its_page(qtbot: QtBot, window: MainWindow) -> None:
     session = window.session
     assert session is not None
     page = _open(qtbot, window, session, "The Colour of Magic")
-    rating = page.findChild(EditableValue, "field_rating")
+    rating = page.details.findChild(EditableValue, "field_rating")
     assert isinstance(rating, EditableValue)
     assert rating.stars is not None
     assert rating.stars.halves == 8  # four stars, from the file

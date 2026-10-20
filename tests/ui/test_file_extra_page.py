@@ -43,12 +43,12 @@ def test_a_markdown_books_own_keys_are_marked_from_the_file(
 ) -> None:
     assert window.session is not None
     page = _open(qtbot, window, window.session, "The Lighthouse Keeper")
-    status = page.findChild(EditableValue, "extra_status")
+    status = page.details.findChild(EditableValue, "extra_status")
     assert isinstance(status, EditableValue)
     assert status.marker.text() == "• from the file"
     assert status.marker.toolTip() == FROM_FILE_TIP
-    assert page.findChild(EditableValue, "extra_cssclasses") is None  # ignored
-    remove = page.findChild(QToolButton, "remove_status")
+    assert page.details.findChild(EditableValue, "extra_cssclasses") is None  # ignored
+    remove = page.details.findChild(QToolButton, "remove_status")
     assert isinstance(remove, QToolButton)
     menu = remove.menu()
     assert menu is not None

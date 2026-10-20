@@ -19,10 +19,10 @@ def test_editing_a_books_series_on_its_page(qtbot: QtBot, window: MainWindow) ->
     session = window.session
     assert session is not None
     page = _open(qtbot, window, session, "Equal Rites")
-    series = page.findChild(EditableValue, "field_series")
+    series = page.details.findChild(EditableValue, "field_series")
     assert isinstance(series, EditableValue)
     assert series.editable
-    universe = page.findChild(EditableValue, "field_universe")
+    universe = page.details.findChild(EditableValue, "field_universe")
     assert isinstance(universe, EditableValue)
     assert not universe.editable  # it follows its series (in Discworld's universe)
     assert universe.toolTip() == "It comes from its series, Discworld: change it there."

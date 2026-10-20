@@ -11,6 +11,7 @@ from tagalot.core.detail import FileRow
 from tagalot.core.models import EntityResource, Resource
 from tagalot.core.session import KeepSession
 from tagalot.themes.api import Kind
+from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
@@ -31,8 +32,8 @@ def _triage(qtbot: QtBot, window: MainWindow) -> TriagePage:
     return page
 
 
-def _files(detail: QWidget) -> list[str]:
-    box = detail.findChild(QWidget, "section_role")
+def _files(detail: DetailPage) -> list[str]:
+    box = detail.details.findChild(QWidget, "section_role")
     assert box is not None
     return [label.text() for label in box.findChildren(QLabel)]
 
