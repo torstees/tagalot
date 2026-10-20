@@ -12,7 +12,7 @@ from tagalot.ui.dnd import tags_mime
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.models.results import TAGS
 from tagalot.ui.navigation import NavTarget
-from tagalot.ui.search_view import SearchPage
+from tagalot.ui.search_view import SECTIONS_TIP, SearchPage
 from tagalot.ui.workers import ScanController
 from tests.ui.test_contents_search import AURORA, _id, session, window
 from tests.ui.test_within import _search
@@ -233,7 +233,10 @@ def test_tags_dropped_on_a_child(qtbot: QtBot, window: MainWindow) -> None:
 def test_search_all_has_no_tree(qtbot: QtBot, window: MainWindow) -> None:
     page = _search(qtbot, window, NavTarget("search", label="Search all"), "14 items")
     assert page.showing_groups()
-    assert not page.tree_button.isEnabled()
+    buttons = (page.list_button, page.grid_button, page.tree_button)
+    assert not any(b.isEnabled() for b in buttons)
+    # Each says why (#477), not only Grid.
+    assert all(b.toolTip() == SECTIONS_TIP for b in buttons)
 
 
 # --- the Tags column after tagging ---
