@@ -436,6 +436,13 @@ class ResultsModel(QAbstractTableModel):
         if self._spec is not None:
             self._start(refreshing=True)
 
+    def cancel(self) -> None:
+        """Drop the results of the search running now, if any, when they arrive (the page
+        shows another search's instead, #406)."""
+        self._generation += 1
+        self._loading.clear()
+        self.searching = False
+
     def _start(self, *, refreshing: bool = False) -> None:
         assert self._spec is not None
         self._refreshing = refreshing

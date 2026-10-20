@@ -303,6 +303,8 @@ class TriagePage(QWidget):
         self.session = session
         self.file_opener = file_opener
         self.counts: Counts | None = None
+        self._refreshes = 0
+        """How many refreshes have started; a result shows only if it is the latest's."""
 
         self.files = UnlinkedModel()
         self.table = QTableView()
@@ -518,8 +520,13 @@ class TriagePage(QWidget):
                 files = unlinked_files(conn, MAX_FILES, notes)
                 return counts, files, markdown, pictures
 
+        # Refreshes overlap (a change, then Show ignored): only the latest is shown, or an
+        # older one finishing last would put back what it saw (#406).
+        self._refreshes += 1
+        refresh = self._refreshes
+
         def done(result: Loaded) -> None:
-            if shiboken6.isValid(self):
+            if shiboken6.isValid(self) and refresh == self._refreshes:
                 self._show(*result)
 
         run_in_pool(job, on_done=done)

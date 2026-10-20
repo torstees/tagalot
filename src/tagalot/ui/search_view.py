@@ -632,6 +632,9 @@ class SearchPage(QWidget):
         if not self.grouped or spec.types:
             self._show_list(spec)
             return
+        # The list's search still running (an earlier one-type result) would say its count
+        # over the groups' when it finished (#406).
+        self.model.cancel()
         generation, session = self._generation, self.session
 
         def done(groups: list[TypeGroup]) -> None:

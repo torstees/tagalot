@@ -281,9 +281,14 @@ class ResultGrid(QListView):
         self._repaint.setInterval(30)
         self._repaint.timeout.connect(self.viewport().update)
         if loader is not None:
-            loader.ready.connect(lambda _id: self._repaint.start())
+            # A method, not a lambda: the connection ends with the grid, while the loader
+            # lives on (#406).
+            loader.ready.connect(self._thumbnail_ready)
         self._apply_size()
         self.hover = outline_hover(self)
+
+    def _thumbnail_ready(self, _id: object) -> None:
+        self._repaint.start()
 
     def results_model(self) -> ResultsModel:
         model = self.model()

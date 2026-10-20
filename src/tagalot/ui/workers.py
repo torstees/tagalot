@@ -47,18 +47,29 @@ class _Relay(QObject):
 
     @Slot(object)
     def _deliver_done(self, result: object) -> None:
-        _pending.discard(self)
-        if self._on_done is not None:
-            self._on_done(result)
+        on_done = self._finish()
+        if on_done is not None:
+            on_done(result)
 
     @Slot(object)
     def _deliver_error(self, error: object) -> None:
-        _pending.discard(self)
+        on_error = self._on_error
+        self._finish()
         assert isinstance(error, BaseException)
-        if self._on_error is not None:
-            self._on_error(error)
+        if on_error is not None:
+            on_error(error)
         else:
             logger.error("Background job failed", exc_info=error)
+
+    def _finish(self) -> Callable[[Any], None] | None:
+        """Let go of the callbacks (and the widgets they hold), and delete the relay here,
+        on the GUI thread: otherwise the worker's last reference could delete it there
+        (#406)."""
+        on_done = self._on_done
+        self._on_done = self._on_error = None
+        _pending.discard(self)
+        self.deleteLater()
+        return on_done
 
 
 class _Job(QRunnable):
