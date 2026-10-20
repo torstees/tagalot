@@ -2,7 +2,7 @@
 
 Each keep opens in a window of its own. Closing the window closes the keep (Keep → Close, Ctrl+W); open another with **Keep → Open another keep…** (Ctrl+O).
 
-![A 2D assets keep: the navigation, a grid of assets, the preview strip, and the Tags panel](../images/screens/assets-grid.png)
+![A 2D assets keep: the navigation with the preview under it, a grid of assets, and the Tags panel](../images/screens/assets-grid.png)
 
 ## Toolbar and menus
 
@@ -11,7 +11,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 - **Keep:** Scan now, Clear thumbnail cache…, Configure keep…, Open another keep…, Close.
 - **Edit:** Undo, Redo, Tag selection… (Ctrl+T), Save search… (Ctrl+S), Save search as… (Ctrl+Shift+S).
 - **Go:** Back, Forward.
-- **View:** the Tags panel, the Details panel, the Preview strip, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
+- **View:** the Tags panel, the Details panel, the Preview, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
 - **Help:** Keyboard shortcuts (F1), and **About Tagalot**: the version, links to these docs and the project, and **Copy check report** (what `tagalot --check` says, for a bug report).
 
 ## The navigation
@@ -35,9 +35,9 @@ The heading says how many items match. Select with a click, Ctrl+click, Shift+cl
 
 Right-click an item for **Open page**, **Open file**, **Show in file manager**, **Open with**, **Show contents in search**, **Re-read from file**, and the theme's own commands (**Play album**, **Copy citation**…).
 
-## The preview strip
+## The preview
 
-Under the results, the **preview strip** shows the selected item: its thumbnail, title, kind, a few fields, its file, and the start of its description (a book's description, a paper's abstract, a movie's plot; point at it to read more). Double-click it to open the page. **View → Preview** hides or shows it.
+Under the navigation on the left, the **preview** shows the selected item: its thumbnail, title, kind, a few fields, its file, and the start of its description (a book's description, a paper's abstract, a movie's plot; point at it to read more). With several items selected, it says how many and lists their names (the first 25). It stays in view while you tag, and the results get the window's full height. Double-click it to open the page. Drag the line above it to make it taller or shorter; it keeps that height. **View → Preview** hides or shows it.
 
 ## The Tags panel
 

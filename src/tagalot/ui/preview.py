@@ -1,29 +1,39 @@
-"""The preview strip under a search's results (DESIGN.md §12 "Select").
+"""The preview of the selected item, under the navigation pane (DESIGN.md §12 "Select";
+left of the results since #493, so they get the window's full height).
 
 ```
-┌─────┐ forest.png · Image
-│thumb│ Aurora Studio · .png · 1600 x 900
-└─────┘ Asset files > Aurora Studio/Backgrounds/forest.png
+┌──────────────┐
+│   picture    │
+└──────────────┘
+forest.png · Image
+Aurora Studio · .png · 1600 x 900
+Asset files > …/forest.png
+A misty forest at dawn…
 ```
 
-One selected item shows its thumbnail, title, type, card fields, primary file, and its
-description on one line (#414); several show how many; none shows a hint. The details load
-in a worker. Double-click opens the page.
+One selected item shows its thumbnail, title, type, card fields, primary file, and the
+start of its description (#414); several show how many and list their titles (#497); none
+shows a hint. The details
+load in a worker. Double-click opens the page.
 """
 
 import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, Signal
 from PySide6.QtGui import QFont, QMouseEvent, QPixmap, QResizeEvent
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from tagalot.core.detail import Preview, load_preview
+from tagalot.core.detail import Preview, load_preview, load_titles
 from tagalot.core.session import KeepSession
-from tagalot.ui.models.results import display_value, one_line, wrapped
+from tagalot.ui.models.results import display_value, wrapped
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
-THUMBNAIL = 96
-"""The strip's thumbnail box, in pixels."""
+THUMBNAIL = 160
+"""The height of the preview's picture, in pixels (it is as wide as the panel allows)."""
+DESCRIPTION_LINES = 6
+"""How much of the description the preview shows; its tooltip has more."""
+LISTED = 25
+"""How many of several selected items the preview names (#497); it says how many more."""
 
 HINT = "Select an item to preview it; double-click to open it."
 
@@ -32,9 +42,14 @@ class ElidedLabel(QLabel):
     """One line of plain text, cut with an ellipsis to the label's width; the whole text
     is :attr:`full_text`."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+    ) -> None:
         super().__init__(parent)
         self.full_text = ""
+        self.mode = mode
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
 
@@ -47,9 +62,7 @@ class ElidedLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        self.setText(
-            self.fontMetrics().elidedText(self.full_text, Qt.TextElideMode.ElideRight, self.width())
-        )
+        self.setText(self.fontMetrics().elidedText(self.full_text, self.mode, self.width()))
 
 
 class PreviewStrip(QFrame):
@@ -75,33 +88,37 @@ class PreviewStrip(QFrame):
         self.setObjectName("preview_strip")
 
         self.thumbnail = QLabel()
-        self.thumbnail.setFixedSize(THUMBNAIL, THUMBNAIL)
+        self.thumbnail.setFixedHeight(THUMBNAIL)
+        self.thumbnail.setMinimumWidth(1)
+        self.thumbnail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title = QLabel(HINT)
         font = QFont(self.title.font())
         font.setBold(True)
         self.title.setFont(font)
-        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.facts = QLabel()
-        self.file = QLabel()
-        self.description = ElidedLabel()
+        self.file = ElidedLabel(mode=Qt.TextElideMode.ElideMiddle)  # a path: keep its name
+        self.description = QLabel()
+        self.listed = QLabel()
+        """The titles of several selected items, one a line (#497)."""
         for label in (self.facts, self.file):
             label.setStyleSheet("color: palette(placeholder-text);")
-        for label in (self.title, self.facts, self.file):
+        for label in (self.title, self.facts, self.description, self.listed):
+            label.setWordWrap(True)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        for label in (self.title, self.facts, self.file, self.description, self.listed):
             label.setTextFormat(Qt.TextFormat.PlainText)  # titles and paths are shown as is
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        text = QVBoxLayout()
-        text.addWidget(self.title)
-        text.addWidget(self.facts)
-        text.addWidget(self.file)
-        text.addWidget(self.description)
-        text.addStretch(1)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(self.thumbnail)
-        layout.addSpacing(8)
-        layout.addLayout(text, 1)
-        self.setFixedHeight(THUMBNAIL + 14)
+        layout.addSpacing(4)
+        layout.addWidget(self.title)
+        layout.addWidget(self.facts)
+        layout.addWidget(self.file)
+        layout.addWidget(self.description)
+        layout.addWidget(self.listed)
+        layout.addStretch(1)
         self.setToolTip("Double-click to open the item's page")
         if thumbnails is not None:
             thumbnails.ready.connect(self._thumbnail_ready)
@@ -113,20 +130,26 @@ class PreviewStrip(QFrame):
         self.entity_id = self.preview = None
         self.title.setText(HINT if count == 0 else f"{count:,} items selected")
         self.facts.clear()
-        self.file.clear()
+        self.file.set_full_text("")
         self._describe(None)
         self.thumbnail.clear()
+        self.thumbnail.hide()  # the words go at the top
+        self.listed.clear()
+        self.listed.hide()
 
     def show_selection(self, entity_ids: list[int]) -> None:
         """Preview the one selected item, or say how many are selected."""
         if len(entity_ids) != 1:
             self.show_count(len(entity_ids))
+            if len(entity_ids) > 1:
+                self._list(entity_ids)
             return
         self._generation += 1
         entity_id = entity_ids[0]
         if entity_id == self.entity_id and self.preview is not None:
             return
         self.entity_id = entity_id
+        self.thumbnail.show()
         generation, session = self._generation, self.session
 
         def job() -> Preview | None:
@@ -140,23 +163,45 @@ class PreviewStrip(QFrame):
         run_in_pool(job, on_done=done, pool=self._pool)
         self._show_thumbnail()
 
+    def _list(self, entity_ids: list[int]) -> None:
+        """Name the first of several selected items, in a worker (#497)."""
+        generation, session = self._generation, self.session
+        shown = entity_ids[:LISTED]
+
+        def job() -> list[str]:
+            with session.reader.connect() as conn:
+                return load_titles(conn, shown)
+
+        def done(titles: list[str]) -> None:
+            if not shiboken6.isValid(self) or generation != self._generation:
+                return
+            lines = [f"\u2022 {title}" for title in titles]
+            more = len(entity_ids) - len(shown)
+            if more:
+                lines.append(f"and {more:,} more")
+            self.listed.setText("\n".join(lines))
+            self.listed.setVisible(bool(lines))
+
+        run_in_pool(job, on_done=done, pool=self._pool)
+
     def _show(self, preview: Preview | None) -> None:
         self.preview = preview
         if preview is None:
             self.title.setText("This item no longer exists")
             self.facts.clear()
-            self.file.clear()
+            self.file.set_full_text("")
             self._describe(None)
             return
         self.title.setText(f"{preview.title} · {preview.type_label}")
         facts = [display_value(f.value, f.display) for f in preview.facts]
         self.facts.setText(" · ".join(f for f in facts if f))
-        self.file.setText(preview.file or "")
+        self.file.set_full_text(preview.file or "")
         self.file.setToolTip(preview.file or "")
         self._describe(preview.description)
 
     def _describe(self, description: str | None) -> None:
-        self.description.set_full_text(one_line(description or ""))
+        self.description.setText(" ".join(wrapped(description or "", 40, DESCRIPTION_LINES)))
+        self.description.setVisible(bool(description))
         self.description.setToolTip("\n".join(wrapped(description or "", lines=12)))
 
     def _show_thumbnail(self) -> None:
@@ -167,9 +212,10 @@ class PreviewStrip(QFrame):
             self.thumbnail.clear()  # requested: _thumbnail_ready shows it
         elif loaded.image is not None:
             pixmap = QPixmap.fromImage(loaded.image)
-            if pixmap.width() > THUMBNAIL or pixmap.height() > THUMBNAIL:
+            width = max(1, self.thumbnail.width())
+            if pixmap.width() > width or pixmap.height() > THUMBNAIL:
                 pixmap = pixmap.scaled(
-                    THUMBNAIL,
+                    width,
                     THUMBNAIL,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
@@ -177,6 +223,10 @@ class PreviewStrip(QFrame):
             self.thumbnail.setPixmap(pixmap)
         else:
             self.thumbnail.setPixmap(icon_for(loaded.icon).pixmap(THUMBNAIL // 2))
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._show_thumbnail()  # as wide as the panel now is
 
     def _thumbnail_ready(self, entity_id: int) -> None:
         if entity_id == self.entity_id and shiboken6.isValid(self):

@@ -6,7 +6,7 @@ following the theme's :class:`~tagalot.themes.api.DetailView` for the type, or
 :func:`default_detail_view` when the theme declares none.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -528,6 +528,15 @@ class Preview:
     """Its primary file: the root's name, then the path inside it."""
     description: str | None = None
     """Its type's description field (``description_field``), if it has one and it's set."""
+
+
+def load_titles(conn: Connection, entity_ids: Sequence[int]) -> list[str]:
+    """These items' titles, in the order given (items since deleted are left out): the
+    preview's list of a selection."""
+    found = dict(
+        conn.execute(select(Entity.id, Entity.title).where(Entity.id.in_(entity_ids))).all()
+    )
+    return [found[i] for i in entity_ids if i in found]
 
 
 def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Preview | None:

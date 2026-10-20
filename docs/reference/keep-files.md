@@ -87,7 +87,7 @@ A missing file means the defaults; one that can't be read is renamed `settings.t
 
 ## ui_state.json
 
-In each keep's folder: how you left its pages. Per search: layouts, hidden and shown columns, card lines, and toggles; and for the keep: the thumbnail size, whether the preview strip shows, and which navigation headings are folded. Deleting it resets them.
+In each keep's folder: how you left its pages. Per search: layouts, hidden and shown columns, card lines, and toggles; and for the keep: the thumbnail size, whether the preview shows and how tall it is, and which navigation headings are folded. Deleting it resets them.
 
 ## Themes folder
 

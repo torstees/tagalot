@@ -104,6 +104,7 @@ from tagalot.ui.lookups import OnlineLookups, lookup_summary
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
+from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.result_table import DEFAULT_HIDDEN
 from tagalot.ui.search_view import SearchPage
@@ -128,6 +129,8 @@ SUMMARY_DELAY_MS = 150
 
 NAVIGATION_MIN_WIDTH = 170
 """The navigation pane never gets narrower than this, however wide a page wants to be."""
+PREVIEW_HEIGHT = 320
+"""The preview's height under the navigation pane until the user drags it (#493)."""
 
 OPENING_PAGE = NavTarget("dashboard", label="Dashboard")
 """What a keep opens on."""
@@ -309,8 +312,24 @@ class MainWindow(QMainWindow):
         self.navigation.folded_changed.connect(self._save_folded)
         self.navigation.saved_menu_requested.connect(self._saved_menu)
         self.stack = QStackedWidget()
+        # The selected item's preview sits under the navigation, so the results get the
+        # window's full height (#493).
+        self.preview = PreviewStrip(session, self.thumbnails)
+        self.preview.open_requested.connect(self.open_entity)
+        self.preview.setVisible(bool(self._ui_state.get("preview", True)))
+        self.left = QSplitter(Qt.Orientation.Vertical)
+        self.left.setChildrenCollapsible(False)
+        self.left.addWidget(self.navigation)
+        self.left.addWidget(self.preview)
+        self.left.setStretchFactor(0, 1)
+        self.left.setStretchFactor(1, 0)
+        self._preview_timer = QTimer(self)  # the height dragged to, saved once it settles
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(500)
+        self._preview_timer.timeout.connect(self._preview_resized)
+        self.left.splitterMoved.connect(lambda *_: self._preview_timer.start())
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.navigation)
+        splitter.addWidget(self.left)
         splitter.addWidget(self.stack)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([220, 980])
@@ -360,7 +379,7 @@ class MainWindow(QMainWindow):
         self.preview_action = QAction("Preview", self)
         self.preview_action.setCheckable(True)
         self.preview_action.setChecked(bool(self._ui_state.get("preview", True)))
-        self.preview_action.setToolTip("Show the selected item under the results")
+        self.preview_action.setToolTip("Show the selected item under the navigation pane")
         self.preview_action.toggled.connect(self._preview_toggled)
         view_menu.addAction(self.preview_action)
         # The activity panel: hidden until asked for (View menu or the problem badge).
@@ -679,7 +698,6 @@ class MainWindow(QMainWindow):
             card_lines=card_lines if isinstance(card_lines, list) else None,
             thumbnails=self.thumbnails,
             thumbnail_size=self.thumbnail_size,
-            preview=self.preview_action.isChecked(),
             toggles=toggles if isinstance(toggles, dict) else None,
         )
         search.size_menu = self.size_menu
@@ -714,10 +732,11 @@ class MainWindow(QMainWindow):
         return search
 
     def _preview_toggled(self, visible: bool) -> None:
-        """Show or hide the preview strip on every search page, and remember it."""
+        """Show or hide the preview under the navigation, and remember it."""
         assert self.session is not None
-        for page in self.search_pages():
-            page.set_preview_visible(visible)
+        self.preview.setVisible(visible)
+        if visible:
+            self._schedule_summary()  # it shows what is selected now
         self._ui_state["preview"] = visible
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
@@ -1511,6 +1530,7 @@ class MainWindow(QMainWindow):
         if session is None or page is None:
             self.tag_panel.set_selection(0, {})
             self._show_details_of(None, None)
+            self.preview.show_count(0)
             return
 
         def show(
@@ -1525,6 +1545,8 @@ class MainWindow(QMainWindow):
         def selected(ids: list[int]) -> None:
             if generation == self._summary_generation:
                 self._show_details_of(page, ids)
+                if self.preview.isVisible():
+                    self.preview.show_selection(ids)
             if not ids:
                 show(0, {}, frozenset())
                 return
@@ -2299,11 +2321,29 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._restore_side_width)
 
     def _restore_side_width(self) -> None:
-        """The side panel's width the user left it at, as far as the window has room."""
+        """The side panel's width the user left it at, as far as the window has room, and
+        the preview's height."""
+        if not shiboken6.isValid(self):
+            return
         width = self._ui_state.get("side_width")
-        if isinstance(width, int) and width > 0 and shiboken6.isValid(self):
+        if isinstance(width, int) and width > 0:
             docks = [self.tags_dock, self.details_dock]
             self.resizeDocks(docks, [width] * 2, Qt.Orientation.Horizontal)
+        height = self._ui_state.get("preview_height")
+        if not isinstance(height, int) or height <= 0:
+            height = PREVIEW_HEIGHT
+        total = sum(self.left.sizes())
+        if total > 0:
+            preview = min(height, total // 2)
+            self.left.setSizes([total - preview, preview])
+
+    def _preview_resized(self) -> None:
+        """Remember the preview's height, which the user dragged (#493)."""
+        height = self.left.sizes()[1] if self.preview.isVisible() else 0
+        if self.session is None or height <= 0 or height == self._ui_state.get("preview_height"):
+            return
+        self._ui_state["preview_height"] = height
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.session is not None and self.scans.running:
