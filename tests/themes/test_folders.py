@@ -10,8 +10,10 @@ from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes import books, movies
 from tagalot.core.containers import uncontain_by_hand
-from tagalot.core.models import Entity, EntityAncestor, EntityContains
+from tagalot.core.models import Entity, EntityAncestor, EntityContains, Resource
 from tagalot.core.tags import add_tag, tag_entities
+from tagalot.core.thumbnails.cache import ThumbCache
+from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import Theme, contains, role
 from tagalot.themes.loader import validate_theme
@@ -209,6 +211,35 @@ class _BadFolders(Theme):
 
     def ingest(self, batch: object, ctx: object) -> None:
         pass
+
+
+def thumbnail_source(env: Env, tmp_path: Path, title: str) -> str | None:
+    """The file an item's thumbnail comes from, or ``None`` for an icon."""
+    cache = ThumbCache(tmp_path / "thumbs.db")
+    resolver = ThumbnailResolver(
+        env.reader, env.writer, movies.MoviesTheme, cache, lambda _: str(env.files), 64
+    )
+    try:
+        result = resolver.resolve(item(env, title))
+    finally:
+        cache.close()
+    if result.resource_id is None:
+        return None
+    with env.reader.connect() as conn:
+        return conn.scalar(select(Resource.relpath).where(Resource.id == result.resource_id))
+
+
+def test_a_loose_video_shows_its_folders_picture(movies_env: Env, tmp_path: Path) -> None:
+    """With no poster or screenshot of its own, not the video icon (#479)."""
+    video(movies_env.files / "Home/Alice/beach.mp4")
+    video(movies_env.files / "Home/Alice/park.mp4")
+    write_image(movies_env.files / "Home/Alice/folder.jpg")
+    write_image(movies_env.files / "Home/Alice/park-poster.jpg")
+    video(movies_env.files / "Home/Bob/swim.mp4")
+    movies_env.scan()
+    assert thumbnail_source(movies_env, tmp_path, "beach") == "Home/Alice/folder.jpg"
+    assert thumbnail_source(movies_env, tmp_path, "park") == "Home/Alice/park-poster.jpg"
+    assert thumbnail_source(movies_env, tmp_path, "swim") is None  # no picture: the icon
 
 
 def test_folder_items_are_checked() -> None:
