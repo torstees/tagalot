@@ -29,7 +29,7 @@ FONT = "Aileron-Regular.ttf"
 
 
 def _field(page: DetailPage, name: str) -> EditableValue:
-    found = page.findChild(EditableValue, f"field_{name}")
+    found = page.details.findChild(EditableValue, f"field_{name}")
     assert isinstance(found, EditableValue), name
     return found
 
@@ -166,7 +166,7 @@ def test_file_facts_are_read_only(qtbot: QtBot, window: MainWindow, session: Kee
 
 
 def _extra(page: DetailPage, name: str) -> EditableValue | None:
-    found = page.findChild(EditableValue, f"extra_{name}")
+    found = page.details.findChild(EditableValue, f"extra_{name}")
     return found if isinstance(found, EditableValue) else None
 
 
@@ -204,7 +204,9 @@ def test_adding_editing_and_removing_extra_fields(
         timeout=5000,
     )
 
-    remove = next(b for b in page.findChildren(QToolButton) if b.toolTip() == "Remove 'Licence'")
+    remove = next(
+        b for b in page.details.findChildren(QToolButton) if b.toolTip() == "Remove 'Licence'"
+    )
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as removed:
         remove.click()
     assert removed.args == [f"Remove 'Licence' from '{FONT}'."]

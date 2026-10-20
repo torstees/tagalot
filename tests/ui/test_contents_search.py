@@ -95,7 +95,7 @@ def test_an_artists_page_lists_its_assets(
     contents = _contents(qtbot, page, "5 items")
     assert _titles(contents) == ["dusk sky.png", "folder.jpg", "forest.png", "gem.png", "heart.png"]
     assert contents.results.currentWidget() is contents.grid  # contents start as a grid
-    assert page.findChild(QWidget, "section_contents") is None  # no separate count
+    assert page.details.findChild(QWidget, "section_contents") is None  # no separate count
     assert contents in window.search_pages()  # refreshed with the others
 
 

@@ -14,7 +14,14 @@ from typing import Any
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence, QMouseEvent
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QKeySequence,
+    QMouseEvent,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -28,6 +35,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QTabWidget,
     QToolBar,
     QToolButton,
     QWidget,
@@ -80,6 +88,12 @@ from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
+from tagalot.ui.details_dock import (
+    NOTHING_OPEN,
+    NOTHING_SELECTED,
+    DetailsDock,
+    several_selected,
+)
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.folder_picker import choose_open_file, choose_save_file
@@ -318,9 +332,31 @@ class MainWindow(QMainWindow):
         self._summary_timer.timeout.connect(self.update_selection_summary)
         self.tags_dock.setWidget(self.tag_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tags_dock)
+        # Details beside Tags (#468): an item's sections, its page's or the selected one's.
+        self.details_dock = DetailsDock(self)
+        self._selected_detail: DetailPage | None = None
+        """The details of the item selected in a search, while there is one."""
+        self.tabifyDockWidget(self.tags_dock, self.details_dock)
+        # Their tabs on top, where tabs are looked for (Qt puts them below).
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
+        if self._ui_state.get("side_tab") == self.details_dock.objectName():
+            self.details_dock.raise_()
+        else:
+            self.tags_dock.raise_()
+        self.tabifiedDockWidgetActivated.connect(self._side_tab_chosen)
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
+        self._side_width_restored = False
+        self._resized_dock: QObject | None = None
+        """The side panel's dock last resized (the tab shown)."""
+        self._side_timer = QTimer(self)
+        self._side_timer.setSingleShot(True)
+        self._side_timer.setInterval(500)
+        self._side_timer.timeout.connect(self._side_resized)
+        for dock in (self.tags_dock, self.details_dock):
+            dock.installEventFilter(self)
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.tags_dock.toggleViewAction())
+        view_menu.addAction(self.details_dock.toggleViewAction())
         self.preview_action = QAction("Preview", self)
         self.preview_action.setCheckable(True)
         self.preview_action.setChecked(bool(self._ui_state.get("preview", True)))
@@ -470,7 +506,14 @@ class MainWindow(QMainWindow):
             page.deleteLater()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """The mouse's back and forward buttons, anywhere in this window."""
+        """The mouse's back and forward buttons, anywhere in this window; and the side
+        panel's width, to remember (#468)."""
+        if event.type() == QEvent.Type.Resize and watched in (
+            getattr(self, "tags_dock", None),
+            getattr(self, "details_dock", None),
+        ):
+            self._resized_dock = watched
+            self._side_timer.start()
         if (
             event.type() == QEvent.Type.MouseButtonPress
             and isinstance(event, QMouseEvent)
@@ -528,27 +571,7 @@ class MainWindow(QMainWindow):
             )
             detail.recall_tab = self._recall_tab
             detail.remember_tab = self._remember_tab
-            detail.open_entity.connect(self.open_entity)
-            detail.field_edited.connect(self.tag_actions.edit_field)
-            detail.extra_edited.connect(self.tag_actions.edit_extra)
-            detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
-            detail.note_edited.connect(self.tag_actions.edit_note)
-            detail.save_note_requested.connect(self.save_as_note)
-            detail.reread_requested.connect(self.reread)
-            detail.write_back_requested.connect(self.write_back)
-            detail.look_up_requested.connect(self.look_up_online)
-            detail.unlink_requested.connect(self.tag_actions.unlink_file)
-            detail.picture_requested.connect(self.set_picture)
-            detail.choose_picture_requested.connect(self.choose_picture)
-            detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
-            detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
-            detail.file_tag_restore_requested.connect(self.restore_file_tag)
-            detail.relate_requested.connect(self.add_related)
-            detail.unrelate_requested.connect(self.tag_actions.remove_related)
-            detail.move_requested.connect(self.tag_actions.move_related)
-            detail.uncontain_requested.connect(self.tag_actions.uncontain)
-            detail.action_requested.connect(self.run_action)
-            detail.file_opener = self.files
+            self._wire_detail(detail)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
             return detail
@@ -705,6 +728,83 @@ class MainWindow(QMainWindow):
         page = self._search_page(title, spec, key, layout="grid")
         page.empty.set_compact(True)  # a small place: no knight
         return page
+
+    def _wire_detail(self, detail: DetailPage) -> None:
+        """What an item's page asks for, done here: an item page's, and the selected item's
+        details in the Details tab (#468)."""
+        detail.open_entity.connect(self.open_entity)
+        detail.field_edited.connect(self.tag_actions.edit_field)
+        detail.extra_edited.connect(self.tag_actions.edit_extra)
+        detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
+        detail.note_edited.connect(self.tag_actions.edit_note)
+        detail.save_note_requested.connect(self.save_as_note)
+        detail.reread_requested.connect(self.reread)
+        detail.write_back_requested.connect(self.write_back)
+        detail.look_up_requested.connect(self.look_up_online)
+        detail.unlink_requested.connect(self.tag_actions.unlink_file)
+        detail.picture_requested.connect(self.set_picture)
+        detail.choose_picture_requested.connect(self.choose_picture)
+        detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))
+        detail.keyword_ignore_requested.connect(self.tag_actions.ignore_keywords)
+        detail.file_tag_restore_requested.connect(self.restore_file_tag)
+        detail.relate_requested.connect(self.add_related)
+        detail.unrelate_requested.connect(self.tag_actions.remove_related)
+        detail.move_requested.connect(self.tag_actions.move_related)
+        detail.uncontain_requested.connect(self.tag_actions.uncontain)
+        detail.action_requested.connect(self.run_action)
+        detail.file_opener = self.files
+
+    # --- the Details tab (#468) ---
+
+    def _show_details_of(self, page: QWidget | None, ids: list[int] | None) -> None:
+        """Show in the Details tab the current item page's sections, or, on a search, the
+        one selected item's (``ids``: what is selected there)."""
+        if isinstance(page, DetailPage):
+            self.details_dock.show_panel(page, page.details)
+        elif page is None or ids is None:
+            self.details_dock.show_message(NOTHING_OPEN)
+        elif len(ids) == 1:
+            selected = self._selected_detail
+            if selected is None or selected.requested_id != ids[0]:
+                selected = self._new_selected_detail(ids[0])
+            self.details_dock.show_panel(selected, selected.details)
+        elif ids:
+            self.details_dock.show_message(several_selected(len(ids)))
+        else:
+            self.details_dock.show_message(NOTHING_SELECTED)
+
+    def _new_selected_detail(self, entity_id: int) -> DetailPage:
+        """The details of the item selected in a search: a page that isn't shown, whose
+        sections are (no searches in it, so related items are links)."""
+        assert self.session is not None
+        old = self._selected_detail
+        detail = DetailPage(self.session, entity_id, parent=self)
+        detail.hide()
+        detail.title_in_details = True
+        self._wire_detail(detail)
+        self._selected_detail = detail
+        if old is not None and shiboken6.isValid(old):
+            if self.details_dock.panel is old.details:
+                self.details_dock.show_message(NOTHING_SELECTED)
+            old.deleteLater()
+        return detail
+
+    def _side_tab_chosen(self, dock: QDockWidget) -> None:
+        """Remember which of Tags and Details was chosen last."""
+        name = dock.objectName()
+        if self.session is None or dock not in (self.tags_dock, self.details_dock):
+            return
+        if self._ui_state.get("side_tab") != name:
+            self._ui_state["side_tab"] = name
+            save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def _side_resized(self) -> None:
+        """Remember the side panel's width, once the user stops dragging it."""
+        dock = self._resized_dock
+        width = dock.width() if isinstance(dock, QDockWidget) else 0
+        if self.session is not None and width > 0 and self._ui_state.get("side_width") != width:
+            self._ui_state["side_width"] = width
+            save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _recall_tab(self, type_id: str) -> str | None:
         """The tab last used on an item page of this type (#456)."""
@@ -1410,6 +1510,7 @@ class MainWindow(QMainWindow):
         generation = self._summary_generation
         if session is None or page is None:
             self.tag_panel.set_selection(0, {})
+            self._show_details_of(None, None)
             return
 
         def show(
@@ -1422,6 +1523,8 @@ class MainWindow(QMainWindow):
                 self.tag_panel.set_selection(count, counts, types, from_files)
 
         def selected(ids: list[int]) -> None:
+            if generation == self._summary_generation:
+                self._show_details_of(page, ids)
             if not ids:
                 show(0, {}, frozenset())
                 return
@@ -1475,6 +1578,9 @@ class MainWindow(QMainWindow):
         for page in self._pages.values():
             if isinstance(page, DetailPage):
                 page.refresh()
+        selected = self._selected_detail
+        if selected is not None and shiboken6.isValid(selected):
+            selected.refresh()
 
     def search_pages(self) -> list[SearchPage]:
         """The search pages created so far, including those inside detail pages."""
@@ -2182,6 +2288,20 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             self.session.problems.add([Problem(SCAN, str(error))])
             self._check_problems()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        # Once the window has its size (#468); a window with no keep has no side panel.
+        if not getattr(self, "_side_width_restored", True):
+            self._side_width_restored = True
+            QTimer.singleShot(0, self._restore_side_width)
+
+    def _restore_side_width(self) -> None:
+        """The side panel's width the user left it at, as far as the window has room."""
+        width = self._ui_state.get("side_width")
+        if isinstance(width, int) and width > 0 and shiboken6.isValid(self):
+            docks = [self.tags_dock, self.details_dock]
+            self.resizeDocks(docks, [width] * 2, Qt.Orientation.Horizontal)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.session is not None and self.scans.running:

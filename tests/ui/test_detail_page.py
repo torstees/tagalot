@@ -37,7 +37,7 @@ def _open(qtbot: QtBot, window: MainWindow, title: str) -> DetailPage:
 
 
 def _texts(detail: DetailPage, section: str) -> list[str]:
-    box = detail.findChild(QWidget, f"section_{section}")
+    box = detail.details.findChild(QWidget, f"section_{section}")
     assert box is not None, section
     return [label.text() for label in box.findChildren(QLabel)]
 
@@ -140,7 +140,7 @@ def test_double_clicking_a_file_row_opens_that_file(
 ) -> None:
     window = _window(qtbot, session)
     detail = _open(qtbot, window, "glacier.jpg")
-    box = detail.findChild(QWidget, "section_role")
+    box = detail.details.findChild(QWidget, "section_role")
     assert box is not None
     row = next(label for label in box.findChildren(QLabel) if "glacier.jpg" in label.text())
     QTest.mouseDClick(row, Qt.MouseButton.LeftButton)

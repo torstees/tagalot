@@ -208,7 +208,7 @@ def test_an_item_without_a_note(qtbot: QtBot, window: MainWindow, session: KeepS
 
 
 def _extra(page: DetailPage, name: str) -> EditableValue | None:
-    found = page.findChild(EditableValue, f"extra_{name}")
+    found = page.details.findChild(EditableValue, f"extra_{name}")
     return found if isinstance(found, EditableValue) else None
 
 
@@ -221,7 +221,7 @@ def test_the_notes_extra_fields(qtbot: QtBot, window: MainWindow, session: KeepS
 
     remove = next(
         b
-        for b in page.findChildren(QToolButton)
+        for b in page.details.findChildren(QToolButton)
         if b.toolTip() == "Remove 'mood'; scans won't add it back"
     )
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as removed:
@@ -245,7 +245,7 @@ def test_the_notes_extra_fields(qtbot: QtBot, window: MainWindow, session: KeepS
 
 
 def _ignore_action(page: DetailPage, name: str) -> QAction:
-    remove = page.findChild(QToolButton, f"remove_{name}")
+    remove = page.details.findChild(QToolButton, f"remove_{name}")
     assert isinstance(remove, QToolButton), name
     menu = remove.menu()
     assert menu is not None
@@ -308,7 +308,9 @@ def test_the_keys_in_keep_configuration(
 
     session.scan_all()  # the lists changed: the notes are read again
     page = _page(qtbot, window, session)
-    qtbot.waitUntil(lambda: page.findChild(QWidget, "section_extra") is not None, timeout=5000)
+    qtbot.waitUntil(
+        lambda: page.details.findChild(QWidget, "section_extra") is not None, timeout=5000
+    )
     assert _extra(page, "mood") is None
     assert _extra(page, "homepage") is None
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)

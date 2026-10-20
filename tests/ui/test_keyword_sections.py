@@ -70,12 +70,12 @@ def _page(qtbot: QtBot, window: MainWindow, entity_id: int) -> DetailPage:
 
 
 def _state(page: DetailPage, key: str) -> str:
-    label = page.findChild(QLabel, f"keyword_{key}")
+    label = page.details.findChild(QLabel, f"keyword_{key}")
     return label.text() if label is not None else ""
 
 
 def _button(page: DetailPage, text: str) -> QPushButton:
-    box = page.findChild(QWidget, "section_keywords")
+    box = page.details.findChild(QWidget, "section_keywords")
     assert box is not None
     [button] = [b for b in box.findChildren(QPushButton) if b.text() == text]
     return button

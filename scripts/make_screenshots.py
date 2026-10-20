@@ -169,11 +169,10 @@ def books(app: QApplication, keep: Path) -> None:
         settle(app)
         window.open_entity(colour)
         settle(app, 2)
-        detail = window.stack.currentWidget()
-        if isinstance(detail, DetailPage):  # room for its details over its credits
-            detail.splitter.setSizes([440, 180])
+        window.details_dock.raise_()  # its details beside its credits (#468)
         settle(app, 1)
         save(window, "item-page")
+        window.tags_dock.raise_()
 
     shoot(app, keep, steps)
 
@@ -188,8 +187,8 @@ def movies(app: QApplication, keep: Path) -> None:
         window.open_entity(alice)
         settle(app, 2)
         detail = window.stack.currentWidget()
-        if isinstance(detail, DetailPage):  # her note's details, over what her folders hold
-            detail.splitter.setSizes([330, 290])
+        window.details_dock.raise_()  # her note's details, beside what her folders hold
+        if isinstance(detail, DetailPage):
             tabs = detail.findChild(QTabWidget, "bottom_tabs")
             if tabs is not None:
                 movies = [i for i in range(tabs.count()) if tabs.tabText(i).startswith("Movies")]
@@ -198,6 +197,7 @@ def movies(app: QApplication, keep: Path) -> None:
                 detail.contents.set_preview_visible(False)
         settle(app, 2)
         save(window, "movies-person")
+        window.tags_dock.raise_()
 
     shoot(app, keep, steps)
 

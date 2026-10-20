@@ -11,7 +11,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 - **Keep:** Scan now, Clear thumbnail cache…, Configure keep…, Open another keep…, Close.
 - **Edit:** Undo, Redo, Tag selection… (Ctrl+T), Save search… (Ctrl+S), Save search as… (Ctrl+Shift+S).
 - **Go:** Back, Forward.
-- **View:** the Tags panel, the Preview strip, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
+- **View:** the Tags panel, the Details panel, the Preview strip, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
 - **Help:** Keyboard shortcuts (F1), and **About Tagalot**: the version, links to these docs and the project, and **Copy check report** (what `tagalot --check` says, for a bug report).
 
 ## The navigation
@@ -42,6 +42,8 @@ Under the results, the **preview strip** shows the selected item: its thumbnail,
 ## The Tags panel
 
 On the right: the tag tree, with a check for each tag showing whether the selected items have it (all, some, or none). See [Tags](tags.md). It's a panel you can move, float, or close (**View → Tags**).
+
+Beside it, the **Details** tab shows the selected item's fields, or on an item's page that item's ([The Details tab](item-pages.md#the-details-tab)).
 
 ## The status bar
 
