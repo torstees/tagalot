@@ -188,4 +188,5 @@ def test_a_new_tag_named_otherwise_gets_the_keyword_as_its_alias(
     )
     jazz = _tag(session, "Jazz music")
     qtbot.waitUntil(lambda: _file_tagged(session, jazz) == 5, timeout=5000)
-    assert session.tag_cache.get().aliases(jazz) == ("Jazz",)
+    # The tag cache catches up after the files are tagged.
+    qtbot.waitUntil(lambda: session.tag_cache.get().aliases(jazz) == ("Jazz",), timeout=5000)

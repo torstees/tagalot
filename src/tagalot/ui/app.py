@@ -15,6 +15,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.resources import icon_files
 from tagalot.ui.empty_state import splash_screen
+from tagalot.ui.gc_guard import collect_on_gui_thread
 from tagalot.ui.launcher import LauncherDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.opening import open_keep_async
@@ -57,6 +58,7 @@ def run(argv: Sequence[str]) -> int:
     app.setApplicationVersion(tagalot.__version__)
     app.setDesktopFileName("tagalot")  # Linux: matches the AppImage's tagalot.desktop
     app.setWindowIcon(app_icon())
+    collect_on_gui_thread(app)
 
     if problem := check_sqlite_support():
         logger.error("Cannot start: %s", problem)

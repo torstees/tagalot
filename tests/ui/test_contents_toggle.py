@@ -2,8 +2,9 @@
 documents, it makes the search box find items by what their files say, and shows where
 (#351)."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from PySide6.QtCore import Qt, QThreadPool
@@ -100,6 +101,25 @@ def test_the_toggle_finds_items_by_their_contents(
     assert page.current_spec().contents is True
     saved = page.saved_definition()
     assert saved.filters.contents is True  # kept with a saved search
+
+
+def test_a_list_search_finishing_after_the_groups_keeps_its_count_to_itself(
+    qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Search all's groups said "Nothing found"; the list's earlier search, finishing
+    later, said "2 items" over it (#406)."""
+    page = _page(window)
+    _wait_for_status(qtbot, page, "2 items")
+    held: list[tuple[Callable[[], Any], Callable[[Any], None]]] = []
+    monkeypatch.setattr(
+        page.model, "_run", lambda job, on_done, on_error: held.append((job, on_done))
+    )
+    page.model.refresh()  # the list's search, held back
+    page.filter_bar.set_text("photosynth")  # the groups': none
+    _wait_for_status(qtbot, page, "Nothing found")
+    [(job, done)] = held
+    done(job())
+    assert page.status.text() == "Nothing found"
 
 
 def test_where_each_item_matched(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:

@@ -99,8 +99,14 @@ def test_export_outside_and_inside_a_watched_folder(
     outside.parent.mkdir()
     monkeypatch.setattr(window, "choose_export_path", lambda name: str(outside))
     window.run_action("export_bibtex", [attention])
-    qtbot.waitUntil(lambda: outside.exists(), timeout=5000)
-    assert "@inproceedings{vaswani_attention_2017," in outside.read_text(encoding="utf-8")
+    # Written in the background: wait for the text, not just the file (#406).
+    qtbot.waitUntil(
+        lambda: (
+            outside.exists()
+            and "@inproceedings{vaswani_attention_2017," in outside.read_text(encoding="utf-8")
+        ),
+        timeout=5000,
+    )
     assert not asked  # not a watched folder: no warning
 
     files = Path(session.root_path("papers"))
@@ -108,7 +114,10 @@ def test_export_outside_and_inside_a_watched_folder(
     inside.parent.mkdir()
     monkeypatch.setattr(window, "choose_export_path", lambda name: str(inside))
     window.run_action("export_bibtex", [attention])
-    qtbot.waitUntil(lambda: inside.exists(), timeout=5000)
+    qtbot.waitUntil(
+        lambda: inside.exists() and "@inproceedings" in inside.read_text(encoding="utf-8"),
+        timeout=5000,
+    )
     assert asked == ["Exports/my papers.bib"]
     root = load_keep_config(session.keep.toml_path).roots[0]
     assert "Exports/my papers.bib" in root.exclude  # skipped: never read back as a source

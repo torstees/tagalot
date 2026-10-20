@@ -164,3 +164,14 @@ def test_a_result_for_a_deleted_relay_is_dropped(qapp: QApplication, fails: bool
     shiboken6.delete(relay)
     job.run()  # raised RuntimeError before
     assert delivered == []
+
+
+def test_a_relay_is_deleted_on_the_gui_thread_once_it_delivers(qtbot: QtBot) -> None:
+    """Not by the worker's last reference to it, which would delete it there (#406)."""
+    received: list[int] = []
+    relay = _Relay(received.append, None)
+    job = _Job(lambda: 42, relay)
+    job.run()
+    qtbot.waitUntil(lambda: received == [42], timeout=5000)
+    assert relay._on_done is None  # the callback (and what it holds) let go
+    qtbot.waitUntil(lambda: not shiboken6.isValid(relay), timeout=5000)

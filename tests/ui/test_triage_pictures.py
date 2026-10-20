@@ -2,7 +2,9 @@
 that isn't there, and *Field Notes*' cover is damaged (so its picture of its own, #446,
 can't be drawn either)."""
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -107,6 +109,25 @@ def test_adding_the_cover_and_scanning_clears_it(qtbot: QtBot, window: MainWindo
     session.scan_all()  # the picture is read after its book, which names it: linked
     triage = _triage(qtbot, window, 0)
     assert triage.pictures_stack.currentIndex() == 1  # the empty state
+
+
+def test_an_older_refresh_finishing_last_is_not_shown(
+    qtbot: QtBot, window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refreshes overlap (a change, then Show ignored): the latest one's rows stay (#406)."""
+    triage = _triage(qtbot, window, 1)
+    jobs: list[tuple[Callable[[], Any], Callable[[Any], None]]] = []
+    monkeypatch.setattr(
+        "tagalot.ui.triage.run_in_pool", lambda job, on_done: jobs.append((job, on_done))
+    )
+    triage.show_ignored.setChecked(True)  # a refresh
+    triage.show_ignored.setChecked(False)  # and another
+    [(_, older_done), (newer, newer_done)] = jobs
+    newer_done(newer())
+    assert len(triage.pictures.problems) == 1
+    counts, files, notes, _ = newer()
+    older_done((counts, files, notes, []))  # what it saw, different, arriving last
+    assert len(triage.pictures.problems) == 1
 
 
 def test_ignoring_rows_from_the_tab(qtbot: QtBot, window: MainWindow) -> None:

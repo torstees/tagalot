@@ -1,5 +1,6 @@
 """Shared set-up for the GUI tests."""
 
+import gc
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.handlers import Command, FileToOpen
 from tagalot.ui import main_window
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.gc_guard import GuiThreadCollector, collect_on_gui_thread
 from tagalot.ui.navigation import NavTarget
 
 LAUNCHED: list[tuple[str, str]] = []
@@ -154,6 +156,22 @@ def background_jobs_finish() -> Iterator[None]:
             f"{pool.activeThreadCount()} background job(s) still running "
             f"{POOL_DRAIN_MS / 1000:.0f} s after the test ended"
         )
+
+
+@pytest.fixture(scope="session")
+def gui_thread_collector(qapp: QApplication) -> Iterator[GuiThreadCollector]:
+    """Garbage is collected on the GUI thread, as in the app (#406)."""
+    collector = collect_on_gui_thread(qapp)
+    yield collector
+    gc.enable()
+
+
+@pytest.fixture(autouse=True)
+def garbage_collected_here(gui_thread_collector: GuiThreadCollector) -> Iterator[None]:
+    """Collect after each GUI test too: tests that never wait don't run the collector's
+    timer, and the tests after the GUI tests have no event loop at all."""
+    yield
+    gui_thread_collector.check()
 
 
 @pytest.fixture(autouse=True)
