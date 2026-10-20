@@ -26,8 +26,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, Signal
-from PySide6.QtGui import QFont, QImage
+from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QFont, QImage, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -75,6 +75,8 @@ from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_action
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
+HEADER_MAX_SHARE = 0.6
+"""The most of a page's height the header takes above its tabs at first (#491)."""
 HEADER_THUMBNAIL = 192
 """The header thumbnail's box, in pixels."""
 
@@ -396,9 +398,13 @@ class DetailPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
+        self._middle = content
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.addWidget(scroll)
+        self._divider_dragged = False
+        """The user moved the divider above the tabs: the header no longer fits itself."""
+        self.splitter.splitterMoved.connect(self._divider_moved)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.splitter)
@@ -430,6 +436,7 @@ class DetailPage(QWidget):
                 self._show(loaded.detail)
                 self._show_note(loaded)
                 self._show_badges(loaded.badges)
+                QTimer.singleShot(0, self._fit_header)  # once the header has its new size
 
         run_in_pool(job, on_done=done, pool=self._pool)
 
@@ -641,6 +648,32 @@ class DetailPage(QWidget):
             return False
         return self.session.schema.theme.type_id_of(link.relationship.b) == self.detail.type
 
+    # --- the divider above the tabs ---
+
+    def _divider_moved(self, _pos: int, _index: int) -> None:
+        self._divider_dragged = True
+
+    def _fit_header(self) -> None:
+        """Start the tabs right under the header (and any galleries in the middle), as long
+        as that leaves the tabs most of the page; a taller header scrolls (#491). Once the
+        user drags the divider, it stays where they put it."""
+        if self._bottom is None or self._divider_dragged or not shiboken6.isValid(self):
+            return
+        total = self.splitter.height() - self.splitter.handleWidth()
+        if total <= 0:
+            return
+        wanted = self._middle.sizeHint().height()
+        header = min(wanted, int(total * HEADER_MAX_SHARE))
+        self.splitter.setSizes([header, total - header])
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._fit_header()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._fit_header()
+
     def _embed(self, page: QWidget, label: str, key: str) -> None:
         """Put an embedded search (or a gallery) below the sections; with more than one, as
         tabs. ``key`` names it for remembering the last tab used."""
@@ -651,6 +684,7 @@ class DetailPage(QWidget):
             # The header keeps its height; the searches below get the rest (#468).
             self.splitter.setStretchFactor(0, 0)
             self.splitter.setStretchFactor(1, 1)
+            self._fit_header()
             return
         if self._tabs is None:
             first = self._bottom

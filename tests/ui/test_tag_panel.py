@@ -162,7 +162,7 @@ def _tag(panel: TagPanel, name: str) -> int:
     return tag_id
 
 
-def test_the_panel_shows_the_keeps_tags_top_level_open(panel: TagPanel) -> None:
+def test_the_panel_shows_the_keeps_tags_open(panel: TagPanel) -> None:
     assert _shown(panel) == [  # in the order the demo created them
         "🌍 Places",
         "  Iceland",
@@ -175,6 +175,42 @@ def test_the_panel_shows_the_keeps_tags_top_level_open(panel: TagPanel) -> None:
         "⭐ Favorites",
     ]
     assert not panel.message.isVisible()
+
+
+def test_every_tag_starts_open_and_the_buttons_fold_them_all(
+    qtbot: QtBot, session: KeepSession
+) -> None:
+    """Not only the top level (#490)."""
+    tree = session.tag_cache.get()
+    [iceland] = [s.tag_id for s in tree.suggest("Iceland") if tree.node(s.tag_id).name == "Iceland"]
+    session.tags.add(iceland, "Reykjavik")
+    panel = TagPanel(session, pool=QThreadPool())
+    qtbot.addWidget(panel)
+    panel.show()
+    qtbot.waitUntil(lambda: panel.loaded, timeout=5000)
+    everything = _shown(panel)
+    assert everything[:3] == ["🌍 Places", "  Iceland", "    Reykjavik"]
+
+    panel.collapse_button.click()
+    assert _shown(panel) == ["🌍 Places", "People", "Topics", "⭐ Favorites"]
+    panel.expand_button.click()
+    assert _shown(panel) == everything
+    panel.reload()  # the folds the buttons made are kept, like the user's own
+    qtbot.wait(200)
+    assert _shown(panel) == everything
+
+
+def test_the_menus_expand_and_collapse_all(panel: TagPanel) -> None:
+    on_a_tag = panel.menu_for(panel.model.index_of(_tag(panel, "Sky")))
+    assert on_a_tag is not None
+    texts = [a.text() for a in on_a_tag.actions()]
+    assert texts[-2:] == ["Expand all", "Collapse all"]
+    off_the_tags = panel.fold_menu()
+    [expand, collapse] = off_the_tags.actions()
+    collapse.trigger()
+    assert _shown(panel) == ["🌍 Places", "People", "Topics", "⭐ Favorites"]
+    expand.trigger()
+    assert "  Family" in _shown(panel)
 
 
 def test_filtering_opens_matches_and_clearing_restores_folds(qtbot: QtBot, panel: TagPanel) -> None:

@@ -75,6 +75,8 @@ def test_the_menu_for_one_tag(window: MainWindow) -> None:
         "Hide items with 'Iceland'",
         "Add 'Iceland' to the selected items",
         "Remove 'Iceland' from the selected items",
+        "Expand all",  # the whole tree (#490)
+        "Collapse all",
     ]
     assert not actions["Add 'Iceland' to the selected items"].isEnabled()  # none selected
     assert window.tag_panel.menu_for(QModelIndex()) is None  # off the tags
