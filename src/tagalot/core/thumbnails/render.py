@@ -153,14 +153,15 @@ def load_office_cover(path: str, size: int) -> Image.Image | None:
 RENDERERS: dict[Kind, Renderer] = {
     Kind.IMAGE: Renderer("image", 1, load_image),
     Kind.AUDIO: Renderer("audio_art", 1, load_audio_art),
-    Kind.ARCHIVE: Renderer("archive_image", 1, load_archive_image),
+    # 2: a name starting with punctuation ("!cover") comes first (#499), drawn again.
+    Kind.ARCHIVE: Renderer("archive_image", 2, load_archive_image),
     Kind.FONT: Renderer("font_sample", 1, load_font_sample),
 }
 """The renderer for each resource kind; kinds without one never give a picture."""
 
 
 EXTENSION_RENDERERS: dict[str, Renderer] = {
-    ".epub": Renderer("epub_cover", 1, load_epub_cover),
+    ".epub": Renderer("epub_cover", 2, load_epub_cover),  # 2: as archives (#499)
     ".pdf": Renderer("pdf_cover", 1, load_pdf_cover),
     **{ext: Renderer("mobi_cover", 1, load_mobi_cover) for ext in MOBI_EXTENSIONS},
     ".docx": Renderer("office_cover", 1, load_office_cover),

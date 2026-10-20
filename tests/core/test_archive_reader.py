@@ -54,6 +54,21 @@ def test_natural_order() -> None:
     assert sorted(names, key=natural_key) == ["page1.jpg", "page1b.jpg", "Page2.jpg", "page10.jpg"]
 
 
+def test_a_name_starting_with_punctuation_comes_first() -> None:
+    """As Explorer sorts: punctuation, then numbers, then letters (#499)."""
+    names = ["001.jpg", "b.jpg", "!cover.jpg", "_art.png", "10.jpg", "2.jpg", "a.jpg"]
+    assert sorted(names, key=natural_key) == [
+        "!cover.jpg",
+        "_art.png",
+        "001.jpg",
+        "2.jpg",
+        "10.jpg",
+        "a.jpg",
+        "b.jpg",
+    ]
+    assert _names(["Book/001.jpg", "Book/002.jpg", "Book/!front.jpg"])[0] == "Book/!front.jpg"
+
+
 def test_covers_and_previews_come_first() -> None:
     assert _names(["a/01.png", "a/thumb.png", "b/Preview_2.jpg", "cover.webp", "a/00.png"]) == [
         "cover.webp",
