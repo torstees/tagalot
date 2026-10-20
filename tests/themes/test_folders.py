@@ -5,18 +5,26 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Connection, insert, select
 from sqlalchemy.orm import aliased
 
 from tagalot.builtin_themes import books, movies
 from tagalot.core.containers import uncontain_by_hand
-from tagalot.core.models import Entity, EntityAncestor, EntityContains, Resource
+from tagalot.core.models import (
+    Entity,
+    EntityAncestor,
+    EntityContains,
+    OnlinePicture,
+    Resource,
+    utcnow,
+)
 from tagalot.core.tags import add_tag, tag_entities
 from tagalot.core.thumbnails.cache import ThumbCache
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import Theme, contains, role
 from tagalot.themes.loader import validate_theme
+from tests.core.book_files import jpeg
 from tests.core.media_files import write_image
 from tests.themes.test_pictures import Env, make_env, video, write_zip
 
@@ -240,6 +248,39 @@ def test_a_loose_video_shows_its_folders_picture(movies_env: Env, tmp_path: Path
     assert thumbnail_source(movies_env, tmp_path, "beach") == "Home/Alice/folder.jpg"
     assert thumbnail_source(movies_env, tmp_path, "park") == "Home/Alice/park-poster.jpg"
     assert thumbnail_source(movies_env, tmp_path, "swim") is None  # no picture: the icon
+
+
+def test_an_online_picture_never_replaces_a_local_one(movies_env: Env, tmp_path: Path) -> None:
+    """Shown only when the item has no picture of its own (#483)."""
+    video(movies_env.files / "Heat (1995)/Heat.mkv")
+    write_image(movies_env.files / "Heat (1995)/poster.jpg")
+    video(movies_env.files / "Home/swim.mp4")
+    movies_env.scan()
+
+    def online(conn: Connection) -> None:
+        for title in ("Heat", "swim"):
+            conn.execute(
+                insert(OnlinePicture).values(
+                    entity_id=item(movies_env, title),
+                    url=f"https://image.tmdb.org/{title}.jpg",
+                    status=200,
+                    data=jpeg(),
+                    fetched_at=utcnow(),
+                )
+            )
+
+    movies_env.writer.run(online)
+    assert thumbnail_source(movies_env, tmp_path, "Heat") == "Heat (1995)/poster.jpg"
+    cache = ThumbCache(tmp_path / "thumbs.db")
+    resolver = ThumbnailResolver(
+        movies_env.reader, movies_env.writer, movies.MoviesTheme, cache, lambda _: "", 64
+    )
+    try:
+        swim = resolver.resolve(item(movies_env, "swim"))
+    finally:
+        cache.close()
+    assert swim.thumbnail is not None  # the online one, not the video icon
+    assert (swim.resource_id, swim.icon) == (None, None)
 
 
 def test_folder_items_are_checked() -> None:

@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 23
+KEEP_FORMAT_VERSION = 24
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -42,6 +42,9 @@ CONTENTS_INDEXES = ("words", "substrings")
 """What ``[contents] index`` can say (§8 *Search inside documents*); absent is Off."""
 ONLINE_ANSWERS = ("allow", "never")
 """What ``[online] lookups`` can say (§9 *Online details*)."""
+LEGACY_HOSTS = frozenset({"openlibrary.org", "api.crossref.org", "export.arxiv.org"})
+"""The services the built-in themes used before each was asked about (#483): a keep that
+allowed lookups then, with no ``[online] allowed``, allowed these."""
 NEW_NOTES = ("folders", "one-folder")
 """Where Save as note… puts a new note: a subfolder per type, or all in the notes folder."""
 
@@ -129,6 +132,13 @@ class KeepConfig:
     online_lookups: str | None = None
     """``[online] lookups``: ``"allow"`` or ``"never"`` once the user answered (§9 *Online
     details*); ``None``, not asked yet, so nothing is looked up."""
+    online_allowed: list[str] | None = None
+    """``[online] allowed``: the hosts of the services the user allowed (#483); ``None`` in
+    a keep that allowed lookups before services were asked about one by one, which allowed
+    those its theme had then (``core.online.LEGACY_HOSTS``)."""
+    online_refused: list[str] = field(default_factory=list)
+    """``[online] refused``: hosts of services the user said not to use (#483), while
+    others are allowed."""
     contents_index: str | None = None
     """``[contents] index``: ``"words"`` or ``"substrings"`` to search inside documents;
     ``None``, Off (nothing is read)."""
@@ -189,6 +199,17 @@ def save_keep_config(config: KeepConfig, path: Path) -> None:
     write_atomic(path, dump_keep_config(config))
 
 
+def allowed_hosts(config: KeepConfig) -> frozenset[str]:
+    """The hosts of the services this keep may look things up in (#483): none unless it
+    allows lookups; then those it lists, or, for a keep that allowed lookups before services
+    were asked about one by one, :data:`LEGACY_HOSTS`."""
+    if config.online_lookups != "allow":
+        return frozenset()
+    if config.online_allowed is None:
+        return LEGACY_HOSTS - set(config.online_refused)
+    return frozenset(config.online_allowed)
+
+
 def dump_keep_config(config: KeepConfig) -> str:
     """Serialize ``config`` as TOML, preferring literal strings so paths stay hand-editable."""
     lines = [
@@ -211,8 +232,15 @@ def dump_keep_config(config: KeepConfig) -> str:
         thumbnails.append("after_scan = false")
     if thumbnails:
         lines += ["", "[thumbnails]", *thumbnails]
+    online_lines = []
     if config.online_lookups is not None:
-        lines += ["", "[online]", f"lookups = {toml_str(config.online_lookups)}"]
+        online_lines.append(f"lookups = {toml_str(config.online_lookups)}")
+    if config.online_allowed is not None:
+        online_lines.append(f"allowed = {toml_list(config.online_allowed)}")
+    if config.online_refused:
+        online_lines.append(f"refused = {toml_list(config.online_refused)}")
+    if online_lines:
+        lines += ["", "[online]", *online_lines]
     if config.contents_index is not None:
         lines += ["", "[contents]", f"index = {toml_str(config.contents_index)}"]
     notes_lines = []
@@ -305,12 +333,23 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             raise KeepConfigError(path, "[thumbnails] after_scan must be true or false")
 
     online_lookups = None
+    online_allowed: list[str] | None = None
+    online_refused: list[str] = []
     if "online" in data:
         online = reader.table(data, "online")
-        reader.warn_unknown(online, {"lookups"}, "[online]")
+        reader.warn_unknown(online, {"lookups", "allowed", "refused"}, "[online]")
         online_lookups = online.get("lookups")
         if online_lookups not in (None, *ONLINE_ANSWERS):
             raise KeepConfigError(path, '[online] lookups must be "allow" or "never"')
+        for key in ("allowed", "refused"):
+            hosts = online.get(key)
+            if hosts is not None and (
+                not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts)
+            ):
+                raise KeepConfigError(path, f"[online] {key} must be a list of host names")
+        if "allowed" in online:
+            online_allowed = sorted({h.strip().lower() for h in online["allowed"] if h.strip()})
+        online_refused = sorted({h.strip().lower() for h in online.get("refused", []) if h.strip()})
 
     contents_index = None
     if "contents" in data:
@@ -426,6 +465,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         thumbnail_max=thumbnail_max,
         thumbnails_after_scan=after_scan,
         online_lookups=online_lookups,
+        online_allowed=online_allowed,
+        online_refused=online_refused,
         contents_index=contents_index,
         note_ignore_keys=note_ignore_keys,
         notes_root=notes_root,

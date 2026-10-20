@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 20
+API_VERSION = 21
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -47,7 +47,8 @@ archives' details and dates (:func:`read_picture`, :func:`read_archive`, :func:`
 version 18 added folder items (:attr:`Entity.folders_for`); version 19 added gallery roles
 filled from the item's own folder (:func:`role`'s ``own_folder``); version 20 added
 see-through folders (:attr:`ResourceInfo.folder`, :attr:`ResourceInfo.folder_path`,
-:attr:`ResourceInfo.see_through`, :func:`files_in`)."""
+:attr:`ResourceInfo.see_through`, :func:`files_in`); version 21 added pictures from
+online services (:meth:`IngestContext.online_picture`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -828,6 +829,16 @@ class IngestContext(Protocol):
         """Report a problem with a file to the activity panel."""
         ...
 
+    def online_picture(self, entity: EntityRef, url: str) -> None:
+        """In :meth:`Theme.online_details` only: ``url`` is a picture of ``entity`` (a
+        book's cover, a person's photo), on one of the theme's :attr:`Theme.online_sources`.
+        The core fetches it after the details, keeps it in the keep, and shows it only when
+        the item has no picture of its own (DESIGN.md §10). Naming another address replaces
+        the item's picture; an address already fetched isn't fetched again until the user
+        asks (**Look up online**). A service without the picture should answer 404. Needs
+        ``api_version = 21``."""
+        ...
+
     def resource_at(
         self, beside: ResourceInfo, relpath: str, assets: str | None = None
     ) -> ResourceInfo | None:
@@ -1524,7 +1535,8 @@ class Theme:
         It runs in the DB writer, like :meth:`ingest`: fields it sets are marked as
         looked up (provenance ``fetched``), and never replace what the user edited. Looked-up
         details should not replace what the item's files say either: fill in empty fields,
-        or rank the sources as the research theme does. API version 5."""
+        or rank the sources as the research theme does. Name pictures of the items with
+        :meth:`IngestContext.online_picture` (API version 21). API version 5."""
 
     def document_text(self, resource: ResourceInfo) -> Sequence[str] | None:
         """The text of a :attr:`Entity.full_text` type's file, as pages, for searching

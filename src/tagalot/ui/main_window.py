@@ -2271,6 +2271,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(summary)
             self.activity.set_now(f"Online, {datetime.now():%H:%M}: {summary}")
         self._check_problems()
+        if report.pictures:
+            self.thumbnails.forget(report.pictures)  # pictures from a service (#483)
         if report.items:
             self._refresh_details()
             for page in self.search_pages():

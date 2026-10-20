@@ -23,6 +23,7 @@ from tagalot.core.models import (
     EntityContains,
     EntityResource,
     ItemPicture,
+    OnlinePicture,
     PictureFailure,
     Resource,
     ResourceKind,
@@ -32,7 +33,7 @@ from tagalot.core.roots import local_path
 from tagalot.core.see_through import counts_in
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError, read_pictures
-from tagalot.core.thumbnails.cache import ThumbCache, thumb_key
+from tagalot.core.thumbnails.cache import ThumbCache, online_key, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
 from tagalot.core.thumbnails.render import load_image_bytes, renderer_for
 from tagalot.core.thumbnails.title_card import Card, title_card
@@ -311,6 +312,9 @@ class _Resolution:
                 found = self._gallery(entity, tried)
                 if found is not None:
                     return found[0], None, found[1], None
+                online = self._online(entity)  # then one from a service (#483)
+                if online is not None:
+                    return online, None, None, None
             if isinstance(provider, Icon):
                 return None, provider.name, None, None
             if isinstance(provider, TitleCard):
@@ -333,7 +337,36 @@ class _Resolution:
             found = self._gallery(entity, tried)
             if found is not None:
                 return found[0], None, found[1], None
+            online = self._online(entity)
+            if online is not None:
+                return online, None, None, None
         return None, FALLBACK_ICON, None, None
+
+    def _online(self, entity: EntityRef) -> Thumbnail | None:
+        """The item's picture from an online service (#483): only when it has none of its
+        own, so it is never remembered as the item's source."""
+        row = self.conn.execute(
+            select(OnlinePicture.data, OnlinePicture.fetched_at).where(
+                OnlinePicture.entity_id == entity.id, OnlinePicture.data.is_not(None)
+            )
+        ).first()
+        if row is None or row.data is None:
+            return None
+        size = self.owner.size
+        key = online_key(entity.id, row.fetched_at, size)
+        cached = self.owner.cache.get(key)
+        if cached is not None:
+            return cached
+        if self.owner.failed(key):
+            return None
+        try:
+            picture = make_thumbnail(load_image_bytes(row.data, size), size)
+        except Exception as e:  # not a picture after all: the card or icon shows
+            logger.warning("Can't draw the online picture of entity %d: %s", entity.id, e)
+            self.owner.mark_failed(key)
+            return None
+        self.owner.cache.put(key, size, picture)
+        return picture
 
     def _own(self, entity: EntityRef, tried: set[int]) -> tuple[Thumbnail, int] | None:
         """The item's own picture (``item_picture``), when it can be drawn."""

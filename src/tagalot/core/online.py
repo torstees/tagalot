@@ -8,8 +8,13 @@ checks every address against the declared hosts, fetches with the standard libra
 answers in the keep (``online_response``), and has the theme apply them in the DB writer
 with provenance ``fetched``.
 
+A theme can also name pictures of items in what it found (``ctx.online_picture``, #483):
+they are fetched after the details, from the services the keep allows, and kept in the keep
+(``online_picture``).
+
 Nothing here asks the user: :meth:`KeepSession.look_up` refuses unless the keep allows
-lookups (``[online] lookups = "allow"``).
+lookups (``[online] lookups = "allow"``), and only fetches from the services it allows
+(``[online] allowed``); addresses on others wait until the user allows them.
 """
 
 import logging
@@ -21,16 +26,17 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.message import Message
+from functools import partial
 from http.client import HTTPMessage
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-from sqlalchemy import Connection, Engine, or_, select
+from sqlalchemy import Connection, Engine, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot import __version__
 from tagalot.core.ingest import IngestError, IngestSession
-from tagalot.core.models import CachedResponse, Entity, FieldSource, utcnow
+from tagalot.core.models import CachedResponse, Entity, FieldSource, OnlinePicture, utcnow
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import EntityRef, OnlineResponse, OnlineSource, Theme
@@ -168,9 +174,25 @@ class Fetcher:
         """Hosts given up on in this run, with why."""
         self.fetched = 0
 
+    def can_fetch(self, url: str) -> bool:
+        """``url`` is on one of this fetcher's services (those the keep allows)."""
+        try:
+            source_for(url, self.sources)
+        except OnlineError:
+            return False
+        return True
+
     def fetch(self, url: str) -> OnlineResponse:
         """Fetch ``url``: its answer, whatever its status (404 included), or
         :class:`UnavailableError` when the service can't be reached or stays busy."""
+        reply = self._get(url)
+        return OnlineResponse(url, reply.status, reply.body.decode("utf-8", errors="replace"))
+
+    def fetch_picture(self, url: str) -> Reply:
+        """Fetch the picture at ``url``, as bytes, by the same rules as :meth:`fetch`."""
+        return self._get(url)
+
+    def _get(self, url: str) -> Reply:
         source = source_for(url, self.sources)
         host = source.host
         with self._locks[host]:
@@ -194,8 +216,7 @@ class Fetcher:
                     if len(reply.body) > MAX_BODY:
                         raise UnavailableError(f"{source.name}: the answer for {url} is too big")
                     self.fetched += 1
-                    text = reply.body.decode("utf-8", errors="replace")
-                    return OnlineResponse(url, reply.status, text)
+                    return reply
                 wait = reply.retry_after if reply.retry_after is not None else BACKOFF * 2**attempt
                 if attempt == RETRIES or wait > MAX_WAIT:
                     break
@@ -315,15 +336,48 @@ def changed_since(conn: Connection, since: datetime | None) -> list[int]:
 
 
 class OnlineSession(IngestSession):
-    """``ctx`` for ``Theme.online_details``: values it writes are marked ``fetched``."""
+    """``ctx`` for ``Theme.online_details``: values it writes are marked ``fetched``, and
+    the pictures it names are kept for fetching (:meth:`online_picture`)."""
 
     source = FieldSource.FETCHED
+
+    def __init__(
+        self, conn: Connection, schema: ThemeSchema, sources: Sequence[OnlineSource] = ()
+    ) -> None:
+        super().__init__(conn, schema)
+        self.sources = tuple(sources)
+        """The theme's services: a picture must be on one of them."""
+        self.pictures: dict[int, str] = {}
+        """The pictures named, by item."""
+
+    def online_picture(self, entity: EntityRef, url: str) -> None:
+        try:
+            source_for(url, self.sources)
+        except OnlineError as e:
+            raise IngestError(str(e)) from None
+        self.pictures[entity.id] = url
 
 
 @dataclass
 class Applied:
     items: int = 0
     problems: list[str] = field(default_factory=list)
+
+
+def name_pictures(conn: Connection, pictures: Mapping[int, str]) -> None:
+    """Keep the pictures a theme named (item id -> address): a new address replaces the
+    item's picture, to be fetched; the same one keeps what was fetched."""
+    for entity_id, url in pictures.items():
+        current = conn.scalar(select(OnlinePicture.url).where(OnlinePicture.entity_id == entity_id))
+        if current == url:
+            continue
+        insert = sqlite_insert(OnlinePicture).values(entity_id=entity_id, url=url)
+        conn.execute(
+            insert.on_conflict_do_update(
+                index_elements=["entity_id"],
+                set_={"url": url, "status": None, "data": None, "fetched_at": None},
+            )
+        )
 
 
 def apply_details(
@@ -358,9 +412,10 @@ def apply_details(
             continue  # deleted while it was looked up
         savepoint = conn.begin_nested()
         try:
-            ctx = OnlineSession(conn, schema)
+            ctx = OnlineSession(conn, schema, theme.online_sources)
             theme.online_details(ref, responses, ctx)
             report = ctx.flush()
+            name_pictures(conn, ctx.pictures)
         except Exception as e:
             savepoint.rollback()
             if not isinstance(e, IngestError):
@@ -388,6 +443,8 @@ class LookupReport:
     """Addresses a service answered with an error status, such as 404 (unknown)."""
     skipped: int = 0
     """Items left for next time: a service couldn't be reached."""
+    pictures: list[int] = field(default_factory=list)
+    """Items that got a picture from a service in this run."""
     problems: list[str] = field(default_factory=list)
     """What went wrong, for the activity panel."""
 
@@ -432,12 +489,19 @@ def look_up(
         fresh.clear()
 
     total = len(plan.lookups)
+    looked_up: list[int] = []
     for done, lookup in enumerate(plan.lookups, start=1):
         if stopped():
             break
         responses = dict(lookup.cached)
+        missing = lookup.missing(refresh)
+        if not all(fetcher.can_fetch(url) for url in missing):
+            # On a service the keep hasn't allowed yet: left until it is.
+            if progress is not None:
+                progress(done, total)
+            continue
         try:
-            for url in lookup.missing(refresh):
+            for url in missing:
                 responses[url] = response = fetcher.fetch(url)
                 fresh.append(response)
                 if not response.ok:
@@ -450,13 +514,56 @@ def look_up(
                 report.problems.append(str(e))
         else:
             answers.append((lookup.entity, responses))
+            looked_up.append(lookup.entity.id)
         if len(answers) >= BATCH:
             write()
         if progress is not None:
             progress(done, total)
     write()
+    if not stopped():
+        fetch_pictures(writer, reader, looked_up, report, fetcher, refresh=refresh, stopped=stopped)
     report.fetched = fetcher.fetched
     return report
+
+
+def fetch_pictures(
+    writer: DbWriter,
+    reader: Engine,
+    entity_ids: Sequence[int],
+    report: LookupReport,
+    fetcher: Fetcher,
+    *,
+    refresh: bool = False,
+    stopped: Callable[[], bool] = lambda: False,
+) -> None:
+    """Fetch the pictures named for these items that haven't been (all of them, to
+    ``refresh``), from the services the fetcher may use, and keep them (#483)."""
+    wanted: list[tuple[int, str]] = []
+    with reader.connect() as conn:
+        for start in range(0, len(entity_ids), 500):
+            rows = conn.execute(
+                select(OnlinePicture.entity_id, OnlinePicture.url, OnlinePicture.status).where(
+                    OnlinePicture.entity_id.in_(entity_ids[start : start + 500])
+                )
+            )
+            wanted += [(r.entity_id, r.url) for r in rows if refresh or r.status is None]
+    for entity_id, url in wanted:
+        if stopped():
+            return
+        if not fetcher.can_fetch(url):
+            continue  # a service the keep hasn't allowed yet
+        try:
+            reply = fetcher.fetch_picture(url)
+        except UnavailableError as e:
+            if str(e) not in report.problems:
+                report.problems.append(str(e))
+            continue
+        ok = 200 <= reply.status < 300 and bool(reply.body)
+        if not ok:
+            report.not_found += 1
+        writer.run(partial(_keep_picture, entity_id, url, reply.status, reply.body if ok else None))
+        if ok:
+            report.pictures.append(entity_id)
 
 
 def consent_text(sources: Sequence[OnlineSource]) -> str:
@@ -468,3 +575,15 @@ def consent_text(sources: Sequence[OnlineSource]) -> str:
         return "This keep's theme looks nothing up online."
     sent = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
     return f"Tagalot would send {sent}. Nothing else about your files leaves this computer."
+
+
+def _keep_picture(
+    entity_id: int, url: str, status: int, data: bytes | None, conn: Connection
+) -> None:
+    """In the DB writer: what fetching an item's picture got (unless the theme named
+    another meanwhile)."""
+    conn.execute(
+        update(OnlinePicture)
+        .where(OnlinePicture.entity_id == entity_id, OnlinePicture.url == url)
+        .values(status=status, data=data, fetched_at=utcnow())
+    )

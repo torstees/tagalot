@@ -12,6 +12,8 @@ Nothing is looked up until the first time a lookup would send something. Then Ta
 
 Change your answer in **Keep → Configure keep… → Keep** tab: **Look up details online**. The answer is saved in the keep's `keep.toml`.
 
+When a newer Tagalot can use a service your keep hasn't been asked about (a covers service, say), it asks once more, about that service only: **Allow**, **Not now** (asked again the next time you open the keep), or **Don't use it**. Nothing is sent to it until you allow it, and the services you already allowed carry on either way.
+
 ## When
 
 - **After each scan,** for the items it added or changed, in the background ("Looking up online: N left").
@@ -28,3 +30,7 @@ Looked-up details fill in and correct what Tagalot guessed from a file, but neve
 - **Your edits win over everything.** Looked-up values are marked as such, and scans and lookups never change a value you edited.
 
 Lookups only ever fill in descriptive details, never identifiers, so they can't change which item a file belongs to.
+
+## Pictures
+
+A service can also have a picture of an item, such as a book's cover. Tagalot keeps it in the keep (never in your folders) and shows it **only when the item has no picture of its own**: a cover file, a picture its note names, or one you chose always wins, and adding one later replaces the online picture at once. Each picture is fetched once; **Look up online** fetches it again.

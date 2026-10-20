@@ -18,6 +18,7 @@ from tagalot.core.keep import (
     ONLINE_ANSWERS,
     KeepConfig,
     KeepError,
+    allowed_hosts,
     clean_names,
     validate_keep_config,
 )
@@ -51,12 +52,46 @@ def with_thumbnails_after_scan(config: KeepConfig, on: bool) -> KeepConfig:
     return replace(config, thumbnails_after_scan=on, roots=copy.deepcopy(config.roots))
 
 
-def with_online_lookups(config: KeepConfig, answer: str | None) -> KeepConfig:
-    """``config`` allowing (``"allow"``) or refusing (``"never"``) online lookups, or not
-    yet asked (``None``)."""
+def with_online_lookups(
+    config: KeepConfig, answer: str | None, hosts: Iterable[str] = ()
+) -> KeepConfig:
+    """``config`` allowing (``"allow"``) online lookups from the services on ``hosts``, or
+    refusing (``"never"``) them all, or not yet asked (``None``)."""
     if answer not in (None, *ONLINE_ANSWERS):
         raise KeepError(f"Online lookups can be allowed or never, not {answer!r}.")
-    return replace(config, online_lookups=answer, roots=copy.deepcopy(config.roots))
+    allowed = sorted(set(hosts)) if answer == "allow" else None
+    return replace(
+        config,
+        online_lookups=answer,
+        online_allowed=allowed,
+        online_refused=[],
+        roots=copy.deepcopy(config.roots),
+    )
+
+
+def with_online_services(
+    config: KeepConfig,
+    *,
+    allow: Iterable[str] = (),
+    refuse: Iterable[str] = (),
+    theme_hosts: Iterable[str] = (),
+) -> KeepConfig:
+    """``config`` (which allows lookups) also allowing the services on ``allow``, and not
+    using those on ``refuse`` (#483). Of the services an older keep allowed without listing
+    them, only the theme's (``theme_hosts``) are listed."""
+    if config.online_lookups != "allow":
+        raise KeepError("Online lookups aren't allowed for this keep.")
+    before = allowed_hosts(config)
+    if config.online_allowed is None:
+        before &= set(theme_hosts)
+    allowed = (before | set(allow)) - set(refuse)
+    refused = (set(config.online_refused) | set(refuse)) - set(allow)
+    return replace(
+        config,
+        online_allowed=sorted(allowed),
+        online_refused=sorted(refused),
+        roots=copy.deepcopy(config.roots),
+    )
 
 
 def with_contents_index(config: KeepConfig, index: str | None) -> KeepConfig:

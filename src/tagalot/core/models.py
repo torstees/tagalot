@@ -454,6 +454,24 @@ class CachedResponse(Base):
     fetched_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class OnlinePicture(Base):
+    """A picture of an item from an online service (§9 *Online details*, #483): a book's
+    cover, a movie's poster, a person's photo, named by the theme from what it looked up,
+    kept here (never in the user's folders) and shown only when the item has no picture of
+    its own. ``status`` and ``data`` are empty until it is fetched; a service without the
+    picture answers 404, which is kept too, so it isn't asked again."""
+
+    __tablename__ = "online_picture"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    url: Mapped[str]
+    status: Mapped[int | None]
+    data: Mapped[bytes | None]
+    fetched_at: Mapped[datetime | None]
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

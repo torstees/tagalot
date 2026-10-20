@@ -265,6 +265,11 @@ def _v22_item_pictures(conn: Connection) -> None:
     conn.execute(text("UPDATE notes_folder_note SET size = NULL"))
 
 
+def _v23_online_pictures(conn: Connection) -> None:
+    """Format 24: pictures from online services (#483)."""
+    Base.metadata.tables["online_picture"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -288,6 +293,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     20: _v20_folder_links,
     21: _v21_markdown_problems,
     22: _v22_item_pictures,
+    23: _v23_online_pictures,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -17,7 +17,8 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 
 from tagalot.core.online import LookupReport, consent_text
 from tagalot.core.session import KeepSession
-from tagalot.ui.online import ALLOW, NEVER, ask_online_consent
+from tagalot.themes.api import OnlineSource
+from tagalot.ui.online import ALLOW, NEVER, REFUSE, ask_new_online_services, ask_online_consent
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,9 @@ class OnlineLookups(QObject):
         self.not_now = False
         """The user said Not now: not asked again until the keep is opened again, except
         by Look up online."""
+        self.not_now_new = False
+        """The user said Not now to services added since lookups were allowed (#483): not
+        asked again until the keep is opened again."""
 
     @property
     def available(self) -> bool:
@@ -94,7 +98,11 @@ class OnlineLookups(QObject):
     def _consent_then(self, request: Request) -> None:
         answer = self.session.keep.config.online_lookups
         if answer == ALLOW:
-            self._start(request)
+            new = self.session.new_online_sources()
+            if new and not self.not_now_new and not self._asking:
+                self._ask_new(new, request)
+            else:
+                self._start(request)
         elif answer == NEVER:
             if request.by_user and self.turn_on():
                 self._save(ALLOW, then=lambda: self._start(request))
@@ -143,6 +151,41 @@ class OnlineLookups(QObject):
     def ask(self) -> str | None:
         """The once-per-keep question (tests replace it)."""
         return ask_online_consent(self.window, list(self.session.theme.online_sources))
+
+    def _ask_new(self, new: list[OnlineSource], request: Request) -> None:
+        """Lookups are allowed, and the theme uses services added since: ask about those
+        once; the lookup goes ahead with what is allowed either way."""
+        self._asking = True
+        try:
+            answer = self.ask_new(new)
+        finally:
+            self._asking = False
+        if answer is None:
+            self.not_now_new = True
+            self._start(request)
+            return
+        session = self.session
+
+        def answered(_: object) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.consent_changed.emit()
+            self._start(request)
+            if answer == ALLOW:
+                self.everything()  # what's already in the keep, from the new services too
+
+        run_in_pool(
+            lambda: session.answer_online_sources(new, allow=answer == ALLOW),
+            on_done=answered,
+            on_error=lambda e: self.message.emit(f"Couldn't save the keep's settings: {e}"),
+        )
+
+    def ask_new(self, sources: list[OnlineSource]) -> str | None:
+        """The question about services added since lookups were allowed: ``"allow"``,
+        ``"refuse"``, or ``None`` (tests replace it)."""
+        answer = ask_new_online_services(self.window, sources)
+        assert answer in (ALLOW, REFUSE, None)
+        return answer
 
     def turn_on(self) -> bool:
         """Lookups are off (Never) and the user asked for one: offer to turn them on."""
