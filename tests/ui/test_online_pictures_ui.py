@@ -159,13 +159,10 @@ def test_dont_use_it_is_remembered(
 ) -> None:
     _asks_new(window, REFUSE)
     _scan(qtbot, window)
-    qtbot.waitUntil(
-        lambda: (
-            load_keep_config(session.keep.toml_path).online_refused == ["covers.openlibrary.org"]
-        ),
-        timeout=10_000,
-    )
-    assert session.new_online_sources() == []
+    # The session takes the new settings after writing keep.toml: wait for it, not the file.
+    qtbot.waitUntil(lambda: session.new_online_sources() == [], timeout=10_000)
+    assert session.keep.config.online_refused == ["covers.openlibrary.org"]
+    assert load_keep_config(session.keep.toml_path).online_refused == ["covers.openlibrary.org"]
     assert window.lookups is not None
     qtbot.waitUntil(lambda: not window.lookups.running, timeout=10_000)  # type: ignore[union-attr]
     assert _cover("111") not in web.urls
