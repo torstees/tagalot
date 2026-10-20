@@ -1,12 +1,13 @@
-"""Descriptions (#414): a type's ``description_field`` under the selected item in the preview
-strip, in grid cards' tooltips, and as a list column. On the books demo, where *Mother of
+"""Descriptions (#414): a type's ``description_field`` under the selected item in the
+preview, in grid cards' tooltips, and as a list column. On the books demo, where *Mother of
 Learning* has a synopsis."""
 
 import pytest
 from pytestqt.qtbot import QtBot
 
+from tagalot.ui.main_window import MainWindow
 from tagalot.ui.models.results import ResultColumn, cell_text, one_line, wrapped
-from tagalot.ui.preview import THUMBNAIL, ElidedLabel
+from tagalot.ui.preview import ElidedLabel
 from tagalot.ui.search_view import SearchPage
 from tests.ui.test_field_columns import _books, session
 from tests.ui.test_preview import _select
@@ -28,17 +29,19 @@ def _row(page: SearchPage, title: str) -> int:
 
 def test_the_preview_strip_shows_the_description(qtbot: QtBot, session: object) -> None:
     page = _books(qtbot, session)  # type: ignore[arg-type]
-    strip = page.preview
+    window = page.window()
+    assert isinstance(window, MainWindow)
+    strip = window.preview
     _select(page, ["Mother of Learning"])
-    qtbot.waitUntil(lambda: strip.description.full_text == SYNOPSIS, timeout=5000)
+    qtbot.waitUntil(lambda: strip.description.text() == SYNOPSIS, timeout=5000)
     assert strip.description.toolTip() == SYNOPSIS
-    assert strip.height() == THUMBNAIL + 14  # the strip keeps its height
 
     _select(page, ["The Lighthouse Keeper"])  # no description
     qtbot.waitUntil(lambda: strip.title.text().startswith("The Lighthouse Keeper"), timeout=5000)
-    assert strip.description.full_text == ""
+    assert strip.description.text() == ""
+    assert strip.description.isHidden()
     _select(page, [])
-    qtbot.waitUntil(lambda: strip.description.full_text == "", timeout=5000)
+    qtbot.waitUntil(lambda: strip.description.text() == "", timeout=5000)
 
 
 def test_a_cards_tooltip_shows_the_description(qtbot: QtBot, session: object) -> None:

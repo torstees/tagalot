@@ -193,8 +193,6 @@ def movies(app: QApplication, keep: Path) -> None:
             if tabs is not None:
                 movies = [i for i in range(tabs.count()) if tabs.tabText(i).startswith("Movies")]
                 tabs.setCurrentIndex(movies[0] if movies else tabs.currentIndex())
-            if detail.contents is not None:  # room for the thumbnails
-                detail.contents.set_preview_visible(False)
         settle(app, 2)
         save(window, "movies-person")
         window.tags_dock.raise_()
