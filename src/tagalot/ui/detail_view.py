@@ -1,26 +1,21 @@
 """An entity's detail page (DESIGN.md §12 "Detail page").
 
 ```
-┌────────┐  Blue Train
-│ thumb  │  Album
-└────────┘
-Details ─────────────────────
-  Year      1957
-Folder ──────────────────────
-  Jazz/Coltrane/Blue Train   NAS music
-Cover ───────────────────────
-  [img] [img]
-Contents                 5 items
-  [filter bar]
-  [results: list or grid]
+┌────────┐  Blue Train                         │ Tags │ Details │
+│ thumb  │  Album                              │ Details ──────  │
+└────────┘                                     │  Year           │
+Songs (5) │ Scans (3)                          │    1957         │
+  [filter bar]                                 │ Folder ───────  │
+  [results: list or grid]                      │  Jazz/Coltrane… │
 ```
 
-A header with the thumbnail and title, then the theme's sections top to bottom in a scroll
-area. A container's contents are a search of their own below it (``within`` the entity),
-with a filter bar and the usual layouts; a splitter divides the page between them. Below
-the sections, several searches are tabs: the contents split by type (an artist's Albums and
-Songs, each counted, empty ones hidden, #456), related sections, then galleries; the tab last
-used on a type of page is chosen again.
+A header with the thumbnail and title, and below it the searches: a container's contents
+(``within`` the entity), with a filter bar and the usual layouts, and related sections;
+several are tabs: the contents split by type (an artist's Albums and Songs, each counted,
+empty ones hidden, #456), related sections, then galleries; the tab last used on a type of
+page is chosen again. The theme's other sections (Details, Extra fields, files, …) are in
+:attr:`DetailPage.details`, which the window shows in the Details tab beside Tags (#468);
+galleries that aren't tabs stay below the header.
 Everything is read in a worker (:func:`~tagalot.core.detail.load_detail`); related entities
 are links that open their own pages.
 """
@@ -252,6 +247,9 @@ class DetailPage(QWidget):
         self.recall_tab: Callable[[str], str | None] = lambda type_id: None
         """The tab last used on a page of this type (the window remembers it)."""
         self.remember_tab: Callable[[str, str], None] = lambda type_id, key: None
+        self.title_in_details = False
+        """Name the item at the top of :attr:`details`: for a search's selected item, whose
+        page isn't shown (#468)."""
         self._pool = pool
         self._generation = 0
         self.detail: EntityDetail | None = None
@@ -361,13 +359,38 @@ class DetailPage(QWidget):
         header.addLayout(self._action_buttons)
         header.addWidget(self.more_button, 0, Qt.AlignmentFlag.AlignTop)
 
+        # The theme's sections go in the Details tab beside Tags (#468), the window's to
+        # place; until it does, the panel is a hidden child of the page.
         self._sections = QVBoxLayout()
         self._sections.setSpacing(14)
+        self.details_title = QLabel()
+        self.details_title.setObjectName("details_title")
+        self.details_title.setWordWrap(True)
+        self.details_title.setTextFormat(Qt.TextFormat.RichText)
+        self.details_title.linkActivated.connect(lambda _: self.open_entity.emit(self.entity_id))
+        self.details_title.setVisible(False)
+        panel = QWidget()
+        panel_column = QVBoxLayout(panel)
+        panel_column.addWidget(self.details_title)
+        panel_column.addLayout(self._sections)
+        panel_column.addStretch(1)
+        self.details = QScrollArea(self)
+        """The item's sections, shown in the window's Details tab."""
+        self.details.setObjectName("details_panel")
+        self.details.setWidgetResizable(True)
+        self.details.setFrameShape(QFrame.Shape.NoFrame)
+        # As wide as the tab: long values wrap, rather than scroll sideways.
+        self.details.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.details.setWidget(panel)
+        self.details.hide()
+        # Galleries that aren't tabs stay below the header, in the middle.
+        self._galleries = QVBoxLayout()
+        self._galleries.setSpacing(14)
         content = QWidget()
         column = QVBoxLayout(content)
         column.addLayout(header)
         column.addSpacing(8)
-        column.addLayout(self._sections)
+        column.addLayout(self._galleries)
         column.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -423,10 +446,12 @@ class DetailPage(QWidget):
         self.entity_id = detail.id if detail is not None else self.requested_id
         self.merged_note.setVisible(merged)
         self.detail = detail
-        while self._sections.count():
-            item = self._sections.takeAt(0)
-            if item is not None and (widget := item.widget()) is not None:
-                widget.deleteLater()
+        for layout in (self._sections, self._galleries):
+            while layout.count():
+                item = layout.takeAt(0)
+                if item is not None and (widget := item.widget()) is not None:
+                    widget.deleteLater()
+        self._show_details_title(detail)
         if detail is None:
             self.title_value.editable = False
             self.title_value.show_value("This item no longer exists", False)
@@ -462,8 +487,9 @@ class DetailPage(QWidget):
                     galleries.append(section)
                     continue
                 widget = self._section_widget(section)
-                if widget is not None:
-                    self._sections.addWidget(widget)
+                if widget is not None:  # a gallery under the header, the rest in Details
+                    place = self._galleries if section.kind == "gallery" else self._sections
+                    place.addWidget(widget)
                 if section.kind == "fields" and extras.parent() is None:
                     self._sections.addWidget(extras)  # the user's fields follow the theme's
             if extras.parent() is None:
@@ -476,6 +502,16 @@ class DetailPage(QWidget):
             self._choose_tab()
             self._show_thumbnail()
         self.loaded.emit()
+
+    def _show_details_title(self, detail: EntityDetail | None) -> None:
+        """The item's name and type above its details, when its page isn't shown."""
+        self.details_title.setVisible(self.title_in_details and detail is not None)
+        if detail is not None:
+            self.details_title.setText(
+                f'<b><a href="open" style="text-decoration: none">{html.escape(detail.title)}'
+                f"</a></b><br><span style='color: gray'>{html.escape(detail.type_label)}</span>"
+            )
+            self.details_title.setToolTip("Open its page")
 
     @property
     def contents(self) -> SearchPage | None:
@@ -612,8 +648,9 @@ class DetailPage(QWidget):
         if self._bottom is None:
             self._bottom, self._bottom_label, self._bottom_key = page, label, key
             self.splitter.addWidget(page)
-            self.splitter.setStretchFactor(0, 2)
-            self.splitter.setStretchFactor(1, 3)
+            # The header keeps its height; the searches below get the rest (#468).
+            self.splitter.setStretchFactor(0, 0)
+            self.splitter.setStretchFactor(1, 1)
             return
         if self._tabs is None:
             first = self._bottom
@@ -854,8 +891,7 @@ class DetailPage(QWidget):
         """The user's own fields: each editable in place, with x to remove it, and a row
         to add one."""
         body = QWidget()
-        form = QFormLayout(body)
-        form.setContentsMargins(12, 0, 0, 0)
+        form = _form(body)
         entity_id = self.entity_id
         sources = dict(detail.extra_sources)
         for name, value in detail.extra:
@@ -944,8 +980,7 @@ class DetailPage(QWidget):
 
     def _fields(self, section: DetailSection) -> QWidget:
         body = QWidget()
-        form = QFormLayout(body)
-        form.setContentsMargins(12, 0, 0, 0)
+        form = _form(body)
         for row in section.fields:
             value = EditableValue(
                 row.value,
@@ -1149,6 +1184,14 @@ class DetailPage(QWidget):
             on_done(own)
             return
         shown.selected_entity_ids(lambda ids: on_done(ids or own))
+
+
+def _form(body: QWidget) -> QFormLayout:
+    """A section's fields: each label above its value, as the Details tab is narrow (#468)."""
+    form = QFormLayout(body)
+    form.setContentsMargins(12, 0, 0, 0)
+    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+    return form
 
 
 def _file_label(file: FileRow) -> QLabel:
