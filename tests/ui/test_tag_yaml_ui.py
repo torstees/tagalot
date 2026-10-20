@@ -1,4 +1,5 @@
-"""Export tags… and Import tags… on the Tag manager (#395)."""
+"""Export tags… and Import tags… on the Tag manager (#395), with which items have each
+tag (#396)."""
 
 import importlib.util
 from collections.abc import Iterator
@@ -8,13 +9,17 @@ import pytest
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
+from sqlalchemy import select
 
+from tagalot.core.models import Entity, EntityTag
+from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.tag_yaml import ImportPlan
 from tagalot.core.tags import PATH_SEPARATOR
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
-from tagalot.ui.tag_import import TagImportDialog
+from tagalot.ui.tag_import import TagImportDialog, items_text
 from tagalot.ui.tag_manager import TagManagerPage
 from tagalot.ui.workers import ScanController
 
@@ -77,7 +82,7 @@ def test_export_saves_the_tree(
         return str(target)
 
     monkeypatch.setattr(window, "choose_export_path", choose)
-    _page(window).export_button.click()
+    _page(window).export_tags_action.trigger()  # Export tags… → Tags only…
     qtbot.waitUntil(target.exists, timeout=5000)
     assert asked == ["Demo tags.yaml"]
     text = target.read_text(encoding="utf-8")
@@ -169,3 +174,103 @@ def test_a_file_that_isnt_text_is_reported(
     _page(window).import_button.click()
     qtbot.waitUntil(lambda: bool(warnings), timeout=5000)
     assert warnings == ["Couldn't read picture.yaml: it isn't a text file."]
+
+
+def _tagged(session: KeepSession) -> set[tuple[int, int]]:
+    with session.reader.connect() as conn:
+        rows = conn.execute(
+            select(EntityTag.entity_id, EntityTag.tag_id).where(EntityTag.by_file.is_(False))
+        )
+        return {(e, t) for e, t in rows}
+
+
+def test_tags_and_their_items_go_out_and_come_back(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Export with which items have each tag, take the tags off, import them back (#396)."""
+    target = tmp_path / "out" / "tags and items.yaml"
+    target.parent.mkdir()
+    asked: list[str] = []
+
+    def choose(name: str) -> str:
+        asked.append(name)
+        return str(target)
+
+    monkeypatch.setattr(window, "choose_export_path", choose)
+    _page(window).export_items_action.trigger()  # Export tags… → Tags and the items…
+    qtbot.waitUntil(target.exists, timeout=5000)
+    assert asked == ["Demo tags and items.yaml"]
+    text = target.read_text(encoding="utf-8")
+    assert "\n---\nitems:\n- type: " in text
+    tagged = _tagged(session)
+    assert tagged
+
+    ids = sorted({e for e, _ in tagged})
+    session.tags.remove(ids, {t for _, t in tagged})  # every tag of the user's off
+    assert not _tagged(session)
+
+    seen: list[TagImportDialog] = []
+
+    def review(dialog: TagImportDialog) -> bool:
+        seen.append(dialog)
+        return dialog.import_button.isEnabled()
+
+    monkeypatch.setattr(window, "choose_tag_file", lambda: str(target))
+    monkeypatch.setattr(window, "review_tag_import", review)
+    _page(window).import_button.click()
+    qtbot.waitUntil(lambda: _tagged(session) == tagged, timeout=5000)
+    [dialog] = seen
+    assert not dialog.match_box.isHidden()
+    items = len(ids)
+    assert dialog.summary.text().endswith(f"{items:,} items found: {len(tagged):,} tags to add.")
+    dialog.match_box.setChecked(True)
+    assert dialog.summary.text().endswith(", 0 tags to take off.")
+    _wait_status(qtbot, window, "Imported tags: nothing to change; tagged")
+
+
+def test_matching_the_file_takes_other_tags_off(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tagged = sorted(_tagged(session))
+    entity_id, tag_id = tagged[0]
+    with session.reader.connect() as conn:
+        title, type_id = conn.execute(
+            select(Entity.title, Entity.type).where(Entity.id == entity_id)
+        ).one()
+    label = type_labels(session.schema)[type_id]
+    source = tmp_path / "one.yaml"
+    source.write_text(
+        f"---\nitems:\n- type: {label}\n  title: '{title}'\n  tags: []\n", encoding="utf-8"
+    )
+
+    def review(dialog: TagImportDialog) -> bool:
+        dialog.match_box.setChecked(True)
+        return dialog.import_button.isEnabled()
+
+    monkeypatch.setattr(window, "choose_tag_file", lambda: str(source))
+    monkeypatch.setattr(window, "review_tag_import", review)
+    _page(window).import_button.click()
+    qtbot.waitUntil(lambda: not any(e == entity_id for e, _ in _tagged(session)), timeout=5000)
+    assert (entity_id, tag_id) not in _tagged(session)
+
+
+def test_the_preview_says_why_there_is_nothing_to_import() -> None:
+    """Items found that already have their tags, and one not found: nothing to do, and the
+    preview says so (found in review)."""
+    plan = ImportPlan(items=12, not_found=("Book “Made Up”",))
+    assert items_text(plan, False) == (
+        "12 items found, 1 not found: 0 tags to add. The items found already have the file's tags."
+    )
+    others = ImportPlan(items=12, tags_removed=2)
+    assert items_text(others, False).endswith(
+        "(and 2 others of yours, which ticking the last box takes off)."
+    )
+    assert items_text(others, True) == "12 items found: 0 tags to add, 2 tags to take off."

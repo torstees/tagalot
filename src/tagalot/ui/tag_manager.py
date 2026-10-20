@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSplitter,
@@ -452,7 +453,8 @@ class TagManagerPage(QWidget):
     """Tag id, and a :class:`~tagalot.core.tags.DeleteMode` (``None`` without sub-tags)."""
     undo_requested = Signal()
     redo_requested = Signal()
-    export_requested = Signal()
+    export_requested = Signal(bool)
+    """Export tags…: with which items have each tag (#396), or not."""
     import_requested = Signal()
 
     def __init__(
@@ -535,7 +537,19 @@ class TagManagerPage(QWidget):
         self.delete_button.clicked.connect(self.delete_current)
         self.export_button = QPushButton("Export tags…")
         self.export_button.setToolTip("Save the whole tag tree as a YAML file")
-        self.export_button.clicked.connect(self.export_requested)
+        export_menu = QMenu(self.export_button)
+        self.export_tags_action = export_menu.addAction(
+            "Tags only…", lambda: self.export_requested.emit(False)
+        )
+        self.export_items_action = export_menu.addAction(
+            "Tags and the items that have them…", lambda: self.export_requested.emit(True)
+        )
+        self.export_items_action.setToolTip(
+            "Also save which items have each tag (your own tags, not the files'), to put "
+            "them back here or in another keep"
+        )
+        export_menu.setToolTipsVisible(True)
+        self.export_button.setMenu(export_menu)
         self.import_button = QPushButton("Import tags…")
         self.import_button.setToolTip(
             "Add and update tags from a YAML file, after showing what would change"

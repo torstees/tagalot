@@ -66,7 +66,7 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import type_plurals, view_spec
 from tagalot.core.search_spec import FieldFilter, SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.core.tag_yaml import ImportPlan, export_tags, plan_import
+from tagalot.core.tag_yaml import ImportPlan, export_tags, plan_import, tagged_items
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
@@ -1264,13 +1264,28 @@ class MainWindow(QMainWindow):
 
     # --- exporting and importing tags (#395) ---
 
-    def export_tag_file(self) -> None:
-        """Save the whole tag tree as YAML, where the user chooses (as other exports)."""
+    def export_tag_file(self, with_items: bool = False) -> None:
+        """Save the whole tag tree as YAML, where the user chooses (as other exports); with
+        which items have each tag, read in a worker (#396)."""
         session = self.session
         if session is None:
             return
-        text = export_tags(session.tag_cache.get(), session.schema)
-        self.save_export(f"{session.keep.config.name} tags.yaml", text, "Export tags")
+        tree = session.tag_cache.get()
+        name = session.keep.config.name
+        if not with_items:
+            self.save_export(f"{name} tags.yaml", export_tags(tree, session.schema), "Export tags")
+            return
+
+        def read() -> str:
+            with session.reader.connect() as conn:
+                items = tagged_items(conn, session.schema, tree)
+            return export_tags(tree, session.schema, items)
+
+        def done(text: str) -> None:
+            if shiboken6.isValid(self):
+                self.save_export(f"{name} tags and items.yaml", text, "Export tags")
+
+        run_in_pool(read, on_done=done)
 
     def import_tag_file(self) -> None:
         """Choose a YAML tag file, read and plan it in a worker, show what it would do, and
@@ -1298,7 +1313,9 @@ class MainWindow(QMainWindow):
             text, keep, delete = result
             dialog = TagImportDialog(name, keep, delete, self)
             if self.review_tag_import(dialog):
-                self.tag_actions.import_tags(text, name, dialog.delete_unused())
+                self.tag_actions.import_tags(
+                    text, name, dialog.delete_unused(), dialog.match_items()
+                )
 
         def failed(error: BaseException) -> None:
             if not shiboken6.isValid(self):

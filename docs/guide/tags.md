@@ -54,7 +54,7 @@ A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` 
 
 ### Importing and exporting tags
 
-**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit. **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor. Only the tags travel, not which items have them.
+**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit: **Tags only…**, or **Tags and the items that have them…** (below). **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor.
 
 The file is nested like the tree. A tag can be written three ways:
 
@@ -84,4 +84,23 @@ Read:                         # just the name
 - **Problems are left out, and the rest imports:** a color that isn't `#rrggbb`, a kind of item this keep doesn't have, a sub-tag that applies to more than its parent allows. A file that isn't YAML imports nothing.
 - **Delete tags not in this file that no item uses** (off unless you tick it) also deletes the tags the file doesn't mention, but only those no item has and with no sub-tag that stays. The preview lists them, and the ones kept because items use them. If you renamed a tag in the file and items use it, the old one stays: merge it into the new one with **Merge…**.
 
-An import is one step: **Undo** puts every tag back as it was.
+An import is one step: **Undo** puts every tag back as it was, and takes the tags it put on items off again.
+
+#### Which items have each tag
+
+**Export tags… → Tags and the items that have them…** adds, after the tree, every item with tags of your own: to back your tagging up, or to carry it to another keep with the same theme. Tags that come from files' own keywords aren't written: they come back from the files.
+
+```yaml
+---
+items:
+- type: Book
+  title: Small Gods
+  key: book:humble bundle|small gods
+  files: [Humble Bundle/Small Gods.epub]
+  tags: [Genre > Fantasy, Read]
+```
+
+- **Importing finds each item** by its `key` (Tagalot's own name for it), else by one of its `files` (relative to its watched folder, so another drive or share works), else by its kind and `title` when exactly one item has them. An item found no way is listed in the preview as not found; it's never guessed.
+- **Its tags are added;** nothing is taken off, unless you tick **Also take tags off its items that the file doesn't list**: then each item the file lists ends up with exactly its tags from the file (tags from its files' keywords stay).
+- The preview says how many items were found, how many tags it will add (and take off), and lists the items not found. A tag the file gives an item must be in the keep or in the file's tree.
+- A file can hold only the items (starting with `---` or with `items:`), and you can edit it: add an item, or change its tags.

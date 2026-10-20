@@ -6,13 +6,31 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, insert, select
+from sqlalchemy import Engine, delete, insert, select
 
 from tagalot.builtin_themes.books import BooksTheme
 from tagalot.core.db import create_keep_engine
-from tagalot.core.models import Base, Entity, EntityTag, Tag, TagAlias
+from tagalot.core.keywords import apply_file_tags, keyword_key
+from tagalot.core.models import (
+    Base,
+    Entity,
+    EntityKeyword,
+    EntityResource,
+    EntityTag,
+    Resource,
+    ResourceKind,
+    Root,
+    Tag,
+    TagAlias,
+)
 from tagalot.core.tag_service import TagService
-from tagalot.core.tag_yaml import ImportPlan, TagUpdate, export_tags, plan_import
+from tagalot.core.tag_yaml import (
+    ImportPlan,
+    TagUpdate,
+    export_tags,
+    plan_import,
+    tagged_items,
+)
 from tagalot.core.tags import PATH_SEPARATOR, TagError, TagTree, TagTreeCache
 from tagalot.core.theme_schema import ThemeSchema, build_theme_schema
 from tagalot.core.writer import DbWriter
@@ -356,3 +374,179 @@ def test_one_undoable_step(env: Env) -> None:
     assert env.tags.undo_label is None
     env.tags.redo()
     assert env.state() == after
+
+
+# --- which items have each tag (#396) ---
+
+
+def _items(env: Env) -> None:
+    """Three more books, each findable one way: by key (Small Gods), by its file (Mort, whose
+    key another keep would write differently), and by title (Eric); and a tag from a file."""
+    with env.engine.begin() as conn:
+        conn.execute(insert(Root).values(id="r", name="Books"))
+        conn.execute(
+            insert(Entity),
+            [
+                {"id": 3, "type": "books.book", "title": "Small Gods", "ingest_key": "book:gods"},
+                {"id": 4, "type": "books.book", "title": "Mort", "ingest_key": "book:mort"},
+                {"id": 5, "type": "books.book", "title": "Eric", "ingest_key": None},
+            ],
+        )
+        conn.execute(
+            insert(Resource).values(
+                id=1, root_id="r", relpath="Pratchett/Mort.epub", kind=ResourceKind.FILE
+            )
+        )
+        conn.execute(insert(EntityResource).values(entity_id=4, resource_id=1, role="file"))
+        conn.execute(
+            insert(EntityTag),
+            [
+                {"entity_id": 3, "tag_id": 2, "by_file": False},
+                {"entity_id": 3, "tag_id": 6, "by_file": False},
+                {"entity_id": 4, "tag_id": 5, "by_file": False},
+                {"entity_id": 5, "tag_id": 6, "by_file": False},
+            ],
+        )
+        # Eric's file says "Ísland": a tag from the file, which is never written.
+        conn.execute(
+            insert(EntityKeyword).values(
+                entity_id=5, resource_id=1, match_key=keyword_key("Ísland"), keyword="Ísland"
+            )
+        )
+        apply_file_tags(conn)
+
+
+def _links(env: Env) -> set[tuple[int, int]]:
+    with env.engine.connect() as conn:
+        rows = conn.execute(
+            select(EntityTag.entity_id, EntityTag.tag_id).where(EntityTag.by_file.is_(False))
+        )
+        return {(e, t) for e, t in rows}
+
+
+def _with_items(env: Env) -> str:
+    with env.engine.connect() as conn:
+        return export_tags(env.tree(), SCHEMA, tagged_items(conn, SCHEMA, env.tree()))
+
+
+def test_export_can_list_which_items_have_each_tag(env: Env) -> None:
+    _items(env)
+    text = _with_items(env)
+    assert text.startswith(EXPORTED)
+    tail = text[len(EXPORTED) :]
+    assert tail == (
+        "\n# Which items have each tag. Import finds each by its key, else a file, else its kind\n"
+        "# and title.\n"
+        "---\n"
+        "items:\n"
+        "- type: Book\n  title: B1\n  tags: [Genre > Fantasy]\n"
+        "- type: Book\n  title: B2\n  tags: [Read]\n"
+        "- type: Book\n  title: Eric\n  tags: [Read]\n"
+        "- type: Book\n  title: Mort\n  key: book:mort\n  files: [Pratchett/Mort.epub]\n"
+        "  tags: [Mood > Calm]\n"
+        "- type: Book\n  title: Small Gods\n  key: book:gods\n  tags: [Genre > Fantasy, Read]\n"
+    )
+
+
+def test_a_round_trip_with_items_changes_nothing(env: Env) -> None:
+    _items(env)
+    text = _with_items(env)
+    before = env.state()
+    plan = env.plan(text)
+    assert (plan.items, plan.not_found, plan.tags_added, plan.tags_removed) == (5, (), 0, 0)
+    assert not plan.changes
+    env.tags.import_tags(text, "tags.yaml", match_items=True)
+    assert env.state() == before
+
+
+def test_items_are_found_by_key_file_or_title_and_tagged(env: Env) -> None:
+    _items(env)
+    text = _with_items(env).replace("book:mort", "book:elsewhere")  # found by its file
+    with env.engine.begin() as conn:
+        conn.execute(delete(EntityTag).where(EntityTag.by_file.is_(False)))
+    plan = env.plan(text)
+    assert (plan.items, plan.tags_added) == (5, 6)
+    assert plan.changes
+    env.tags.import_tags(text, "tags.yaml")
+    assert _links(env) == {(1, 2), (2, 6), (3, 2), (3, 6), (4, 5), (5, 6)}
+    env.tags.undo()
+    assert _links(env) == set()
+    env.tags.redo()
+    assert len(_links(env)) == 6
+
+
+def test_an_item_found_no_way_is_listed_and_never_guessed(env: Env) -> None:
+    _items(env)
+    text = _with_items(env) + "- type: Book\n  title: Unknown Book\n  tags: [Read]\n"
+    text += "- type: Book\n  title: Twin\n  key: book:nope\n  files: [nope.epub]\n  tags: [Read]\n"
+    with env.engine.begin() as conn:  # two "Twin"s: the title alone doesn't say which
+        conn.execute(
+            insert(Entity),
+            [{"id": i, "type": "books.book", "title": "Twin", "ingest_key": None} for i in (6, 7)],
+        )
+    plan = env.plan(text)
+    assert plan.not_found == ("Book \u201cUnknown Book\u201d", "Book \u201cTwin\u201d")
+    assert plan.items == 5
+
+
+def test_add_only_or_match_the_file(env: Env) -> None:
+    _items(env)
+    text = _with_items(env).replace("tags: [Genre > Fantasy, Read]", "tags: [Mood > Calm]")
+    plan = env.plan(text)
+    assert (plan.tags_added, plan.tags_removed) == (1, 2)  # Calm on; Fantasy and Read to match
+    env.tags.import_tags(text, "tags.yaml")
+    assert {(3, 2), (3, 5), (3, 6)} <= _links(env)  # added, nothing taken off
+    env.tags.import_tags(text, "tags.yaml", match_items=True)
+    assert {t for e, t in _links(env) if e == 3} == {5}
+    with env.engine.connect() as conn:  # Eric's tag from its file stays
+        assert conn.scalar(
+            select(EntityTag.by_file).where(EntityTag.entity_id == 5, EntityTag.tag_id == 8)
+        )
+
+
+def test_an_items_new_tag_comes_with_the_file_and_undoes(env: Env) -> None:
+    _items(env)
+    text = (
+        _with_items(env)
+        .replace("Places:\n", "Shelf:\n  tags:\n    Top:\nPlaces:\n", 1)
+        .replace("title: Eric\n  tags: [Read]", "title: Eric\n  tags: [Read, Shelf > Top]")
+    )
+    plan = env.plan(text)
+    assert plan.new == (p("Shelf"), p("Shelf", "Top"))
+    assert plan.tags_added == 1
+    env.tags.import_tags(text, "tags.yaml")
+    top = env.find("Shelf", "Top")
+    assert (5, top) in _links(env)
+    env.tags.undo()
+    assert env.tree().find_child(None, "Shelf") is None
+    env.tags.redo()  # the new tag comes back with its item
+    assert (5, env.find("Shelf", "Top")) in _links(env)
+
+
+def test_items_problems_are_reported(env: Env) -> None:
+    text = EXPORTED + (
+        "---\nitems:\n"
+        "- type: Movie\n  title: Heat\n  tags: [Read]\n"
+        "- type: Book\n  tags: [Read]\n"
+        "- type: Book\n  title: B1\n  tags: [Nowhere > Else]\n"
+    )
+    plan = env.plan(text)
+    messages = [str(problem) for problem in plan.problems]
+    assert messages[0].startswith("Line 21: 'Movie' isn't a kind of item in this keep")
+    assert messages[1] == "Line 24: An item without a title: left out."
+    assert messages[2] == (
+        "Line 26: 'B1': the tag 'Nowhere > Else' isn't in this keep or this file: left out."
+    )
+    assert plan.items == 1
+
+
+def test_a_file_of_items_only(env: Env) -> None:
+    """Starting with "---" (or not), a file that is only ``items:`` is read as items."""
+    for text in (
+        "---\nitems:\n- type: Book\n  title: B1\n  tags: [Read]\n",
+        "items:\n- type: Book\n  title: B1\n  tags: [Read]\n",
+    ):
+        plan = env.plan(text)
+        assert (plan.new, plan.items, plan.tags_added) == ((), 1, 1)
+    plan = env.plan("items: [Read, Later]\n")  # a tag named "items", with sub-tags
+    assert plan.new == (p("items"), p("items", "Read"), p("items", "Later"))
