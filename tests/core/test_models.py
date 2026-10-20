@@ -60,6 +60,7 @@ CORE_TABLES = {
     "picture_ignore",
     "markdown_problem",
     "item_picture",
+    "online_picture",
     "schema_version",
 }
 FTS_TABLES = {

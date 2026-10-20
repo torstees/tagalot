@@ -792,6 +792,10 @@ class IngestSession:
         self._touch(entity_id)
         self._dirty.add(entity_id)
 
+    def online_picture(self, entity: EntityRef, url: str) -> None:
+        """Only while applying online details (``core.online.OnlineSession``)."""
+        raise IngestError("online_picture is only for Theme.online_details")
+
     def warn(self, resource: ResourceInfo | None, message: str) -> None:
         """Record a problem with a file for the activity panel."""
         warning = IngestWarning(

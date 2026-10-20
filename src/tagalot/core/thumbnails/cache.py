@@ -14,6 +14,7 @@ import hashlib
 import logging
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import (
@@ -72,6 +73,14 @@ def thumb_key(
     (size or modification time), another renderer or renderer version, or another thumbnail
     size gives another key."""
     parts = (resource_id, file_size, mtime_ns, renderer_id, renderer_version, thumb_size)
+    return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
+
+
+def online_key(entity_id: int, fetched_at: datetime | None, thumb_size: int) -> str:
+    """The cache key of an item's picture from an online service (#483): fetching it again
+    gives another key."""
+    stamp = fetched_at.isoformat() if fetched_at is not None else ""
+    parts = ("online", entity_id, stamp, thumb_size)
     return hashlib.sha256(repr(parts).encode("utf-8")).hexdigest()
 
 

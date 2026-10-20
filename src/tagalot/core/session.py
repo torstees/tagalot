@@ -50,13 +50,14 @@ from tagalot.core.dedupe import Verifier
 from tagalot.core.folder_items import tagged_hidden
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
-from tagalot.core.keep import Keep, KeepConfig, open_keep, save_keep_config
+from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_contents_index,
     with_markdown_assets,
     with_name,
     with_note_ignore_keys,
     with_online_lookups,
+    with_online_services,
     with_option,
     with_see_through,
     with_thumbnail_max,
@@ -126,7 +127,7 @@ from tagalot.core.thumbnails.queue import (
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.triage import dismiss
 from tagalot.core.writer import DbWriter
-from tagalot.themes.api import Theme
+from tagalot.themes.api import OnlineSource, Theme
 from tagalot.themes.loader import ThemeCatalog, load_themes
 
 logger = logging.getLogger(__name__)
@@ -359,7 +360,9 @@ class KeepSession:
             return closing.is_set() or stopped()
 
         theme = self.theme()
-        fetcher = fetcher or Fetcher(theme.online_sources, opener=self.online_opener, stopped=stop)
+        fetcher = fetcher or Fetcher(
+            self.allowed_online_sources(), opener=self.online_opener, stopped=stop
+        )
         report = look_up(
             self.writer,
             self.reader,
@@ -822,9 +825,38 @@ class KeepSession:
             self._queue.stop()
 
     def set_online_lookups(self, answer: str | None) -> None:
-        """Allow (``"allow"``) or refuse (``"never"``) online lookups for this keep, or
-        forget the answer (``None``: ask again). Runs in a worker."""
-        self.save_config(with_online_lookups(self.keep.config, answer))
+        """Allow (``"allow"``, every service the theme uses) or refuse (``"never"``)
+        online lookups for this keep, or forget the answer (``None``: ask again). Runs in a
+        worker."""
+        hosts = [s.host for s in self.theme.online_sources]
+        self.save_config(with_online_lookups(self.keep.config, answer, hosts))
+
+    def allowed_online_sources(self) -> list[OnlineSource]:
+        """The theme's services this keep may look things up in (#483)."""
+        allowed = allowed_hosts(self.keep.config)
+        return [s for s in self.theme.online_sources if s.host in allowed]
+
+    def new_online_sources(self) -> list[OnlineSource]:
+        """The theme's services a keep that allows lookups hasn't been asked about: added
+        since the user allowed the others (#483)."""
+        config = self.keep.config
+        if config.online_lookups != "allow":
+            return []
+        answered = allowed_hosts(config) | set(config.online_refused)
+        return [s for s in self.theme.online_sources if s.host not in answered]
+
+    def answer_online_sources(self, sources: Iterable[OnlineSource], allow: bool) -> None:
+        """Allow, or don't use, these services, besides those already answered. Runs in a
+        worker."""
+        hosts = [s.host for s in sources]
+        self.save_config(
+            with_online_services(
+                self.keep.config,
+                allow=hosts if allow else (),
+                refuse=() if allow else hosts,
+                theme_hosts=[s.host for s in self.theme.online_sources],
+            )
+        )
 
     def rename_keep(self, name: str) -> None:
         """Rename the keep. Runs in a worker."""

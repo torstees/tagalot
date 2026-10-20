@@ -112,7 +112,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 20             # the theme API it needs
+    api_version = 21             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -127,7 +127,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`, 21 for `ctx.online_picture`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -299,6 +299,8 @@ class BooksTheme(Theme):
 ```
 
 `online_requests` runs in a worker for many items, so it only builds addresses (never goes online). `online_details` runs in the DB writer, like `ingest`, once every address has an answer; check `answer.ok` (a service answers 404 for an identifier it doesn't know). Values it sets are marked as looked up, never replace the user's edits, and are replaced when the item's files are read again; fill in empty fields, as here, so a file's own details win. `interval=3` on an `OnlineSource` spaces its requests further apart, for services that ask for it.
+
+To show a picture the service has (a cover, a photo), name it in `online_details` with `ctx.online_picture(entity, url)` (`api_version = 21`). Its host must be one of your `online_sources` too, so the user is asked about it; a covers service on its own host is a source of its own (`OnlineSource("Open Library Covers", "covers.openlibrary.org", "ISBNs")`). Tagalot fetches it after the details, keeps it in the keep, and shows it only when the item has no picture of its own. The service should answer 404 when it has none (Open Library's covers need `?default=false` for that). A keep that already allows your other services is asked once about a service you add.
 
 ## Near-duplicates
 
