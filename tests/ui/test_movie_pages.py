@@ -319,3 +319,22 @@ def test_a_person_holding_nothing_has_no_contents_tabs(
     qtbot.waitUntil(lambda: len(page._counts) == 5, timeout=5000)  # all counted
     shown = [tabs.tabText(i) for i in range(tabs.count()) if tabs.isTabVisible(i)]
     assert shown == ["Movie credits", "Picture credits", "Photos (2)"]
+
+
+def test_the_tabs_start_right_under_the_header(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """The details are in the Details tab, so the tabs take the room below the header
+    (#491), until the user drags the divider."""
+    window.resize(1200, 800)
+    page = _page_of(qtbot, window, session, "Sigourney Weaver")
+    header = page._middle.sizeHint().height()
+
+    def fitted() -> bool:
+        return page.splitter.sizes()[0] == header
+
+    qtbot.waitUntil(fitted, timeout=5000)
+    page.splitter.moveSplitter(header + 120, 1)  # as the user dragging it
+    page.refresh()
+    qtbot.wait(200)
+    assert page.splitter.sizes()[0] == header + 120  # where they put it

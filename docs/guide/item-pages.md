@@ -6,7 +6,7 @@ Double-click an item (or press Enter) for its page; for kinds that open their fi
 
 ## What's on a page
 
-The middle of a page has the header and, below it, what the item holds or links to, as tabs. Its details (**Details**, **Extra fields**, **Files**, **From the file**) are in the **Details** tab beside **Tags** on the right, so the tabs below the header get the room.
+The middle of a page has the header and, below it, what the item holds or links to, as tabs. Its details (**Details**, **Extra fields**, **Files**, **From the file**) are in the **Details** tab beside **Tags** on the right, so the tabs start right under the header and get the room. Drag the divider between them to give the header more; it stays there while the page is open.
 
 - **The header:** its thumbnail, title, and kind, with the [badges](tags.md#tag-icons) of its tags beside the title. Above the title, **breadcrumbs** show what holds it (`Discworld ›`), each opening that item's page. Under it, the item's [note](notes.md), with **Show more** for a long one and **Open note** for a note file; an item without a note file has **Add a note**, or ✎ to edit the note [typed in Tagalot](notes.md#typing-a-note-in-tagalot).
 - **Details** (in the Details tab): its fields, each name above its value. Fields you can change show a ✎ when you point at them.

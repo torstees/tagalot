@@ -2,7 +2,8 @@
 
 Typing in the filter box narrows the tree to matching tags (names, aliases, descriptions)
 and their ancestors, expanded so every match shows; clearing it restores the folds the user
-had. Down moves into the tree, on the first match.
+had. Down moves into the tree, on the first match. Every tag starts expanded; the buttons
+beside the filter box (and the right-click menu) expand or collapse them all (#490).
 
 Keyboard tagging: **Enter** asks to apply the highlighted tag (or the tags selected in the
 tree) to the selected items, **Shift+Enter** to remove it; the panel emits
@@ -14,13 +15,16 @@ change.
 
 import shiboken6
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThreadPool, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QIcon, QKeyEvent, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
     QPushButton,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -96,9 +100,25 @@ class TagPanel(QWidget):
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setWordWrap(True)
 
+        self.expand_button = QToolButton()
+        self.expand_button.setIcon(fold_icon(expand=True))
+        self.expand_button.setAutoRaise(True)
+        self.expand_button.setToolTip("Expand all tags")
+        self.expand_button.clicked.connect(self.expand_all)
+        self.collapse_button = QToolButton()
+        self.collapse_button.setIcon(fold_icon(expand=False))
+        self.collapse_button.setAutoRaise(True)
+        self.collapse_button.setToolTip("Collapse all tags")
+        self.collapse_button.clicked.connect(self.collapse_all)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.addWidget(self.filter_edit)
+        top = QHBoxLayout()
+        top.setSpacing(2)
+        top.addWidget(self.filter_edit, 1)
+        top.addWidget(self.expand_button)
+        top.addWidget(self.collapse_button)
+        layout.addLayout(top)
         self.selection_label = QLabel()
         self.selection_label.setWordWrap(True)
         self.selection_label.hide()
@@ -134,7 +154,7 @@ class TagPanel(QWidget):
         current = self.current_tag()
         self._expanded &= set(_all_ids(tree))  # forget deleted tags
         if first_load:
-            self._expanded = set(tree.children(None))  # start with the top level open
+            self._expanded = set(_all_ids(tree))  # start with every tag open (#490)
         self.model.set_tree(tree)
         self._after_reset()
         if current is not None:
@@ -156,6 +176,30 @@ class TagPanel(QWidget):
 
     def expanded_tags(self) -> set[int]:
         return set(self._expanded)
+
+    def expand_all(self) -> None:
+        """Open every tag (#490). While filtering, the tree shown is already open: this
+        becomes the folds the user gets back."""
+        tree = self.model.tree
+        if tree is None:
+            return
+        self._expanded = set(_all_ids(tree))
+        if not self.model.filtering:
+            self._restoring = True
+            try:
+                self.view.expandAll()
+            finally:
+                self._restoring = False
+
+    def collapse_all(self) -> None:
+        """Close every tag, leaving the top level (#490)."""
+        self._expanded = set()
+        if not self.model.filtering:
+            self._restoring = True
+            try:
+                self.view.collapseAll()
+            finally:
+                self._restoring = False
 
     # --- filtering ---
 
@@ -304,12 +348,25 @@ class TagPanel(QWidget):
         if not count:
             add.setText(f"Add {names} to the selected items")
             remove.setText(f"Remove {names} from the selected items")
+        self.add_fold_actions(menu)
+        return menu
+
+    def fold_menu(self) -> QMenu:
+        """The right-click menu off the tags: **Expand all** and **Collapse all**."""
+        menu = QMenu(self)
+        menu.addAction(fold_icon(expand=True), "Expand all", self.expand_all)
+        menu.addAction(fold_icon(expand=False), "Collapse all", self.collapse_all)
         return menu
 
     def _show_menu(self, index: QModelIndex, where: QPoint) -> None:
         menu = self.menu_for(index)
-        if menu is not None:
-            menu.exec(where)
+        (menu if menu is not None else self.fold_menu()).exec(where)
+
+    def add_fold_actions(self, menu: QMenu) -> None:
+        """**Expand all** and **Collapse all**, at the end of a menu (#490)."""
+        menu.addSeparator()
+        menu.addAction(fold_icon(expand=True), "Expand all", self.expand_all)
+        menu.addAction(fold_icon(expand=False), "Collapse all", self.collapse_all)
 
     def target_tags(self) -> list[int]:
         """The tags Enter would use: those selected in the tree, else the highlighted one,
@@ -367,6 +424,24 @@ class TagPanel(QWidget):
             if first.isValid():
                 self.view.setCurrentIndex(first)
         self.view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+def fold_icon(*, expand: bool, size: int = 16) -> QIcon:
+    """A small drawn box with a plus (expand all) or a minus (collapse all), in the
+    palette's text color, like the results' layout icons."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    color = QApplication.palette().color(QPalette.ColorRole.WindowText)
+    painter.setPen(color)
+    painter.drawRect(2, 2, 11, 11)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawRect(5, 7, 6, 2)  # the minus
+    if expand:
+        painter.drawRect(7, 5, 2, 6)  # and the plus's upright
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _all_ids(tree: TagTree) -> list[int]:
