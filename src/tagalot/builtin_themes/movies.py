@@ -506,10 +506,11 @@ class MoviesTheme(Theme):
     ]
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
-        """A movie shows its poster, else its first screenshot; a collection its poster, else
-        one of its movies'; a person their photo, else a title card."""
+        """A movie shows its poster, else its first screenshot, else its folder's picture (a
+        loose home video beside ``folder.jpg``, #479); a collection its poster, else one of its
+        movies'; a person their photo, else a title card."""
         if entity_type is Movie:
-            return [RoleImage("poster"), RoleImage("screenshot"), Icon("video")]
+            return [RoleImage("poster"), RoleImage("screenshot"), FolderImage(), Icon("video")]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
         if entity_type is Folder:  # its folder picture, else one of the first things in it
