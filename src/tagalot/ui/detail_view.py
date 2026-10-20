@@ -71,7 +71,7 @@ from tagalot.ui.gallery_view import GalleryView, fitted
 from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import TagsValue, badges_value
 from tagalot.ui.note_view import NoteView
-from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions, writes_back
+from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
 
@@ -1048,8 +1048,8 @@ class DetailPage(QWidget):
             self._action_buttons.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
 
     def _add_write_back(self, detail: EntityDetail) -> None:
-        """Write to file… at the end of More (once), for types the theme writes back."""
-        if self._write_back_added or not writes_back(self.session, detail.type):
+        """Write to file… at the end of More (once): any item's Markdown file or note (#501)."""
+        if self._write_back_added:
             return
         self._write_back_added = True
         write = self._more_menu.addAction("Write to file\u2026")

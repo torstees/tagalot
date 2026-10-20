@@ -4,8 +4,9 @@ files", #299).
 This is the one code path that changes a file under a root (AGENTS.md rule 1), and it is
 narrow on purpose:
 
-- only files in roots marked ``writable = true``, only Markdown files of the theme's
-  :attr:`~tagalot.themes.api.Theme.write_back` types, and only when the user asks;
+- only files in roots marked ``writable = true`` (or, for notes in the keep's notes
+  folder, a notes folder marked ``[notes] writable``), only Markdown files: an item's own
+  (its primary role's, in any theme) and its note (#501), and only when the user asks;
 - :func:`plan_write_back` (a worker) reads each file and works out its new front matter,
   for the user to preview; a file that changed since Tagalot last read it is refused;
 - :func:`write_files` checks each file again, copies it to the keep's ``backups/`` folder,
@@ -16,7 +17,10 @@ YAML front matter is edited round-trip with ruamel.yaml, so comments, quoting, a
 order of keys stay; TOML front matter has the lines of the keys being written replaced,
 leaving every other line as it was. Tags are written under ``tags``: the file's own words
 for tags its keywords gave (a word whose tag the user took off the item goes), then the
-item's other tags as full paths (``Genre/Fantasy``).
+item's other tags as full paths (``Genre/Fantasy``). Fields the user edited go under the
+theme's keys (:meth:`~tagalot.themes.api.Theme.front_matter`), else, and always in a note,
+under the key the file already uses for the field (its name or label, as notes are read),
+else its name (:func:`default_front_matter`).
 """
 
 import io
@@ -37,18 +41,20 @@ from sqlalchemy import Connection, select
 from tagalot.core.keywords import keyword_index, keyword_key
 from tagalot.core.models import (
     Entity,
+    EntityNote,
     EntityResource,
     EntityTag,
     FieldProvenance,
     FieldSource,
     FileTagRemoval,
+    NotesFolderNote,
     Resource,
     ResourceStatus,
 )
 from tagalot.core.roots import local_path
 from tagalot.core.tags import TagTree
 from tagalot.core.theme_schema import ThemeSchema
-from tagalot.themes.api import EntityRef, Record, split_keywords
+from tagalot.themes.api import EntityRef, Record, Theme, entity_fields, split_keywords
 from tagalot.themes.readers import front_matter_problems
 
 logger = logging.getLogger(__name__)
@@ -276,15 +282,54 @@ def tag_changes(
     return changes
 
 
+def _loose(key: str) -> str:
+    """A key as notes match them: ignoring case, spaces, ``_``, and ``-``."""
+    return re.sub(r"[\s_-]", "", key.casefold())
+
+
+def default_front_matter(
+    entity_type: type, record: Record, edited: frozenset[str], current: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The edited fields (and title) under the key the file already uses for each (its
+    name or label, ignoring case, spaces, ``_``, and ``-``, as notes are read), else its name
+    (#501). Used for notes, and for a theme that maps no keys of its own."""
+    fields = {f.name: f for f in entity_fields(entity_type)}
+    by_key = {_loose(str(k)): str(k) for k in current}
+    wanted: dict[str, Any] = {}
+    for name in sorted(edited):
+        value: Any
+        if name == "title":
+            label, value = "title", record.title
+        elif name in fields:
+            label, value = str(fields[name].spec.label or name), record.fields.get(name)
+        else:
+            continue
+        key = by_key.get(_loose(name)) or by_key.get(_loose(label)) or name
+        wanted[key] = value
+    return wanted
+
+
+def _maps_keys(theme: Theme) -> bool:
+    """The theme says which keys its fields are written under."""
+    return type(theme).front_matter is not Theme.front_matter
+
+
 def field_changes(
     theme: Any,
     entity_type: type,
     record: Record,
     edited: frozenset[str],
     current: Mapping[str, Any],
+    note: bool = False,
 ) -> dict[str, Any]:
-    """The theme's keys for the fields the user edited, less those already as written."""
-    wanted = theme.front_matter(entity_type, record, edited, current) if edited else {}
+    """The keys for the fields the user edited (the theme's, or, in a note or for a theme
+    without its own, :func:`default_front_matter`), less those already as written."""
+    if not edited:
+        wanted: Mapping[str, Any] = {}
+    elif note or not _maps_keys(theme):
+        wanted = default_front_matter(entity_type, record, edited, current)
+    else:
+        wanted = theme.front_matter(entity_type, record, edited, current)
     changes: dict[str, Any] = {}
     for key, value in wanted.items():
         name = key_in(current, key)
@@ -320,6 +365,9 @@ class FileWrite:
     """The file's new content, when it changes."""
     problem: str | None = None
     """Why the file can't be written (it is left alone)."""
+    note: str | None = None
+    """``"note"`` for the item's note beside its files, ``"notes folder"`` for its note in
+    the keep's notes folder (#501); ``None`` for the item's own file."""
 
     @property
     def changes(self) -> bool:
@@ -335,6 +383,12 @@ class WritePlan:
     """``(item title, reason)`` for items with no file to write."""
 
 
+NOTES_FOLDER_LOCKED = (
+    "the notes folder doesn't let Write to file… change notes (Keep configuration → Notes, "
+    "or its watched folder's Write back)"
+)
+
+
 def plan_write_back(
     conn: Connection,
     schema: ThemeSchema,
@@ -342,14 +396,16 @@ def plan_write_back(
     entity_ids: Sequence[int],
     root_paths: Mapping[str, str | None],
     writable: Iterable[str],
+    notes_write_back: bool = False,
 ) -> WritePlan:
     """Work out, for each item, the new front matter of its Markdown files (its primary
-    role's), reading them (call it from a worker). ``root_paths`` gives this computer's path
-    of each root (``None``: none here); only roots in ``writable`` are written."""
+    role's) and of its note (#501), reading them (call it from a worker). ``root_paths``
+    gives this computer's path of each root (``None``: none here); only roots in
+    ``writable`` are written, and notes in the notes folder also when ``notes_write_back``."""
     from tagalot.core.ingest import IngestSession
 
     theme = schema.theme()
-    types = {schema.theme.type_id_of(t): t for t in schema.theme.write_back}
+    types = {t.type_id: t.entity for t in schema.entities.values()}
     allowed = set(writable)
     plan = WritePlan()
     context = IngestSession(conn, schema)  # only to read records; nothing is written
@@ -359,11 +415,14 @@ def plan_write_back(
     for entity_id, title, type_id in sorted(rows, key=lambda r: list(entity_ids).index(r[0])):
         entity_type = types.get(type_id)
         if entity_type is None:
-            plan.skipped.append((title, "its type has nothing Tagalot writes back"))
+            plan.skipped.append((title, "its type isn't in this keep's theme"))
             continue
-        files = _markdown_files(conn, schema, entity_id, entity_type)
+        files: list[tuple[int, str, str, int | None, int | None, str | None]] = [
+            (*f, None) for f in _markdown_files(conn, schema, entity_id, entity_type)
+        ]
+        files += _note_files(conn, entity_id, {f[0] for f in files})
         if not files:
-            plan.skipped.append((title, "it has no Markdown file"))
+            plan.skipped.append((title, "it has no Markdown file or note file"))
             continue
         record = context.get(EntityRef(entity_id, type_id))
         edited = frozenset(
@@ -380,14 +439,27 @@ def plan_write_back(
         removed = set(
             conn.scalars(select(FileTagRemoval.tag_id).where(FileTagRemoval.entity_id == entity_id))
         )
-        for resource_id, root_id, relpath, size, mtime in files:
+        for resource_id, root_id, relpath, size, mtime, note in files:
             base = root_paths.get(root_id)
             path = local_path(base, relpath) if base else ""
-            write = FileWrite(entity_id, title, resource_id, root_id, relpath, path, size, mtime)
-            if root_id not in allowed:
+            write = FileWrite(
+                entity_id, title, resource_id, root_id, relpath, path, size, mtime, note=note
+            )
+            shared = _shared_note(conn, resource_id, entity_id) if note else None
+            if not may_write(write, allowed, notes_write_back):
                 plan.files.append(
                     _problem(
-                        write, "its folder doesn't allow writing (Keep configuration → Folders)"
+                        write,
+                        NOTES_FOLDER_LOCKED
+                        if note == "notes folder"
+                        else "its folder doesn't allow writing (Keep configuration → Folders)",
+                    )
+                )
+            elif shared is not None:
+                plan.files.append(
+                    _problem(
+                        write,
+                        f"it's also the note of {shared!r}, which its tags would go to as well",
                     )
                 )
             elif not base:
@@ -397,6 +469,54 @@ def plan_write_back(
                     _plan_file(write, theme, entity_type, record, edited, item_tags, removed, tree)
                 )
     return plan
+
+
+def may_write(write: FileWrite, writable: Iterable[str], notes_write_back: bool) -> bool:
+    """Whether ``write``'s folder allows writing: its root is writable, or it is a note in
+    the notes folder and the notes folder is (#501)."""
+    return write.root_id in set(writable) or (write.note == "notes folder" and notes_write_back)
+
+
+def _note_files(
+    conn: Connection, entity_id: int, own: set[int]
+) -> list[tuple[int, str, str, int | None, int | None, str | None]]:
+    """The item's note files: beside its files, and in the notes folder (#501)."""
+    columns = (Resource.id, Resource.root_id, Resource.relpath, Resource.size, Resource.mtime_ns)
+    found: list[tuple[int, str, str, int | None, int | None, str | None]] = []
+    # The notes folder's first: those notes are items' notes too.
+    for kind, query in (
+        (
+            "notes folder",
+            select(*columns)
+            .join(NotesFolderNote, NotesFolderNote.resource_id == Resource.id)
+            .where(NotesFolderNote.item_id == entity_id),
+        ),
+        (
+            "note",
+            select(*columns)
+            .join(EntityNote, EntityNote.resource_id == Resource.id)
+            .where(EntityNote.entity_id == entity_id),
+        ),
+    ):
+        for rid, root, rel, size, mtime in conn.execute(
+            query.where(Resource.status == ResourceStatus.OK)
+        ):
+            if rid not in own and rel.lower().endswith(tuple(MARKDOWN)):
+                own.add(rid)
+                found.append((rid, root, rel, size, mtime, kind))
+    return found
+
+
+def _shared_note(conn: Connection, resource_id: int, entity_id: int) -> str | None:
+    """The title of another item whose note this file also is (a movie's folder note is its
+    Folder's too), if any: writing it would tag that item as well."""
+    other = conn.scalar(
+        select(Entity.title)
+        .join(EntityNote, EntityNote.entity_id == Entity.id)
+        .where(EntityNote.resource_id == resource_id, Entity.id != entity_id)
+        .limit(1)
+    )
+    return str(other) if other is not None else None
 
 
 def _problem(write: FileWrite, problem: str) -> FileWrite:
@@ -455,7 +575,10 @@ def _plan_file(
     before = text[found.start : found.end].replace("\r\n", "\n")
     try:
         current = read_block(found.style, before)
-        changes: dict[str, Any] = {**field_changes(theme, entity_type, record, edited, current)}
+        note = write.note is not None
+        changes: dict[str, Any] = {
+            **field_changes(theme, entity_type, record, edited, current, note)
+        }
         changes.update(tag_changes(current, item_tags, removed, tree))
         new = edit_front_matter(text, changes)
     except (WriteBackError, ValueError, TypeError) as e:
@@ -484,6 +607,7 @@ def write_files(
     keep_dir: Path,
     writable: Iterable[str],
     now: datetime | None = None,
+    notes_write_back: bool = False,
 ) -> list[WriteResult]:
     """Write the planned files that change (call it from a worker): each is checked again
     (its folder still writable, the file as it was when planned), copied to
@@ -495,7 +619,7 @@ def write_files(
     for write in writes:
         if not write.changes or write.text is None:
             continue
-        if write.root_id not in allowed:
+        if not may_write(write, allowed, notes_write_back):
             results.append(WriteResult(write, "its folder no longer allows writing"))
             continue
         target = Path(write.path)

@@ -572,10 +572,16 @@ class KeepSession:
         (``None``); it applies at the next scan. Runs in a worker."""
         self.save_config(with_notes_folder(self.keep.config, root_id, path))
 
-    def set_notes_writing(self, writable: bool | None = None, new_notes: str | None = None) -> None:
-        """Let Save as note… write in the notes folder (or not), and choose where it puts
-        new notes (``"folders"`` or ``"one-folder"``). Runs in a worker."""
-        self.save_config(with_notes_writing(self.keep.config, writable, new_notes))
+    def set_notes_writing(
+        self,
+        writable: bool | None = None,
+        new_notes: str | None = None,
+        write_back: bool | None = None,
+    ) -> None:
+        """Let Save as note… write in the notes folder (or not), choose where it puts new
+        notes (``"folders"`` or ``"one-folder"``), and let Write to file… change notes there
+        (or not, #501). Runs in a worker."""
+        self.save_config(with_notes_writing(self.keep.config, writable, new_notes, write_back))
 
     def save_as_note(self, entity_id: int) -> NewNote:
         """Write an item's typed note as a new file in the notes folder (Save as note…,

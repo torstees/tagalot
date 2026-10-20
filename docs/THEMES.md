@@ -243,12 +243,11 @@ It runs in the writer, in one transaction: what it changes is one Edit → Undo 
 
 ## Writing back to files
 
-A theme can let **Write to file…** put an item's tags, and the fields the user edited, into the front matter of its Markdown files (in folders the user marked writable; DESIGN.md §4). Name the types, and map fields to front-matter keys; Tagalot does the reading, the preview, the backup, and the writing:
+**Write to file…** puts an item's tags, and the fields the user edited, into the front matter of its Markdown files and its note (in folders the user marked writable; DESIGN.md §4), for every theme. Without anything from you, each edited field goes under the key the file already uses for it (its name or label, as notes are read), else under the field's name. To choose the keys, map fields to front-matter keys; Tagalot does the reading, the preview, the backup, and the writing:
 
 ```python
 class StoriesTheme(Theme):
     api_version = 3
-    write_back = [Story]
 
     def front_matter(self, entity_type, item, edited, current):
         keys = {"title": "title", "rating": "rating"}
@@ -256,7 +255,7 @@ class StoriesTheme(Theme):
                 for name in edited if name in keys}
 ```
 
-`edited` names the fields (and `"title"`) the user changed in Tagalot; `current` is the file's front matter now, so you can reuse a key it already has. A value of `None` removes the key. Tags are written by Tagalot under `tags`.
+`edited` names the fields (and `"title"`) the user changed in Tagalot; `current` is the file's front matter now, so you can reuse a key it already has. A value of `None` removes the key. Tags are written by Tagalot under `tags`. Notes always get the default keys. (`write_back = [...]`, which once named the types that could be written, is no longer needed.)
 
 ## Searching inside documents
 

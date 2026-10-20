@@ -258,3 +258,20 @@ def test_keep_toml_notes_writing(tmp_path: Path, env: Env) -> None:
     path.write_text(text.replace("'one-folder'", "'piles'"), encoding="utf-8")
     with pytest.raises(KeepError, match="new_notes must be"):
         load_keep_config(path)
+
+
+def test_keep_toml_notes_write_back(tmp_path: Path, env: Env) -> None:
+    """Write to file… on notes has its own switch (#501): Save as note…'s doesn't give it."""
+    config = with_notes_writing(with_notes_folder(_config(env.root), "r", "Notes"), writable=True)
+    assert not config.notes_write_back
+    config = with_notes_writing(config, write_back=True)
+    path = tmp_path / "keep.toml"
+    save_keep_config(config, path)
+    assert "writable = true\nwrite_back = true" in path.read_text("utf-8")
+    loaded = load_keep_config(path)
+    assert loaded.notes_write_back
+    assert with_notes_folder(loaded, "r", "Notes").notes_write_back
+    assert not with_notes_folder(loaded, "r", "Other").notes_write_back
+    assert not with_notes_folder(loaded, None).notes_write_back
+    with pytest.raises(KeepError, match="no notes folder"):
+        with_notes_writing(with_notes_folder(loaded, None), write_back=True)

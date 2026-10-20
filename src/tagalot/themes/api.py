@@ -1440,11 +1440,12 @@ class Theme:
     they meet files added later whichever came first. A tuple reads its earlier extensions
     first (bibliographies, then the notes that cite them); a set reads them by path."""
     write_back: ClassVar[Sequence[type[Entity]]] = ()
-    """Entity types whose Markdown files **Write to file…** may update (DESIGN.md §4
-    *Writing back to files*; API version 3): their tags, and the keys
-    :meth:`front_matter` gives. Only files in folders the user marked writable are ever
-    changed, only by that command, and only their front matter; the core does the
-    writing."""
+    """No longer needed (#501): **Write to file…** now updates the Markdown files of every
+    type, and items' notes (DESIGN.md §4 *Writing back to files*): their tags, and the
+    fields the user edited under the keys :meth:`front_matter` gives (else under the key the
+    file uses for the field, or its name). Only files in folders the user marked writable are
+    ever changed, only by that command, and only their front matter; the core does the
+    writing. Kept so themes that set it still load (API version 3)."""
 
     online_sources: ClassVar[Sequence[OnlineSource]] = ()
     """The online services this theme looks items up in (DESIGN.md §9 *Online details*;
@@ -1500,8 +1501,8 @@ class Theme:
         edited: frozenset[str],
         current: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        """The front-matter keys **Write to file…** sets for one item of a
-        :attr:`write_back` type: ``{key: value}``, a value of ``None`` removing the key.
+        """The front-matter keys **Write to file…** sets in one item's own Markdown file:
+        ``{key: value}``, a value of ``None`` removing the key.
 
         ``edited`` names the item's fields (and ``"title"``) the user edited in Tagalot;
         only those are written, so return keys for them alone (values that came from the
@@ -1509,7 +1510,9 @@ class Theme:
         written, so a key it already uses can be kept (``number`` rather than
         ``series_index``). Values may be text, numbers, booleans, dates, or lists of them.
         Tags are the core's: it writes them under ``tags`` (keeping the file's own words for
-        tags its keywords gave). The default sets nothing else.
+        tags its keywords gave). Without this method, each edited field goes under the key
+        the file already uses for it (its name or label, as notes are read), else its name;
+        notes are always written that way (#501).
         """
         return {}
 

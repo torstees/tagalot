@@ -191,3 +191,27 @@ def test_letting_save_as_note_write(
     qtbot.waitUntil(lambda: not config.notes_writable.isEnabled(), timeout=5000)
     assert not config.notes_writable.isChecked()
     config.close()
+
+
+def test_letting_write_to_file_change_notes(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, tmp_path: Path
+) -> None:
+    """Its own checkbox, asking first (#501)."""
+    config = _config(qtbot, window, tmp_path)
+    assert not config.notes_write_back.isEnabled()
+    config.use_notes_folder(str(tmp_path / "movie-files" / "Notes"))
+    qtbot.waitUntil(config.notes_write_back.isEnabled, timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)  # that save done first
+    keep_toml = session.keep.dir / "keep.toml"
+    config.ask_notes_write_back = lambda: False  # type: ignore[method-assign]
+    config.notes_write_back.click()
+    assert not config.notes_write_back.isChecked()
+    config.ask_notes_write_back = lambda: True  # type: ignore[method-assign]
+    config.notes_write_back.click()
+    # On the session, not by reading keep.toml: on Windows a read can block the save.
+    qtbot.waitUntil(lambda: session.keep.config.notes_write_back, timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    saved = load_keep_config(keep_toml)
+    assert saved.notes_write_back
+    assert not saved.notes_writable  # Save as note… still off
+    config.close()
