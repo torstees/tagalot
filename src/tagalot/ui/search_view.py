@@ -95,6 +95,16 @@ PREVIEW_DELAY_MS = 120
 
 __all__ = ["SearchPage", "count_text", "list_columns"]
 
+LIST_TIP = "Show the results as a list"
+GRID_TIP = "Show the results as thumbnails"
+TREE_TIP = "Show the results as a tree: expand an item to see what it contains"
+SECTIONS_TIP = (
+    "Search all's sections are lists. Click a section's Show all (or pick a kind with "
+    "Only) to see it as a grid or a tree."
+)
+"""A layout button's tooltip while Search all shows sections, where the buttons are off
+(#477)."""
+
 
 WRITE_BACK_TIP = (
     "Write its tags, and the fields you edited, into the front matter of its Markdown files "
@@ -253,11 +263,9 @@ class SearchPage(QWidget):
         self.save_button.clicked.connect(self.save_requested)
         header_row.addWidget(self.save_button)
         header_row.addWidget(self.status)
-        self.list_button = self._layout_button("list", "Show the results as a list")
-        self.grid_button = self._layout_button("grid", "Show the results as thumbnails")
-        self.tree_button = self._layout_button(
-            "tree", "Show the results as a tree: expand an item to see what it contains"
-        )
+        self.list_button = self._layout_button("list", LIST_TIP)
+        self.grid_button = self._layout_button("grid", GRID_TIP)
+        self.tree_button = self._layout_button("tree", TREE_TIP)
         self._layout_buttons = QButtonGroup(self)
         self._layout_buttons.setExclusive(True)
         for button in (self.list_button, self.grid_button, self.tree_button):
@@ -781,12 +789,13 @@ class SearchPage(QWidget):
         self.list_button.setChecked(self.layout_mode == "list")
         self.grid_button.setChecked(self.layout_mode == "grid")
         self.tree_button.setChecked(self.layout_mode == "tree")
-        for button in (self.list_button, self.grid_button, self.tree_button):
+        for button, tip in (
+            (self.list_button, LIST_TIP),
+            (self.grid_button, GRID_TIP),
+            (self.tree_button, TREE_TIP),
+        ):
             button.setEnabled(not grouped)
-        if grouped:
-            self.grid_button.setToolTip("Search all shows sections; pick Show all for the grid")
-        else:
-            self.grid_button.setToolTip("Show the results as thumbnails")
+            button.setToolTip(SECTIONS_TIP if grouped else tip)
         box = self.filter_bar.contained_box
         box.setEnabled(not self._tree_layout())
         box.setToolTip(
