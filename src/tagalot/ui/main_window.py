@@ -366,6 +366,8 @@ class MainWindow(QMainWindow):
         self.tabifiedDockWidgetActivated.connect(self._side_tab_chosen)
         self.resizeDocks([self.tags_dock], [260], Qt.Orientation.Horizontal)
         self._side_width_restored = False
+        self._side_hidden: list[QDockWidget] | None = None
+        """The side panel's docks the Tag manager's page hid, to show again (#508)."""
         self._resized_dock: QObject | None = None
         """The side panel's dock last resized (the tab shown)."""
         self._side_timer = QTimer(self)
@@ -482,6 +484,7 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         self._pages[target] = page  # most recently shown last
         self.stack.setCurrentWidget(page)
+        self._side_panel_for(page)
         if record:
             self._record(target)
         self.navigation.show_current(target)
@@ -818,9 +821,33 @@ class MainWindow(QMainWindow):
             self._ui_state["side_tab"] = name
             save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
+    def _side_panel_for(self, page: QWidget) -> None:
+        """The Tag manager has its own tree and details: hide the Tags and Details panel
+        there, and put it back as it was (which of the two were open, the tab chosen) on
+        any other page (#508)."""
+        docks = (self.tags_dock, self.details_dock)
+        if isinstance(page, TagManagerPage):
+            if self._side_hidden is None:
+                self._side_hidden = [d for d in docks if d.toggleViewAction().isChecked()]
+                for dock in self._side_hidden:
+                    dock.hide()
+            return
+        if self._side_hidden is None:
+            return
+        shown, self._side_hidden = self._side_hidden, None
+        for dock in shown:
+            dock.show()
+        chosen = self.details_dock if self._ui_state.get("side_tab") == "details_dock" else None
+        if chosen in shown:
+            chosen.raise_()
+        elif shown:
+            shown[0].raise_()
+
     def _side_resized(self) -> None:
         """Remember the side panel's width, once the user stops dragging it."""
         dock = self._resized_dock
+        if isinstance(dock, QDockWidget) and not dock.isVisible():
+            return  # hidden (the Tag manager's page, #508): its width isn't the user's
         width = dock.width() if isinstance(dock, QDockWidget) else 0
         if self.session is not None and width > 0 and self._ui_state.get("side_width") != width:
             self._ui_state["side_width"] = width
