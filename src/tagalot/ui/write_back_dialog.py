@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
 from tagalot.core.writeback import FileWrite, WritePlan
 
 _WRITE = Qt.ItemDataRole.UserRole
+NOTE_LABELS = {"note": "its note", "notes folder": "its note"}
+"""How a note is named in the list of files (#501)."""
 
 
 def front_matter_diff(write: FileWrite) -> str:
@@ -47,8 +49,9 @@ class WriteBackDialog(QDialog):
         self.plan = plan
         intro = QLabel(
             "Tagalot changes only each file's front matter (its tags, and the fields you "
-            "edited), and keeps a copy of each file it changes in the keep's backups folder. "
-            "This can't be undone with Edit → Undo."
+            "edited), in items' own Markdown files and their notes, and keeps a copy of each "
+            "file it changes in the keep's backups folder. This can't be undone with Edit → "
+            "Undo."
         )
         intro.setWordWrap(True)
         self.files = QListWidget()
@@ -58,7 +61,8 @@ class WriteBackDialog(QDialog):
         self.preview.setReadOnly(True)
         self.preview.setFont(QFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)))
         for write in plan.files:
-            item = QListWidgetItem(f"{write.title} — {write.relpath}")
+            what = f" ({NOTE_LABELS[write.note]})" if write.note else ""
+            item = QListWidgetItem(f"{write.title}{what} — {write.relpath}")
             item.setData(_WRITE, write)
             if write.changes:
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)

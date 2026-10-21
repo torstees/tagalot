@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from tagalot.core.keep import load_keep_config
 from tagalot.core.models import Entity
-from tagalot.core.root_admin import edit_root
+from tagalot.core.root_admin import edit_root, with_notes_writing
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.writeback import FileWrite, WritePlan
@@ -182,3 +182,42 @@ def test_the_preview_dialog(qtbot: QtBot) -> None:
     assert dialog.chosen() == []
     assert not ok.isEnabled()
     assert dialog.files.item(1).flags() & Qt.ItemFlag.ItemIsUserCheckable == Qt.ItemFlag(0)
+
+
+def test_an_authors_note_is_written_when_the_notes_folder_allows_it(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Write to file… on any item: an author's note in the notes folder (#501)."""
+    session.save_config(with_notes_writing(session.keep.config, write_back=True))
+    with session.reader.connect() as conn:
+        terry = conn.scalar(
+            select(Entity.id).where(
+                Entity.title == "Terry Pratchett", Entity.type == "books.author"
+            )
+        )
+    assert terry is not None
+    favorite = session.tags.add(None, "Favorite author")
+    session.tags.apply([terry], [favorite])
+    note = Path(session.root_path("books")) / "Notes" / "Authors" / "Terry Pratchett.md"
+    shown: list[WritePlan] = []
+
+    def confirm(plan: WritePlan) -> list[FileWrite]:
+        shown.append(plan)
+        return [f for f in plan.files if f.changes]
+
+    monkeypatch.setattr(window, "confirm_write_back", confirm)
+    window.open_entity(terry)
+    page = window.stack.currentWidget()
+    assert isinstance(page, DetailPage)
+    qtbot.waitUntil(lambda: page.detail is not None, timeout=5000)
+    action = page.findChild(QAction, "write_back")
+    assert action is not None  # offered for an author, not only books
+    messages: list[str] = []
+    window.statusBar().messageChanged.connect(messages.append)
+    action.trigger()
+    qtbot.waitUntil(lambda: any(m.startswith("Wrote 1 file.") for m in messages), timeout=5000)
+    [write] = shown[0].files
+    assert write.note == "notes folder"
+    text = note.read_text(encoding="utf-8")
+    assert "tags:\n- Favorite author\n" in text
+    assert text.endswith("Start with *Guards! Guards!* or *Small Gods*.\n")

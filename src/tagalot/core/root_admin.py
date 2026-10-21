@@ -169,7 +169,14 @@ def without_root(config: KeepConfig, root_id: str) -> KeepConfig:
     there)."""
     roots = [copy.deepcopy(r) for r in config.roots if r.id != root_id]
     if config.notes_root == root_id:
-        return replace(config, roots=roots, notes_root=None, notes_path="", notes_writable=False)
+        return replace(
+            config,
+            roots=roots,
+            notes_root=None,
+            notes_path="",
+            notes_writable=False,
+            notes_write_back=False,
+        )
     return replace(config, roots=roots)
 
 
@@ -209,7 +216,14 @@ def with_notes_folder(config: KeepConfig, root_id: str | None, path: str = "") -
     folder*), or none (``None``). A different folder isn't writable until the user says so."""
     roots = copy.deepcopy(config.roots)
     if root_id is None:
-        return replace(config, notes_root=None, notes_path="", notes_writable=False, roots=roots)
+        return replace(
+            config,
+            notes_root=None,
+            notes_path="",
+            notes_writable=False,
+            notes_write_back=False,
+            roots=roots,
+        )
     if root_id not in {r.id for r in config.roots}:
         raise KeepError(f"The keep has no watched folder {root_id!r}.")
     path = clean_relpath(path)
@@ -219,22 +233,28 @@ def with_notes_folder(config: KeepConfig, root_id: str | None, path: str = "") -
         notes_root=root_id,
         notes_path=path,
         notes_writable=config.notes_writable and same,
+        notes_write_back=config.notes_write_back and same,
         roots=roots,
     )
 
 
 def with_notes_writing(
-    config: KeepConfig, writable: bool | None = None, new_notes: str | None = None
+    config: KeepConfig,
+    writable: bool | None = None,
+    new_notes: str | None = None,
+    write_back: bool | None = None,
 ) -> KeepConfig:
-    """``config`` with Save as note… allowed (or not) to write into the notes folder, and
-    where it puts new notes (``"folders"`` or ``"one-folder"``)."""
+    """``config`` with Save as note… allowed (or not) to write into the notes folder, where
+    it puts new notes (``"folders"`` or ``"one-folder"``), and Write to file… allowed (or
+    not) to change notes there (#501)."""
     if new_notes is not None and new_notes not in NEW_NOTES:
         raise KeepError(f"Unknown layout for new notes: {new_notes!r}")
-    if writable and config.notes_root is None:
+    if (writable or write_back) and config.notes_root is None:
         raise KeepError("The keep has no notes folder to write in.")
     return replace(
         config,
         notes_writable=config.notes_writable if writable is None else writable,
+        notes_write_back=config.notes_write_back if write_back is None else write_back,
         new_notes=config.new_notes if new_notes is None else new_notes,
         roots=copy.deepcopy(config.roots),
     )

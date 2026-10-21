@@ -73,7 +73,7 @@ def test_the_results_menu_rereads_the_selection(qtbot: QtBot, window: MainWindow
     page = _search(qtbot, window, NavTarget("view", key="Images", label="Images"), "9 items")
     qtbot.waitUntil(lambda: page.model.hit(0) is not None, timeout=5000)
     labels = [a.text() for a in page.item_menu(_hit(page, "gem.png")).actions()]
-    assert labels[-2:] == [REREAD, REPLACE]
+    assert labels[-3:] == [REREAD, REPLACE, "Write to file…"]  # then every item's (#501)
     page.table.selectAll()
     with qtbot.waitSignal(page.reread_requested) as blocker:
         next(

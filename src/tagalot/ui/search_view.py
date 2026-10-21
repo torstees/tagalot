@@ -104,7 +104,7 @@ SECTIONS_TIP = (
 
 WRITE_BACK_TIP = (
     "Write its tags, and the fields you edited, into the front matter of its Markdown files "
-    "(in folders that allow it), after showing you the change"
+    "and its note (in folders that allow it), after showing you the change"
 )
 
 
@@ -119,12 +119,6 @@ TRIAGE_DONE = {
 def searches_contents(session: KeepSession) -> bool:
     """The keep searches inside documents (§8): the filter bar offers Contents."""
     return session.keep.config.contents_index is not None and session.has_documents
-
-
-def writes_back(session: KeepSession, type_id: str) -> bool:
-    """Whether items of ``type_id`` offer Write to file… (the theme's ``write_back``)."""
-    theme = session.schema.theme
-    return any(theme.type_id_of(t) == type_id for t in theme.write_back)
 
 
 def add_reread_actions(menu: QMenu, reread: Callable[[bool], None]) -> None:
@@ -542,12 +536,11 @@ class SearchPage(QWidget):
                     hit, lambda ids: self.add_to_requested.emit(c, ids)
                 )
             )
-        if writes_back(self.session, hit.type):
-            write = menu.addAction("Write to file\u2026")
-            write.setToolTip(WRITE_BACK_TIP)
-            write.triggered.connect(
-                lambda: self._on_selection_or(hit, self.write_back_requested.emit)
-            )
+        # Every item: its own Markdown file, or its note (#501); the preview says when
+        # there's nothing to write.
+        write = menu.addAction("Write to file\u2026")
+        write.setToolTip(WRITE_BACK_TIP)
+        write.triggered.connect(lambda: self._on_selection_or(hit, self.write_back_requested.emit))
         if self.session.theme.online_sources:
             look_up = menu.addAction("Look up online")
             look_up.setToolTip(LOOK_UP_TIP)

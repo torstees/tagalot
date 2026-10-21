@@ -473,6 +473,14 @@ class KeepConfigWindow(QWidget):
             "whether or not the watched folder it's in lets Write to file… change files."
         )
         self.notes_writable.clicked.connect(self._toggle_notes_writable)
+        self.notes_write_back = QCheckBox("Let Write to file… change notes' front matter here")
+        self.notes_write_back.setObjectName("notes_write_back")
+        self.notes_write_back.setToolTip(
+            "Off: Write to file… leaves notes here alone. On: Write to file… on an item (and "
+            "only that) writes its tags and the fields you edited into its note's front matter "
+            "here, after a preview, keeping a copy in the keep's backups folder (#501)."
+        )
+        self.notes_write_back.clicked.connect(self._toggle_notes_write_back)
         self.new_notes = QComboBox()
         self.new_notes.setObjectName("new_notes")
         self.new_notes.addItem("In a folder for each type (Actors/Keanu Reeves.md)", "folders")
@@ -488,6 +496,7 @@ class KeepConfigWindow(QWidget):
         folder_column.addWidget(folder_about)
         folder_column.addLayout(folder_row)
         folder_column.addWidget(self.notes_writable)
+        folder_column.addWidget(self.notes_write_back)
         folder_column.addLayout(new_row)
 
         tab = QWidget()
@@ -629,6 +638,8 @@ class KeepConfigWindow(QWidget):
         self.no_notes_folder.setEnabled(root is not None)
         self.notes_writable.setEnabled(root is not None)
         self.notes_writable.setChecked(root is not None and config.notes_writable)
+        self.notes_write_back.setEnabled(root is not None)
+        self.notes_write_back.setChecked(root is not None and config.notes_write_back)
         self.new_notes.setEnabled(root is not None)
         self.new_notes.setCurrentIndex(max(0, self.new_notes.findData(config.new_notes)))
         lists = (
@@ -959,6 +970,36 @@ class KeepConfigWindow(QWidget):
             if on
             else "Tagalot won't write in the notes folder.",
         )
+
+    def _toggle_notes_write_back(self, on: bool) -> None:
+        """Let Write to file… change notes in the notes folder (after asking), or not."""
+        if on and not self.ask_notes_write_back():
+            self.notes_write_back.setChecked(False)
+            return
+        session = self.session
+        self._run(
+            lambda: session.set_notes_writing(write_back=on),
+            "Write to file… may change notes in the notes folder."
+            if on
+            else "Write to file… leaves the notes folder alone.",
+        )
+
+    def ask_notes_write_back(self) -> bool:
+        config = self.session.keep.config
+        root = next((r for r in config.roots if r.id == config.notes_root), None)
+        if root is None:
+            return False
+        folder = local_path(self.session.root_path(root.id), config.notes_path)
+        answer = QMessageBox.question(
+            self,
+            "Let Tagalot change notes in this folder?",
+            f"Let Write to file… change the front matter of notes in {folder}?\n\n"
+            "Tagalot still writes nothing on its own: only when you choose Write to file… on "
+            "items, after showing each change. It changes only the front matter (tags, and "
+            "fields you edited), keeps a copy of each note in the keep's backups folder, and "
+            "writes nowhere else in the folder it's in.",
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def ask_notes_writable(self) -> bool:
         config = self.session.keep.config

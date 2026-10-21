@@ -8,19 +8,26 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from tagalot.core.keep import RootConfig, ThemeRef, create_keep
+from tagalot.core.keep import RootConfig, ThemeRef, create_keep, save_keep_config
 from tagalot.core.models import Entity
+from tagalot.core.root_admin import with_notes_folder
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.tags import TagNode, TagTree
 from tagalot.core.writeback import (
     WriteBackError,
+    WriteResult,
+    default_front_matter,
     edit_front_matter,
     find_front_matter,
     plan_write_back,
     tag_changes,
     write_files,
 )
+from tagalot.themes.api import Entity as ThemeEntity
+from tagalot.themes.api import EntityRef, Record, field
+from tests.core.media_files import write_image
+from tests.themes.test_pictures import video
 
 BODY = "# Chapter One\n\nIt was a dark night.  \n\n---\n\nThe end.\n"
 
@@ -195,7 +202,7 @@ def test_plan_and_write(keep: tuple[KeepSession, Path]) -> None:
     session, files = keep
     story = files / "story.md"
     plan = _plan(session, [_id(session, "The Story"), _id(session, "epub-only")])
-    assert plan.skipped == [("epub-only", "it has no Markdown file")]
+    assert plan.skipped == [("epub-only", "it has no Markdown file or note file")]
     [write] = plan.files
     assert write.changes
     assert write.before == "title: The Story\nauthor: Ann Writer\ntags: [Fantasy]\n"
@@ -256,3 +263,110 @@ def test_nothing_to_change_writes_nothing(keep: tuple[KeepSession, Path]) -> Non
     assert not again.changes
     assert again.problem is None
     assert again.before == again.after
+
+
+# --- notes, and Markdown items in any theme (#501) ---
+
+
+def _plan_notes(session: KeepSession, ids: list[int], notes_write_back: bool):  # type: ignore[no-untyped-def]
+    with session.reader.connect() as conn:
+        return plan_write_back(
+            conn,
+            session.schema,
+            session.tag_cache.get(),
+            ids,
+            {r.id: session.root_path(r.id) for r in session.keep.config.roots},
+            {r.id for r in session.keep.config.roots if r.writable},
+            notes_write_back,
+        )
+
+
+def test_an_items_note_in_the_notes_folder(tmp_path: Path) -> None:
+    """An author's note gets the author's tags, and an edited field under the key the note
+    already uses for it; only when the notes folder allows writing."""
+    files = tmp_path / "files"
+    (files / "Notes" / "Authors").mkdir(parents=True)
+    (files / "story.md").write_text(
+        "---\ntitle: The Story\nauthor: Ann Writer\n---\n" + BODY, encoding="utf-8"
+    )
+    note = files / "Notes" / "Authors" / "Ann Writer.md"
+    note.write_text("---\ntitle: Ann Writer\nsort-name: Writer\n---\nShe writes.\n", "utf-8")
+    keep_dir = tmp_path / "Books.keep"
+    keep = create_keep(
+        keep_dir, "Books", ThemeRef("books", 1), [RootConfig("r", "Files", str(files))]
+    )
+    save_keep_config(with_notes_folder(keep.config, "r", "Notes"), keep.toml_path)
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        ann = _id(session, "Ann Writer")
+        read = session.tags.add(None, "Read")
+        session.tags.apply([ann], [read])
+        session.tags.edit_field(ann, "sort_name", "Writer, Ann")
+
+        [locked] = _plan_notes(session, [ann], False).files
+        assert locked.note == "notes folder"
+        assert locked.problem is not None
+        assert locked.problem.startswith("the notes folder doesn't let Write to file")
+
+        [write] = _plan_notes(session, [ann], True).files
+        assert write.after == "title: Ann Writer\nsort-name: Writer, Ann\ntags:\n- Read\n"
+        assert write_files([write], session.keep.dir, set()) == [
+            WriteResult(write, "its folder no longer allows writing")
+        ]
+        [result] = write_files([write], session.keep.dir, set(), notes_write_back=True)
+        assert result.error is None
+    assert note.read_text(encoding="utf-8").endswith("---\nShe writes.\n")
+
+
+def test_any_themes_markdown_items(tmp_path: Path) -> None:
+    """A generic keep's Markdown file: no theme declares it, its tags are written."""
+    files = tmp_path / "files"
+    files.mkdir()
+    (files / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    keep_dir = tmp_path / "Generic.keep"
+    create_keep(
+        keep_dir, "G", ThemeRef("generic", 1), [RootConfig("r", "F", str(files), writable=True)]
+    )
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        plan_md = _id(session, "plan.md")
+        session.tags.apply([plan_md], [session.tags.add(None, "Todo")])
+        [write] = _plan_notes(session, [plan_md], False).files
+        assert (write.note, write.after) == (None, "tags:\n- Todo\n")
+
+
+def test_a_note_two_items_share_is_left_alone(tmp_path: Path) -> None:
+    """A movie in its own folder of pictures shares its note with the Folder: writing the
+    movie's tags into it would give them to the folder too."""
+    files = tmp_path / "files"
+    video(files / "Trip" / "trip.mp4")
+    write_image(files / "Trip" / "snap.jpg")
+    (files / "Trip" / "Trip.md").write_text("---\ntitle: Trip\n---\n", encoding="utf-8")
+    keep_dir = tmp_path / "Movies.keep"
+    create_keep(
+        keep_dir, "M", ThemeRef("movies", 1), [RootConfig("r", "F", str(files), writable=True)]
+    )
+    with KeepSession.open(keep_dir, Settings()) as session:
+        session.scan_all()
+        with session.reader.connect() as conn:
+            movie = conn.scalar(
+                select(Entity.id).where(Entity.type == "movies.movie", Entity.title == "trip")
+            )
+        assert movie is not None
+        [write] = _plan_notes(session, [movie], False).files
+        assert write.note == "note"
+        assert write.problem == "it's also the note of 'Trip', which its tags would go to as well"
+
+
+def test_default_keys_follow_the_file() -> None:
+    class Paper(ThemeEntity):
+        year: int | None = field("Year")
+        venue: str | None = field("Published in")
+
+    record = Record(EntityRef(1, "t.paper"), "Paper", {"year": 2001, "venue": "Nature"}, {})
+    current = {"Published_In": "Science", "Title": "Old"}
+    assert default_front_matter(Paper, record, frozenset({"year", "venue", "title"}), current) == {
+        "Published_In": "Nature",
+        "Title": "Paper",
+        "year": 2001,
+    }

@@ -154,6 +154,9 @@ class KeepConfig:
     notes_writable: bool = False
     """``[notes] writable``: **Save as note…** may write new notes into the notes folder
     (§9 *In-app notes and Save as note…*), whether or not its root is writable."""
+    notes_write_back: bool = False
+    """``[notes] write_back``: **Write to file…** may change the front matter of notes in
+    the notes folder (#501), whether or not its root is writable."""
     new_notes: str = "folders"
     """``[notes] new_notes``: where Save as note… puts a note, ``"folders"`` (a subfolder
     per type) or ``"one-folder"`` (typed by ``tagalot-type``)."""
@@ -251,6 +254,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         ]
         if config.notes_writable:
             notes_lines.append("writable = true")
+        if config.notes_write_back:
+            notes_lines.append("write_back = true")
         if config.new_notes != "folders":
             notes_lines.append(f"new_notes = {toml_str(config.new_notes)}")
     if config.note_ignore_keys:
@@ -363,10 +368,11 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     notes_root: str | None = None
     notes_path = ""
     notes_writable = False
+    notes_write_back = False
     new_notes = "folders"
     if "notes" in data:
         notes_table = reader.table(data, "notes")
-        known_notes = {"ignore_keys", "root", "path", "writable", "new_notes"}
+        known_notes = {"ignore_keys", "root", "path", "writable", "write_back", "new_notes"}
         reader.warn_unknown(notes_table, known_notes, "[notes]")
         keys = notes_table.get("ignore_keys", [])
         if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
@@ -381,6 +387,9 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         notes_writable = notes_table.get("writable", False)
         if not isinstance(notes_writable, bool):
             raise KeepConfigError(path, "[notes] writable must be true or false")
+        notes_write_back = notes_table.get("write_back", False)
+        if not isinstance(notes_write_back, bool):
+            raise KeepConfigError(path, "[notes] write_back must be true or false")
         new_notes = notes_table.get("new_notes", "folders")
         if new_notes not in NEW_NOTES:
             raise KeepConfigError(path, '[notes] new_notes must be "folders" or "one-folder"')
@@ -453,7 +462,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         logger.warning("%s: [notes] root %r is no root of the keep; ignoring it", path, notes_root)
         notes_root, notes_path = None, ""
     if notes_root is None:
-        notes_writable = False
+        notes_writable = notes_write_back = False
 
     return KeepConfig(
         id=keep_id,
@@ -472,6 +481,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         notes_root=notes_root,
         notes_path=notes_path,
         notes_writable=notes_writable,
+        notes_write_back=notes_write_back,
         new_notes=new_notes,
         markdown_assets=markdown_assets,
         see_through=see_through,

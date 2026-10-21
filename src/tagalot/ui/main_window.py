@@ -864,11 +864,14 @@ class MainWindow(QMainWindow):
         roots = [r for r in session.keep.config.roots if r.watched]
         paths = {r.id: session.root_path(r.id) for r in roots}
         writable = {r.id for r in roots if r.writable}
+        notes = session.keep.config.notes_write_back
 
         def plan() -> WritePlan:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                return plan_write_back(conn, session.schema, tree, entity_ids, paths, writable)
+                return plan_write_back(
+                    conn, session.schema, tree, entity_ids, paths, writable, notes
+                )
 
         def planned(found: WritePlan) -> None:
             if not shiboken6.isValid(self):
@@ -881,7 +884,7 @@ class MainWindow(QMainWindow):
             if chosen:
                 self.statusBar().showMessage("Writing files\u2026")
                 run_in_pool(
-                    lambda: write_files(chosen, session.keep.dir, writable),
+                    lambda: write_files(chosen, session.keep.dir, writable, notes_write_back=notes),
                     on_done=self._written,
                     on_error=lambda e: self.statusBar().showMessage(f"Couldn't write: {e}"),
                 )

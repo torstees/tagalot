@@ -13,7 +13,7 @@ A keep's **theme** decides what its files are: which kinds of item to make, what
 
 What every theme shares:
 
-- **Your files are never changed** (except by [Write to file…](../guide/write-to-file.md), which only the Books theme offers, and only where you allow it).
+- **Your files are never changed** (except by [Write to file…](../guide/write-to-file.md), on Markdown files and notes, and only where you allow it).
 - **Tags, searches, Triage, Dedupe, undo** work the same everywhere.
 - **Values you edit stay yours:** scans never change them.
 - **Files can be versions:** where an item has several files (a song as MP3 and FLAC, a book bought from two stores, a paper's preprint and published version), they're one item.
