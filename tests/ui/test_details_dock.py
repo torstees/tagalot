@@ -12,6 +12,7 @@ from tagalot.core.session import KeepSession
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.details_dock import NOTHING_SELECTED, several_selected
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.navigation import NavTarget
 from tagalot.ui.workers import ScanController
 from tests.ui.test_detail_page import _open
 from tests.ui.test_grid import _close, _page, _row, _window, keep_dir, session
@@ -152,3 +153,25 @@ def test_the_tab_chosen_and_the_width_are_remembered(qtbot: QtBot, session: Keep
     assert _side_tab(again) == "Details"
     qtbot.waitUntil(lambda: again.details_dock.width() == 330, timeout=5000)
     _close(again)
+
+
+def test_the_tag_manager_hides_the_side_panel(qtbot: QtBot, session: KeepSession) -> None:
+    """It has its own tree and details (#508); other pages get the panel back as it was."""
+    window = _window(qtbot, session)
+    window.details_dock.raise_()
+    window.tabifiedDockWidgetActivated.emit(window.details_dock)  # Details chosen
+    assert _side_tab(window) == "Details"
+    window.navigation.select(NavTarget("tags", label="Tag manager"))
+    assert not window.tags_dock.toggleViewAction().isChecked()
+    assert not window.details_dock.toggleViewAction().isChecked()
+    window.navigation.select(NavTarget("search", label="Search all"))
+    assert window.tags_dock.toggleViewAction().isChecked()
+    assert window.details_dock.toggleViewAction().isChecked()
+    assert _side_tab(window) == "Details"  # the tab chosen before
+
+    window.tags_dock.toggleViewAction().trigger()  # the user closed Tags
+    window.navigation.select(NavTarget("tags", label="Tag manager"))
+    window.navigation.select(NavTarget("search", label="Search all"))
+    assert not window.tags_dock.toggleViewAction().isChecked()  # still closed
+    assert window.details_dock.toggleViewAction().isChecked()
+    _close(window)

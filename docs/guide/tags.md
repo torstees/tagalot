@@ -23,7 +23,7 @@ Every tagging is one step you can undo (**Edit → Undo**, Ctrl+Z).
 
 ## The tag manager
 
-TOOLS → **Tag manager**: the whole tree, with how many items have each tag (**Items**) and each tag or its sub-tags (**With sub-tags**).
+TOOLS → **Tag manager** (the Tags and Details panel steps aside while it's open): the whole tree, with how many items have each tag (**Items**) and each tag or its sub-tags (**With sub-tags**).
 
 - **New tag…** (at the top level) and **Sub-tag…** (under the selected tag); **Rename** (F2, or double-click).
 - **Move…**, or drag a tag onto another (or onto empty space for the top level). The status bar says how many items it affects.
