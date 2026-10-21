@@ -310,3 +310,15 @@ def test_a_session_asks_about_services_added_since(tmp_path: Path) -> None:
             "openlibrary.org",
             "covers.openlibrary.org",
         ]
+
+
+def test_a_picture_redirected_to_a_service_not_allowed_is_tried_again(env: Env) -> None:
+    """Its redirect is kept as the answer, and the next run asks again (#484)."""
+    [dune] = env.books("1")
+    env.web.answers["https://openlibrary.org/isbn/1.json"] = [_edition(_cover("1"))]
+    env.web.answers[_cover("1")] = [Reply(302, b"", location="https://archive.org/1.jpg")]
+    env.look_up([dune])
+    assert env.kept() == {dune: (_cover("1"), 302, False)}
+    env.web.answers[_cover("1")] = [Reply(200, jpeg())]  # as if it were allowed now
+    env.look_up([dune])
+    assert env.kept() == {dune: (_cover("1"), 200, True)}

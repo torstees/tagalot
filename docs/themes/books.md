@@ -55,7 +55,7 @@ Books are documents: when the keep [searches inside documents](../guide/search-i
 
 A book with an ISBN can be looked up in Open Library (with your consent, [Online details](../guide/online-details.md)), filling in an empty year, publisher, language, and description. What the files say always wins; titles, authors, and series never come from it.
 
-It also brings **covers and authors' photos**, kept in the keep and shown only for a book or author with no picture of its own. A book gets its edition's cover. An author gets their photo once Tagalot knows their **Open Library ID** (a field on their page): it's found from a book they wrote alone, or you can type it in (`OL25712A`, from their Open Library address). The photo is only used when Open Library's name for them is theirs. Covers and photos come from a second service, Open Library Covers, which a keep that already looks things up is asked about once.
+It also brings **covers and authors' photos**, kept in the keep and shown only for a book or author with no picture of its own. A book gets its edition's cover. An author gets their photo once Tagalot knows their **Open Library ID** (a field on their page): it's found from a book they wrote alone, or you can type it in (`OL25712A`, from their Open Library address). The photo is only used when Open Library's name for them is theirs. Covers and photos come from Open Library Covers, and most covers from the Internet Archive, where Open Library keeps them: two more services, which a keep that already looks things up is asked about once.
 
 ## Writing to Markdown
 

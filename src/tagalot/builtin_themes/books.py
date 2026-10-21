@@ -122,6 +122,9 @@ OPEN_LIBRARY_COVERS = OnlineSource(
     "Open Library cover and photo numbers",
 )
 """Book covers and authors' photos, by the numbers Open Library's answers give (#484)."""
+INTERNET_ARCHIVE = OnlineSource("Internet Archive", "archive.org", "Open Library cover addresses")
+"""Where Open Library Covers sends most covers (a redirect to ``archive.org``, then to one
+of its servers): followed only when the keep allows this service too (#484)."""
 COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 """Pictures a Markdown book's front matter can name as its cover."""
 PICTURE_EXTENSIONS = KIND_EXTENSIONS[Kind.IMAGE]
@@ -336,7 +339,7 @@ class BooksTheme(Theme):
     # 6: full_text; 5: online
     api_version = 21  # 21: online pictures (#484)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
-    online_sources = [OPEN_LIBRARY, OPEN_LIBRARY_COVERS]
+    online_sources = [OPEN_LIBRARY, OPEN_LIBRARY_COVERS, INTERNET_ARCHIVE]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
     entities = [Author, Universe, Series, Collection, Book, Comic, Picture, Archive, Folder]
     dirs = True  # folders of pictures are items (#447)

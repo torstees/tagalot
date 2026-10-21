@@ -160,6 +160,8 @@ def test_open_library_fills_in_only_what_the_files_dont_say(
 TERRY = "https://openlibrary.org/authors/OL25712A.json"
 COVER = "https://covers.openlibrary.org/b/id/8231-L.jpg"
 PHOTO = "https://covers.openlibrary.org/a/id/6255-L.jpg"
+ARCHIVE = "https://archive.org/download/olcovers0/olcovers0-L.zip/8231-L.jpg"
+ARCHIVE_SERVER = "https://ia800401.us.archive.org/view_archive.php?file=8231-L.jpg"
 
 
 def _corgi(**more: Any) -> Reply:
@@ -197,10 +199,14 @@ def test_a_cover_and_the_authors_photo_in_one_run(
 ) -> None:
     library.answers[COLOUR_URL] = _corgi(covers=[-1, 8231], authors=[{"key": "/authors/OL25712A"}])
     library.answers[TERRY] = Reply(200, b'{"name": "Terry Pratchett", "photos": [6255]}')
-    library.answers[COVER] = library.answers[PHOTO] = Reply(200, jpeg())
+    # As Open Library does: the cover from the Internet Archive, two redirects on.
+    library.answers[COVER] = Reply(302, b"", location=ARCHIVE)
+    library.answers[ARCHIVE] = Reply(302, b"", location=ARCHIVE_SERVER)
+    library.answers[ARCHIVE_SERVER] = library.answers[PHOTO] = Reply(200, jpeg())
     colour, terry = _book(session, "The Colour of Magic"), _author(session, "Terry Pratchett")
     report = session.look_up([colour])
-    assert library.urls == [COLOUR_URL, TERRY, COVER, PHOTO]  # his record in the same run
+    # His record in the same run; the cover by way of the Internet Archive.
+    assert library.urls == [COLOUR_URL, TERRY, COVER, ARCHIVE, ARCHIVE_SERVER, PHOTO]
     assert _open_library_id(session, terry) == "OL25712A"
     assert _pictures(session) == {colour: COVER, terry: PHOTO}
     assert sorted(report.pictures) == sorted([colour, terry])
