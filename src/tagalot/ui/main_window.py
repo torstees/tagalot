@@ -342,6 +342,7 @@ class MainWindow(QMainWindow):
         self.tag_panel.tag_requested.connect(self.tag_selection)
         self.tag_panel.create_requested.connect(self.create_tag)
         self.tag_panel.search_requested.connect(self.add_tags_to_search)
+        self.tag_panel.back_requested.connect(self._back_to_page_item)
         # The panel's all / some / none checks follow the current page's selection. Selection
         # changes come in bursts (Shift+arrows), so the summary waits for a short pause.
         self._summary_generation = 0
@@ -1553,6 +1554,10 @@ class MainWindow(QMainWindow):
             self.preview.show_count(0)
             return
 
+        # On an item's page: whether the checks are its own item's, or its contents' (#504).
+        page_item = page.detail.title if isinstance(page, DetailPage) and page.detail else None
+        own: list[bool] = [False]
+
         def show(
             count: int,
             counts: dict[int, int],
@@ -1560,9 +1565,10 @@ class MainWindow(QMainWindow):
             from_files: dict[int, int] | None = None,
         ) -> None:
             if generation == self._summary_generation and shiboken6.isValid(self.tag_panel):
-                self.tag_panel.set_selection(count, counts, types, from_files)
+                self.tag_panel.set_selection(count, counts, types, from_files, page_item, own[0])
 
         def selected(ids: list[int]) -> None:
+            own[0] = isinstance(page, DetailPage) and ids == [page.entity_id]
             if generation == self._summary_generation:
                 self._show_details_of(page, ids)
                 if self.preview.isVisible():
@@ -1579,6 +1585,13 @@ class MainWindow(QMainWindow):
             run_in_pool(count, on_done=lambda found: show(len(ids), *found))
 
         page.selected_entity_ids(selected)
+
+    def _back_to_page_item(self) -> None:
+        """Back to the page's own item's tags: select nothing in its contents (#504)."""
+        page = self.current_items_page()
+        if isinstance(page, DetailPage):
+            page.clear_selection()
+            self._schedule_summary()
 
     def _tags_changed(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -2169,11 +2182,11 @@ class MainWindow(QMainWindow):
         self.read_contents()
         if self.lookups is not None and self.session is not None:
             self.lookups.after_scan(self.session.last_scan_started)
-        for detail in self._pages.values():
-            if isinstance(detail, DetailPage):
-                detail.refresh()
+        self._refresh_details()  # the Details tab's selected item too
         for page in self.search_pages():
             page.refresh()
+        # A scan can change items' tags (their files' keywords): count them again (#504).
+        self._schedule_summary()
 
     def _queue_thumbnails(self) -> None:
         """After a scan: make its thumbnails in the background (§6 step 7)."""
@@ -2319,6 +2332,7 @@ class MainWindow(QMainWindow):
             self._refresh_details()
             for page in self.search_pages():
                 page.refresh()
+            self._schedule_summary()  # their tags may have changed too (#504)
 
     def _online_consent_changed(self) -> None:
         if self.keep_config is not None:

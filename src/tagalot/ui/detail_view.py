@@ -1209,6 +1209,12 @@ class DetailPage(QWidget):
 
     # --- like a search page ---
 
+    def clear_selection(self) -> None:
+        """Select nothing in the contents shown, so tagging is the page's item's again."""
+        shown = self._tabs.currentWidget() if self._tabs is not None else self._bottom
+        if isinstance(shown, SearchPage):
+            shown.clear_selection()
+
     def selected_entity_ids(self, on_done: Callable[[list[int]], None]) -> None:
         """What tagging applies to: the items selected in the contents, else the page's
         own entity."""

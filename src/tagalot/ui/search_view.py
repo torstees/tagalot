@@ -593,6 +593,13 @@ class SearchPage(QWidget):
         if hit is not None:
             self.item_menu(hit).exec(self.table.viewport().mapToGlobal(point))
 
+    def clear_selection(self) -> None:
+        """Select nothing, in every layout (the list and grid share their selection)."""
+        self.table.selectionModel().clearSelection()
+        self.tree.selectionModel().clearSelection()
+        for section in self.groups.sections:
+            section.table.clearSelection()
+
     def showing_groups(self) -> bool:
         return self.results.currentWidget() is self.groups
 

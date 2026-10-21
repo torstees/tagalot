@@ -81,7 +81,8 @@ def test_tagging_from_a_detail_page(qtbot: QtBot, session: KeepSession) -> None:
     with session.reader.connect() as conn:
         assert sky in entity_tags(conn, [detail.entity_id])[detail.entity_id]
     label = window.tag_panel.selection_label
-    qtbot.waitUntil(lambda: label.text().startswith("1 item selected"), timeout=5000)
+    # The page's own item: the panel says whose tags they are (#504).
+    qtbot.waitUntil(lambda: label.text().startswith("<b>notes.txt</b>'s tags"), timeout=5000)
     _close(window)
 
 
