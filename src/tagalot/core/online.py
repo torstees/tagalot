@@ -57,6 +57,9 @@ MAX_WAIT = 60.0
 """The longest Tagalot waits for a busy service before giving up on it for this run."""
 BATCH = 20
 """Items applied in one write."""
+ROUNDS = 2
+"""How many times a run looks up items: those asked for, then those whose details the
+answers set (#484)."""
 
 
 class OnlineError(Exception):
@@ -349,6 +352,13 @@ class OnlineSession(IngestSession):
         """The theme's services: a picture must be on one of them."""
         self.pictures: dict[int, str] = {}
         """The pictures named, by item."""
+        self.updated: set[int] = set()
+        """Items whose details the theme set: another item it found an identifier for
+        (a book's author) is then looked up in the same run (#484)."""
+
+    def update(self, entity: EntityRef, *, title: str | None = None, **fields: Any) -> None:
+        super().update(entity, title=title, **fields)
+        self.updated.add(entity.id)
 
     def online_picture(self, entity: EntityRef, url: str) -> None:
         try:
@@ -362,6 +372,8 @@ class OnlineSession(IngestSession):
 class Applied:
     items: int = 0
     problems: list[str] = field(default_factory=list)
+    updated: set[int] = field(default_factory=set)
+    """Items the theme set details on, the looked-up ones included."""
 
 
 def name_pictures(conn: Connection, pictures: Mapping[int, str]) -> None:
@@ -416,6 +428,7 @@ def apply_details(
             theme.online_details(ref, responses, ctx)
             report = ctx.flush()
             name_pictures(conn, ctx.pictures)
+            applied.updated |= ctx.updated
         except Exception as e:
             savepoint.rollback()
             if not isinstance(e, IngestError):
@@ -477,6 +490,7 @@ def look_up(
     fetcher = fetcher or Fetcher(theme.online_sources, stopped=stopped)
     answers: list[tuple[EntityRef, Mapping[str, OnlineResponse]]] = []
     fresh: list[OnlineResponse] = []
+    updated: set[int] = set()
 
     def write() -> None:
         if not answers:
@@ -485,12 +499,34 @@ def look_up(
         applied = writer.run(lambda conn: apply_details(conn, schema, theme, batch, new))
         report.items += applied.items
         report.problems += applied.problems
+        updated.update(applied.updated)
         answers.clear()
         fresh.clear()
 
-    total = len(plan.lookups)
+    lookups = list(plan.lookups)
+    planned = {lookup.entity.id for lookup in lookups}
+    rounds = 1
+    total = len(lookups)
     looked_up: list[int] = []
-    for done, lookup in enumerate(plan.lookups, start=1):
+    done = 0
+    while True:
+        if done == len(lookups):
+            write()
+            followers = sorted(updated - planned)
+            if rounds == ROUNDS or not followers or stopped():
+                break
+            # Items the details named (a book's author, with the identifier Open Library
+            # gave): looked up now too, once (#484).
+            rounds += 1
+            with reader.connect() as conn:
+                more = plan_lookups(conn, schema, theme, followers)
+            report.problems += more.problems
+            planned |= set(followers)
+            lookups += more.lookups
+            total = len(lookups)
+            continue
+        lookup = lookups[done]
+        done += 1
         if stopped():
             break
         responses = dict(lookup.cached)
