@@ -13,6 +13,8 @@ filter box. The tag tree is loaded in a worker; call :meth:`TagPanel.reload` aft
 change.
 """
 
+import html
+
 import shiboken6
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThreadPool, Signal
 from PySide6.QtGui import QIcon, QKeyEvent, QPainter, QPalette, QPixmap
@@ -47,6 +49,9 @@ class TagPanel(QWidget):
     """The filter text, to create as a tag (a path like "Places > Norway" is allowed)."""
     search_requested = Signal(list, bool)
     """Tag ids to add to the current search, and whether as "but not" (from the menu)."""
+    back_requested = Signal()
+    """**Back to …'s tags**: clear the selection in the page's contents, so the checks are
+    the page's own item's again (#504)."""
 
     def __init__(
         self,
@@ -121,6 +126,8 @@ class TagPanel(QWidget):
         layout.addLayout(top)
         self.selection_label = QLabel()
         self.selection_label.setWordWrap(True)
+        self.selection_label.setTextFormat(Qt.TextFormat.RichText)
+        self.selection_label.linkActivated.connect(lambda _: self.back_requested.emit())
         self.selection_label.hide()
         layout.addWidget(self.selection_label)
         # With nothing to show, the tree hides and these sit right under the filter box.
@@ -397,18 +404,27 @@ class TagPanel(QWidget):
         tag_counts: dict[int, int],
         types: frozenset[str] = frozenset(),
         file_counts: dict[int, int] | None = None,
+        page_item: str | None = None,
+        page_item_selected: bool = False,
     ) -> None:
         """Show which tags the selected items have (checked: all, partly: some), hiding
-        tags limited to types none of them are (#135)."""
+        tags limited to types none of them are (#135). On an item's page (``page_item``, its
+        title), say whether the checks are that item's own (``page_item_selected``), or the
+        selection's in its contents, with a way back (#504)."""
         current = self.current_tag()
         if self.model.set_selection(selected_count, tag_counts, types, file_counts):
             self._after_reset()
             if current is not None:
                 self.select_tag(current)
         items = "1 item" if selected_count == 1 else f"{selected_count:,} items"
-        self.selection_label.setText(
-            f"{items} selected. Tick a tag to put it on all of them; untick it to remove it."
-        )
+        if page_item is not None and page_item_selected:
+            name = html.escape(page_item)
+            text = f"<b>{name}</b>'s tags. Tick a tag to put it on; untick it to remove it."
+        else:
+            text = f"{items} selected. Tick a tag to put it on all of them; untick it to remove it."
+            if page_item is not None:
+                text += f' <a href="back">Back to {html.escape(page_item)}\'s tags</a>'
+        self.selection_label.setText(text)
         self.selection_label.setVisible(bool(selected_count))
         self._show_create()
 

@@ -10,7 +10,7 @@ Tags are yours: a tree you shape however suits the collection (`Genre › Fantas
 On the right of the window (**View → Tags** shows or hides it).
 
 - **Type to find a tag:** the tree narrows as you type, matching names, other names (aliases), and descriptions, ignoring case and accents (`isl` finds `Ísland`).
-- **The checks** show what the selected items have: ✓ all of them, ▣ some, empty none. Click a check to put the tag on all selected items, or take it off all of them. A tag in *italics* comes from the files themselves (see [File keywords](file-keywords.md)).
+- **The checks** show what the selected items have: ✓ all of them, ▣ some, empty none. On an item's page they're that item's (the panel says whose) until you select something in what the page lists; then **Back to …'s tags** above the tree goes back to the page's item. Click a check to put the tag on all selected items, or take it off all of them. A tag in *italics* comes from the files themselves (see [File keywords](file-keywords.md)).
 - **Keyboard:** Ctrl+T (**Edit → Tag selection…**) jumps to the panel from anywhere; type, then **Enter** puts the highlighted tag on the selection and **Shift+Enter** takes it off. Arrows move through the tree; Esc goes back to the box.
 - **New tags:** when what you typed matches no tag, **Create tag '…'** (or Enter) makes it, and puts it on the selected items. Type a path to make several levels at once: `Places > Norway` (or `Places › Norway`) makes `Norway` under `Places`, and `Places` too if it's new. A `/` isn't a separator, so `AC/DC` stays one tag.
 - **Drag and drop:** drag tags onto an item to tag it, or onto a selected item to tag the whole selection. The items a drop would tag are outlined while you drag.
