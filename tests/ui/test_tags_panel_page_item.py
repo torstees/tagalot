@@ -74,9 +74,11 @@ def _tag(session: KeepSession, name: str) -> int:
 
 
 def test_the_panel_counts_again_after_a_scan(
-    qtbot: QtBot, window: MainWindow, session: KeepSession
+    qtbot: QtBot, window: MainWindow, session: KeepSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Terry's note gains a tag; after Scan now, his page's checks show it."""
+    if window.lookups is not None:  # no lookup after the scan: it would ask first
+        monkeypatch.setattr(window.lookups, "after_scan", lambda since: None)
     page = _author_page(qtbot, window, "Terry Pratchett")
     read = _tag(session, "Read")
     panel = window.tag_panel
