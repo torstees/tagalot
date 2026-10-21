@@ -29,7 +29,7 @@ from email.message import Message
 from functools import partial
 from http.client import HTTPMessage
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from sqlalchemy import Connection, Engine, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -57,6 +57,11 @@ MAX_WAIT = 60.0
 """The longest Tagalot waits for a busy service before giving up on it for this run."""
 BATCH = 20
 """Items applied in one write."""
+MAX_REDIRECTS = 5
+"""How many redirects one address may take (Open Library's covers take two, #484)."""
+ROUNDS = 2
+"""How many times a run looks up items: those asked for, then those whose details the
+answers set (#484)."""
 
 
 class OnlineError(Exception):
@@ -96,6 +101,24 @@ class Reply:
     status: int
     body: bytes
     retry_after: float | None = None
+    location: str | None = None
+    """Where a redirect (3xx) points: the :class:`Fetcher` follows it only to a service the
+    keep allows."""
+
+
+def on_service(url: str, sources: Sequence[OnlineSource]) -> OnlineSource | None:
+    """The service a redirect's target is on: a plain ``https`` address on one of
+    ``sources``' hosts or a subdomain of one (the Internet Archive answers from
+    ``ia800401.us.archive.org``); ``None`` for anything else (#484)."""
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or parts.username or parts.password or port not in (None, 443):
+        return None
+    return next((s for s in sources if host == s.host or host.endswith("." + s.host)), None)
 
 
 class Opener(Protocol):
@@ -105,10 +128,9 @@ class Opener(Protocol):
     def __call__(self, url: str, headers: Mapping[str, str], timeout: float) -> Reply: ...
 
 
-class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
-    """Follow a redirect only to ``https`` on the same host (Open Library sends
-    ``/isbn/…`` to ``/books/…``); one anywhere else is an answer, not a request, so nothing
-    is ever sent to a host the theme didn't declare."""
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect here: it comes back as a reply with its ``Location``, and the
+    :class:`Fetcher` decides (only to a service the keep allows, #484)."""
 
     def redirect_request(
         self,
@@ -119,26 +141,22 @@ class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
         headers: HTTPMessage,
         newurl: str,
     ) -> urllib.request.Request | None:
-        old, new = urlsplit(req.full_url), urlsplit(newurl)
-        if new.scheme != "https" or new.hostname != old.hostname or new.port not in (None, 443):
-            raise urllib.error.HTTPError(
-                newurl, code, f"redirected off {old.hostname}", headers, fp
-            )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        return None  # urllib then raises the 3xx as an HTTPError
 
 
 def urlopen_reply(url: str, headers: Mapping[str, str], timeout: float) -> Reply:
-    """The real :data:`Opener`: ``urllib``, with HTTP errors as replies, not exceptions,
-    following redirects only on the same host."""
+    """The real :data:`Opener`: ``urllib``, with HTTP errors and redirects as replies, not
+    exceptions or requests of its own."""
     request = urllib.request.Request(url, headers=dict(headers))
-    opener = urllib.request.build_opener(_SameHostRedirects())
+    opener = urllib.request.build_opener(_NoRedirects())
     try:
         with opener.open(request, timeout=timeout) as response:  # https only: source_for
             return Reply(response.status, response.read(MAX_BODY + 1))
     except urllib.error.HTTPError as e:
         with e:
             body = e.read(MAX_BODY + 1) if e.fp is not None else b""
-        return Reply(e.code, body, _retry_after(e.headers))
+        location = e.headers.get("Location") if e.headers is not None else None
+        return Reply(e.code, body, _retry_after(e.headers), location)
 
 
 def _retry_after(headers: Message | None) -> float | None:
@@ -193,7 +211,22 @@ class Fetcher:
         return self._get(url)
 
     def _get(self, url: str) -> Reply:
-        source = source_for(url, self.sources)
+        """``url``'s answer, following redirects (each spaced like any request) only to the
+        services this fetcher may use; a redirect elsewhere is the answer itself."""
+        source = source_for(url, self.sources)  # the theme's address: on a declared host
+        for _ in range(MAX_REDIRECTS + 1):
+            reply = self._get_one(url, source)
+            if not 300 <= reply.status < 400 or not reply.location:
+                return reply
+            target = urljoin(url, reply.location)
+            onward = on_service(target, self.sources)
+            if onward is None:
+                logger.info("Not following %s's redirect to %s", url, target)
+                return reply
+            url, source = target, onward
+        return reply
+
+    def _get_one(self, url: str, source: OnlineSource) -> Reply:
         host = source.host
         with self._locks[host]:
             for attempt in range(RETRIES + 1):
@@ -349,6 +382,13 @@ class OnlineSession(IngestSession):
         """The theme's services: a picture must be on one of them."""
         self.pictures: dict[int, str] = {}
         """The pictures named, by item."""
+        self.updated: set[int] = set()
+        """Items whose details the theme set: another item it found an identifier for
+        (a book's author) is then looked up in the same run (#484)."""
+
+    def update(self, entity: EntityRef, *, title: str | None = None, **fields: Any) -> None:
+        super().update(entity, title=title, **fields)
+        self.updated.add(entity.id)
 
     def online_picture(self, entity: EntityRef, url: str) -> None:
         try:
@@ -362,6 +402,8 @@ class OnlineSession(IngestSession):
 class Applied:
     items: int = 0
     problems: list[str] = field(default_factory=list)
+    updated: set[int] = field(default_factory=set)
+    """Items the theme set details on, the looked-up ones included."""
 
 
 def name_pictures(conn: Connection, pictures: Mapping[int, str]) -> None:
@@ -416,6 +458,7 @@ def apply_details(
             theme.online_details(ref, responses, ctx)
             report = ctx.flush()
             name_pictures(conn, ctx.pictures)
+            applied.updated |= ctx.updated
         except Exception as e:
             savepoint.rollback()
             if not isinstance(e, IngestError):
@@ -477,6 +520,7 @@ def look_up(
     fetcher = fetcher or Fetcher(theme.online_sources, stopped=stopped)
     answers: list[tuple[EntityRef, Mapping[str, OnlineResponse]]] = []
     fresh: list[OnlineResponse] = []
+    updated: set[int] = set()
 
     def write() -> None:
         if not answers:
@@ -485,12 +529,34 @@ def look_up(
         applied = writer.run(lambda conn: apply_details(conn, schema, theme, batch, new))
         report.items += applied.items
         report.problems += applied.problems
+        updated.update(applied.updated)
         answers.clear()
         fresh.clear()
 
-    total = len(plan.lookups)
+    lookups = list(plan.lookups)
+    planned = {lookup.entity.id for lookup in lookups}
+    rounds = 1
+    total = len(lookups)
     looked_up: list[int] = []
-    for done, lookup in enumerate(plan.lookups, start=1):
+    done = 0
+    while True:
+        if done == len(lookups):
+            write()
+            followers = sorted(updated - planned)
+            if rounds == ROUNDS or not followers or stopped():
+                break
+            # Items the details named (a book's author, with the identifier Open Library
+            # gave): looked up now too, once (#484).
+            rounds += 1
+            with reader.connect() as conn:
+                more = plan_lookups(conn, schema, theme, followers)
+            report.problems += more.problems
+            planned |= set(followers)
+            lookups += more.lookups
+            total = len(lookups)
+            continue
+        lookup = lookups[done]
+        done += 1
         if stopped():
             break
         responses = dict(lookup.cached)
@@ -546,7 +612,7 @@ def fetch_pictures(
                     OnlinePicture.entity_id.in_(entity_ids[start : start + 500])
                 )
             )
-            wanted += [(r.entity_id, r.url) for r in rows if refresh or r.status is None]
+            wanted += [(r.entity_id, r.url) for r in rows if refresh or _unfetched(r.status)]
     for entity_id, url in wanted:
         if stopped():
             return
@@ -575,6 +641,12 @@ def consent_text(sources: Sequence[OnlineSource]) -> str:
         return "This keep's theme looks nothing up online."
     sent = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
     return f"Tagalot would send {sent}. Nothing else about your files leaves this computer."
+
+
+def _unfetched(status: int | None) -> bool:
+    """A picture still to fetch: never asked for, or only redirected, to a service the keep
+    didn't allow then (#484): tried again in later runs."""
+    return status is None or 300 <= status < 400
 
 
 def _keep_picture(

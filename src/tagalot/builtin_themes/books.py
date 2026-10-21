@@ -115,7 +115,16 @@ BOOK_EXTENSIONS = (
     | LINK_EXTENSIONS
 )
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
-OPEN_LIBRARY = OnlineSource("Open Library", "openlibrary.org", "ISBNs")
+OPEN_LIBRARY = OnlineSource("Open Library", "openlibrary.org", "ISBNs and Open Library author IDs")
+OPEN_LIBRARY_COVERS = OnlineSource(
+    "Open Library Covers",
+    "covers.openlibrary.org",
+    "Open Library cover and photo numbers",
+)
+"""Book covers and authors' photos, by the numbers Open Library's answers give (#484)."""
+INTERNET_ARCHIVE = OnlineSource("Internet Archive", "archive.org", "Open Library cover addresses")
+"""Where Open Library Covers sends most covers (a redirect to ``archive.org``, then to one
+of its servers): followed only when the keep allows this service too (#484)."""
 COVER_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 """Pictures a Markdown book's front matter can name as its cover."""
 PICTURE_EXTENSIONS = KIND_EXTENSIONS[Kind.IMAGE]
@@ -132,6 +141,9 @@ class Author(Entity):
     title_label = "Name"
     sort_name: str | None = field("Sort name", search="text")
     """``Pratchett, Terry``: how the Authors view sorts them."""
+    open_library: str | None = field("Open Library ID")
+    """``OL25712A``: the author in Open Library, for their photo (#484). Looked up from a
+    book they wrote alone, or typed in."""
     rating: float | None = field("Rating", search="range", card=True, rating=5)
     """The user's own, out of 5 (#419)."""
     card_lines = ("rating",)
@@ -325,9 +337,9 @@ class BooksTheme(Theme):
     # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
     # 6: full_text; 5: online
-    api_version = 19
+    api_version = 21  # 21: online pictures (#484)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
-    online_sources = [OPEN_LIBRARY]
+    online_sources = [OPEN_LIBRARY, OPEN_LIBRARY_COVERS, INTERNET_ARCHIVE]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
     entities = [Author, Universe, Series, Collection, Book, Comic, Picture, Archive, Folder]
     dirs = True  # folders of pictures are items (#447)
@@ -546,19 +558,30 @@ class BooksTheme(Theme):
     # --- online details ---
 
     def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
-        """A book with an ISBN: its edition in Open Library."""
+        """A book with an ISBN: its edition in Open Library; an author with an Open Library
+        ID: their record, for their photo (#484)."""
+        if entity_type is Author:
+            key = open_library_author(item.fields.get("open_library"))
+            return [f"https://{OPEN_LIBRARY.host}/authors/{key}.json"] if key else ()
         isbn = isbn_digits(item.fields.get("isbn")) if entity_type is Book else None
         return [f"https://{OPEN_LIBRARY.host}/isbn/{isbn}.json"] if isbn else ()
 
     def online_details(
         self, entity: EntityRef, responses: Mapping[str, OnlineResponse], ctx: IngestContext
     ) -> None:
-        """Fill in what the book's files don't say (they always win)."""
+        """Fill in what the book's files don't say (they always win), name its cover, and
+        give its one author their Open Library ID; an author's photo (#484)."""
         for url, answer in responses.items():
             if not answer.ok:
-                continue  # an ISBN Open Library doesn't know
+                continue  # an ISBN (or an author) Open Library doesn't know
             try:
-                found = open_library_values(answer.json())
+                data = answer.json()
+                if not isinstance(data, Mapping):
+                    raise ValueError("not a record")
+                if "/authors/" in url:
+                    self._author_photo(entity, data, ctx)
+                    continue
+                found = open_library_values(data)
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 ctx.warn(None, f"couldn't read {url}: {e}")
                 continue
@@ -570,6 +593,43 @@ class BooksTheme(Theme):
             }
             if empty:
                 ctx.update(entity, **empty)
+            cover = first_picture(data.get("covers"))
+            if cover is not None:
+                ctx.online_picture(entity, f"https://{OPEN_LIBRARY_COVERS.host}/b/id/{cover}-L.jpg")
+            self._author_ids(entity, data, ctx)
+
+    def _author_ids(self, book: EntityRef, edition: Mapping[str, Any], ctx: IngestContext) -> None:
+        """The edition's author, as Open Library knows them, is the book's when each has one
+        (several can't be told apart): their Open Library ID, unless they have one."""
+        keys = [
+            key
+            for a in edition.get("authors") or []
+            if isinstance(a, Mapping) and (key := open_library_author(a.get("key")))
+        ]
+        writers = ctx.related("writers", book)
+        if len(keys) != 1 or len(writers) != 1:
+            return
+        [writer] = writers
+        if not ctx.get(writer).fields.get("open_library"):
+            ctx.update(writer, open_library=keys[0])
+
+    def _author_photo(
+        self, author: EntityRef, record: Mapping[str, Any], ctx: IngestContext
+    ) -> None:
+        """Their photo, if Open Library has one and the record is theirs (its name, or one
+        of its other names, is the author's): else the ID found for them goes."""
+        names = [
+            record.get("name"),
+            record.get("personal_name"),
+            *(record.get("alternate_names") or []),
+        ]
+        title = normalize(ctx.get(author).title)
+        if not any(isinstance(n, str) and normalize(n) == title for n in names):
+            ctx.update(author, open_library=None)  # a wrong guess (yours stays: rule 9)
+            return
+        photo = first_picture(record.get("photos"))
+        if photo is not None:
+            ctx.online_picture(author, f"https://{OPEN_LIBRARY_COVERS.host}/a/id/{photo}-L.jpg")
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
         for resource in batch:
@@ -1064,6 +1124,23 @@ def isbn_digits(isbn: str | None) -> str | None:
     ``None`` unless it has 10 or 13."""
     digits = re.sub(r"[^0-9Xx]", "", isbn or "").upper()
     return digits if len(digits) in (10, 13) else None
+
+
+def first_picture(numbers: Any) -> int | None:
+    """The first real picture number in an Open Library list (``-1`` means none)."""
+    if not isinstance(numbers, list):
+        return None
+    return next((n for n in numbers if isinstance(n, int) and n > 0), None)
+
+
+_OL_AUTHOR = re.compile(r"(?:/authors/)?(OL\d+A)", re.IGNORECASE)
+
+
+def open_library_author(value: Any) -> str | None:
+    """An Open Library author ID (``OL25712A``) from a key (``/authors/OL25712A``), an
+    address, or the ID itself; ``None`` for anything else."""
+    found = _OL_AUTHOR.search(str(value or ""))
+    return found.group(1).upper() if found else None
 
 
 def open_library_values(edition: Mapping[str, Any]) -> dict[str, Any]:

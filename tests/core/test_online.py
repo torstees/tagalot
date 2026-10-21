@@ -26,9 +26,10 @@ from tagalot.core.online import (
     OnlineError,
     Reply,
     UnavailableError,
-    _SameHostRedirects,
+    _NoRedirects,
     consent_text,
     look_up,
+    on_service,
     source_for,
     urlopen_reply,
 )
@@ -378,25 +379,57 @@ def test_consent_is_saved_in_keep_toml(tmp_path: Path) -> None:
         load_keep_config(keep.toml_path)
 
 
-def test_redirects_are_followed_only_on_the_same_host() -> None:
-    """Open Library sends /isbn/… to /books/…; a redirect anywhere else is refused, so
-    nothing goes to a host the theme didn't declare."""
-    redirects = _SameHostRedirects()
-    request = urllib.request.Request("https://openlibrary.org/isbn/1.json")
-    followed = redirects.redirect_request(
-        request, io.BytesIO(), 302, "Found", HTTPMessage(), "https://openlibrary.org/books/1"
-    )
-    assert followed is not None
-    assert followed.full_url == "https://openlibrary.org/books/1"
+def test_redirects_are_followed_only_to_a_service_the_fetcher_may_use() -> None:
+    """Open Library sends /isbn/… to /books/…, and its covers to the Internet Archive and on
+    to one of its servers (#484); a redirect anywhere else is the answer, never a request."""
+    covers = OnlineSource("Open Library Covers", "covers.openlibrary.org", "numbers")
+    archive = OnlineSource("Internet Archive", "archive.org", "addresses")
+    web = FakeWeb()
+    web.answers["https://openlibrary.org/isbn/1.json"] = [Reply(302, b"", location="/books/1")]
+    web.answers["https://openlibrary.org/books/1"] = [_book_reply("Ace")]
+    web.answers["https://covers.openlibrary.org/b/id/7-L.jpg"] = [
+        Reply(302, b"", location="https://archive.org/download/c/7-L.jpg")
+    ]
+    web.answers["https://archive.org/download/c/7-L.jpg"] = [
+        Reply(302, b"", location="https://ia800401.us.archive.org/view?file=7-L.jpg")
+    ]
+    web.answers["https://ia800401.us.archive.org/view?file=7-L.jpg"] = [Reply(200, b"jpeg")]
+    clock = Clock()
+    fetcher = Fetcher([LIBRARY, covers, archive], opener=web, clock=clock, sleep=clock.sleep)
+    assert fetcher.fetch("https://openlibrary.org/isbn/1.json").json() == {"publishers": ["Ace"]}
+    picture = fetcher.fetch_picture("https://covers.openlibrary.org/b/id/7-L.jpg")
+    assert (picture.status, picture.body) == (200, b"jpeg")
+    assert web.urls[-3:] == [
+        "https://covers.openlibrary.org/b/id/7-L.jpg",
+        "https://archive.org/download/c/7-L.jpg",
+        "https://ia800401.us.archive.org/view?file=7-L.jpg",
+    ]
+
+    # Without the Internet Archive among its services, the redirect is the answer.
+    web.requests.clear()
+    clock = Clock()
+    fetcher = Fetcher([LIBRARY, covers], opener=web, clock=clock, sleep=clock.sleep)
+    refused = fetcher.fetch_picture("https://covers.openlibrary.org/b/id/7-L.jpg")
+    assert refused.status == 302
+    assert web.urls == ["https://covers.openlibrary.org/b/id/7-L.jpg"]
     for elsewhere in [
         "https://evil.example/x",
         "http://openlibrary.org/x",
         "https://openlibrary.org:8443/x",
+        "https://notarchive.org/x",  # a host ending like a service's isn't one of it
     ]:
-        with pytest.raises(urllib.error.HTTPError):
-            redirects.redirect_request(
-                request, io.BytesIO(), 302, "Found", HTTPMessage(), elsewhere
-            )
+        assert on_service(elsewhere, [LIBRARY, archive]) is None
+    assert on_service("https://us.archive.org/x", [archive]) is archive
+
+
+def test_urllib_never_follows_a_redirect_itself() -> None:
+    """The real opener hands a redirect back, with where it points: the fetcher decides."""
+    handler = _NoRedirects()
+    request = urllib.request.Request("https://openlibrary.org/isbn/1.json")
+    followed = handler.redirect_request(
+        request, io.BytesIO(), 302, "Found", HTTPMessage(), "https://openlibrary.org/books/1"
+    )
+    assert followed is None
 
 
 def test_a_session_fetches_with_urllib_by_default(tmp_path: Path) -> None:

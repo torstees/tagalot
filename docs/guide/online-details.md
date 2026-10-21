@@ -26,7 +26,7 @@ Answers are kept in the keep, so each identifier is fetched once (Look up online
 Looked-up details fill in and correct what Tagalot guessed from a file, but never override your files' own curated details or your edits:
 
 - **Research:** a literature note, a sidecar bibliography, or a library export beats what Crossref or arXiv say; what they say beats what Tagalot read from the PDF or its file name.
-- **Books:** Open Library only fills in empty fields (year, publisher, language, description); what the files say always wins.
+- **Books:** Open Library only fills in empty fields (year, publisher, language, description); what the files say always wins. It also gives covers and authors' photos (below).
 - **Your edits win over everything.** Looked-up values are marked as such, and scans and lookups never change a value you edited.
 
 Lookups only ever fill in descriptive details, never identifiers, so they can't change which item a file belongs to.
