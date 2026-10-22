@@ -275,6 +275,11 @@ def _v24_tag_pictures(conn: Connection) -> None:
     Base.metadata.tables["tag_picture"].create(conn, checkfirst=True)
 
 
+def _v25_tag_icon_pictures(conn: Connection) -> None:
+    """Format 26: tags' icons as pictures (#507)."""
+    Base.metadata.tables["tag_icon_picture"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -300,6 +305,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     22: _v22_item_pictures,
     23: _v23_online_pictures,
     24: _v24_tag_pictures,
+    25: _v25_tag_icon_pictures,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

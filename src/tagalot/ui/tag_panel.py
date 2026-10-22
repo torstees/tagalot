@@ -80,6 +80,8 @@ class TagPanel(QWidget):
         )
         self.view = QTreeView()
         self.view.setModel(self.model)
+        self._icon_size = self.view.iconSize()
+        self.model.modelReset.connect(self._fit_icons)
         self.view.setHeaderHidden(True)
         self.view.setUniformRowHeights(True)
         self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -168,6 +170,12 @@ class TagPanel(QWidget):
             self.select_tag(current)
 
     # --- state ---
+
+    def _fit_icons(self) -> None:
+        """Room for a swatch and an icon picture side by side, while some tag's icon is a
+        picture (#507)."""
+        size = self.model.decoration_size()
+        self.view.setIconSize(size if size is not None else self._icon_size)
 
     def current_tag(self) -> int | None:
         return self.model.tag_id(self.view.currentIndex())

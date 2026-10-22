@@ -18,7 +18,7 @@ from tagalot.core.settings import Settings
 from tagalot.core.tags import PATH_SEPARATOR
 from tagalot.ui.badges import GAP, badges_that_fit
 from tagalot.ui.main_window import MainWindow
-from tagalot.ui.models.results import BADGES, TagsValue, row_values
+from tagalot.ui.models.results import BADGES, BadgesValue, row_values
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.result_table import list_columns
 from tagalot.ui.search_view import SearchPage
@@ -89,8 +89,10 @@ def test_grid_cards_paint_badges(qtbot: QtBot, session: KeepSession) -> None:
     page = _grid_page(qtbot, window)
     found = page.model.row(_row(page, "glacier.jpg"))
     assert found is not None
-    assert found[1][BADGES] == TagsValue(
-        f"{STAR} {GLOBE}", f"{STAR} Favorites\n{GLOBE} Places{PATH_SEPARATOR}Iceland"
+    assert found[1][BADGES] == BadgesValue(
+        f"{STAR} {GLOBE}",
+        f"{STAR} Favorites\n{GLOBE} Places{PATH_SEPARATOR}Iceland",
+        (STAR, GLOBE),
     )
     assert not page.grid.grab().isNull()  # painted, badges and all
     _close(window)
@@ -128,7 +130,7 @@ def test_container_tags_give_no_badges(tmp_path: Path) -> None:
             values = row_values(conn, music.schema, tree, songs, columns)
             album_values = row_values(conn, music.schema, tree, [album], columns)
         assert songs
-        assert all(values[s.id][BADGES] == TagsValue("", "") for s in songs)
+        assert all(values[s.id][BADGES] == BadgesValue("", "") for s in songs)
         assert album_values[album.id][BADGES].text == STAR
 
 

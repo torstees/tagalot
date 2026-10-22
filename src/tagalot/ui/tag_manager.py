@@ -22,6 +22,7 @@ Merge, delete, colors, aliases, and descriptions come with later tasks.
 (#395, ``core/tag_yaml.py``).
 """
 
+import html
 from collections.abc import Mapping
 from typing import Any
 
@@ -62,6 +63,7 @@ from tagalot.core.search_fields import type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, TagUsage, tag_usage
 from tagalot.ui.dnd import dragged_tags
+from tagalot.ui.icon_pictures import icon_html, icon_image
 from tagalot.ui.models.tag_tree import TagTreeModel
 from tagalot.ui.tag_picker import DeleteDialog, merge_dialog, move_dialog
 from tagalot.ui.workers import run_in_pool
@@ -198,6 +200,8 @@ class TagDetails(QFrame):
     """Tag id and ``#rrggbb``, or ``None`` to clear it."""
     icon_chosen = Signal(int, object)
     """Tag id and its new icon, or ``None`` to clear it (#398)."""
+    icon_picture_requested = Signal(int)
+    """**Picture…** beside the icon: the window asks for a picture file as its icon (#507)."""
     picture_requested = Signal(int)
     """**Choose picture…**: the window asks for a picture file for this tag (#506)."""
     picture_cleared = Signal(int)
@@ -248,7 +252,18 @@ class TagDetails(QFrame):
             "one (on Windows, Win+. opens the emoji picker)."
         )
         self.icon_edit.editingFinished.connect(self._icon_edited)
+        self._icon_picture = False  # its own icon is a picture (#507)
+        self.icon_picture = QLabel()
+        self.icon_picture.setObjectName("icon_picture")
+        self.icon_picture.setVisible(False)
         self.icon_note = QLabel()
+        self.icon_note.setTextFormat(Qt.TextFormat.RichText)
+        self.choose_icon = QPushButton("Picture\u2026")
+        self.choose_icon.setToolTip(
+            "A small picture as the icon, for what no emoji says: a logo, a badge, a GIF (it "
+            "plays in tag trees). Tagalot keeps a copy in the keep."
+        )
+        self.choose_icon.clicked.connect(self._choose_icon_picture)
         self.clear_icon = QPushButton("Clear")
         self.clear_icon.clicked.connect(lambda: self._emit_icon(None))
         self.picture = QLabel("None")
@@ -270,7 +285,9 @@ class TagDetails(QFrame):
         icon_row = QHBoxLayout()
         icon_row.setContentsMargins(0, 0, 0, 0)
         icon_row.addWidget(self.icon_edit)
+        icon_row.addWidget(self.icon_picture)
         icon_row.addWidget(self.icon_note, 1)
+        icon_row.addWidget(self.choose_icon)
         icon_row.addWidget(self.clear_icon)
 
         # Description: edited here, saved on demand.
@@ -371,12 +388,34 @@ class TagDetails(QFrame):
         self.path.setText(PATH_SEPARATOR.join(tree.path(tag_id)))
         self._icon = node.icon
         self.icon_edit.setText(node.icon or "")
-        inherited = tree.icon(tag_id) if node.icon is None else None
-        if inherited is not None:
-            source = next(a for a in reversed(tree.ancestors(tag_id)) if tree.node(a).icon)
-            self.icon_note.setText(f"{inherited} from {tree.node(source).name!r}")
+        own_picture = tree.icon_picture(tag_id)
+        self._icon_picture = own_picture is not None
+        self.icon_picture.setVisible(own_picture is not None)
+        if own_picture is not None:
+            side = self.fontMetrics().height() + 4
+            image = icon_image(own_picture).scaled(
+                side * 2,
+                side * 2,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            image.setDevicePixelRatio(2)
+            self.icon_picture.setPixmap(QPixmap.fromImage(image))
+        source = tree.icon_source(tag_id)
+        if source is not None and source != tag_id:
+            inherited = tree.own_icon(source)
+            icon_text = (
+                html.escape(inherited, quote=False)
+                if isinstance(inherited, str)
+                else icon_html(inherited, self.fontMetrics().height())
+                if inherited is not None
+                else ""
+            )
+            name = html.escape(repr(tree.node(source).name), quote=False)
+            self.icon_note.setText(f"{icon_text} from {name}")
         else:
-            self.icon_note.setText("" if node.icon else "None")
+            self.icon_note.setText("" if source is not None else "None")
+        self.clear_icon.setEnabled(source == tag_id)
         picture = tree.picture(tag_id)
         if picture is None:
             self.picture.setPixmap(QPixmap())
@@ -438,8 +477,14 @@ class TagDetails(QFrame):
         if icon != self._icon:
             self._emit_icon(icon)
 
+    def _choose_icon_picture(self) -> None:
+        if self.tag_id is not None:
+            self.icon_picture_requested.emit(self.tag_id)
+
     def _emit_icon(self, icon: str | None) -> None:
-        if self.tag_id is not None and (icon is not None or self._icon is not None):
+        if self.tag_id is not None and (
+            icon is not None or self._icon is not None or self._icon_picture
+        ):
             self._icon = icon  # editingFinished comes again when the box loses focus
             self.icon_chosen.emit(self.tag_id, icon)
 

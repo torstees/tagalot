@@ -4,6 +4,8 @@ DESIGN.md §12).
 As many badges as fit the space are drawn, then "+n" for the rest: across a grid card's
 thumbnail (bottom-left, each on a translucent backing so it reads on any picture), or across
 the Badges column. :func:`badges_that_fit` decides how many; the tooltip lists them all.
+An icon that is a picture (#507) is drawn scaled into its square, an animated one's first
+frame.
 """
 
 from collections.abc import Callable, Sequence
@@ -12,8 +14,13 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
+from tagalot.core.tags import Icon
+from tagalot.ui.icon_pictures import icon_image, paint_icon_picture
+
 GAP = 2
 """Space between badges."""
+BADGES_ROLE = Qt.ItemDataRole.UserRole + 41
+"""The Badges column's icons, emoji and pictures (#507), as a tuple."""
 
 
 def badges_that_fit(count: int, width: int, side: int, more: Callable[[int], int]) -> int:
@@ -36,7 +43,7 @@ def badge_side(metrics: QFontMetrics) -> int:
 def paint_badges(
     painter: QPainter,
     rect: QRect,
-    icons: Sequence[str],
+    icons: Sequence[Icon],
     *,
     backing: QColor | None = None,
     text_color: QColor | None = None,
@@ -69,7 +76,10 @@ def paint_badges(
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(box, 4, 4)
                 painter.setPen(text_color if text_color is not None else QColor("black"))
-            painter.drawText(box, center, icon)
+            if isinstance(icon, str):
+                painter.drawText(box, center, icon)
+            else:
+                paint_icon_picture(painter, box.adjusted(1, 1, -1, -1), icon_image(icon))
             x += side + GAP
         rest = len(icons) - shown
         if rest:
@@ -101,7 +111,7 @@ class BadgeDelegate(QStyledItemDelegate):
         style = widget.style() if widget is not None else None
         if style is not None:
             style.drawControl(QStyle.ControlElement.CE_ItemViewItem, cell, painter, widget)
-        icons = str(index.data() or "").split()  # icons have no spaces (clean_icon)
+        icons = index.data(BADGES_ROLE)
         if not icons:
             return
         selected = bool(option.state & QStyle.StateFlag.State_Selected)

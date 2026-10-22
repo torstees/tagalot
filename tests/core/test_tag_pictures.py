@@ -1,5 +1,6 @@
-"""Tags' pictures (#506): kept in the keep, shrunk, undoable, carried by merges and by tag
-export and import (a folder of pictures beside the file)."""
+"""Tags' pictures (#506) and icons that are pictures (#507): kept in the keep, shrunk,
+undoable, carried by merges and by tag export and import (a folder of pictures beside the
+file)."""
 
 import io
 from pathlib import Path
@@ -9,8 +10,8 @@ from PIL import Image
 from sqlalchemy import delete
 
 from tagalot.core.models import Tag
-from tagalot.core.tag_pictures import STORED_SIZE, prepare_picture
-from tagalot.core.tag_yaml import export_tags, picture_files
+from tagalot.core.tag_pictures import ICON_SIZE, STORED_SIZE, prepare_icon, prepare_picture
+from tagalot.core.tag_yaml import export_tags, icon_files, picture_files
 from tagalot.core.tags import TagError
 from tests.core.test_tag_yaml import SCHEMA, Env, env
 
@@ -102,3 +103,92 @@ def test_a_tag_deleted_by_hand_takes_its_picture(env: Env) -> None:
     with env.engine.begin() as conn:
         conn.execute(delete(Tag).where(Tag.id == FANTASY))
     assert FANTASY not in env.tree().pictures()
+
+
+# --- icons that are pictures (#507) ---
+
+
+def _gif(size: tuple[int, int], frames: int = 3) -> bytes:
+    images = [Image.new("RGB", size, (i * 60, 0, 0)) for i in range(frames)]
+    out = io.BytesIO()
+    images[0].save(out, "GIF", save_all=True, append_images=images[1:], duration=80, loop=0)
+    return out.getvalue()
+
+
+def test_an_icon_picture_is_kept_small_and_animations_stay_animated() -> None:
+    still = prepare_icon(_png((300, 150)))
+    assert (still.width, still.height) == (ICON_SIZE, ICON_SIZE // 2)
+    assert still.data.startswith(b"\x89PNG")
+    moving = prepare_icon(_gif((200, 100)))
+    assert (moving.width, moving.height) == (ICON_SIZE, ICON_SIZE // 2)
+    with Image.open(io.BytesIO(moving.data)) as kept:
+        assert (kept.format, getattr(kept, "n_frames", 1)) == ("GIF", 3)
+    small = _gif((16, 16))
+    assert prepare_icon(small).data == small  # small enough: as it is
+    with pytest.raises(TagError, match="isn't a picture"):
+        prepare_icon(b"not a picture")
+
+
+def test_an_icon_is_an_emoji_or_a_picture_undoably(env: Env) -> None:
+    picture = prepare_icon(_png((20, 20)))
+    env.tags.set_icon(FANTASY, "🐉")
+    env.tags.set_icon_picture(FANTASY, picture)  # replaces the emoji
+    tree = env.tree()
+    assert (tree.node(FANTASY).icon, tree.icon_picture(FANTASY)) == (None, picture)
+    assert tree.has_icons
+    assert tree.icon(FANTASY) == picture
+    assert [b.icon for b in tree.badges([FANTASY])] == [picture]
+    env.tags.undo()
+    tree = env.tree()
+    assert (tree.node(FANTASY).icon, tree.icon_picture(FANTASY)) == ("🐉", None)
+    env.tags.redo()
+    env.tags.set_icon(FANTASY, "⭐")  # and an emoji replaces the picture
+    assert (env.tree().node(FANTASY).icon, env.tree().icon_picture(FANTASY)) == ("⭐", None)
+    env.tags.set_icon_picture(FANTASY, picture)
+    env.tags.set_icon(FANTASY, None)  # Clear clears either
+    assert env.tree().own_icon(FANTASY) is None
+    assert not env.tree().has_icons
+
+
+def test_sub_tags_show_an_icon_picture_and_merges_carry_it(env: Env) -> None:
+    picture = prepare_icon(_png((20, 20)))
+    env.tags.set_icon_picture(MOOD, picture)
+    tree = env.tree()
+    assert tree.icon(CALM) == picture  # inherited
+    assert tree.icon_source(CALM) == MOOD
+    env.tags.set_icon_picture(CALM, prepare_icon(_png((10, 10), (0, 200, 0))))
+    env.tags.set_icon_picture(MOOD, None)
+    env.tags.merge(CALM, FANTASY)  # Fantasy has no icon: it takes Calm's
+    assert env.tree().icon_picture(FANTASY) is not None
+
+
+def test_export_and_import_carry_icon_pictures(env: Env, tmp_path: Path) -> None:
+    picture = prepare_icon(_gif((16, 16)))
+    env.tags.set_icon_picture(FANTASY, picture)
+    env.tags.set_picture(FANTASY, prepare_picture(_png((60, 30))))
+    tree = env.tree()
+    pictures = picture_files(tree, "Tags pictures")
+    icons = icon_files(tree, "Tags pictures", pictures.values())
+    assert icons == {FANTASY: "Tags pictures/Genre/Fantasy icon.gif"}
+    text = export_tags(tree, SCHEMA, pictures=pictures, icons=icons)
+    assert "    Fantasy:\n      icon: Tags pictures/Genre/Fantasy icon.gif\n" in text
+    folder = tmp_path / "export"
+    for name, data in [
+        (icons[FANTASY], picture.data),
+        (pictures[FANTASY], tree.pictures()[FANTASY].data),
+    ]:
+        target = folder.joinpath(*name.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    assert not env.plan_from(text, folder).changes  # as exported: nothing to change
+
+    env.tags.set_icon(FANTASY, "🐉")
+    plan = env.plan_from(text, folder)
+    assert [u.changes for u in plan.updated] == [("icon",)]
+    env.tags.import_tags(text, "tags.yaml", base=folder)
+    tree = env.tree()
+    assert (tree.node(FANTASY).icon, tree.icon_picture(FANTASY)) == (None, picture)
+
+    plan = env.plan_from(text.replace("Fantasy icon.gif", "missing.png"), folder)
+    assert "its icon 'Tags pictures/Genre/missing.png' can't be read" in str(plan.problems[0])

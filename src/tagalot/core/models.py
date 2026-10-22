@@ -484,6 +484,18 @@ class TagPicture(Base):
     height: Mapped[int]
 
 
+class TagIconPicture(Base):
+    """A tag's icon as a small picture (#507, §7 *Tag icons*), in place of an emoji: a copy
+    kept in the keep (PNG, or an animated GIF), at most 64 px."""
+
+    __tablename__ = "tag_icon_picture"
+
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete=CASCADE), primary_key=True)
+    data: Mapped[bytes]
+    width: Mapped[int]
+    height: Mapped[int]
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

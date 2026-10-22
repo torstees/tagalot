@@ -3,7 +3,8 @@
 
 The file is nested like the tree. A tag is written as a plain name with nothing under it
 (``Read:``), as a short list of sub-tag names (``Mood: [Calm, Tense]``), or in the full
-form: a mapping of ``icon``, ``color``, ``description``, ``aliases``, ``applies_to`` (kinds of item,
+form: a mapping of ``icon`` (an emoji, or a picture file beside the file, #507), ``color``,
+``description``, ``picture`` (#506), ``aliases``, ``applies_to`` (kinds of item,
 by the theme's names), and ``tags`` (its sub-tags, in any of the three forms). Export
 always writes the full form, leaving out empty properties.
 
@@ -44,7 +45,12 @@ from tagalot.core.models import (
     TagAlias,
 )
 from tagalot.core.search_fields import type_labels, type_plurals
-from tagalot.core.tag_pictures import prepare_picture, set_tag_picture
+from tagalot.core.tag_pictures import (
+    PICTURE_EXTENSIONS,
+    prepare_icon,
+    prepare_picture,
+    set_tag_picture,
+)
 from tagalot.core.tags import (
     MAX_DESCRIPTION,
     PATH_SEPARATOR,
@@ -60,6 +66,7 @@ from tagalot.core.tags import (
     search_key,
     set_tag_types,
     split_tag_path,
+    store_icon_picture,
     tag_entities,
 )
 from tagalot.core.theme_schema import ThemeSchema
@@ -226,17 +233,34 @@ _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 def picture_files(tree: TagTree, folder: str) -> dict[int, str]:
     """Where an export puts each tag's picture (#506): ``folder/Genre/Fantasy.png``, by the
     tag's path, its names made safe for file names; relative to the exported file."""
+    return _files(tree, tree.pictures(), folder, "", set())
+
+
+def icon_files(tree: TagTree, folder: str, taken: Iterable[str] = ()) -> dict[int, str]:
+    """Where an export puts each tag's icon that is a picture (#507), beside its pictures
+    (``taken``, from :func:`picture_files`): ``folder/Genre/Fantasy icon.png``."""
+    return _files(tree, tree.icon_pictures(), folder, " icon", {t.casefold() for t in taken})
+
+
+def _files(
+    tree: TagTree, pictures: Mapping[int, PictureData], folder: str, suffix: str, taken: set[str]
+) -> dict[int, str]:
     names: dict[int, str] = {}
-    taken: set[str] = set()
-    for tag_id, picture in sorted(tree.pictures().items()):
+    for tag_id, picture in sorted(pictures.items()):
         parts = [_UNSAFE.sub("_", n).strip(" .") or "_" for n in tree.path(tag_id)]
-        ext = "png" if picture.data.startswith(b"\x89PNG") else "jpg"
-        name = "/".join([folder, *parts]) + f".{ext}"
+        ext = _extension(picture.data)
+        name = "/".join([folder, *parts]) + f"{suffix}.{ext}"
         if name.casefold() in taken:  # two paths made the same by the safe names
-            name = "/".join([folder, *parts]) + f" ({tag_id}).{ext}"
+            name = "/".join([folder, *parts]) + f"{suffix} ({tag_id}).{ext}"
         taken.add(name.casefold())
         names[tag_id] = name
     return names
+
+
+def _extension(data: bytes) -> str:
+    if data.startswith(b"\x89PNG"):
+        return "png"
+    return "gif" if data.startswith(b"GIF8") else "jpg"
 
 
 def export_tags(
@@ -244,10 +268,12 @@ def export_tags(
     schema: ThemeSchema,
     items: Sequence[dict[str, Any]] | None = None,
     pictures: Mapping[int, str] | None = None,
+    icons: Mapping[int, str] | None = None,
 ) -> str:
     """The whole tree as YAML, every tag in the full form, in display order; with
     ``items`` (:func:`tagged_items`), followed by which items have each tag (#396); with
-    ``pictures`` (:func:`picture_files`), each tag's picture file named (#506)."""
+    ``pictures`` (:func:`picture_files`), each tag's picture file named (#506), and with
+    ``icons`` (:func:`icon_files`), the file of each icon that is a picture (#507)."""
     labels = type_labels(schema)
 
     def tag(tag_id: int) -> dict[str, Any] | None:
@@ -255,6 +281,8 @@ def export_tags(
         data: dict[str, Any] = {}
         if node.icon:
             data["icon"] = node.icon
+        elif icons and tag_id in icons:
+            data["icon"] = icons[tag_id]
         if node.color:
             data["color"] = node.color
         if node.description:
@@ -318,6 +346,8 @@ class _Parsed:
     children: list["_Parsed"] = field(default_factory=list)
     picture: bytes | None = None
     """The picture file's bytes, as read (#506)."""
+    icon_picture: bytes | None = None
+    """The bytes of the picture file ``icon`` names, as read (#507)."""
 
 
 def _key_line(data: Any, key: Any) -> int | None:
@@ -538,7 +568,10 @@ class _Reader:
             try:
                 tag.icon = clean_icon(str(value))
             except TagError as error:
-                self.problem(line, f"{str(value)!r}: {error}")
+                if Path(str(value)).suffix.lower() in PICTURE_EXTENSIONS:  # a file (#507)
+                    tag.icon_picture = self.file(tag, value, line, "icon")
+                else:
+                    self.problem(line, f"{str(value)!r}: {error}")
         elif prop == "color":
             if isinstance(value, str) and _COLOR.fullmatch(value.strip()):
                 tag.color = value.strip().lower()
@@ -565,20 +598,25 @@ class _Reader:
         if isinstance(value, dict | list):
             self.problem(line, f"{tag.name!r}: a picture is a file's name.")
             return
+        tag.picture = self.file(tag, value, line, "picture")
+
+    def file(self, tag: _Parsed, value: Any, line: int | None, what: str) -> bytes | None:
+        """The bytes of a picture file the tag names, relative to the file read."""
         if self.base is None:
-            self.problem(line, f"{tag.name!r}: its picture can't be read from here.")
-            return
+            self.problem(line, f"{tag.name!r}: its {what} can't be read from here.")
+            return None
         path = self.base / str(value)
         try:
-            tag.picture = path.read_bytes()
+            data = path.read_bytes()
         except OSError as e:
             self.problem(
-                line, f"{tag.name!r}: its picture {str(value)!r} can't be read: {e.strerror or e}."
+                line, f"{tag.name!r}: its {what} {str(value)!r} can't be read: {e.strerror or e}."
             )
-            return
-        if len(tag.picture) > MAX_PICTURE_FILE:
-            tag.picture = None
-            self.problem(line, f"{tag.name!r}: its picture {str(value)!r} is too big.")
+            return None
+        if len(data) > MAX_PICTURE_FILE:
+            self.problem(line, f"{tag.name!r}: its {what} {str(value)!r} is too big.")
+            return None
+        return data
 
     def aliases(self, tag: _Parsed, value: Any, line: int | None) -> None:
         items = _scalars(value)
@@ -649,9 +687,11 @@ class _Planned:
     children: list["_Planned"]
     new_aliases: tuple[str, ...]
     rename: str | None = None
+    """The file's spelling of a tag it names with different case or accents."""
     picture: PictureData | None = None
     """The picture to give the tag (#506): the file's, when it isn't the tag's already."""
-    """The file's spelling of a tag it names with different case or accents."""
+    icon_picture: PictureData | None = None
+    """The picture to give the tag as its icon (#507), likewise."""
 
 
 def _match(tree: TagTree, parent_id: int | None, name: str) -> tuple[int | None, bool]:
@@ -726,6 +766,10 @@ class _Planner:
                 changes = [f"renamed to {rename!r}"] if rename else []
                 if tag.icon is not None and tag.icon != node.icon:
                     changes.append("icon")
+                elif tag.icon_picture is not None:
+                    current = tree.icon_picture(tag_id)
+                    if current is None or current.data != tag.icon_picture:
+                        changes.append("icon")
                 if tag.color is not None and tag.color != node.color:
                     changes.append("color")
                 if tag.description is not None and tag.description != node.description:
@@ -744,19 +788,39 @@ class _Planner:
             if rename:  # its sub-tags are shown under the new name
                 here = (*path, rename)
             children = self.walk(tag.children, tag_id, tag_id is None, scope, here)
-            picture = self.picture(tag, tag_id)
-            planned.append(_Planned(tag, tag_id, types, children, new_aliases, rename, picture))
+            tree = self.tree
+            picture = self.picture(
+                tag,
+                tag.picture,
+                tree.picture(tag_id) if tag_id is not None else None,
+                prepare_picture,
+            )
+            icon = self.picture(
+                tag,
+                tag.icon_picture,
+                tree.icon_picture(tag_id) if tag_id is not None else None,
+                prepare_icon,
+            )
+            planned.append(
+                _Planned(tag, tag_id, types, children, new_aliases, rename, picture, icon)
+            )
         return planned
 
-    def picture(self, tag: _Parsed, tag_id: int | None) -> PictureData | None:
-        """The file's picture for the tag, unless it is the one the tag has (#506)."""
-        if tag.picture is None:
+    def picture(
+        self,
+        tag: _Parsed,
+        data: bytes | None,
+        current: PictureData | None,
+        prepare: Callable[[bytes], PictureData],
+    ) -> PictureData | None:
+        """The file's picture (#506) or icon picture (#507) for the tag, prepared as when
+        chosen, unless it is the one the tag has (``current``)."""
+        if data is None:
             return None
-        current = self.tree.picture(tag_id) if tag_id is not None else None
-        if current is not None and current.data == tag.picture:
+        if current is not None and current.data == data:
             return None  # exported from here: the same bytes
         try:
-            return prepare_picture(tag.picture)
+            return prepare(data)
         except TagError as e:
             self.reader.problem(tag.line, f"{tag.name!r}: {e}")
             return None
@@ -999,6 +1063,9 @@ def import_tags(
                         )
                 if tag.icon is not None:
                     values["icon"] = tag.icon
+                    store_icon_picture(conn, tag_id, None)  # an emoji replaces a picture
+                elif item.icon_picture is not None:
+                    values["icon"] = None  # and a picture an emoji (#507)
                 if tag.color is not None:
                     values["color"] = tag.color
                 if tag.description is not None:
@@ -1013,6 +1080,8 @@ def import_tags(
                 )
             if item.picture is not None:
                 set_tag_picture(conn, tag_id, item.picture)
+            if item.icon_picture is not None:
+                store_icon_picture(conn, tag_id, item.icon_picture)
             apply(item.children, tag_id)
 
     apply(prepared.planned, None)

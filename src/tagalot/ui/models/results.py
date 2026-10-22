@@ -46,9 +46,10 @@ from tagalot.core.search import (
 from tagalot.core.search_fields import field_values, search_fields
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
-from tagalot.core.tags import PATH_SEPARATOR, TagTree, entity_tags, name_key
+from tagalot.core.tags import PATH_SEPARATOR, Icon, TagTree, entity_tags, name_key
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.themes.api import MOBI_EXTENSIONS
+from tagalot.ui.badges import BADGES_ROLE
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -157,17 +158,33 @@ class TagsValue:
     tooltip: str
 
 
-def badges_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
-    """An item's badges (from its own tags): the icons, space-separated, and a tooltip line
-    per icon with the tags that give it."""
+@dataclass(frozen=True)
+class BadgesValue(TagsValue):
+    """An item's badges: the icons, emoji and pictures (#507), in order; ``text`` has the
+    emoji alone, space-separated."""
+
+    icons: tuple[Icon, ...] = ()
+
+
+def badges_value(tree: TagTree, tag_ids: Iterable[int]) -> BadgesValue:
+    """An item's badges (from its own tags): the icons, and a tooltip line per icon with the
+    tags that give it."""
     badges = tree.badges(tag_ids)
-    return TagsValue(
-        " ".join(b.icon for b in badges),
+    return BadgesValue(
+        " ".join(b.icon for b in badges if isinstance(b.icon, str)),
         "\n".join(
-            f"{b.icon} " + ", ".join(PATH_SEPARATOR.join(tree.path(t)) for t in b.tag_ids)
+            (f"{b.icon} " if isinstance(b.icon, str) else "")
+            + ", ".join(PATH_SEPARATOR.join(tree.path(t)) for t in b.tag_ids)
             for b in badges
         ),
+        tuple(b.icon for b in badges),
     )
+
+
+def cell_badges(row: Row, column: ResultColumn) -> tuple[Icon, ...] | None:
+    """The Badges column's icons in a row (``None`` for other columns)."""
+    value = row[1].get(column.key)
+    return value.icons if isinstance(value, BadgesValue) else None
 
 
 def tags_value(tree: TagTree, tag_ids: Iterable[int]) -> TagsValue:
@@ -344,6 +361,8 @@ class PreviewModel(QAbstractTableModel):
         if role == MATCH_HTML_ROLE:
             value = self.rows[index.row()][1].get(column.key)
             return value.html if isinstance(value, MatchValue) else None
+        if role == BADGES_ROLE:
+            return cell_badges(self.rows[index.row()], column)
         return None
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
@@ -691,6 +710,9 @@ class ResultsModel(QAbstractTableModel):
             found = self.row(index.row(), load=False)
             value = found[1].get(column.key) if found is not None else None
             return value.html if isinstance(value, MatchValue) else None
+        if role == BADGES_ROLE:
+            found = self.row(index.row(), load=False)
+            return cell_badges(found, column) if found is not None else None
         if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return None
         found = self.row(index.row())

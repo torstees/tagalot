@@ -68,8 +68,9 @@ from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.gallery_view import GalleryView, fitted
+from tagalot.ui.icon_pictures import icon_html
 from tagalot.ui.lookups import LOOK_UP_TIP
-from tagalot.ui.models.results import TagsValue, badges_value
+from tagalot.ui.models.results import BadgesValue, badges_value
 from tagalot.ui.note_view import NoteView
 from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
@@ -107,7 +108,7 @@ class _Loaded:
     pictures: dict[str, QImage] = field(default_factory=dict)
     links: dict[str, str] = field(default_factory=dict)
     """Where the note's links are, when in an assets folder rather than beside it."""
-    badges: TagsValue | None = None
+    badges: BadgesValue | None = None
     """The item's tag badges (#398), shown beside its title."""
 
 
@@ -440,10 +441,20 @@ class DetailPage(QWidget):
 
         run_in_pool(job, on_done=done, pool=self._pool)
 
-    def _show_badges(self, badges: TagsValue | None) -> None:
-        shown = badges is not None and bool(badges.text)
-        self.badges.setVisible(shown)
-        self.badges.setText(badges.text if badges is not None else "")
+    def _show_badges(self, badges: BadgesValue | None) -> None:
+        icons = badges.icons if badges is not None else ()
+        self.badges.setVisible(bool(icons))
+        if all(isinstance(i, str) for i in icons):
+            self.badges.setTextFormat(Qt.TextFormat.PlainText)
+            self.badges.setText(" ".join(str(i) for i in icons))
+        else:  # with pictures (#507): rich text, each a line of text high
+            side = self.badges.fontMetrics().height()
+            self.badges.setTextFormat(Qt.TextFormat.RichText)
+            self.badges.setText(
+                "&nbsp;".join(
+                    html.escape(i) if isinstance(i, str) else icon_html(i, side) for i in icons
+                )
+            )
         self.badges.setToolTip(badges.tooltip if badges is not None else "")
 
     def _show(self, detail: EntityDetail | None) -> None:

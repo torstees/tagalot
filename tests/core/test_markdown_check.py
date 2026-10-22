@@ -108,6 +108,7 @@ def test_upgrading_a_keep_reads_its_markdown_files_again(tmp_path: Path) -> None
         conn.exec_driver_sql("DROP TABLE item_picture")  # format 23
         conn.exec_driver_sql("DROP TABLE online_picture")  # format 24
         conn.exec_driver_sql("DROP TABLE tag_picture")  # format 25
+        conn.exec_driver_sql("DROP TABLE tag_icon_picture")  # format 26
         conn.exec_driver_sql("ALTER TABLE entity_note DROP COLUMN picture")
         conn.execute(update(SchemaVersion).values(version=21))
     engine.dispose()
