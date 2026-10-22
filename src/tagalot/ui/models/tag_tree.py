@@ -5,26 +5,36 @@ whose name or an alias contains the text, plus their ancestors, so every match i
 place in the hierarchy. Matches are drawn in bold; ancestors shown only for context are not.
 The whole tree is small (hundreds to low thousands of tags), so a new snapshot or filter
 simply resets the model.
+
+A tag's own icon that is a picture (#507) is drawn beside its name, after its color's
+swatch; an animated GIF plays (a :class:`QMovie` per animated icon, few in a tree).
 """
 
 import base64
 import html
 from collections.abc import Sequence
+from functools import partial
 from typing import Any
 
 from PySide6.QtCore import (
     QAbstractItemModel,
+    QBuffer,
+    QByteArray,
+    QIODevice,
     QMimeData,
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QRect,
+    QSize,
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QMovie, QPainter, QPixmap
 
 from tagalot.core.tags import PATH_SEPARATOR, PictureData, TagTree, description_excerpt, search_key
 from tagalot.ui.dnd import TAG_MIME, tags_mime
+from tagalot.ui.icon_pictures import icon_image, is_animated, paint_icon_picture
 
 TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 """The tag id of an index."""
@@ -32,6 +42,11 @@ TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
 EXCERPT_WIDTH = 32
 """Characters of a description shown next to a tag matched only through it."""
 
+
+SWATCH_SLOT = 12
+"""The width of a tag's color swatch beside an icon picture (#507)."""
+ICON_SLOT = 16
+"""A tag's icon picture in tag trees, at most this many pixels."""
 
 TOOLTIP_PICTURE = 240
 """The longest side of a tag's picture in its tooltips (#506)."""
@@ -94,6 +109,13 @@ class TagTreeModel(QAbstractItemModel):
         self._children: dict[int | None, tuple[int, ...]] = {}
         self._row: dict[int, int] = {}
         self._swatches: dict[str, QPixmap | None] = {}
+        self._decorations: dict[int, QPixmap | None] = {}
+        """Each tag's swatch and icon picture, drawn together, while the tree has icon
+        pictures (#507)."""
+        self._movies: dict[int, tuple[PictureData, QMovie]] = {}
+        """The animated icon pictures playing, by tag."""
+        self._frames: dict[int, QImage] = {}
+        """Each animated icon's current frame."""
         self.selected_count = 0
         self._tag_counts: dict[int, int] = {}
         self._selected_types: frozenset[str] = frozenset()
@@ -146,10 +168,19 @@ class TagTreeModel(QAbstractItemModel):
             order.extend(self._walk(child))
         return order
 
+    def decoration_size(self) -> QSize | None:
+        """The size of the tags' decorations while the tree has icon pictures (a swatch and
+        an icon side by side, #507); ``None`` for the view's own."""
+        if self.tree is None or not self.tree.icon_pictures():
+            return None
+        return QSize(SWATCH_SLOT + ICON_SLOT, ICON_SLOT)
+
     def _rebuild(self) -> None:
         self.beginResetModel()
         tree = self.tree
         self._children, self._row = {}, {}
+        self._decorations = {}
+        self._play(tree)
         if tree is None:
             self._visible, self._matches = None, frozenset()
         else:
@@ -250,9 +281,72 @@ class TagTreeModel(QAbstractItemModel):
                 font.setBold(bold)
                 font.setItalic(italic)
                 return font
+        if role == Qt.ItemDataRole.DecorationRole and tree.icon_pictures():
+            if tag_id not in self._decorations:
+                self._decorations[tag_id] = self._decoration(tree, tag_id)
+            pixmap = self._decorations[tag_id]
+            return QIcon(pixmap) if pixmap is not None else None  # a new one each time
         if role == Qt.ItemDataRole.DecorationRole and node.color:
             return self._swatch(node.color)
         return None
+
+    def _decoration(self, tree: TagTree, tag_id: int) -> QPixmap | None:
+        """The tag's swatch (if it has a color) and its own icon picture (if it has one),
+        side by side, drawn at twice the size for high-density screens."""
+        node = tree.node(tag_id)
+        picture = tree.icon_picture(tag_id)
+        color = QColor(node.color) if node.color else None
+        if picture is None and (color is None or not color.isValid()):
+            return None
+        scale = 2
+        pixmap = QPixmap((SWATCH_SLOT + ICON_SLOT) * scale, ICON_SLOT * scale)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        try:
+            if color is not None and color.isValid():
+                side = 10 * scale
+                top = (ICON_SLOT * scale - side) // 2
+                painter.fillRect(QRect(0, top, side, side), color)
+            if picture is not None:
+                frame = self._frames.get(tag_id) or icon_image(picture)
+                box = QRect(SWATCH_SLOT * scale, 0, ICON_SLOT * scale, ICON_SLOT * scale)
+                paint_icon_picture(painter, box, frame)
+        finally:
+            painter.end()
+        pixmap.setDevicePixelRatio(scale)
+        return pixmap
+
+    def _play(self, tree: TagTree | None) -> None:
+        """Play the tree's animated icon pictures; stop those no longer there."""
+        wanted = {t: p for t, p in (tree.icon_pictures() if tree else {}).items() if is_animated(p)}
+        for tag_id, (picture, movie) in list(self._movies.items()):
+            if wanted.get(tag_id) != picture:
+                movie.stop()
+                movie.deleteLater()
+                del self._movies[tag_id]
+                self._frames.pop(tag_id, None)
+        for tag_id, picture in wanted.items():
+            if tag_id in self._movies:
+                continue
+            movie = QMovie(self)
+            buffer = QBuffer(movie)
+            buffer.setData(QByteArray(picture.data))
+            buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+            movie.setDevice(buffer)
+            movie.setCacheMode(QMovie.CacheMode.CacheAll)
+            movie.frameChanged.connect(partial(self._next_frame, tag_id))
+            self._movies[tag_id] = (picture, movie)
+            movie.start()
+
+    def _next_frame(self, tag_id: int, _frame: int) -> None:
+        playing = self._movies.get(tag_id)
+        if playing is None:
+            return
+        self._frames[tag_id] = playing[1].currentImage()
+        self._decorations.pop(tag_id, None)
+        index = self.index_of(tag_id)
+        if index.isValid():
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
         if not index.isValid():

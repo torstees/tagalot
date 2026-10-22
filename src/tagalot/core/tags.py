@@ -23,6 +23,7 @@ from tagalot.core.models import (
     FileTagRemoval,
     Tag,
     TagAlias,
+    TagIconPicture,
     TagPicture,
     utcnow,
 )
@@ -35,11 +36,16 @@ PATH_SEPARATOR = f" {chr(0x203A)} "  # U+203A SINGLE RIGHT-POINTING ANGLE QUOTAT
 
 @dataclass(frozen=True)
 class PictureData:
-    """A tag's picture as kept (#506): PNG or JPEG bytes, and its size."""
+    """A tag's picture as kept (#506), or its icon as a picture (#507): PNG, JPEG, or GIF
+    bytes, and its size."""
 
     data: bytes
     width: int
     height: int
+
+
+Icon = str | PictureData
+"""A tag's icon: an emoji or one character (#398), or a small picture (#507)."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +69,7 @@ class Badge:
     """An icon an item shows, and the item's tags that give it (several sub-tags of one
     ancestor can give the same icon, shown once)."""
 
-    icon: str
+    icon: Icon
     tag_ids: tuple[int, ...]
 
 
@@ -135,10 +141,14 @@ class TagTree:
         nodes: Iterable[TagNode],
         aliases: Mapping[int, Iterable[str]],
         pictures: Mapping[int, PictureData] | None = None,
+        icon_pictures: Mapping[int, PictureData] | None = None,
     ) -> None:
         self._nodes: dict[int, TagNode] = {n.id: n for n in nodes}
         self._pictures: dict[int, PictureData] = {
             tag_id: p for tag_id, p in (pictures or {}).items() if tag_id in self._nodes
+        }
+        self._icon_pictures: dict[int, PictureData] = {
+            tag_id: p for tag_id, p in (icon_pictures or {}).items() if tag_id in self._nodes
         }
         self._aliases: dict[int, tuple[str, ...]] = {
             tag_id: tuple(names) for tag_id, names in aliases.items() if tag_id in self._nodes
@@ -177,7 +187,16 @@ class TagTree:
             select(TagPicture.tag_id, TagPicture.data, TagPicture.width, TagPicture.height)
         )
         pictures = {r.tag_id: PictureData(r.data, r.width, r.height) for r in rows}
-        return cls(nodes, aliases, pictures)
+        rows = conn.execute(
+            select(
+                TagIconPicture.tag_id,
+                TagIconPicture.data,
+                TagIconPicture.width,
+                TagIconPicture.height,
+            )
+        )
+        icon_pictures = {r.tag_id: PictureData(r.data, r.width, r.height) for r in rows}
+        return cls(nodes, aliases, pictures, icon_pictures)
 
     def picture(self, tag_id: int) -> PictureData | None:
         """The tag's picture (#506), if it has one."""
@@ -186,6 +205,18 @@ class TagTree:
     def pictures(self) -> dict[int, PictureData]:
         """Every tag's picture, by tag id."""
         return dict(self._pictures)
+
+    def icon_picture(self, tag_id: int) -> PictureData | None:
+        """The tag's own icon, when it is a picture (#507)."""
+        return self._icon_pictures.get(tag_id)
+
+    def icon_pictures(self) -> dict[int, PictureData]:
+        """Every tag's own icon that is a picture, by tag id."""
+        return dict(self._icon_pictures)
+
+    def own_icon(self, tag_id: int) -> Icon | None:
+        """The tag's own icon, an emoji or a picture, if it has one."""
+        return self._nodes[tag_id].icon or self._icon_pictures.get(tag_id)
 
     def __len__(self) -> int:
         return len(self._nodes)
@@ -258,23 +289,30 @@ class TagTree:
                 allowed = own if allowed is None else allowed & own
         return allowed
 
-    def icon(self, tag_id: int) -> str | None:
+    def icon(self, tag_id: int) -> Icon | None:
         """The icon ``tag_id`` shows: its own, else its nearest ancestor's (#398)."""
         for t in (tag_id, *reversed(self.ancestors(tag_id))):
-            if (icon := self._nodes[t].icon) is not None:
+            if (icon := self.own_icon(t)) is not None:
                 return icon
+        return None
+
+    def icon_source(self, tag_id: int) -> int | None:
+        """The tag whose icon ``tag_id`` shows: itself, an ancestor, or ``None``."""
+        for t in (tag_id, *reversed(self.ancestors(tag_id))):
+            if self.own_icon(t) is not None:
+                return t
         return None
 
     @cached_property
     def has_icons(self) -> bool:
         """Whether any tag has an icon: without one, no item has badges."""
-        return any(n.icon is not None for n in self._nodes.values())
+        return bool(self._icon_pictures) or any(n.icon is not None for n in self._nodes.values())
 
     def badges(self, tag_ids: Iterable[int]) -> tuple[Badge, ...]:
         """The badges an item with these (its own) tags shows: each tag's icon, once per
         icon, in the order of the tags' names (deleted tags and tags without an icon give
         none)."""
-        found: dict[str, list[int]] = {}
+        found: dict[Icon, list[int]] = {}
         ordered = sorted((t for t in set(tag_ids) if t in self), key=self._badge_order)
         for tag_id in ordered:
             icon = self.icon(tag_id)
@@ -296,7 +334,7 @@ class TagTree:
             replace(n, types=format_types(types)) if n.id == tag_id else n
             for n in self._nodes.values()
         ]
-        return TagTree(nodes, self._aliases, self._pictures)
+        return TagTree(nodes, self._aliases, self._pictures, self._icon_pictures)
 
     def expand(self, tag_ids: Iterable[int]) -> frozenset[int]:
         """The union of several tags' subtrees (an include group or the exclude set, §8)."""
@@ -642,9 +680,31 @@ def clean_icon(icon: str | None) -> str | None:
 
 
 def set_tag_icon(conn: Connection, tag_id: int, icon: str | None) -> None:
-    """Set a tag's icon (:func:`clean_icon`) or clear it with ``None`` or blank."""
+    """Set a tag's icon (:func:`clean_icon`) or clear it with ``None`` or blank; either
+    replaces an icon that is a picture (#507)."""
     _existing(TagTree.load(conn), tag_id)
     conn.execute(update(Tag).where(Tag.id == tag_id).values(icon=clean_icon(icon)))
+    conn.execute(delete(TagIconPicture).where(TagIconPicture.tag_id == tag_id))
+
+
+def set_tag_icon_picture(conn: Connection, tag_id: int, picture: PictureData | None) -> None:
+    """Give a tag a picture as its icon (#507), replacing an emoji, or clear it (``None``)."""
+    _existing(TagTree.load(conn), tag_id)
+    if picture is not None:
+        conn.execute(update(Tag).where(Tag.id == tag_id).values(icon=None))
+    store_icon_picture(conn, tag_id, picture)
+
+
+def store_icon_picture(conn: Connection, tag_id: int, picture: PictureData | None) -> None:
+    """Write a tag's icon picture row as given (or remove it), leaving its emoji alone: for
+    undo and import, which handle the tag's row themselves."""
+    conn.execute(delete(TagIconPicture).where(TagIconPicture.tag_id == tag_id))
+    if picture is not None:
+        conn.execute(
+            insert(TagIconPicture).values(
+                tag_id=tag_id, data=picture.data, width=picture.width, height=picture.height
+            )
+        )
 
 
 def set_tag_description(conn: Connection, tag_id: int, description: str | None) -> None:
@@ -959,8 +1019,14 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
             conn.execute(insert(TagAlias).values(tag_id=target_id, alias=alias))
     if target.description is None and source.description is not None:
         conn.execute(update(Tag).where(Tag.id == target_id).values(description=source.description))
-    if target.icon is None and source.icon is not None:
+    if tree.own_icon(target_id) is None and source.icon is not None:
         conn.execute(update(Tag).where(Tag.id == target_id).values(icon=source.icon))
+    if tree.own_icon(target_id) is None and tree.icon_picture(source_id) is not None:
+        conn.execute(  # or its icon that is a picture (#507)
+            update(TagIconPicture)
+            .where(TagIconPicture.tag_id == source_id)
+            .values(tag_id=target_id)
+        )
     if tree.picture(target_id) is None and tree.picture(source_id) is not None:
         conn.execute(  # as its description: the source's picture, if the target has none
             update(TagPicture).where(TagPicture.tag_id == source_id).values(tag_id=target_id)

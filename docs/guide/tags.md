@@ -35,9 +35,10 @@ TOOLS → **Tag manager** (the Tags and Details panel steps aside while it's ope
 
 ### Tag icons
 
-A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` or ✓ for `Read`. Items show their tags' icons as small **badges**, so you can see at a glance what's a favorite.
+A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` or ✓ for `Read`, or a small picture where no emoji will do (a logo, a rating badge). Items show their tags' icons as small **badges**, so you can see at a glance what's a favorite.
 
-- **Setting one:** select the tag in the tag manager, type or paste the emoji into **Icon** (on Windows, Win+. opens the emoji picker), and press Enter. **Clear** removes it. Undo works as for any change.
+- **Setting one:** select the tag in the tag manager, type or paste the emoji into **Icon** (on Windows, Win+. opens the emoji picker), and press Enter. Or click **Picture…** and choose a picture file (PNG, JPEG, GIF, WebP, BMP, or SVG): Tagalot keeps a small copy in the keep, so the file can move or go. An emoji and a picture replace each other; **Clear** removes either. Undo works as for any change.
+- **Animated GIFs** play in the tag trees (the Tags panel and the tag manager); badges on items show their first frame, so long lists stay still.
 - **Sub-tags** without an icon of their own show their parent's (or the nearest one up): give `Places` a 🌍 and `Places › Iceland` shows it too. The details say where an inherited icon comes from.
 - **Where badges show:**
   - in the grid, along the bottom of each thumbnail, as many as fit (bigger thumbnails show more), then "+2" for the rest;
@@ -54,7 +55,7 @@ A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` 
 
 ### Importing and exporting tags
 
-**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit, with tags' pictures in a folder beside it (`My tags pictures/Places/Iceland.jpg`, named under `picture:`): **Tags only…**, or **Tags and the items that have them…** (below). **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor.
+**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit, with tags' pictures in a folder beside it (`My tags pictures/Places/Iceland.jpg`, named under `picture:`; icons that are pictures too, `Iceland icon.png` under `icon:`): **Tags only…**, or **Tags and the items that have them…** (below). **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor.
 
 The file is nested like the tree. A tag can be written three ways:
 

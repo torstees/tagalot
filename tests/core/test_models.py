@@ -62,6 +62,7 @@ CORE_TABLES = {
     "item_picture",
     "online_picture",
     "tag_picture",
+    "tag_icon_picture",
     "schema_version",
 }
 FTS_TABLES = {

@@ -71,6 +71,7 @@ from tagalot.core.tag_pictures import PICTURE_EXTENSIONS, prepare_picture
 from tagalot.core.tag_yaml import (
     ImportPlan,
     export_tags,
+    icon_files,
     picture_files,
     plan_import,
     tagged_items,
@@ -106,6 +107,7 @@ from tagalot.ui.details_dock import (
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.folder_picker import choose_open_file, choose_save_file
+from tagalot.ui.icon_pictures import SVG_SUFFIX, read_icon_file
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
@@ -666,6 +668,7 @@ class MainWindow(QMainWindow):
             details.color_chosen.connect(self._set_tag_color)
             details.icon_chosen.connect(self._set_tag_icon)
             details.picture_requested.connect(self.choose_tag_picture)
+            details.icon_picture_requested.connect(self.choose_tag_icon_picture)
             details.picture_cleared.connect(lambda tag_id: self._set_tag_picture(tag_id, None))
             details.description_saved.connect(self._set_tag_description)
             details.alias_added.connect(self._add_tag_alias)
@@ -1269,10 +1272,36 @@ class MainWindow(QMainWindow):
 
         run_in_pool(read, on_done=lambda p: self._set_tag_picture(tag_id, p), on_error=failed)
 
-    def choose_tag_picture_file(self) -> str:
+    def choose_tag_icon_picture(self, tag_id: int) -> None:
+        """Choose a picture file as a tag's icon (#507), read and shrink it in a worker (an
+        SVG drawn first), and set it as one undoable step, replacing an emoji."""
+        path = self.choose_tag_picture_file(icon=True)
+        if not path:
+            return
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                QMessageBox.warning(self, "Tag icon", f"Couldn't use {Path(path).name}: {error}")
+
+        run_in_pool(
+            lambda: read_icon_file(path),
+            on_done=lambda p: self._set_tag_icon_picture(tag_id, p),
+            on_error=failed,
+        )
+
+    def _set_tag_icon_picture(self, tag_id: int, picture: PictureData) -> None:
+        if not shiboken6.isValid(self):
+            return
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        message = f"Set a picture as the icon of {name!r}."
+        self.tag_actions.change(lambda: tags.set_icon_picture(tag_id, picture), message)
+
+    def choose_tag_picture_file(self, icon: bool = False) -> str:
         """Ask for a picture file (tests replace this)."""
         assert self.session is not None
-        names = " ".join(f"*{ext}" for ext in sorted(PICTURE_EXTENSIONS))
+        extensions = PICTURE_EXTENSIONS | {SVG_SUFFIX} if icon else PICTURE_EXTENSIONS
+        names = " ".join(f"*{ext}" for ext in sorted(extensions))
         return choose_open_file(
             self,
             "Choose a picture",
@@ -1381,8 +1410,10 @@ class MainWindow(QMainWindow):
 
             def build(folder: str) -> tuple[str, dict[str, bytes]]:
                 names = picture_files(tree, folder)
+                icons = icon_files(tree, folder, names.values())  # and icon pictures (#507)
                 files = {names[t]: p.data for t, p in tree.pictures().items() if t in names}
-                return export_tags(tree, session.schema, items, names), files
+                files |= {icons[t]: p.data for t, p in tree.icon_pictures().items() if t in icons}
+                return export_tags(tree, session.schema, items, names, icons), files
 
             return build
 

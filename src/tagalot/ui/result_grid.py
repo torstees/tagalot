@@ -58,6 +58,7 @@ from tagalot.ui.models.results import (
     BADGES,
     MATCH,
     PLACEHOLDER,
+    BadgesValue,
     MatchValue,
     ResultsModel,
     TagsValue,
@@ -187,7 +188,7 @@ class CardDelegate(QStyledItemDelegate):
     def _badges(self, painter: QPainter, box: QRect, value: object, palette: QPalette) -> None:
         """The item's tag badges along the thumbnail's bottom-left, as many as fit across it
         (#398; chosen in review), each on a backing that reads on any picture."""
-        if not isinstance(value, TagsValue) or not value.text:
+        if not isinstance(value, BadgesValue) or not value.icons:
             return
         side = badge_side(self.grid.fontMetrics())
         strip = QRect(box.x() + 3, box.bottom() - 2 - side, box.width() - 6, side)
@@ -197,7 +198,7 @@ class CardDelegate(QStyledItemDelegate):
         paint_badges(
             painter,
             strip,
-            value.text.split(),
+            value.icons,
             backing=backing,
             text_color=palette.color(QPalette.ColorRole.Text),
         )

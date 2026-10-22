@@ -43,7 +43,13 @@ from tagalot.core.keywords import (
 )
 from tagalot.core.linked_fields import edit_linked_field
 from tagalot.core.merge import MergeChange, restore_merge
-from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias
+from tagalot.core.models import (
+    Entity,
+    EntityTag,
+    FileTagRemoval,
+    Tag,
+    TagAlias,
+)
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
 from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
@@ -68,7 +74,9 @@ from tagalot.core.tags import (
     set_tag_color,
     set_tag_description,
     set_tag_icon,
+    set_tag_icon_picture,
     set_tag_types,
+    store_icon_picture,
     tag_entities,
     untag_entities,
 )
@@ -78,6 +86,11 @@ from tagalot.core.writer import DbWriter
 from tagalot.themes.api import FieldInfo
 
 logger = logging.getLogger(__name__)
+
+PictureKey = tuple[str, int]
+"""Which picture of which tag: ``("picture", id)`` (#506) or ``("icon", id)`` (#507)."""
+PICTURE, ICON = "picture", "icon"
+
 
 MAX_HISTORY = 100
 """Undo steps kept per session."""
@@ -106,11 +119,12 @@ class TagChange:
     """``(entity, tag)``: file tags the user removed by hand, remembered (#294)."""
     removals_dropped: frozenset[tuple[int, int]] = frozenset()
     """Removal records dropped because the user put the tag back by hand."""
-    pictures_before: tuple[tuple[int, PictureData | None], ...] = ()
-    """The tags' pictures the operation changed, as they were (#506): only those, not every
-    tag's, so the history doesn't hold every picture for every step."""
-    pictures_after: tuple[tuple[int, PictureData | None], ...] = ()
-    """The same tags' pictures afterwards (``None``: none)."""
+    pictures_before: tuple[tuple[PictureKey, PictureData | None], ...] = ()
+    """The tags' pictures and icons that are pictures the operation changed, as they were
+    (#506, #507): only those, not every tag's, so the history doesn't hold every picture
+    for every step."""
+    pictures_after: tuple[tuple[PictureKey, PictureData | None], ...] = ()
+    """The same afterwards (``None``: none)."""
 
 
 LinkDelta = tuple[
@@ -239,6 +253,14 @@ class TagService:
             lambda tree: f"Change the icon of {_name(tree, tag_id)!r}",
             lambda tree: (),
             lambda conn: set_tag_icon(conn, tag_id, icon),
+        )
+
+    def set_icon_picture(self, tag_id: int, picture: PictureData | None) -> None:
+        """Set a picture as a tag's icon, or clear it (#507); one undoable step."""
+        self._record(
+            lambda tree: f"Change the icon of {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: set_tag_icon_picture(conn, tag_id, picture),
         )
 
     def set_picture(self, tag_id: int, picture: PictureData | None) -> None:
@@ -689,9 +711,11 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
             insert(FileTagRemoval).prefix_with("OR IGNORE"),
             [{"entity_id": e, "tag_id": t} for e, t in keep_off],
         )
-    # Tags' pictures, after the tags they belong to are back (#506).
-    for tag_id, picture in change.pictures_after if forward else change.pictures_before:
-        if tag_id in wanted:
+    # Tags' pictures and icons that are pictures, after their tags are back (#506, #507).
+    for (kind, tag_id), picture in change.pictures_after if forward else change.pictures_before:
+        if tag_id in wanted and kind == ICON:
+            store_icon_picture(conn, tag_id, picture)
+        elif tag_id in wanted:
             set_tag_picture(conn, tag_id, picture)
     if change.tags_before != change.tags_after or change.aliases_before != change.aliases_after:
         apply_file_tags(conn)
@@ -712,9 +736,13 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
             conn.execute(insert(EntityTag).prefix_with("OR IGNORE"), rows)
 
 
-def _pictures(conn: Connection) -> dict[int, PictureData]:
-    """Every tag's picture now: read around an operation to keep only those it changed."""
-    return TagTree.load(conn).pictures()
+def _pictures(conn: Connection) -> dict[PictureKey, PictureData]:
+    """Every tag's picture and icon that is a picture now: read around an operation to keep
+    only those it changed."""
+    tree = TagTree.load(conn)
+    found: dict[PictureKey, PictureData] = {(PICTURE, t): p for t, p in tree.pictures().items()}
+    found |= {(ICON, t): p for t, p in tree.icon_pictures().items()}
+    return found
 
 
 def _tag_values(row: TagRow) -> dict[str, Any]:
