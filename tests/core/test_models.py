@@ -61,6 +61,7 @@ CORE_TABLES = {
     "markdown_problem",
     "item_picture",
     "online_picture",
+    "tag_picture",
     "schema_version",
 }
 FTS_TABLES = {

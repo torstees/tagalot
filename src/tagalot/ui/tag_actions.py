@@ -7,6 +7,7 @@ drops finishing out of order would record them out of order.
 
 import logging
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
@@ -133,7 +134,12 @@ class TagActions(QObject):
         self._run(run, lambda _: message)
 
     def import_tags(
-        self, text: str, name: str, delete_unused: bool, match_items: bool = False
+        self,
+        text: str,
+        name: str,
+        delete_unused: bool,
+        match_items: bool = False,
+        base: Path | None = None,
     ) -> None:
         """Import a YAML tag file as one undoable step (#395), and the tags it gives items
         (#396)."""
@@ -141,7 +147,7 @@ class TagActions(QObject):
 
         def work() -> ImportPlan | None:
             plan = tags.import_tags(
-                text, name, delete_unused=delete_unused, match_items=match_items
+                text, name, delete_unused=delete_unused, match_items=match_items, base=base
             )
             changed = plan.changes or (match_items and plan.tags_removed)
             return plan if changed else None

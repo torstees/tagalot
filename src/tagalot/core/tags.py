@@ -17,12 +17,29 @@ from functools import cached_property
 
 from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, tuple_, update
 
-from tagalot.core.models import Entity, EntityTag, FileTagRemoval, Tag, TagAlias, utcnow
+from tagalot.core.models import (
+    Entity,
+    EntityTag,
+    FileTagRemoval,
+    Tag,
+    TagAlias,
+    TagPicture,
+    utcnow,
+)
 
 logger = logging.getLogger(__name__)
 
 PATH_SEPARATOR = f" {chr(0x203A)} "  # U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
 """Joins tag names in a path; the same separator as the breadcrumbs (DESIGN.md §12)."""
+
+
+@dataclass(frozen=True)
+class PictureData:
+    """A tag's picture as kept (#506): PNG or JPEG bytes, and its size."""
+
+    data: bytes
+    width: int
+    height: int
 
 
 @dataclass(frozen=True)
@@ -113,8 +130,16 @@ def _match_rank(needle: str, name: str) -> int | None:
 class TagTree:
     """An immutable snapshot of the tag tree with its aliases."""
 
-    def __init__(self, nodes: Iterable[TagNode], aliases: Mapping[int, Iterable[str]]) -> None:
+    def __init__(
+        self,
+        nodes: Iterable[TagNode],
+        aliases: Mapping[int, Iterable[str]],
+        pictures: Mapping[int, PictureData] | None = None,
+    ) -> None:
         self._nodes: dict[int, TagNode] = {n.id: n for n in nodes}
+        self._pictures: dict[int, PictureData] = {
+            tag_id: p for tag_id, p in (pictures or {}).items() if tag_id in self._nodes
+        }
         self._aliases: dict[int, tuple[str, ...]] = {
             tag_id: tuple(names) for tag_id, names in aliases.items() if tag_id in self._nodes
         }
@@ -148,7 +173,19 @@ class TagTree:
         aliases: dict[int, list[str]] = {}
         for tag_id, alias in conn.execute(select(TagAlias.tag_id, TagAlias.alias)):
             aliases.setdefault(tag_id, []).append(alias)
-        return cls(nodes, aliases)
+        rows = conn.execute(
+            select(TagPicture.tag_id, TagPicture.data, TagPicture.width, TagPicture.height)
+        )
+        pictures = {r.tag_id: PictureData(r.data, r.width, r.height) for r in rows}
+        return cls(nodes, aliases, pictures)
+
+    def picture(self, tag_id: int) -> PictureData | None:
+        """The tag's picture (#506), if it has one."""
+        return self._pictures.get(tag_id)
+
+    def pictures(self) -> dict[int, PictureData]:
+        """Every tag's picture, by tag id."""
+        return dict(self._pictures)
 
     def __len__(self) -> int:
         return len(self._nodes)
@@ -259,7 +296,7 @@ class TagTree:
             replace(n, types=format_types(types)) if n.id == tag_id else n
             for n in self._nodes.values()
         ]
-        return TagTree(nodes, self._aliases)
+        return TagTree(nodes, self._aliases, self._pictures)
 
     def expand(self, tag_ids: Iterable[int]) -> frozenset[int]:
         """The union of several tags' subtrees (an include group or the exclude set, §8)."""
@@ -924,6 +961,10 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
         conn.execute(update(Tag).where(Tag.id == target_id).values(description=source.description))
     if target.icon is None and source.icon is not None:
         conn.execute(update(Tag).where(Tag.id == target_id).values(icon=source.icon))
+    if tree.picture(target_id) is None and tree.picture(source_id) is not None:
+        conn.execute(  # as its description: the source's picture, if the target has none
+            update(TagPicture).where(TagPicture.tag_id == source_id).values(tag_id=target_id)
+        )
     conn.execute(delete(Tag).where(Tag.id == source_id))  # its entity_tag rows cascade
 
 

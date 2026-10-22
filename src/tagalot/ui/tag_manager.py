@@ -35,7 +35,7 @@ from PySide6.QtCore import (
     QThreadPool,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
@@ -70,6 +70,10 @@ AnyIndex = QModelIndex | QPersistentModelIndex
 
 ITEMS, WITH_SUBTAGS = 1, 2
 HEADERS = ("Tag", "Items", "With sub-tags")
+
+
+PANE_PICTURE = 96
+"""The tag's picture in the details pane, at most this many pixels (#506)."""
 
 
 class TagManagerModel(TagTreeModel):
@@ -194,6 +198,10 @@ class TagDetails(QFrame):
     """Tag id and ``#rrggbb``, or ``None`` to clear it."""
     icon_chosen = Signal(int, object)
     """Tag id and its new icon, or ``None`` to clear it (#398)."""
+    picture_requested = Signal(int)
+    """**Choose picture…**: the window asks for a picture file for this tag (#506)."""
+    picture_cleared = Signal(int)
+    """**Clear** the tag's picture."""
     description_saved = Signal(int, str)
     alias_added = Signal(int, str)
     alias_removed = Signal(int, str)
@@ -243,6 +251,22 @@ class TagDetails(QFrame):
         self.icon_note = QLabel()
         self.clear_icon = QPushButton("Clear")
         self.clear_icon.clicked.connect(lambda: self._emit_icon(None))
+        self.picture = QLabel("None")
+        self.picture.setObjectName("tag_picture")
+        self.choose_picture = QPushButton("Choose picture\u2026")
+        self.choose_picture.setToolTip(
+            "A picture that shows what the tag means, above its description in its tooltips. "
+            "Tagalot keeps a copy in the keep."
+        )
+        self.choose_picture.clicked.connect(self._choose_picture)
+        self.clear_picture = QPushButton("Clear")
+        self.clear_picture.clicked.connect(self._clear_picture)
+        picture_row = QHBoxLayout()
+        picture_row.setContentsMargins(0, 0, 0, 0)
+        picture_row.addWidget(self.picture)
+        picture_row.addStretch(1)
+        picture_row.addWidget(self.choose_picture)
+        picture_row.addWidget(self.clear_picture)
         icon_row = QHBoxLayout()
         icon_row.setContentsMargins(0, 0, 0, 0)
         icon_row.addWidget(self.icon_edit)
@@ -314,6 +338,7 @@ class TagDetails(QFrame):
         form.addRow("Icon:", icon_row)
         form.addRow("Color:", color_row)
         form.addRow("Description:", description_box)
+        form.addRow("Picture:", picture_row)
         form.addRow("Applies to:", types_row)
         form.addRow("Also called:", alias_box)
         form.addRow("Used on:", self.counts)
@@ -352,6 +377,22 @@ class TagDetails(QFrame):
             self.icon_note.setText(f"{inherited} from {tree.node(source).name!r}")
         else:
             self.icon_note.setText("" if node.icon else "None")
+        picture = tree.picture(tag_id)
+        if picture is None:
+            self.picture.setPixmap(QPixmap())
+            self.picture.setText("None")
+        else:
+            pixmap = QPixmap()
+            pixmap.loadFromData(picture.data)
+            self.picture.setPixmap(
+                pixmap.scaled(
+                    PANE_PICTURE,
+                    PANE_PICTURE,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        self.clear_picture.setEnabled(picture is not None)
         self._color = node.color
         if node.color:
             self.color.setText(f'<span style="color:{node.color}">\u25a0</span> {node.color}')
@@ -383,6 +424,14 @@ class TagDetails(QFrame):
         return self.description.toPlainText().strip() != self._saved_description.strip()
 
     # --- edits ---
+
+    def _choose_picture(self) -> None:
+        if self.tag_id is not None:
+            self.picture_requested.emit(self.tag_id)
+
+    def _clear_picture(self) -> None:
+        if self.tag_id is not None:
+            self.picture_cleared.emit(self.tag_id)
 
     def _icon_edited(self) -> None:
         icon = self.icon_edit.text().strip() or None

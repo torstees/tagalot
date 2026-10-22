@@ -15,6 +15,7 @@ import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, delete, insert, select, tuple_, update
@@ -48,10 +49,12 @@ from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_
 from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
+from tagalot.core.tag_pictures import set_tag_picture
 from tagalot.core.tag_yaml import ImportPlan, import_tags
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
+    PictureData,
     TagTree,
     TagTreeCache,
     add_alias,
@@ -103,6 +106,11 @@ class TagChange:
     """``(entity, tag)``: file tags the user removed by hand, remembered (#294)."""
     removals_dropped: frozenset[tuple[int, int]] = frozenset()
     """Removal records dropped because the user put the tag back by hand."""
+    pictures_before: tuple[tuple[int, PictureData | None], ...] = ()
+    """The tags' pictures the operation changed, as they were (#506): only those, not every
+    tag's, so the history doesn't hold every picture for every step."""
+    pictures_after: tuple[tuple[int, PictureData | None], ...] = ()
+    """The same tags' pictures afterwards (``None``: none)."""
 
 
 LinkDelta = tuple[
@@ -233,6 +241,14 @@ class TagService:
             lambda conn: set_tag_icon(conn, tag_id, icon),
         )
 
+    def set_picture(self, tag_id: int, picture: PictureData | None) -> None:
+        """Set or clear a tag's picture (#506); one undoable step."""
+        self._record(
+            lambda tree: f"Change the picture of {_name(tree, tag_id)!r}",
+            lambda tree: (),
+            lambda conn: set_tag_picture(conn, tag_id, picture),
+        )
+
     def set_description(self, tag_id: int, description: str | None) -> None:
         self._record(
             lambda tree: f"Change the description of {_name(tree, tag_id)!r}",
@@ -241,7 +257,13 @@ class TagService:
         )
 
     def import_tags(
-        self, text: str, name: str, *, delete_unused: bool = False, match_items: bool = False
+        self,
+        text: str,
+        name: str,
+        *,
+        delete_unused: bool = False,
+        match_items: bool = False,
+        base: Path | None = None,
     ) -> ImportPlan:
         """Import a YAML tag file (``name`` is how the step reads in Undo) as one undoable
         step; returns what it did (#395). Changing a tag's ``applies_to`` can take it off
@@ -252,7 +274,7 @@ class TagService:
         return self._record(
             lambda tree: f"Import tags from {name!r}",
             lambda tree: tree,
-            lambda conn: import_tags(conn, text, schema, delete_unused, match_items),
+            lambda conn: import_tags(conn, text, schema, delete_unused, match_items, base),
         )
 
     # --- tagging entities ---
@@ -500,6 +522,7 @@ class TagService:
             tags_before, aliases_before = _tag_tables(conn)
             links_before = _links(conn, tag_ids)
             removals_before = _removals(conn, tag_ids)
+            pictures_before = _pictures(conn)
             result = op(conn)
             apply_file_tags(conn)  # a rename, alias, or type change changes what matches
             tags_after, aliases_after = _tag_tables(conn)
@@ -507,6 +530,12 @@ class TagService:
             made = frozenset(r[0] for r in tags_after) - frozenset(r[0] for r in tags_before)
             links_after = _links(conn, tag_ids | made)
             removals_after = _removals(conn, tag_ids)
+            pictures_after = _pictures(conn)
+            changed = sorted(
+                t
+                for t in pictures_before.keys() | pictures_after.keys()
+                if pictures_before.get(t) != pictures_after.get(t)
+            )
             change = TagChange(
                 label=label(tree),
                 tags_before=tags_before,
@@ -518,6 +547,8 @@ class TagService:
                 # A merge moves removal records; a delete takes them with the tag (#294).
                 removals_added=removals_after - removals_before,
                 removals_dropped=removals_before - removals_after,
+                pictures_before=tuple((t, pictures_before.get(t)) for t in changed),
+                pictures_after=tuple((t, pictures_after.get(t)) for t in changed),
             )
             return result, change
 
@@ -658,6 +689,10 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
             insert(FileTagRemoval).prefix_with("OR IGNORE"),
             [{"entity_id": e, "tag_id": t} for e, t in keep_off],
         )
+    # Tags' pictures, after the tags they belong to are back (#506).
+    for tag_id, picture in change.pictures_after if forward else change.pictures_before:
+        if tag_id in wanted:
+            set_tag_picture(conn, tag_id, picture)
     if change.tags_before != change.tags_after or change.aliases_before != change.aliases_after:
         apply_file_tags(conn)
     else:
@@ -675,6 +710,11 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
         ]
         if rows:
             conn.execute(insert(EntityTag).prefix_with("OR IGNORE"), rows)
+
+
+def _pictures(conn: Connection) -> dict[int, PictureData]:
+    """Every tag's picture now: read around an operation to keep only those it changed."""
+    return TagTree.load(conn).pictures()
 
 
 def _tag_values(row: TagRow) -> dict[str, Any]:

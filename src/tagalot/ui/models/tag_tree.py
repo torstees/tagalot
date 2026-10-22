@@ -7,6 +7,8 @@ The whole tree is small (hundreds to low thousands of tags), so a new snapshot o
 simply resets the model.
 """
 
+import base64
+import html
 from collections.abc import Sequence
 from typing import Any
 
@@ -21,7 +23,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
 
-from tagalot.core.tags import PATH_SEPARATOR, TagTree, description_excerpt, search_key
+from tagalot.core.tags import PATH_SEPARATOR, PictureData, TagTree, description_excerpt, search_key
 from tagalot.ui.dnd import TAG_MIME, tags_mime
 
 TAG_ID_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -31,15 +33,39 @@ EXCERPT_WIDTH = 32
 """Characters of a description shown next to a tag matched only through it."""
 
 
+TOOLTIP_PICTURE = 240
+"""The longest side of a tag's picture in its tooltips (#506)."""
+
+
+def picture_html(picture: PictureData, size: int = TOOLTIP_PICTURE) -> str:
+    """A tag's picture as an ``<img>`` for rich-text tooltips, at most ``size`` pixels on
+    its longer side (the data is in the tag, so nothing is read)."""
+    scale = min(1.0, size / max(picture.width, picture.height, 1))
+    width, height = round(picture.width * scale), round(picture.height * scale)
+    kind = "png" if picture.data.startswith(b"\x89PNG") else "jpeg"
+    data = base64.b64encode(picture.data).decode("ascii")
+    return f'<img src="data:image/{kind};base64,{data}" width="{width}" height="{height}">'
+
+
+def with_picture(tree: TagTree | None, tag_id: int, text: str) -> str:
+    """``text`` (plain) under the tag's picture, as rich text, when it has one (#506);
+    else ``text`` as it is."""
+    picture = tree.picture(tag_id) if tree is not None and tag_id in tree else None
+    if picture is None:
+        return text
+    lines = html.escape(text).replace("\n", "<br>")
+    return f"<p>{picture_html(picture)}</p><p>{lines}</p>"
+
+
 def tag_tooltip(tree: TagTree, tag_id: int) -> str:
-    """A tag's tooltip: its path, its description, and its aliases."""
+    """A tag's tooltip: its picture (#506), its path, its description, and its aliases."""
     node = tree.node(tag_id)
     lines = [PATH_SEPARATOR.join(tree.path(tag_id))]
     if node.description:
         lines.append(node.description)
     if aliases := tree.aliases(tag_id):
         lines.append("Also: " + ", ".join(aliases))
-    return "\n".join(lines)
+    return with_picture(tree, tag_id, "\n".join(lines))
 
 
 AnyIndex = QModelIndex | QPersistentModelIndex

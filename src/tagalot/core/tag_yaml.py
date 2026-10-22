@@ -25,8 +25,9 @@ come back from the files.
 
 import re
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -43,9 +44,11 @@ from tagalot.core.models import (
     TagAlias,
 )
 from tagalot.core.search_fields import type_labels, type_plurals
+from tagalot.core.tag_pictures import prepare_picture, set_tag_picture
 from tagalot.core.tags import (
     MAX_DESCRIPTION,
     PATH_SEPARATOR,
+    PictureData,
     TagError,
     TagTree,
     clean_icon,
@@ -61,8 +64,10 @@ from tagalot.core.tags import (
 )
 from tagalot.core.theme_schema import ThemeSchema
 
-PROPERTIES = ("icon", "color", "description", "aliases", "applies_to", "tags")
+PROPERTIES = ("icon", "color", "description", "picture", "aliases", "applies_to", "tags")
 """The keys of a tag written in the full form."""
+MAX_PICTURE_FILE = 20 * 1024 * 1024
+"""The biggest picture file an import reads (#506)."""
 ITEMS = "items"
 """The key of the second document's list of tagged items (#396)."""
 ITEM_KEYS = ("type", "title", "key", "files", "tags")
@@ -215,11 +220,34 @@ def tagged_items(conn: Connection, schema: ThemeSchema, tree: TagTree) -> list[d
     return written
 
 
+_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def picture_files(tree: TagTree, folder: str) -> dict[int, str]:
+    """Where an export puts each tag's picture (#506): ``folder/Genre/Fantasy.png``, by the
+    tag's path, its names made safe for file names; relative to the exported file."""
+    names: dict[int, str] = {}
+    taken: set[str] = set()
+    for tag_id, picture in sorted(tree.pictures().items()):
+        parts = [_UNSAFE.sub("_", n).strip(" .") or "_" for n in tree.path(tag_id)]
+        ext = "png" if picture.data.startswith(b"\x89PNG") else "jpg"
+        name = "/".join([folder, *parts]) + f".{ext}"
+        if name.casefold() in taken:  # two paths made the same by the safe names
+            name = "/".join([folder, *parts]) + f" ({tag_id}).{ext}"
+        taken.add(name.casefold())
+        names[tag_id] = name
+    return names
+
+
 def export_tags(
-    tree: TagTree, schema: ThemeSchema, items: Sequence[dict[str, Any]] | None = None
+    tree: TagTree,
+    schema: ThemeSchema,
+    items: Sequence[dict[str, Any]] | None = None,
+    pictures: Mapping[int, str] | None = None,
 ) -> str:
     """The whole tree as YAML, every tag in the full form, in display order; with
-    ``items`` (:func:`tagged_items`), followed by which items have each tag (#396)."""
+    ``items`` (:func:`tagged_items`), followed by which items have each tag (#396); with
+    ``pictures`` (:func:`picture_files`), each tag's picture file named (#506)."""
     labels = type_labels(schema)
 
     def tag(tag_id: int) -> dict[str, Any] | None:
@@ -231,6 +259,8 @@ def export_tags(
             data["color"] = node.color
         if node.description:
             data["description"] = node.description
+        if pictures and tag_id in pictures:
+            data["picture"] = pictures[tag_id]
         if aliases := tree.aliases(tag_id):
             data["aliases"] = _Flow(sorted(aliases, key=name_key))
         if (types := parse_types(node.types)) is not None:
@@ -286,6 +316,8 @@ class _Parsed:
     aliases: tuple[str, ...] = ()
     types: frozenset[str] | None = None
     children: list["_Parsed"] = field(default_factory=list)
+    picture: bytes | None = None
+    """The picture file's bytes, as read (#506)."""
 
 
 def _key_line(data: Any, key: Any) -> int | None:
@@ -311,7 +343,9 @@ def _scalars(value: Any) -> list[Any] | None:
 
 
 class _Reader:
-    def __init__(self, schema: ThemeSchema) -> None:
+    def __init__(self, schema: ThemeSchema, base: Path | None = None) -> None:
+        self.base = base
+        """The folder of the file read, where its pictures are (#506)."""
         self.problems: list[Problem] = []
         self.items: list[_Item] = []
         """The items of the file's second document (#396)."""
@@ -519,10 +553,32 @@ class _Reader:
                 self.problem(line, f"A description can be at most {MAX_DESCRIPTION:,} characters.")
             elif text:
                 tag.description = text
+        elif prop == "picture":
+            self.picture(tag, value, line)
         elif prop == "aliases":
             self.aliases(tag, value, line)
         else:
             self.applies_to(tag, value, line)
+
+    def picture(self, tag: _Parsed, value: Any, line: int | None) -> None:
+        """A picture file, relative to the file read (#506)."""
+        if isinstance(value, dict | list):
+            self.problem(line, f"{tag.name!r}: a picture is a file's name.")
+            return
+        if self.base is None:
+            self.problem(line, f"{tag.name!r}: its picture can't be read from here.")
+            return
+        path = self.base / str(value)
+        try:
+            tag.picture = path.read_bytes()
+        except OSError as e:
+            self.problem(
+                line, f"{tag.name!r}: its picture {str(value)!r} can't be read: {e.strerror or e}."
+            )
+            return
+        if len(tag.picture) > MAX_PICTURE_FILE:
+            tag.picture = None
+            self.problem(line, f"{tag.name!r}: its picture {str(value)!r} is too big.")
 
     def aliases(self, tag: _Parsed, value: Any, line: int | None) -> None:
         items = _scalars(value)
@@ -593,6 +649,8 @@ class _Planned:
     children: list["_Planned"]
     new_aliases: tuple[str, ...]
     rename: str | None = None
+    picture: PictureData | None = None
+    """The picture to give the tag (#506): the file's, when it isn't the tag's already."""
     """The file's spelling of a tag it names with different case or accents."""
 
 
@@ -672,6 +730,10 @@ class _Planner:
                     changes.append("color")
                 if tag.description is not None and tag.description != node.description:
                     changes.append("description")
+                if tag.picture is not None:
+                    current = tree.picture(tag_id)
+                    if current is None or current.data != tag.picture:
+                        changes.append("picture")
                 if new_aliases:
                     changes.append("aliases")
                 if types is not None and types != parse_types(node.types):
@@ -682,8 +744,22 @@ class _Planner:
             if rename:  # its sub-tags are shown under the new name
                 here = (*path, rename)
             children = self.walk(tag.children, tag_id, tag_id is None, scope, here)
-            planned.append(_Planned(tag, tag_id, types, children, new_aliases, rename))
+            picture = self.picture(tag, tag_id)
+            planned.append(_Planned(tag, tag_id, types, children, new_aliases, rename, picture))
         return planned
+
+    def picture(self, tag: _Parsed, tag_id: int | None) -> PictureData | None:
+        """The file's picture for the tag, unless it is the one the tag has (#506)."""
+        if tag.picture is None:
+            return None
+        current = self.tree.picture(tag_id) if tag_id is not None else None
+        if current is not None and current.data == tag.picture:
+            return None  # exported from here: the same bytes
+        try:
+            return prepare_picture(tag.picture)
+        except TagError as e:
+            self.reader.problem(tag.line, f"{tag.name!r}: {e}")
+            return None
 
 
 @dataclass(frozen=True)
@@ -793,9 +869,11 @@ def _plan_items(
     return found, missing, added, removed
 
 
-def _prepare(conn: Connection, text: str, schema: ThemeSchema, delete_unused: bool) -> _Prepared:
+def _prepare(
+    conn: Connection, text: str, schema: ThemeSchema, delete_unused: bool, base: Path | None
+) -> _Prepared:
     tree = TagTree.load(conn)
-    reader = _Reader(schema)
+    reader = _Reader(schema, base)
     parsed = reader.read(text)
     if parsed is None:
         return _Prepared(
@@ -852,10 +930,15 @@ def _path(tree: TagTree, tag_id: int) -> str:
 
 
 def plan_import(
-    conn: Connection, text: str, schema: ThemeSchema, delete_unused: bool = False
+    conn: Connection,
+    text: str,
+    schema: ThemeSchema,
+    delete_unused: bool = False,
+    base: Path | None = None,
 ) -> ImportPlan:
-    """What importing ``text`` would do to the keep's tags, without changing anything."""
-    return _prepare(conn, text, schema, delete_unused).plan
+    """What importing ``text`` would do to the keep's tags, without changing anything.
+    ``base`` is the file's folder, where the pictures it names are (#506)."""
+    return _prepare(conn, text, schema, delete_unused, base).plan
 
 
 def import_tags(
@@ -864,12 +947,13 @@ def import_tags(
     schema: ThemeSchema,
     delete_unused: bool = False,
     match_items: bool = False,
+    base: Path | None = None,
 ) -> ImportPlan:
     """Import ``text`` in one transaction (planned again against the tags as they are now);
     returns what it did. With ``match_items``, the user's tags on the file's items that it
     doesn't list for them are taken off (#396). A file that can't be read raises
     :class:`TagError`."""
-    prepared = _prepare(conn, text, schema, delete_unused)
+    prepared = _prepare(conn, text, schema, delete_unused, base)
     if prepared.plan.unreadable:
         raise TagError(str(prepared.plan.problems[0]))
     tree = TagTree.load(conn)
@@ -927,6 +1011,8 @@ def import_tags(
                 conn.execute(
                     insert(TagAlias), [{"tag_id": tag_id, "alias": a} for a in item.new_aliases]
                 )
+            if item.picture is not None:
+                set_tag_picture(conn, tag_id, item.picture)
             apply(item.children, tag_id)
 
     apply(prepared.planned, None)
