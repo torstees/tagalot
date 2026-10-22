@@ -7,6 +7,7 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 
 import logging
 import os
+import posixpath
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -66,10 +67,18 @@ from tagalot.core.scanjob import ScanReport
 from tagalot.core.search_fields import type_plurals, view_spec
 from tagalot.core.search_spec import FieldFilter, SearchSpec
 from tagalot.core.session import KeepSession
-from tagalot.core.tag_yaml import ImportPlan, export_tags, plan_import, tagged_items
+from tagalot.core.tag_pictures import PICTURE_EXTENSIONS, prepare_picture
+from tagalot.core.tag_yaml import (
+    ImportPlan,
+    export_tags,
+    picture_files,
+    plan_import,
+    tagged_items,
+)
 from tagalot.core.tags import (
     PATH_SEPARATOR,
     DeleteMode,
+    PictureData,
     TagError,
     entity_types,
     parse_types,
@@ -656,6 +665,8 @@ class MainWindow(QMainWindow):
             details = manager.details
             details.color_chosen.connect(self._set_tag_color)
             details.icon_chosen.connect(self._set_tag_icon)
+            details.picture_requested.connect(self.choose_tag_picture)
+            details.picture_cleared.connect(lambda tag_id: self._set_tag_picture(tag_id, None))
             details.description_saved.connect(self._set_tag_description)
             details.alias_added.connect(self._add_tag_alias)
             details.alias_removed.connect(self._remove_tag_alias)
@@ -1028,26 +1039,41 @@ class MainWindow(QMainWindow):
 
     # --- saving an action's export (#322) ---
 
-    def save_export(self, name: str, text: str, by: str = "an action") -> None:
+    def save_export(
+        self,
+        name: str,
+        text: str,
+        by: str = "an action",
+        with_files: Callable[[str], tuple[str, dict[str, bytes]]] | None = None,
+    ) -> None:
         """Ask where to save an action's export, then write it (in the background). A place
         inside a watched folder is allowed after a warning, and the file is then skipped by
         scans (an exact pattern on that folder's Skip list), so the keep doesn't read its
-        own export back; an existing file there is never replaced."""
+        own export back; an existing file there is never replaced. ``with_files``, given
+        the name of a folder beside the file (``<name> pictures``), gives the file's text and
+        the files to put in that folder (relative paths), a tag export's pictures (#506)."""
         session = self.session
         assert session is not None
         path = self.choose_export_path(name)
         if not path:
             return
+        files: dict[str, bytes] = {}
+        folder = f"{Path(path).stem} pictures"
+        if with_files is not None:
+            text, files = with_files(folder)
         roots = {r.id: session.root_path(r.id) for r in session.keep.config.roots}
         place = place_in_roots(path, roots)
         if place is not None:
             root = next(r for r in session.keep.config.roots if r.id == place[0])
-            if os.path.exists(path):
+            taken = path if os.path.exists(path) else None
+            if files and (Path(path).parent / folder).exists():
+                taken = str(Path(path).parent / folder)
+            if taken is not None:
                 QMessageBox.warning(
                     self,
                     "Not saved",
-                    f"{place[1]} is already in {root.name}, a folder this keep watches. "
-                    "Tagalot never replaces files there: choose a new name.",
+                    f"{Path(taken).name} is already in {root.name}, a folder this keep "
+                    "watches. Tagalot never replaces files there: choose a new name.",
                 )
                 return
             if not self.confirm_export_in_root(root.name, place[1]):
@@ -1059,11 +1085,17 @@ class MainWindow(QMainWindow):
                     f"Saved here by {by} on {datetime.now():%Y-%m-%d}; skipped so the keep "
                     "doesn't read its own export back"
                 )
-                config = add_skipped(
-                    session.keep.config, session.keep.dir, place[0], [exact_pattern(place[1])], note
-                )
+                skipped = [exact_pattern(place[1])]
+                if files:  # and the pictures beside it (#506)
+                    beside = posixpath.join(posixpath.dirname(place[1]), folder)
+                    skipped += [exact_pattern(beside), exact_pattern(beside) + "/**"]
+                config = add_skipped(session.keep.config, session.keep.dir, place[0], skipped, note)
                 session.save_config(config)
             Path(path).write_text(text, encoding="utf-8")
+            for relpath, data in files.items():
+                target = Path(path).parent.joinpath(*relpath.split("/"))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
             return path
 
         def done(saved: str) -> None:
@@ -1221,6 +1253,44 @@ class MainWindow(QMainWindow):
         )
         self.tag_actions.change(lambda: tags.set_icon(tag_id, icon), message)
 
+    def choose_tag_picture(self, tag_id: int) -> None:
+        """Choose a picture file for a tag, read and shrink it in a worker, and set it as one
+        undoable step (#506)."""
+        path = self.choose_tag_picture_file()
+        if not path:
+            return
+
+        def read() -> PictureData:
+            return prepare_picture(Path(path).read_bytes())
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                QMessageBox.warning(self, "Tag picture", f"Couldn't use {Path(path).name}: {error}")
+
+        run_in_pool(read, on_done=lambda p: self._set_tag_picture(tag_id, p), on_error=failed)
+
+    def choose_tag_picture_file(self) -> str:
+        """Ask for a picture file (tests replace this)."""
+        assert self.session is not None
+        names = " ".join(f"*{ext}" for ext in sorted(PICTURE_EXTENSIONS))
+        return choose_open_file(
+            self,
+            "Choose a picture",
+            f"Pictures ({names})",
+            self.session.settings,
+            self.files.settings_path,
+        )
+
+    def _set_tag_picture(self, tag_id: int, picture: PictureData | None) -> None:
+        if not shiboken6.isValid(self):
+            return
+        name = self._tag_name(tag_id)
+        tags = self.tag_actions.session.tags
+        message = (
+            f"Set the picture of {name!r}." if picture else f"Cleared the picture of {name!r}."
+        )
+        self.tag_actions.change(lambda: tags.set_picture(tag_id, picture), message)
+
     def _set_tag_description(self, tag_id: int, description: str) -> None:
         name = self._tag_name(tag_id)
         tags = self.tag_actions.session.tags
@@ -1303,18 +1373,33 @@ class MainWindow(QMainWindow):
             return
         tree = session.tag_cache.get()
         name = session.keep.config.name
+
+        def with_pictures(
+            items: list[dict[str, Any]] | None,
+        ) -> Callable[[str], tuple[str, dict[str, bytes]]]:
+            """The file's text, and its tags' pictures in a folder beside it (#506)."""
+
+            def build(folder: str) -> tuple[str, dict[str, bytes]]:
+                names = picture_files(tree, folder)
+                files = {names[t]: p.data for t, p in tree.pictures().items() if t in names}
+                return export_tags(tree, session.schema, items, names), files
+
+            return build
+
         if not with_items:
-            self.save_export(f"{name} tags.yaml", export_tags(tree, session.schema), "Export tags")
+            text = export_tags(tree, session.schema)
+            self.save_export(f"{name} tags.yaml", text, "Export tags", with_pictures(None))
             return
 
-        def read() -> str:
+        def read() -> list[dict[str, Any]]:
             with session.reader.connect() as conn:
-                items = tagged_items(conn, session.schema, tree)
-            return export_tags(tree, session.schema, items)
+                return tagged_items(conn, session.schema, tree)
 
-        def done(text: str) -> None:
+        def done(items: list[dict[str, Any]]) -> None:
             if shiboken6.isValid(self):
-                self.save_export(f"{name} tags and items.yaml", text, "Export tags")
+                text = export_tags(tree, session.schema, items)
+                file = f"{name} tags and items.yaml"
+                self.save_export(file, text, "Export tags", with_pictures(items))
 
         run_in_pool(read, on_done=done)
 
@@ -1334,8 +1419,8 @@ class MainWindow(QMainWindow):
             with session.reader.connect() as conn:
                 return (
                     text,
-                    plan_import(conn, text, session.schema, False),
-                    plan_import(conn, text, session.schema, True),
+                    plan_import(conn, text, session.schema, False, Path(path).parent),
+                    plan_import(conn, text, session.schema, True, Path(path).parent),
                 )
 
         def planned(result: tuple[str, ImportPlan, ImportPlan]) -> None:
@@ -1345,7 +1430,7 @@ class MainWindow(QMainWindow):
             dialog = TagImportDialog(name, keep, delete, self)
             if self.review_tag_import(dialog):
                 self.tag_actions.import_tags(
-                    text, name, dialog.delete_unused(), dialog.match_items()
+                    text, name, dialog.delete_unused(), dialog.match_items(), Path(path).parent
                 )
 
         def failed(error: BaseException) -> None:

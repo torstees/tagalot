@@ -29,7 +29,7 @@ TOOLS → **Tag manager** (the Tags and Details panel steps aside while it's ope
 - **Move…**, or drag a tag onto another (or onto empty space for the top level). The status bar says how many items it affects.
 - **Merge…** folds one tag into another: its items get the other tag, its sub-tags move under it, and its name becomes an alias of the other. It says what will happen before it does it.
 - **Delete…** asks, for a tag with sub-tags, whether to delete them too or move them up a level, and says how many items will lose a tag. Items themselves are never deleted.
-- The details on the right: the tag's **icon** (below), its **color**, a **description** (shown in tooltips; finding a tag matches it too), **other names** (aliases: they find the tag in the panel and the search box, and match [file keywords](file-keywords.md)), and **what it applies to**.
+- The details on the right: the tag's **icon** (below), its **color**, a **description** (shown in tooltips; finding a tag matches it too), a **picture** (**Choose picture…**: shown above the description in its tooltips, up to 240 px; Tagalot keeps a copy in the keep, so the file can move or go), **other names** (aliases: they find the tag in the panel and the search box, and match [file keywords](file-keywords.md)), and **what it applies to**.
 - **Undo** and **Redo** buttons on its toolbar, the same history as Edit → Undo.
 - **Export tags…** and **Import tags…** save the whole tree to a file and load one back (below).
 
@@ -54,7 +54,7 @@ A tag can have an **icon**: an emoji or one character, like ⭐ for `Favorites` 
 
 ### Importing and exporting tags
 
-**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit: **Tags only…**, or **Tags and the items that have them…** (below). **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor.
+**Export tags…** saves the whole tree as a YAML file, a plain text file you can edit, with tags' pictures in a folder beside it (`My tags pictures/Places/Iceland.jpg`, named under `picture:`): **Tags only…**, or **Tags and the items that have them…** (below). **Import tags…** loads one, to start a keep with a ready-made set of tags or to reshape them in a text editor.
 
 The file is nested like the tree. A tag can be written three ways:
 

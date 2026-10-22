@@ -2,10 +2,12 @@
 tag (#396)."""
 
 import importlib.util
+import io
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
@@ -15,9 +17,11 @@ from tagalot.core.models import Entity, EntityTag
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.tag_pictures import prepare_picture
 from tagalot.core.tag_yaml import ImportPlan
 from tagalot.core.tags import PATH_SEPARATOR
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.models.tag_tree import tag_tooltip
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.tag_import import TagImportDialog, items_text
 from tagalot.ui.tag_manager import TagManagerPage
@@ -274,3 +278,65 @@ def test_the_preview_says_why_there_is_nothing_to_import() -> None:
         "(and 2 others of yours, which ticking the last box takes off)."
     )
     assert items_text(others, True) == "12 items found: 0 tags to add, 2 tags to take off."
+
+
+# --- tags' pictures (#506) ---
+
+
+def _png() -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", (60, 30), (30, 120, 200)).save(out, "PNG")
+    return out.getvalue()
+
+
+def _iceland(session: KeepSession) -> int:
+    tree = session.tag_cache.get()
+    return next(t for t in tree if tree.node(t).name == "Iceland")
+
+
+def test_a_tags_picture_from_the_tag_manager_shows_in_its_tooltip(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "iceland.png"
+    source.write_bytes(_png())
+    monkeypatch.setattr(window, "choose_tag_picture_file", lambda: str(source))
+    page = _page(window)
+    iceland = _iceland(session)
+    assert page.select_tag(iceland)
+    details = page.details
+    assert not details.clear_picture.isEnabled()
+    details.choose_picture.click()
+    qtbot.waitUntil(lambda: session.tag_cache.get().picture(iceland) is not None, timeout=5000)
+    qtbot.waitUntil(
+        lambda: details.picture.pixmap() is not None and not details.picture.pixmap().isNull(),
+        timeout=5000,
+    )
+    tip = tag_tooltip(session.tag_cache.get(), iceland)
+    assert tip.startswith('<p><img src="data:image/jpeg;base64,')
+    assert 'width="60" height="30"' in tip
+    assert "Summer 2019 road trip" in tip  # its description, under the picture
+    details.clear_picture.click()
+    qtbot.waitUntil(lambda: session.tag_cache.get().picture(iceland) is None, timeout=5000)
+    assert not tag_tooltip(session.tag_cache.get(), iceland).startswith("<p><img")
+
+
+def test_export_writes_the_pictures_beside_the_file(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session.tags.set_picture(_iceland(session), prepare_picture(_png()))
+    target = tmp_path / "out" / "tags.yaml"
+    target.parent.mkdir()
+    monkeypatch.setattr(window, "choose_export_path", lambda name: str(target))
+    _page(window).export_tags_action.trigger()
+    picture = tmp_path / "out" / "tags pictures" / "Places" / "Iceland.jpg"
+    qtbot.waitUntil(picture.exists, timeout=5000)
+    qtbot.waitUntil(target.exists, timeout=5000)
+    assert "picture: tags pictures/Places/Iceland.jpg" in target.read_text(encoding="utf-8")

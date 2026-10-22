@@ -52,7 +52,7 @@ from tagalot.ui.field_filters import (
     FieldFilterPopup,
     FilterField,
 )
-from tagalot.ui.models.tag_tree import EXCERPT_WIDTH, tag_tooltip
+from tagalot.ui.models.tag_tree import EXCERPT_WIDTH, tag_tooltip, with_picture
 
 TEXT_DELAY_MS = 300
 """How long the text box waits after the last keystroke before searching."""
@@ -196,7 +196,7 @@ class Chip(QFrame):
             tip = f"Only items tagged {path}, or with any tag under it"
         if tree is not None and self.tag_id in tree and tree.node(self.tag_id).description:
             tip += f"\n\n{tree.node(self.tag_id).description}"
-        self.setToolTip(tip)
+        self.setToolTip(with_picture(tree, self.tag_id, tip))
         self.close_button.setToolTip("Remove this filter")
 
 

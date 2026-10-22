@@ -161,7 +161,7 @@ MyMusic.keep/
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 24                         # core schema version
+format_version = 25                         # core schema version
 
 [theme]
 id = "music"
@@ -305,6 +305,8 @@ PK `(entity_id, resource_id, role)`. Index on `resource_id`.
 **user_contains** (core format 13, #329) — `parent_id`, `child_id` (FKs to `entity`, cascade), `added` (true: the user put the child in the container; false: the user took it out), `at`. PK `(parent_id, child_id)`. Containment changed by hand (projects), which scans respect: a theme's `uncontain` leaves an edge the user added, and its `contain` doesn't restore one the user removed. Snapshots and merges carry it.
 
 **online_response** (core format 14, #339) — `url` (PK), `status` (the HTTP status; 404 and other answers that aren't details are kept too, so an unknown identifier isn't asked about again), `body` (text), `fetched_at`. What online services answered (§9 *Online details*); **Look up online** replaces an item's answers. Not part of snapshots: it is a cache of the services, not of the user's work.
+
+**tag_picture** (core format 25, #506) — `tag_id` (PK, FK to `tag`, cascade), `data` (PNG when it has transparency, else JPEG, at most 480 px on its longer side), `width`, `height`. A tag's picture (§7 *Tag pictures*), copied into the keep. Not in tag snapshots' rows: an operation's undo step keeps only the pictures it changed.
 
 **online_picture** (core format 24, #483) — `entity_id` (PK, FK to `entity`, cascade), `url`, `status` (the HTTP status, empty until fetched; a 404 is kept, so a missing picture isn't asked for again), `data` (the picture's bytes, when there is one), `fetched_at`. A picture of an item a theme named from what it looked up (§9 *Online details*), shown only when the item has none of its own (§10). Not part of snapshots, like `online_response`.
 
@@ -495,6 +497,16 @@ A tag can have an icon, an emoji or a single character, shown as a **badge** on 
 - **Looked up with the page's results**, not per painted row: `row_values` reads each page's own tags (`entity_tags`) and maps them through the tag tree already in memory, for every row whenever some tag has an icon (`TagTree.has_icons`), since grid cards show badges whatever columns are shown.
 - **The Badges column** is shown by default only while some tag has an icon, so keeps without icons get no empty column; it is always offered in the column menu. A search page starts from the cached tree without loading it (`TagTreeCache.peek`, as the GUI thread mustn't read the keep) and rebuilds its columns when its background tag load finds the first icon, or that the last is gone.
 
+### Tag pictures
+
+A tag can have a **picture** (#506, decided in discussion, 2026-10-21): a visual note of what it means, as its description is in words.
+
+- **Kept in the keep** (`tag_picture`, chosen over linking a file in a watched folder, which can go missing or offline): **Choose picture…** in the Tag manager's details pane takes any picture file (PNG, JPEG, GIF, WebP, BMP; an animated one's first frame), read and shrunk in a worker (`core/tag_pictures.prepare_picture`: turned upright by its EXIF, at most 480 px, twice the tooltip's for high-density screens). **Clear** clears it. Each is one undo step; the pane shows it at up to 96 px.
+- **In tooltips, above the description:** wherever a tag's tooltip shows (the Tags panel and the Tag manager's tree, the filter box's suggestions, search chips), a tag with a picture gets a rich-text tooltip: the picture (a `data:` URL, at most 240 px, chosen in discussion) then the text. Tags without one keep their plain tooltips. The tag tree carries the pictures (`TagTree.picture`), so a tooltip reads nothing.
+- **Undo** keeps only the pictures an operation changed, before and after (`TagChange.pictures_before/after`), not every tag's, so the history doesn't hold every picture for every step; deleting a tag and undoing brings its picture back.
+- **Merging:** a target without a picture takes the source's, as with descriptions and icons.
+- **Export and import** (decided in discussion): **Export tags…** writes each tag's picture into a folder beside the file, `<file name> pictures/<tag path>.png` (names made safe for file names), and names it under the tag's `picture` key; inside a watched folder that folder is refused if it's there already and is added to the Skip list with the file. Import reads `picture` relative to the file's folder: the same bytes as the tag's picture change nothing (a round trip changes nothing); others are shrunk as when chosen; a file that's missing, too big (20 MB), or not a picture is a problem, left out.
+
 ### Importing and exporting tags
 
 The whole tag tree can be saved to a YAML file and loaded back (#395), to seed a keep's vocabulary or reshape it by hand (rename a few in the file, import it back), optionally with which items have each tag (#396, below).
@@ -502,7 +514,7 @@ The whole tag tree can be saved to a YAML file and loaded back (#395), to seed a
 - **The format** (`core/tag_yaml.py`) is nested like the tree. A tag is written in one of three ways:
   - **plain**, with nothing under it: `Read:`;
   - **shorthand**, a list of its sub-tags' names: `Mood: [Calm, Tense]`. The list holds **names only**: a sub-tag with its own sub-tags or properties is written in the full form, under `tags:` (decided in review: one rule instead of mappings inside lists);
-  - **full form**, a mapping of `icon`, `color`, `description`, `aliases`, `applies_to` (kinds of item, by the theme's names: the label, plural, or type id, ignoring case), and `tags` (its sub-tags, in any of the three forms).
+  - **full form**, a mapping of `icon`, `color`, `description`, `picture` (a file beside the YAML, #506), `aliases`, `applies_to` (kinds of item, by the theme's names: the label, plural, or type id, ignoring case), and `tags` (its sub-tags, in any of the three forms).
 
   ```yaml
   Genre:
@@ -1472,6 +1484,7 @@ Keep configuration and the keep launcher are separate windows/dialogs. `tagalot 
 | 2026-10 | Research online details (#341, §9 research): Crossref by DOI, arXiv only for papers without one; each service a source in `origins` ranked 25 (between export and PDF), kept through scans; descriptive details only, never identifiers. |
 | 2026-10 | Books online details (#342, §9 books): Open Library by ISBN fills only empty fields (year, publisher, language, description), never title, authors, series, or identifiers. |
 | 2026-10 | Books: covers and authors' photos from Open Library (#484, M35, §9 books): by the cover and photo numbers its answers give (service Open Library Covers); an author's Open Library ID kept in a new Author field, found from a book with one author (several can't be paired) and checked against the record's names; the core looks up, in the same run, items the answers set details on (a second round). |
+| 2026-10 | Tag pictures (#506, §7 *Tag pictures*, §5; decided in discussion, 2026-10-21): a copy kept in the keep (core format 25, `tag_picture`, at most 480 px), shown above the description in tags' tooltips (up to 240 px); export writes them in a folder beside the YAML and import reads them back. Decided while building: pictures get their own table, not a tag column, so undo snapshots of every tag row don't copy every picture; a step keeps only the pictures it changed. |
 | 2026-10 | Search inside documents designed in review (M23, #308, §8): the theme marks document types (`full_text`, API version 6) and the core reads their primary files by format, as pages; read in the background after scans; text in `fulltext.db` (its own writer), indexed as Words or Substrings and switchable without re-reading; a Contents toggle in the filter bar (`SearchSpec.contents`) and snippets naming file and page. |
 | 2026-10 | Documents' text (#348, §8): theme API version 6 (`Entity.full_text`, `Theme.document_text`, `read_document_text`); `fulltext.db` with `contents_file` and `contents_page`, its own writer, rebuilt on a format change; read after scans on two threads, only new or changed files; `[contents] index` in `keep.toml`. |
 | 2026-10 | Contents index (#349, §8): external-content FTS5 (`contents_words` or `contents_substrings`) over `contents_page`, which gets an explicit `id` (`fulltext.db` format 2); switching is one `rebuild` write, then the other index is dropped; Clear contents text also turns contents search off. |

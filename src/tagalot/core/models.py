@@ -472,6 +472,18 @@ class OnlinePicture(Base):
     fetched_at: Mapped[datetime | None]
 
 
+class TagPicture(Base):
+    """A tag's picture (#506, §7 *Tag pictures*): a copy kept in the keep (PNG or JPEG, at
+    most 480 px), shown above the tag's description in its tooltips."""
+
+    __tablename__ = "tag_picture"
+
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete=CASCADE), primary_key=True)
+    data: Mapped[bytes]
+    width: Mapped[int]
+    height: Mapped[int]
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.

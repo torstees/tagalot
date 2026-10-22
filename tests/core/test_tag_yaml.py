@@ -64,6 +64,11 @@ class Env:
         with self.engine.connect() as conn:
             return plan_import(conn, text, SCHEMA, delete_unused)
 
+    def plan_from(self, text: str, base: Path) -> ImportPlan:
+        """As read from a file in ``base``, whose pictures are there (#506)."""
+        with self.engine.connect() as conn:
+            return plan_import(conn, text, SCHEMA, False, base)
+
     def tree(self) -> TagTree:
         with self.engine.connect() as conn:
             return TagTree.load(conn)
