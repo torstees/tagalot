@@ -151,9 +151,10 @@ def test_save_as_note(
     monkeypatch.setattr(MainWindow, "confirm_save_note", confirm)
     page.save_note_action.trigger()
     target = tmp_path / "movie-files" / "Notes" / "Actors" / "Robert De Niro.md"
-    qtbot.waitUntil(target.exists, timeout=5000)
+    expected = "---\ntitle: Robert De Niro\n---\n\nHeat, 1995.\n"
+    # Read once written: the file is there a moment sooner.
+    qtbot.waitUntil(lambda: target.exists() and target.read_text("utf-8") == expected, timeout=5000)
     assert [n.relpath for n in asked] == ["Notes/Actors/Robert De Niro.md"]
-    assert target.read_text("utf-8") == "---\ntitle: Robert De Niro\n---\n\nHeat, 1995.\n"
     # The scan that follows reads it: the note is the file's now.
     qtbot.waitUntil(lambda: page.note_view.open_button.isVisible(), timeout=10000)
     assert not page.note_view.pencil.isVisible()
