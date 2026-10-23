@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import InstrumentedAttribute
 
+from tagalot.core.kinds import FILES_KEY, kind_column
 from tagalot.core.models import (
     LAST_POSITION,
     Entity,
@@ -33,6 +34,8 @@ from tagalot.core.models import (
     EntityMerge,
     EntityResource,
     EntityTag,
+    Resource,
+    ResourceKind,
     entity_fts,
 )
 from tagalot.core.search_spec import (
@@ -301,6 +304,79 @@ def count_by_type(
     return {type_: int(n) for type_, n in conn.execute(query)}
 
 
+def count_by_kind(
+    conn: Connection,
+    spec: SearchSpec,
+    tree: TagTree,
+    fields: Mapping[str, ColumnElement[Any]],
+    contents: ContentsScope | None = None,
+) -> dict[str, int]:
+    """How many of the search's items have each kind (§8 *Kinds*), as if nothing were
+    hidden, so a hidden kind keeps its count. An item with two kinds (a book with an EPUB
+    and a PDF) counts under both. Kinds with no items are absent. ``fields`` must have
+    :data:`~tagalot.core.kinds.FILES_KEY` (``search_fields`` gives it)."""
+    shown = replace(spec, hidden_kinds=(), sort=())
+    files = _own_files(fields)
+    kind = kind_column()
+    by_file = (
+        select(kind, func.count(func.distinct(EntityResource.entity_id)))
+        .select_from(EntityResource)
+        .join(Resource, Resource.id == EntityResource.resource_id)
+        .join(Entity, Entity.id == EntityResource.entity_id)
+        .where(files, Resource.kind != ResourceKind.DIR)
+        .where(_Filter(shown, tree, fields, contents).result())
+        .group_by(kind)
+    )
+    found = {k: int(n) for k, n in conn.execute(by_file)}
+    by_type = (
+        select(Entity.type, func.count())
+        .where(
+            _Filter(shown, tree, fields, contents).result(),
+            Entity.id.not_in(_file_rows(files, select(EntityResource.entity_id))),
+        )
+        .group_by(Entity.type)
+    )
+    found.update({type_: int(n) for type_, n in conn.execute(by_type)})
+    return found
+
+
+def kinds_of(
+    conn: Connection, ids: Sequence[int], fields: Mapping[str, ColumnElement[Any]]
+) -> dict[int, frozenset[str]]:
+    """The kinds of the entities ``ids`` (§8 *Kinds*), for showing which listed items are
+    hidden ones kept to reach what they hold. ``fields`` as for :func:`count_by_kind`."""
+    files = _own_files(fields)
+    found: dict[int, set[str]] = {}
+    rows = _file_rows(files, select(EntityResource.entity_id, kind_column()))
+    for entity_id, kind in conn.execute(rows.where(EntityResource.entity_id.in_(ids))):
+        found.setdefault(entity_id, set()).add(kind)
+    others = [i for i in ids if i not in found]
+    if others:
+        for entity_id, type_ in conn.execute(
+            select(Entity.id, Entity.type).where(Entity.id.in_(others))
+        ):
+            found[entity_id] = {type_}
+    return {i: frozenset(k) for i, k in found.items()}
+
+
+def _own_files(fields: Mapping[str, ColumnElement[Any]]) -> ColumnElement[bool]:
+    files = fields.get(FILES_KEY)
+    if files is None:
+        raise SearchError("This search can't tell items' files apart.")
+    return files
+
+
+def _file_rows[S: Select[*tuple[Any, ...]]](files: ColumnElement[bool], query: S) -> S:
+    """``query`` over items' own files (``entity_resource`` joined to its resource and
+    entity), folders aside: a folder item's folder is no file type."""
+    return (
+        query.select_from(EntityResource)
+        .join(Resource, Resource.id == EntityResource.resource_id)
+        .join(Entity, Entity.id == EntityResource.entity_id)
+        .where(files, Resource.kind != ResourceKind.DIR)
+    )
+
+
 # --- Building the filter (DESIGN.md §8 "Semantics") ---
 
 
@@ -320,8 +396,12 @@ class _Filter:
         tree: TagTree,
         fields: Mapping[str, ColumnElement[Any]],
         contents: ContentsScope | None = None,
+        *,
+        leading: bool = False,
     ) -> None:
         self.spec = spec
+        self.leading = leading or (spec.nest and not spec.show_contained)
+        """A hidden item stays when it holds a shown one, so a tree can reach it."""
         self.tree = tree
         self.fields = fields
         self.contents = contents if spec.contents else None
@@ -338,9 +418,9 @@ class _Filter:
             held = select(EntityAncestor.entity_id).where(
                 EntityAncestor.ancestor_id.in_(matched), EntityAncestor.depth > 0
             )
-            return and_(matches, Entity.id.not_in(held))
+            return and_(matches, Entity.id.not_in(held), self._shown())
         if not self.spec.show_contained:
-            return matches
+            return and_(matches, self._shown())
         # Matches plus every descendant of a match, whatever its type; descendants still
         # have to pass exclusion.
         matched = self._materialize(("matched",), select(Entity.id).where(matches))
@@ -350,7 +430,34 @@ class _Filter:
         return and_(
             or_(Entity.id.in_(matched), Entity.id.in_(contained)),
             self._not_excluded(Entity.id),
+            self._shown(),
         )
+
+    def _shown(self) -> ColumnElement[bool]:
+        """Not left out by ``hidden_kinds`` (§8 *Kinds*): a kind of the item's is shown, or,
+        when :attr:`leading`, it holds an item that is."""
+        hidden = self.spec.hidden_kinds
+        if not hidden:
+            return true()
+        files = _own_files(self.fields)
+        with_files = self._materialize(
+            ("with files",), _file_rows(files, select(EntityResource.entity_id))
+        )
+        shown_files = self._materialize(
+            ("shown files", hidden),
+            _file_rows(files, select(EntityResource.entity_id)).where(kind_column().not_in(hidden)),
+        )
+        shown = or_(
+            Entity.id.in_(shown_files),
+            and_(Entity.id.not_in(with_files), Entity.type.not_in(hidden)),
+        )
+        if not self.leading:
+            return shown
+        shown_ids = self._materialize(("shown", hidden), select(Entity.id).where(shown))
+        holding = select(EntityAncestor.ancestor_id).where(
+            EntityAncestor.entity_id.in_(shown_ids), EntityAncestor.depth > 0
+        )
+        return or_(shown, Entity.id.in_(holding))
 
     def _matches(self) -> ColumnElement[bool]:
         """Entities that match in their own right (or via a descendant, with aggregate_up)."""
@@ -538,7 +645,8 @@ def child_hits(
     contained"): every type, in ``sort`` order (the container's ``contents_sort``, with
     ``fields`` from :func:`~tagalot.core.search_fields.contents_order`), not re-filtered by
     the search's includes, text, or fields (they are shown because of their container), but
-    still without excluded items."""
+    still without excluded items, and without hidden kinds' items unless they hold a shown
+    one (§8 *Kinds*)."""
     children = (
         select(EntityContains.child_id)
         .where(EntityContains.parent_id == parent_id)
@@ -548,9 +656,16 @@ def child_hits(
         exclude=spec.exclude,
         inherit_tags=spec.inherit_tags,
         within=parent_id,
+        hidden_kinds=spec.hidden_kinds,
         sort=sort,
     )
-    query = build_query(listing, tree, fields).where(Entity.id.in_(children)).limit(limit)
+    found = _Filter(listing, tree, fields, leading=True).result()
+    query = (
+        select(Entity.id, Entity.type, Entity.title)
+        .where(found, Entity.id.in_(children))
+        .order_by(*_order_by(listing, fields))
+        .limit(limit)
+    )
     return [SearchHit(id, type_, title) for id, type_, title in conn.execute(query)]
 
 

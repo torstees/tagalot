@@ -12,9 +12,10 @@
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import ColumnElement, Connection, func, select
+from sqlalchemy import ColumnElement, Connection, and_, false, func, or_, select
 
-from tagalot.core.models import Entity
+from tagalot.core.kinds import FILES_KEY
+from tagalot.core.models import Entity, EntityResource
 from tagalot.core.search import CORE_FIELDS, SearchHit
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -46,11 +47,11 @@ def contents_order(
     try:
         entity = schema.by_type_id(type_id).entity
     except KeyError:
-        return (SortKey("title"),), dict(CORE_FIELDS)
+        return (SortKey("title"),), {**CORE_FIELDS, FILES_KEY: primary_files(schema)}
     keys = tuple(SortKey(k.field, k.descending) for k in entity.contents_sort)
     if not keys:
-        return (SortKey("title"),), dict(CORE_FIELDS)
-    fields: dict[str, ColumnElement[Any]] = dict(CORE_FIELDS)
+        return (SortKey("title"),), {**CORE_FIELDS, FILES_KEY: primary_files(schema)}
+    fields: dict[str, ColumnElement[Any]] = {**CORE_FIELDS, FILES_KEY: primary_files(schema)}
     tables = scoped_tables(schema, contained_types(schema, type_id))
     for key in keys:
         if key.field in fields:
@@ -111,7 +112,8 @@ def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, Column
     look rows up by primary key, so filtering and sorting on them needs no join.
 
     Each relationship's link table columns come too, as ``@<name>.a`` and ``@<name>.b``
-    (not field names), for :attr:`SearchSpec.related`.
+    (not field names), for :attr:`SearchSpec.related`, and :func:`primary_files` as
+    :data:`~tagalot.core.kinds.FILES_KEY`, for :attr:`SearchSpec.hidden_kinds`.
     """
     tables = scoped_tables(schema, types)
     fields: dict[str, ColumnElement[Any]] = dict(CORE_FIELDS)
@@ -124,7 +126,21 @@ def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, Column
     for name, link in schema.relationships.items():
         fields[f"@{name}.a"] = link.table.c.a_id
         fields[f"@{name}.b"] = link.table.c.b_id
+    fields[FILES_KEY] = primary_files(schema)
     return fields
+
+
+def primary_files(schema: ThemeSchema) -> ColumnElement[bool]:
+    """True for the ``entity_resource`` rows (joined to ``entity``) that are an item's own
+    files, whose types are its kinds (§8 *Kinds*): those in its type's primary role. A
+    gallery's pictures and a movie's poster aren't the movie's file types."""
+    primary = [
+        and_(Entity.type == t.type_id, EntityResource.role == role.name)
+        for t in schema.entities.values()
+        for role in t.entity.roles
+        if role.primary
+    ]
+    return or_(*primary) if primary else false()
 
 
 def field_values(

@@ -9,14 +9,22 @@ search). Measured medians on the development machine are recorded in DESIGN.md ย
 
 import statistics
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from typing import Any
 
 import pytest
-from sqlalchemy import Engine, func, select
+from sqlalchemy import ColumnElement, Engine, and_, func, insert, or_, select
 
 from tagalot.core.db import create_keep_engine
-from tagalot.core.models import Base, Entity
-from tagalot.core.search import count_by_type, count_matches, run_search
+from tagalot.core.kinds import FILES_KEY
+from tagalot.core.models import Base, Entity, EntityResource, Resource, ResourceKind, Root
+from tagalot.core.search import (
+    CORE_FIELDS,
+    count_by_kind,
+    count_by_type,
+    count_matches,
+    run_search,
+)
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.tags import TagTree, tag_usage
 from tests.core.bench_data import BenchKeep, build
@@ -119,3 +127,62 @@ def test_tag_usage_counts(keep: tuple[Engine, BenchKeep, float]) -> None:
         usage_ms = _median_ms(lambda: tag_usage(conn, tree))
     print(f"tag usage for {len(tree)} tags: {usage_ms:.0f} ms")
     assert usage_ms < 2000, f"tag usage took {usage_ms:.0f} ms"  # it runs in a worker
+
+
+@pytest.fixture(scope="module")
+def files_keep(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[Engine, BenchKeep]]:
+    """The same keep, with an audio file for every song (a fifth of them MP3, the rest FLAC)
+    and a folder for every album, for hiding kinds (ยง8 *Kinds*)."""
+    engine = create_keep_engine(tmp_path_factory.mktemp("bench_files") / "keep.db")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        data = build(conn)
+        conn.execute(insert(Root).values(id="r", name="Music"))
+        items = [(s, ResourceKind.FILE, ".mp3" if s % 5 == 0 else ".flac") for s in data.songs]
+        items += [(a, ResourceKind.DIR, "") for a in data.albums]
+        conn.execute(
+            insert(Resource),
+            [
+                {"id": n, "root_id": "r", "relpath": f"f{n}", "kind": kind, "ext": ext}
+                for n, (_, kind, ext) in enumerate(items, start=1)
+            ],
+        )
+        conn.execute(
+            insert(EntityResource),
+            [
+                {"entity_id": e, "resource_id": n, "role": "folder" if ext == "" else "audio"}
+                for n, (e, _, ext) in enumerate(items, start=1)
+            ],
+        )
+    yield engine, data
+    engine.dispose()
+
+
+KIND_FIELDS: Mapping[str, ColumnElement[Any]] = {
+    **CORE_FIELDS,
+    FILES_KEY: or_(
+        and_(Entity.type == SONG, EntityResource.role == "audio"),
+        and_(Entity.type == ALBUM, EntityResource.role == "folder"),
+    ),
+}
+KIND_SPECS: dict[str, SearchSpec] = {
+    "hide MP3": SearchSpec(hidden_kinds=(".mp3",)),
+    "hide albums, in a tree": SearchSpec(types=(ALBUM, SONG), nest=True, hidden_kinds=(ALBUM,)),
+    "hide FLAC, albums with contents": SearchSpec(
+        types=(ALBUM,), show_contained=True, hidden_kinds=(".flac",)
+    ),
+}
+
+
+@pytest.mark.parametrize("spec", KIND_SPECS.values(), ids=KIND_SPECS.keys())
+def test_hiding_kinds(files_keep: tuple[Engine, BenchKeep], spec: SearchSpec) -> None:
+    engine, _ = files_keep
+    with engine.connect() as conn:
+        tree = TagTree.load(conn)
+        page_ms = _median_ms(lambda: run_search(conn, spec, tree, limit=100, fields=KIND_FIELDS))
+        count_ms = _median_ms(lambda: count_matches(conn, spec, tree, KIND_FIELDS))
+        kinds_ms = _median_ms(lambda: count_by_kind(conn, spec, tree, KIND_FIELDS))
+    print(f"page {page_ms:.0f} ms, count {count_ms:.0f} ms, by kind {kinds_ms:.0f} ms")
+    assert page_ms < BOUND_MS, f"first page took {page_ms:.0f} ms"
+    assert count_ms < BOUND_MS, f"count took {count_ms:.0f} ms"
+    assert kinds_ms < BOUND_MS, f"count by kind took {kinds_ms:.0f} ms"
