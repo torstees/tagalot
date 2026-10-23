@@ -52,7 +52,7 @@ When a list mixes kinds of things (a folder's contents with **Contained**, an au
 - On a page of one kind of item, those without a file are **No file** (a book you made from a note, on the Books page).
 - In the tree layout, the chips count what the folders hold too, and a hidden folder stays (dimmed) while it holds something shown, so you can still open it.
 
-Each search, and each tab on an item's page, remembers what you hid. A list of one kind has no chips. Saved searches don't keep what's hidden.
+Galleries shown as tabs on an item's page have them too, for their pictures' file types. Each search, and each tab on an item's page, remembers what you hid. A list of one kind has no chips. Saved searches don't keep what's hidden.
 
 ## Within an item
 

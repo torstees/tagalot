@@ -101,6 +101,25 @@ def test_a_gallery_shows_groups_and_an_archives_pictures(
     assert _texts(view.lists["Broken.zip"]) == ["Broken.zip"]  # the archive itself
 
 
+def test_hiding_kinds_hides_files_and_empty_groups(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    """The kind chips' part (#514): files of hidden types go, and groups left empty; an
+    archive goes, group and all, with its type."""
+    view = _view(qtbot, window, session)
+    assert view.kinds() == {".png": 2, ".zip": 2}
+    assert view.set_hidden({".png"}) == 2
+    assert view.boxes[""].isHidden()
+    assert view.boxes["Disc 2"].isHidden()
+    assert not view.boxes["Extras.zip"].isHidden()
+    assert view.set_hidden({".zip"}) == 2
+    assert not view.boxes[""].isHidden()
+    assert view.boxes["Extras.zip"].isHidden()
+    assert view.boxes["Broken.zip"].isHidden()
+    assert view.set_hidden(()) == 4
+    assert all(not box.isHidden() for box in view.boxes.values())
+
+
 def test_a_picture_opens_from_a_copy(
     qtbot: QtBot,
     window: MainWindow,

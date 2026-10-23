@@ -11,6 +11,7 @@ from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.ui.kind_chips import KindChips
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.workers import ScanController
@@ -93,14 +94,48 @@ def test_an_albums_scans_are_a_tab_after_its_songs(
     tabs = detail.findChild(QTabWidget, "bottom_tabs")
     assert isinstance(tabs, QTabWidget)
     scans = tabs.widget(1)
-    assert isinstance(scans, QScrollArea)
+    assert scans is not None
     assert scans.objectName() == "gallery_tab_Scans"
+    assert scans.findChild(QScrollArea) is not None  # under its kind chips (#514)
     tabs.setCurrentIndex(1)
     detail.refresh()  # made again, and still shown
     qtbot.waitUntil(lambda: tabs.tabText(tabs.currentIndex()) == "Scans (3)", timeout=5000)
     shown = tabs.currentWidget()
     assert shown is not None
     assert shown.objectName() == "gallery_tab_Scans"
+
+
+def test_a_gallery_tabs_kind_chips(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    """Hide a gallery's archives with its chips (#514), remembered for albums' Scans."""
+    detail = _open(qtbot, window, session, "Kind of Blue")
+    qtbot.waitUntil(lambda: _tabs(detail) == ["Songs (3)", "Scans (3)"], timeout=5000)
+    tabs = detail.findChild(QTabWidget, "bottom_tabs")
+    assert isinstance(tabs, QTabWidget)
+    scans = tabs.widget(1)
+    assert scans is not None
+    chips = scans.findChild(KindChips)
+    assert chips is not None
+    assert not chips.isHidden()  # two JPGs and a ZIP
+    assert {k: c.text() for k, c in chips.chips.items()} == {".jpg": "JPG 2", ".zip": "ZIP 1"}
+    booklet = scans.findChild(QWidget, "gallery_group:Booklet.zip")
+    assert booklet is not None
+    assert not booklet.isHidden()
+
+    chips.toggle(".zip")
+    assert tabs.tabText(1) == "Scans (2 of 3)"
+    assert booklet.isHidden()
+    assert window._ui_state["hidden_kinds"]["gallery:music.album:Scans"] == [".zip"]
+
+    detail.refresh()  # made again: still hidden
+    qtbot.waitUntil(lambda: tabs.tabText(1) == "Scans (2 of 3)", timeout=5000)
+    made_again = tabs.widget(1)
+    assert made_again is not None
+    again = made_again.findChild(KindChips)
+    assert again is not None
+    assert again.hidden == (".zip",)
+    again.toggle(".zip")
+    assert tabs.tabText(1) == "Scans (3)"
+    assert "gallery:music.album:Scans" not in window._ui_state["hidden_kinds"]
 
 
 def test_play_album_from_its_page(

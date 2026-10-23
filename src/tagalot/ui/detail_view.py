@@ -69,6 +69,7 @@ from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.gallery_view import GalleryView, fitted
 from tagalot.ui.icon_pictures import icon_html
+from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
 from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import BadgesValue, badges_value
 from tagalot.ui.note_view import NoteView
@@ -250,6 +251,9 @@ class DetailPage(QWidget):
         self.recall_tab: Callable[[str], str | None] = lambda type_id: None
         """The tab last used on a page of this type (the window remembers it)."""
         self.remember_tab: Callable[[str, str], None] = lambda type_id, key: None
+        self.recall_kinds: Callable[[str], list[str]] = lambda key: []
+        """The kinds hidden on a gallery tab, by its state key (the window remembers it)."""
+        self.remember_kinds: Callable[[str, list[str]], None] = lambda key, kinds: None
         self.title_in_details = False
         """Name the item at the top of :attr:`details`: for a search's selected item, whose
         page isn't shown (#468)."""
@@ -732,19 +736,62 @@ class DetailPage(QWidget):
                 old.deleteLater()
             self._gallery_tabs = []
             for section in galleries:
+                tab = QWidget()
+                tab.setObjectName(f"gallery_tab_{section.title}")
+                column = QVBoxLayout(tab)
+                column.setContentsMargins(0, 0, 0, 0)
+                chips = KindChips()  # above the pictures, so they stay in view (#514)
+                column.addWidget(chips)
                 area = QScrollArea()
-                area.setObjectName(f"gallery_tab_{section.title}")
                 area.setWidgetResizable(True)
                 area.setFrameShape(QFrame.Shape.NoFrame)
-                area.setWidget(self._gallery(section))
+                gallery = self._gallery(section)
+                area.setWidget(gallery)
+                column.addWidget(area, 1)
                 count = len(section.files)
                 label = f"{section.title} ({count:,})" if count else section.title
-                self._embed(area, label, f"gallery:{section.title}")
-                self._gallery_tabs.append(area)
+                self._embed(tab, label, f"gallery:{section.title}")
+                self._gallery_tabs.append(tab)
+                self._gallery_chips(tab, section, gallery, chips)
             if current is not None:
                 self._select_key(current)
         finally:
             self._choosing = restoring
+
+    def _gallery_chips(
+        self, tab: QWidget, section: DetailSection, gallery: GalleryView, chips: KindChips
+    ) -> None:
+        """A gallery tab's kind chips (#514): hide a gallery's files of some types, as the
+        list tabs' chips do, remembered per item type and gallery."""
+        if self.detail is None:
+            return
+        key = f"gallery:{self.detail.type}:{section.title}"
+        counts = gallery.kinds()
+        labels = {k: kind_label(k, {}) for k in counts}
+        tips = {
+            k: (kind_tip(k, labels[k], {}, True), kind_tip(k, labels[k], {}, False)) for k in counts
+        }
+        chips.set_hidden(self.recall_kinds(key))
+        chips.set_kinds(counts, labels, tips)
+
+        def show(hidden: list[str] | tuple[str, ...]) -> None:
+            shown = gallery.set_hidden(hidden)
+            total = len(section.files)
+            if self._tabs is None or (index := self._tabs.indexOf(tab)) < 0:
+                return
+            if shown != total:
+                text = f"{section.title} ({shown:,} of {total:,})"
+            else:
+                text = f"{section.title} ({total:,})" if total else section.title
+            self._tabs.setTabText(index, text)
+
+        def changed(hidden: list[str]) -> None:
+            self.remember_kinds(key, hidden)
+            show(hidden)
+
+        chips.changed.connect(changed)
+        if chips.hidden:
+            show(chips.hidden)
 
     def _current_key(self) -> str | None:
         if self._tabs is None:
@@ -1174,7 +1221,7 @@ class DetailPage(QWidget):
             )
         return menu
 
-    def _gallery(self, section: DetailSection) -> QWidget:
+    def _gallery(self, section: DetailSection) -> GalleryView:
         """The role's pictures in groups, archives' pictures included (#386)."""
         return GalleryView(
             section, self.session, self.entity_id, self.file_opener, self._file_menu, self._pool

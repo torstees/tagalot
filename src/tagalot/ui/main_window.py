@@ -605,6 +605,10 @@ class MainWindow(QMainWindow):
             )
             detail.recall_tab = self._recall_tab
             detail.remember_tab = self._remember_tab
+            detail.recall_kinds = self._recall_kinds
+            detail.remember_kinds = lambda key, kinds: self._save_view_state(
+                "hidden_kinds", key, kinds or None
+            )
             self._wire_detail(detail)
             detail.show_in_search.connect(lambda _id: self._contents_in_search(detail))
             detail.selection_changed.connect(self._schedule_summary)
@@ -878,6 +882,13 @@ class MainWindow(QMainWindow):
         """The tab last used on an item page of this type (#456)."""
         found = self._ui_state.get("detail_tabs", {}).get(type_id)
         return found if isinstance(found, str) else None
+
+    def _recall_kinds(self, key: str) -> list[str]:
+        """The kinds hidden under ``key`` (a gallery tab's, #514)."""
+        found = self._ui_state.get("hidden_kinds", {}).get(key)
+        if not isinstance(found, list):
+            return []
+        return [k for k in found if isinstance(k, str) and k]
 
     def _remember_tab(self, type_id: str, key: str) -> None:
         tabs = self._ui_state.setdefault("detail_tabs", {})

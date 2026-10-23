@@ -7,8 +7,8 @@ temporary folder. A rar archive without a tool to read it, or one that can't be 
 as the archive itself (with why, for a damaged one).
 """
 
-from collections.abc import Callable
-from pathlib import Path
+from collections.abc import Callable, Collection
+from pathlib import Path, PurePosixPath
 
 import shiboken6
 from PySide6.QtCore import QPoint, QSize, Qt, QThreadPool, QTimer
@@ -34,6 +34,7 @@ from tagalot.core.gallery import (
     list_archive,
 )
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.kinds import file_kind
 from tagalot.core.models import ResourceStatus
 from tagalot.core.session import KeepSession
 from tagalot.core.thumbnails.image import Thumbnail
@@ -45,6 +46,13 @@ GALLERY_THUMBNAIL = 128
 MEMBER = Qt.ItemDataRole.UserRole + 1
 """An archive picture's path inside its archive (a resource's items hold its id instead)."""
 READING = "Reading the archive…"
+KIND = Qt.ItemDataRole.UserRole + 2
+"""A file's kind (``core.kinds``): its file type, for the kind chips (#514)."""
+
+
+def kind_of(file: FileRow) -> str:
+    """A gallery file's kind: its file type (an archive's is ``.zip``, ``.rar``…)."""
+    return file_kind(PurePosixPath(file.relpath).suffix.lower())
 
 
 def fitted(image: QImage, size: int) -> QPixmap:
@@ -139,46 +147,94 @@ class GalleryView(QWidget):
         """Each group's list, by its title (``""`` for loose pictures)."""
         self.listings: dict[str, ArchiveListing] = {}
         """What each archive group found, once listed."""
+        self.boxes: dict[str, QWidget] = {}
+        """Each group, its heading and list, by its title: hidden when the kind chips hide
+        all it holds (#514)."""
+        self._hidden: frozenset[str] = frozenset()
         self.column = QVBoxLayout(self)
         self.column.setContentsMargins(0, 0, 0, 0)
         if not self.groups:  # an empty gallery: one empty list, as before
-            self._resource_list("", [])
+            self._resource_list("", [], self.column)
+        for group in self.groups:
+            box = QWidget()
+            box.setObjectName(f"gallery_group:{group.title}")
+            layout = QVBoxLayout(box)
+            layout.setContentsMargins(0, 0, 0, 0)
+            self.column.addWidget(box)
+            self.boxes[group.title] = box
+            if group.kind == "archive":
+                self._archive_group(group, layout)
+            else:
+                self._resource_list(group.title, list(group.files), layout)
+        self.column.addStretch(1)  # groups stay at the top as others are hidden
+
+    # --- kinds (#514) ---
+
+    def kinds(self) -> dict[str, int]:
+        """How many of the gallery's files have each kind (an archive counts once)."""
+        counts: dict[str, int] = {}
+        for file in self.section.files:
+            kind = kind_of(file)
+            counts[kind] = counts.get(kind, 0) + 1
+        return counts
+
+    def set_hidden(self, hidden: Collection[str]) -> int:
+        """Hide the files of ``hidden`` kinds, and the groups left with nothing: an
+        archive's whole group with its kind. Returns how many files still show."""
+        self._hidden = frozenset(hidden)
+        shown = 0
         for group in self.groups:
             if group.kind == "archive":
-                self._archive_group(group)
+                count = int(kind_of(group.files[0]) not in self._hidden)
             else:
-                self._resource_list(group.title, list(group.files))
+                count = self._hide_items(self.lists[group.title])
+            self.boxes[group.title].setVisible(count > 0)
+            shown += count
+        return shown
+
+    def _hide_items(self, gallery: GalleryList) -> int:
+        """Hide ``gallery``'s items of hidden kinds; how many show."""
+        shown = 0
+        for row in range(gallery.count()):
+            item = gallery.item(row)
+            hide = item.data(KIND) in self._hidden
+            item.setHidden(hide)
+            shown += not hide
+        QTimer.singleShot(0, gallery.fit)
+        return shown
 
     # --- groups ---
 
-    def _header(self, title: str) -> None:
+    def _header(self, title: str, column: QVBoxLayout) -> None:
         header = QLabel(title)
         font = QFont(header.font())
         font.setBold(True)
         header.setFont(font)
         header.setTextFormat(Qt.TextFormat.PlainText)
         header.setObjectName("gallery_header")
-        self.column.addWidget(header)
+        column.addWidget(header)
 
-    def _list(self, title: str) -> GalleryList:
+    def _list(self, title: str, column: QVBoxLayout) -> GalleryList:
         name = f"gallery_{self.section.title}" + (f":{title}" if title else "")
         gallery = GalleryList(name)
         self.lists[title] = gallery
-        self.column.addWidget(gallery)
+        column.addWidget(gallery)
         return gallery
 
-    def _resource_list(self, title: str, files: list[FileRow]) -> GalleryList:
+    def _resource_list(self, title: str, files: list[FileRow], column: QVBoxLayout) -> GalleryList:
         """Pictures that are files: open and menu as file rows (#124)."""
         if title:
-            self._header(title)
-        gallery = self._list(title)
+            self._header(title, column)
+        gallery = self._list(title, column)
         rows = {f.resource_id: f for f in files}
         items: dict[int, QListWidgetItem] = {}
         for file in files:
             item = QListWidgetItem(icon_for("image"), file.relpath.rpartition("/")[2])
             item.setToolTip(file.relpath)
             item.setData(Qt.ItemDataRole.UserRole, file.resource_id)
+            item.setData(KIND, kind_of(file))
             gallery.addItem(item)
+            item.setHidden(kind_of(file) in self._hidden)
             items[file.resource_id] = item
         gallery.itemActivated.connect(
             lambda item: self._open_file(item.data(Qt.ItemDataRole.UserRole))
@@ -191,22 +247,23 @@ class GalleryView(QWidget):
         gallery.fit()
         return gallery
 
-    def _archive_group(self, group: GalleryGroup) -> None:
+    def _archive_group(self, group: GalleryGroup, column: QVBoxLayout) -> None:
         archive = group.files[0]
         if archive.status is not ResourceStatus.OK or not archive.path:
-            self._resource_list(group.title, [archive])  # offline or missing: the file
+            # Offline or missing: the file.
+            self._resource_list(group.title, [archive], column)
             return
-        self._header(group.title)
+        self._header(group.title, column)
         note = QLabel(READING)
         note.setObjectName("gallery_note")
         note.setWordWrap(True)
-        self.column.addWidget(note)
-        gallery = self._list(group.title)
+        column.addWidget(note)
+        gallery = self._list(group.title, column)
         gallery.hide()
         path = archive.path
         run_in_pool(
             lambda: list_archive(path),
-            on_done=lambda listing: self._listed(group, archive, note, gallery, listing),
+            on_done=lambda listing: self._listed(group, archive, note, gallery, listing, column),
             pool=self._pool,
         )
 
@@ -217,6 +274,7 @@ class GalleryView(QWidget):
         note: QLabel,
         gallery: GalleryList,
         listing: ArchiveListing,
+        column: QVBoxLayout,
     ) -> None:
         if not shiboken6.isValid(self):
             return
@@ -230,11 +288,11 @@ class GalleryView(QWidget):
             else:
                 note.setText("No pictures inside.")
             gallery.deleteLater()
-            index = self.column.indexOf(note) + 1
-            replacement = self._resource_list("", [archive])
+            index = column.indexOf(note) + 1
+            replacement = self._resource_list("", [archive], column)
             replacement.setObjectName(f"gallery_{self.section.title}:{group.title}")
             self.lists[group.title] = replacement
-            self.column.insertWidget(index, replacement)
+            column.insertWidget(index, replacement)
             return
         note.setText(f"and {listing.more:,} more" if listing.more else "")
         note.setVisible(bool(listing.more))
