@@ -254,6 +254,26 @@ def test_reload_keeps_folds_filter_and_highlight(
     assert panel.current_tag() == _tag(panel, "Beach")
 
 
+def test_ticking_keeps_the_tree_where_it_was(
+    qtbot: QtBot, panel: TagPanel, session: KeepSession
+) -> None:
+    """The tree made again after a tick (the panel reloads for the new counts) stays
+    scrolled where it was, not at the highlighted tag far above the box just ticked."""
+    panel.resize(260, 120)
+    bar = panel.view.verticalScrollBar()
+    qtbot.waitUntil(lambda: bar.maximum() > 0, timeout=5000)
+    first = panel.model.tag_id(panel.model.index(0, 0))
+    assert first is not None
+    assert panel.select_tag(first)  # highlighted at the top
+    bar.setValue(bar.maximum())  # then scrolled down to tick a box there
+    bottom = bar.value()
+    session.tags.apply([1], [_tag(panel, "Sky")])  # the tick
+    with qtbot.waitSignal(panel.model.modelReset, timeout=5000):
+        panel.reload()  # as the window does after tagging
+    assert bar.value() == bottom
+    assert panel.current_tag() == first
+
+
 def test_an_empty_keep(qtbot: QtBot, tmp_path: Path) -> None:
     keep = create_keep(tmp_path / "Empty.keep", "Empty", ThemeRef("generic", 1))
     with KeepSession.open(keep.dir, Settings()) as session:

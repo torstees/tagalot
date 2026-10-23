@@ -161,13 +161,13 @@ class TagPanel(QWidget):
         first_load = not self.loaded
         self.loaded = True
         current = self.current_tag()
+        scrolled = self.view.verticalScrollBar().value()
         self._expanded &= set(_all_ids(tree))  # forget deleted tags
         if first_load:
             self._expanded = set(_all_ids(tree))  # start with every tag open (#490)
         self.model.set_tree(tree)
         self._after_reset()
-        if current is not None:
-            self.select_tag(current)
+        self._restore_place(current, scrolled)
 
     # --- state ---
 
@@ -180,14 +180,24 @@ class TagPanel(QWidget):
     def current_tag(self) -> int | None:
         return self.model.tag_id(self.view.currentIndex())
 
-    def select_tag(self, tag_id: int) -> bool:
-        """Highlight a shown tag; returns whether it is shown."""
+    def select_tag(self, tag_id: int, *, scroll: bool = True) -> bool:
+        """Highlight a shown tag, scrolling to it unless ``scroll`` is false; returns
+        whether it is shown."""
         index = self.model.index_of(tag_id)
         if not index.isValid():
             return False
         self.view.setCurrentIndex(index)
-        self.view.scrollTo(index)
+        if scroll:
+            self.view.scrollTo(index)
         return True
+
+    def _restore_place(self, current: int | None, scrolled: int) -> None:
+        """After the tree was made again (new counts after a tick, a reload): the same tag
+        highlighted, and the tree where it was, not scrolled to the highlight, which can be
+        far from the box just ticked."""
+        if current is not None:
+            self.select_tag(current, scroll=False)
+        self.view.verticalScrollBar().setValue(scrolled)
 
     def expanded_tags(self) -> set[int]:
         return set(self._expanded)
@@ -420,10 +430,10 @@ class TagPanel(QWidget):
         title), say whether the checks are that item's own (``page_item_selected``), or the
         selection's in its contents, with a way back (#504)."""
         current = self.current_tag()
+        scrolled = self.view.verticalScrollBar().value()
         if self.model.set_selection(selected_count, tag_counts, types, file_counts):
             self._after_reset()
-            if current is not None:
-                self.select_tag(current)
+            self._restore_place(current, scrolled)
         items = "1 item" if selected_count == 1 else f"{selected_count:,} items"
         if page_item is not None and page_item_selected:
             name = html.escape(page_item)
