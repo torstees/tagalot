@@ -76,7 +76,8 @@ def test_typing_a_note_on_the_page(qtbot: QtBot, window: MainWindow, session: Ke
     _shown(qtbot, page, "Born in Greenwich Village.")
     assert note.pencil.isVisible()
     assert not note.add_button.isVisible()
-    assert session.tags.undo_label == "Add a note to 'Robert De Niro'"
+    # The note is in the keep a moment before its undo step is recorded.
+    _undo_label(qtbot, session, "Add a note to 'Robert De Niro'")
 
     # Esc cancels; Enter alone is a new line.
     _double_click(note.body.viewport())
@@ -95,8 +96,16 @@ def test_typing_a_note_on_the_page(qtbot: QtBot, window: MainWindow, session: Ke
     save.click()
     qtbot.waitUntil(lambda: _body(session, "Robert De Niro") is None, timeout=5000)
     qtbot.waitUntil(note.add_button.isVisible, timeout=5000)
+    _undo_label(qtbot, session, "Remove the note of 'Robert De Niro'")
     session.tags.undo()
     assert _body(session, "Robert De Niro") == "Born in **Greenwich Village**."
+
+
+def _undo_label(qtbot: QtBot, session: KeepSession, expected: str) -> None:
+    def recorded() -> None:
+        assert session.tags.undo_label == expected
+
+    qtbot.waitUntil(recorded, timeout=5000)
 
 
 def test_a_note_files_note_is_read_only(
