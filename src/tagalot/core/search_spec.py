@@ -119,6 +119,11 @@ class SearchSpec:
     nest: bool = False
     """Leave out matches that one of their containers' matches holds (the tree layout lists
     them under it instead). Ignored with ``show_contained``."""
+    hidden_kinds: tuple[str, ...] = ()
+    """Kinds of items to leave out (``core.kinds``: file types like ``".pdf"``, item types
+    like ``"movies.folder"``): an item is left out when every one of its kinds is hidden
+    (§8 *Kinds*, #512). How a list is shown, not what it asks: not in the JSON form, so
+    saved searches never carry it."""
     sort: tuple[SortKey, ...] = field(default=(SortKey("title"),))
 
     def __post_init__(self) -> None:
@@ -128,6 +133,8 @@ class SearchSpec:
             ids = getattr(self, name)
             if not all(isinstance(i, int) and not isinstance(i, bool) and i > 0 for i in ids):
                 raise SearchSpecError(f"{name} must list positive tag ids, not {ids!r}")
+        if not all(isinstance(k, str) and k for k in self.hidden_kinds):
+            raise SearchSpecError(f"hidden_kinds must list kinds, not {self.hidden_kinds!r}")
         if self.triage not in (None, "untagged", "missing", "keywords"):
             raise SearchSpecError(
                 f"triage must be 'untagged', 'missing', or 'keywords', not {self.triage!r}"
