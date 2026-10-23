@@ -39,7 +39,14 @@ from tagalot.core.actions import actions_for
 from tagalot.core.containers import containers_for, hand_made_types
 from tagalot.core.contents import full_text_types
 from tagalot.core.saved_searches import SavedDefinition
-from tagalot.core.search import CORE_FIELDS, SearchError, SearchHit, choice_counts
+from tagalot.core.search import (
+    CORE_FIELDS,
+    SearchError,
+    SearchHit,
+    choice_counts,
+    count_by_kind,
+    count_matches,
+)
 from tagalot.core.search_fields import (
     contained_types,
     scope_fields,
@@ -63,6 +70,7 @@ from tagalot.ui.file_actions import (
 )
 from tagalot.ui.filter_bar import FilterBar, Filters
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
+from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
 from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import ResultColumn, ResultsModel
 from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
@@ -155,6 +163,11 @@ class SearchPage(QWidget):
     """The selected items may be different (a click, new results, grouped or not)."""
     layout_changed = Signal(str)
     """The user switched to ``"list"``, ``"grid"``, or ``"tree"`` (to remember it)."""
+    hidden_kinds_changed = Signal(list)
+    """The user hid or showed a kind with the kind chips (#513): the hidden kinds (to
+    remember it)."""
+    kinds_counted = Signal()
+    """The list's kinds were counted: :attr:`unhidden_total` is up to date."""
     toggles_changed = Signal(dict)
     """The user changed "Contained", "Inherit tags", or "By contents":
     ``{"show_contained": …, "inherit_tags": …, "aggregate_up": …}`` (to remember it)."""
@@ -193,10 +206,16 @@ class SearchPage(QWidget):
         thumbnails: ThumbnailLoader | None = None,
         thumbnail_size: int = 128,
         toggles: dict[str, bool] | None = None,
+        hidden_kinds: Iterable[str] = (),
         pool: QThreadPool | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.shown_total: int | None = None
+        """How many items the list shows, once counted."""
+        self.unhidden_total: int | None = None
+        """How many it would show with no kind hidden, once the kinds are counted."""
+        self._kinds_generation = 0
         self._menu_actions: list[tuple[str, Callable[[list[int]], None]]] = []
         self.session = session
         self.grouped = grouped
@@ -277,6 +296,10 @@ class SearchPage(QWidget):
         self.filter_bar.set_toggles(**self._toggles)
         self.filter_bar.set_contents_available(self.offers_contents())
         self.filter_bar.changed.connect(self._filters_changed)
+        self.kind_chips = KindChips()
+        """Hide and show kinds of items (#513); not over Search all's sections."""
+        self.kind_chips.set_hidden(hidden_kinds)
+        self.kind_chips.changed.connect(self._kinds_changed)
 
         self.table = make_result_table()
         self.table.setModel(self.model)
@@ -347,6 +370,7 @@ class SearchPage(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(header_row)
         layout.addWidget(self.filter_bar)
+        layout.addWidget(self.kind_chips)
         layout.addWidget(self.results, 1)
 
         self.model.counted.connect(self._counted)
@@ -447,6 +471,8 @@ class SearchPage(QWidget):
             show_contained=filters.show_contained and not self._tree_layout(),
             # ...and what a listed container holds isn't listed again at the top.
             nest=self._tree_layout(),
+            # Search all's sections by type have no chips; its one type's list does.
+            hidden_kinds=self.kind_chips.hidden if types or not self.grouped else (),
         )
 
     def offers_contents(self) -> bool:
@@ -611,6 +637,8 @@ class SearchPage(QWidget):
         else:
             self.model.refresh()
             self.tree_model.refresh_children()  # expanded containers' rows too
+            if self.model.spec is not None:
+                self._count_kinds(self.model.spec)
         self._load_tags()
 
     def show_all(self, type_id: str) -> None:
@@ -650,6 +678,8 @@ class SearchPage(QWidget):
             self._show_list(self.current_spec((groups[0].type_id,)))
             return
         self.groups.set_groups(groups)
+        self._kinds_generation += 1
+        self.kind_chips.set_kinds({}, {}, {})
         self.results.setCurrentWidget(self.groups)
         self._show_layout_buttons()
         total = sum(g.count for g in groups)
@@ -689,6 +719,56 @@ class SearchPage(QWidget):
         self._tree_column_widths()
         self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
+        self._count_kinds(spec)
+
+    # --- kinds (#513) ---
+
+    def _count_kinds(self, spec: SearchSpec) -> None:
+        """Count the list's items by kind, in a worker, for the kind chips."""
+        self._kinds_generation += 1
+        generation, session = self._kinds_generation, self.session
+        everything = replace(spec, hidden_kinds=())
+        # The tree reaches what its containers hold: their kinds count too.
+        reachable = (
+            replace(everything, nest=False, show_contained=True) if spec.nest else everything
+        )
+
+        def job() -> tuple[dict[str, int], int]:
+            tree = session.tag_cache.get()
+            fields = search_fields(session.schema, spec.types)
+            with session.reader.connect() as conn:
+                contents = session.contents_scope(conn, spec)
+                counts = count_by_kind(conn, reachable, tree, fields, contents)
+                total = count_matches(conn, everything, tree, fields, contents)
+            return counts, total
+
+        def done(result: tuple[dict[str, int], int]) -> None:
+            if shiboken6.isValid(self) and generation == self._kinds_generation:
+                self._kinds_counted(spec, *result)
+
+        def failed(error: BaseException) -> None:
+            logger.warning("Counting kinds failed: %s", error)
+
+        run_in_pool(job, on_done=done, on_error=failed, pool=self._pool)
+
+    def _kinds_counted(self, spec: SearchSpec, counts: dict[str, int], total: int) -> None:
+        plurals = self._plurals
+        own = self._base.types
+        contents = spec.show_contained or spec.nest
+        labels = {k: kind_label(k, plurals, own, contents) for k in counts}
+        tips = {
+            k: (kind_tip(k, labels[k], plurals, True), kind_tip(k, labels[k], plurals, False))
+            for k in counts
+        }
+        self.kind_chips.set_kinds(counts, labels, tips)
+        self.unhidden_total = total
+        if self.showing_empty():
+            self._show_empty()  # all hidden, maybe
+        self.kinds_counted.emit()
+
+    def _kinds_changed(self, hidden: list[str]) -> None:
+        self.hidden_kinds_changed.emit(hidden)
+        self._run()
 
     def _layout_widget(self) -> QWidget:
         return {"grid": self.grid, "tree": self.tree}.get(self.layout_mode, self.table)
@@ -981,6 +1061,7 @@ class SearchPage(QWidget):
     # --- the list's count and sorting ---
 
     def _counted(self, total: int) -> None:
+        self.shown_total = total
         self.status.setText(count_text(total) if total else "Nothing found")
         self.counted.emit(total)
         if not total:
@@ -1000,6 +1081,8 @@ class SearchPage(QWidget):
         """The heading and hint for a page with nothing to list: what's filtering it out,
         or why there's nothing yet."""
         f = self.filter_bar.filters()
+        if self.kind_chips.hidden and not self.kind_chips.isHidden() and self.unhidden_total:
+            return "All kinds are hidden", "Switch a kind back on above."
         if f.include or f.exclude or f.text or f.fields or f.within is not None:
             chips = f.include or f.exclude or f.fields or f.within is not None
             hint = (

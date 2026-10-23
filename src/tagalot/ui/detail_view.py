@@ -582,19 +582,30 @@ class DetailPage(QWidget):
             )
         if type_id:  # a tab of one type: counted, and hidden while empty (#456)
             page.counted.connect(lambda total: self._contents_counted(type_id, label, total))
+            page.kinds_counted.connect(
+                lambda: self._contents_counted(type_id, label, page.shown_total)
+            )
         self._embed(page, label, f"contents:{type_id or detail.type}")
 
-    def _contents_counted(self, type_id: str, label: str, total: int) -> None:
-        """Show a contents tab's count, and hide it while it has nothing (unless all of
-        them have nothing and there are no other tabs: then the first stays, saying so)."""
-        if self._tabs is None or not shiboken6.isValid(self._tabs):
+    def _contents_counted(self, type_id: str, label: str, shown: int | None) -> None:
+        """Show a contents tab's count (``9 of 16`` while kind chips hide some, #513), and
+        hide it while it has nothing (unless all of them have nothing and there are no
+        other tabs: then the first stays, saying so). A tab whose items are all hidden by
+        its chips stays, so they can be shown again."""
+        if self._tabs is None or not shiboken6.isValid(self._tabs) or shown is None:
             return
-        self._counts[type_id] = total
         page = self.contents_pages[type_id]
+        everything = page.unhidden_total
+        total = shown if everything is None or not page.current_spec().hidden_kinds else everything
+        self._counts[type_id] = total
         index = self._tabs.indexOf(page)
         if index < 0:
             return
-        self._tabs.setTabText(index, f"{label} ({total:,})" if total else label)
+        if total and shown != total:
+            text = f"{label} ({shown:,} of {total:,})"
+        else:
+            text = f"{label} ({total:,})" if total else label
+        self._tabs.setTabText(index, text)
         typed = [t for t in self.contents_pages if t]
         empty = {t for t in typed if self._counts.get(t) == 0}
         # All empty: the first says so, unless other tabs fill the place (an actor's).

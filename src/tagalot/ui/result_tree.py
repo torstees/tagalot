@@ -39,7 +39,15 @@ from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.session import KeepSession
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.hover import outline_hover
-from tagalot.ui.models.results import ResultsModel, Row, cell_text, cell_tooltip, row_values
+from tagalot.ui.models.results import (
+    ResultsModel,
+    Row,
+    cell_text,
+    cell_tooltip,
+    dimmed,
+    mark_hidden,
+    row_values,
+)
 from tagalot.ui.result_table import OUTLINE_COLOR
 from tagalot.ui.workers import run_in_pool
 
@@ -200,6 +208,7 @@ class ResultTreeModel(QAbstractItemModel):
             with session.reader.connect() as conn:
                 hits = child_hits(conn, spec, tree, parent_id, sort=sort, fields=fields)
                 values = row_values(conn, session.schema, tree, hits, columns)
+                mark_hidden(conn, spec, fields, hits, values)
             return [(h, values.get(h.id, {})) for h in hits]
 
         def done(rows: list[Row]) -> None:
@@ -278,6 +287,8 @@ class ResultTreeModel(QAbstractItemModel):
             return cell_tooltip(column, row, self.source.type_labels)
         if role == Qt.ItemDataRole.TextAlignmentRole and column.numeric:
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return dimmed(row)
         return None
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:

@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     QThreadPool,
     Signal,
 )
+from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from sqlalchemy import ColumnElement, Connection
 
 from tagalot.core.formats import format_rating_number, format_stars, format_value, rating_scale
@@ -41,6 +42,7 @@ from tagalot.core.search import (
     Snippet,
     contents_snippets,
     count_matches,
+    kinds_of,
     run_search,
 )
 from tagalot.core.search_fields import field_values, search_fields
@@ -148,6 +150,35 @@ def add_snippets(
     found = contents_snippets(conn, spec.text, contents, [h.id for h in hits])
     for entity_id, snippet in found.items():
         values.setdefault(entity_id, {})[MATCH] = match_value(snippet)
+
+
+HIDDEN_KIND = "@hidden"
+"""A row's value key: true for an item of hidden kinds that a tree keeps because it holds
+a shown one (§8 *Kinds*); drawn dimmed."""
+
+
+def mark_hidden(
+    conn: Connection,
+    spec: SearchSpec,
+    fields: Mapping[str, ColumnElement[Any]],
+    hits: Sequence[SearchHit],
+    values: dict[int, dict[str, Any]],
+) -> None:
+    """Mark the hits whose kinds are all hidden (:data:`HIDDEN_KIND`), when ``spec`` hides
+    some. Runs in a worker."""
+    if not spec.hidden_kinds or not hits:
+        return
+    hidden = set(spec.hidden_kinds)
+    for entity_id, kinds in kinds_of(conn, [h.id for h in hits], fields).items():
+        if kinds <= hidden:
+            values.setdefault(entity_id, {})[HIDDEN_KIND] = True
+
+
+def dimmed(row: Row | None) -> QColor | None:
+    """The text color of a row kept though its kinds are hidden, else ``None``."""
+    if row is None or not row[1].get(HIDDEN_KIND):
+        return None
+    return QGuiApplication.palette().color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
 
 
 @dataclass(frozen=True)
@@ -499,6 +530,8 @@ class ResultsModel(QAbstractTableModel):
             )
             values = row_values(conn, session.schema, tree, hits, columns)
             add_snippets(conn, spec, contents, hits, values)
+            if spec.nest:  # only a tree keeps hidden kinds' items
+                mark_hidden(conn, spec, fields, hits, values)
             return total, [(h, values.get(h.id, {})) for h in hits]
 
         return fetch
@@ -713,6 +746,8 @@ class ResultsModel(QAbstractTableModel):
         if role == BADGES_ROLE:
             found = self.row(index.row(), load=False)
             return cell_badges(found, column) if found is not None else None
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return dimmed(self.row(index.row(), load=False))
         if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return None
         found = self.row(index.row())
