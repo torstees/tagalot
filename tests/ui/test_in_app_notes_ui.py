@@ -76,7 +76,8 @@ def test_typing_a_note_on_the_page(qtbot: QtBot, window: MainWindow, session: Ke
     _shown(qtbot, page, "Born in Greenwich Village.")
     assert note.pencil.isVisible()
     assert not note.add_button.isVisible()
-    assert session.tags.undo_label == "Add a note to 'Robert De Niro'"
+    # The note is in the keep a moment before its undo step is recorded.
+    _undo_label(qtbot, session, "Add a note to 'Robert De Niro'")
 
     # Esc cancels; Enter alone is a new line.
     _double_click(note.body.viewport())
@@ -95,8 +96,16 @@ def test_typing_a_note_on_the_page(qtbot: QtBot, window: MainWindow, session: Ke
     save.click()
     qtbot.waitUntil(lambda: _body(session, "Robert De Niro") is None, timeout=5000)
     qtbot.waitUntil(note.add_button.isVisible, timeout=5000)
+    _undo_label(qtbot, session, "Remove the note of 'Robert De Niro'")
     session.tags.undo()
     assert _body(session, "Robert De Niro") == "Born in **Greenwich Village**."
+
+
+def _undo_label(qtbot: QtBot, session: KeepSession, expected: str) -> None:
+    def recorded() -> None:
+        assert session.tags.undo_label == expected
+
+    qtbot.waitUntil(recorded, timeout=5000)
 
 
 def test_a_note_files_note_is_read_only(
@@ -142,9 +151,10 @@ def test_save_as_note(
     monkeypatch.setattr(MainWindow, "confirm_save_note", confirm)
     page.save_note_action.trigger()
     target = tmp_path / "movie-files" / "Notes" / "Actors" / "Robert De Niro.md"
-    qtbot.waitUntil(target.exists, timeout=5000)
+    expected = "---\ntitle: Robert De Niro\n---\n\nHeat, 1995.\n"
+    # Read once written: the file is there a moment sooner.
+    qtbot.waitUntil(lambda: target.exists() and target.read_text("utf-8") == expected, timeout=5000)
     assert [n.relpath for n in asked] == ["Notes/Actors/Robert De Niro.md"]
-    assert target.read_text("utf-8") == "---\ntitle: Robert De Niro\n---\n\nHeat, 1995.\n"
     # The scan that follows reads it: the note is the file's now.
     qtbot.waitUntil(lambda: page.note_view.open_button.isVisible(), timeout=10000)
     assert not page.note_view.pencil.isVisible()

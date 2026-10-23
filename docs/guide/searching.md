@@ -41,13 +41,26 @@ At the right of the filter bar:
 
 Each search remembers its toggles. The theme's searches start with sensible ones (its album and song searches inherit tags, for example).
 
+## Hiding kinds of items
+
+When a list mixes kinds of things (a folder's contents with **Contained**, an author's EPUBs and PDFs), a row of **chips** under the filter bar names each kind with how many there are: file types (`EPUB 9`, `PDF 2`) and kinds of items without a file (`Folders 8`).
+
+- **Click a chip** to hide that kind. It stays where it is, dimmed and struck through, still counting; click it again to bring the kind back.
+- **Ctrl+click** shows only that kind; Ctrl+click it again to show them all.
+- An item with several files (a book as an EPUB and a PDF) stays while any of its file types is shown.
+- `JPG` covers `.jpg` and `.jpeg` (and likewise `TIF`, `HTML`, `MPG`, `YAML`).
+- On a page of one kind of item, those without a file are **No file** (a book you made from a note, on the Books page).
+- In the tree layout, the chips count what the folders hold too, and a hidden folder stays (dimmed) while it holds something shown, so you can still open it.
+
+Each search, and each tab on an item's page, remembers what you hid. A list of one kind has no chips. Saved searches don't keep what's hidden.
+
 ## Within an item
 
 Right-click an item that holds others (an artist, an album, a series) and choose **Show contents in search**: a grey **Within: …** chip limits the search to what it holds, keeping your other filters. A container's page has **Show in search** for the same thing.
 
 ## When nothing matches
 
-The knight says what's in the way: your chips and text (remove a chip, try other words, or tick **In documents**), or, on an empty list, why there's nothing yet.
+The knight says what's in the way: kinds you hid (**All kinds are hidden**), your chips and text (remove a chip, try other words, or tick **In documents**), or, on an empty list, why there's nothing yet.
 
 ## Search all
 

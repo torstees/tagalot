@@ -87,7 +87,7 @@ def test_export_saves_the_tree(
 
     monkeypatch.setattr(window, "choose_export_path", choose)
     _page(window).export_tags_action.trigger()  # Export tags… → Tags only…
-    qtbot.waitUntil(target.exists, timeout=5000)
+    _wait_status(qtbot, window, "Saved tags.yaml.")  # written: the file is there sooner
     assert asked == ["Demo tags.yaml"]
     text = target.read_text(encoding="utf-8")
     assert "    Iceland:\n      description: Summer 2019 road trip" in text
@@ -206,7 +206,7 @@ def test_tags_and_their_items_go_out_and_come_back(
 
     monkeypatch.setattr(window, "choose_export_path", choose)
     _page(window).export_items_action.trigger()  # Export tags… → Tags and the items…
-    qtbot.waitUntil(target.exists, timeout=5000)
+    _wait_status(qtbot, window, "Saved tags and items.yaml.")
     assert asked == ["Demo tags and items.yaml"]
     text = target.read_text(encoding="utf-8")
     assert "\n---\nitems:\n- type: " in text
@@ -337,6 +337,6 @@ def test_export_writes_the_pictures_beside_the_file(
     monkeypatch.setattr(window, "choose_export_path", lambda name: str(target))
     _page(window).export_tags_action.trigger()
     picture = tmp_path / "out" / "tags pictures" / "Places" / "Iceland.jpg"
-    qtbot.waitUntil(picture.exists, timeout=5000)
-    qtbot.waitUntil(target.exists, timeout=5000)
+    _wait_status(qtbot, window, "Saved tags.yaml.")
+    assert picture.exists()
     assert "picture: tags pictures/Places/Iceland.jpg" in target.read_text(encoding="utf-8")
