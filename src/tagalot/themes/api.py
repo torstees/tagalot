@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 21
+API_VERSION = 22
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -48,7 +48,8 @@ version 18 added folder items (:attr:`Entity.folders_for`); version 19 added gal
 filled from the item's own folder (:func:`role`'s ``own_folder``); version 20 added
 see-through folders (:attr:`ResourceInfo.folder`, :attr:`ResourceInfo.folder_path`,
 :attr:`ResourceInfo.see_through`, :func:`files_in`); version 21 added pictures from
-online services (:meth:`IngestContext.online_picture`)."""
+online services (:meth:`IngestContext.online_picture`); version 22 added files inside
+archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -680,6 +681,14 @@ class ResourceInfo:
     see_through: frozenset[str] = frozenset()
     """The keep's see-through folder names, case-folded (``[folders] see_through``): for
     looking around on disk with :func:`files_in`."""
+    archive: str | None = None
+    """For a file inside an archive the user chose to look inside (#391): the archive's
+    root-relative path (its :attr:`relpath` is the archive's, then its path inside it:
+    ``Aurora Studio/pack.zip/fonts/Regular.ttf``). It counts as in the folder the archive
+    is in (:attr:`folder`), and :attr:`path` is a temporary copy taken out of the archive,
+    for reading during the scan only. ``None``: a file or folder of its own."""
+    archive_path: str | None = None
+    """This machine's path to :attr:`archive`."""
 
     @property
     def folder(self) -> str:
@@ -691,6 +700,20 @@ class ResourceInfo:
     @property
     def folder_path(self) -> str:
         """This machine's path to :attr:`folder`."""
+        if self.archive is not None and self.archive_path is not None:
+            # The archive's folder, as a file of its own would see it.
+            outer = ResourceInfo(
+                self.id,
+                self.root_id,
+                self.archive,
+                "file",
+                "",
+                None,
+                None,
+                self.archive_path,
+                None if self.counts_in == posixpath.dirname(self.archive) else self.counts_in,
+            )
+            return outer.folder_path
         path = os.path.dirname(self.path)
         if self.counts_in is not None:
             real = posixpath.dirname(self.relpath)

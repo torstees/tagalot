@@ -499,7 +499,8 @@ def _note_files(
         ),
     ):
         for rid, root, rel, size, mtime in conn.execute(
-            query.where(Resource.status == ResourceStatus.OK)
+            # Never a file inside an archive (#391): nothing writes into one.
+            query.where(Resource.status == ResourceStatus.OK, Resource.parent_resource_id.is_(None))
         ):
             if rid not in own and rel.lower().endswith(tuple(MARKDOWN)):
                 own.add(rid)
@@ -537,7 +538,11 @@ def _markdown_files(
             Resource.ext,
         )
         .join(EntityResource, EntityResource.resource_id == Resource.id)
-        .where(EntityResource.entity_id == entity_id, Resource.status == ResourceStatus.OK)
+        .where(
+            EntityResource.entity_id == entity_id,
+            Resource.status == ResourceStatus.OK,
+            Resource.parent_resource_id.is_(None),  # nothing writes into an archive (#391)
+        )
         .order_by(Resource.relpath)
     )
     if primary is not None:

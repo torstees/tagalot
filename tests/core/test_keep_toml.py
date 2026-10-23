@@ -23,7 +23,7 @@ DESIGN_EXAMPLE = """\
 [keep]
 id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"   # UUID, never changes
 name = "Music"
-format_version = 26                         # core schema version
+format_version = 27                         # core schema version
 
 [theme]
 id = "music"
@@ -96,7 +96,7 @@ def test_zero_roots_round_trip(tmp_path: Path) -> None:
 
 
 def test_new_config_uses_current_format_version() -> None:
-    assert _config().format_version == KEEP_FORMAT_VERSION == 26
+    assert _config().format_version == KEEP_FORMAT_VERSION == 27
 
 
 def test_exclude_defaults_to_empty(tmp_path: Path) -> None:
@@ -151,13 +151,14 @@ def test_invalid_toml(tmp_path: Path) -> None:
         ('id = "0b6e3c1e-6f0a-4b54-9a8e-2b2d7f1c9d41"', 'id = "not-a-uuid"', "not a UUID"),
         ('name = "Music"', 'name = ""', r"\[keep\] name must be a non-empty string"),
         ('name = "Music"', "name = 5", r"\[keep\] name must be a non-empty string"),
-        ("format_version = 26", 'format_version = "3"', "format_version must be a positive"),
-        ("format_version = 26", "format_version = 0", "format_version must be a positive"),
+        ("format_version = 27", 'format_version = "3"', "format_version must be a positive"),
+        ("format_version = 27", "format_version = 0", "format_version must be a positive"),
         ('id = "music"', "id = 3", r"\[theme\] id must be a non-empty string"),
         ("\nversion = 1 ", "\nversion = true ", r"\[theme\] version must be a positive"),
         ('id = "nas-music"', 'id = "  "', r"\[\[roots\]\] #1 id must be a non-empty"),
         ("path = '\\\\nas\\music'\n", "", r"\[\[roots\]\] #1 path must be a non-empty"),
         ('exclude = ["**/.DS_Store"', 'exclude = [1, "**/.DS_Store"', "exclude must be a list"),
+        ("exclude = [", 'archives = "Fonts/**"\nexclude = [', "archives must be a list"),
     ],
 )
 def test_invalid_values(tmp_path: Path, old: str, new: str, message: str) -> None:
@@ -202,3 +203,14 @@ def test_invalid_thumbnail_max(tmp_path: Path, value: str) -> None:
     text = DESIGN_EXAMPLE.replace("[[roots]]", f"[thumbnails]\nmax_size = {value}\n\n[[roots]]")
     with pytest.raises(KeepConfigError, match=r"\[thumbnails\] max_size must be a positive"):
         load_keep_config(_write(tmp_path, text))
+
+
+def test_archives_round_trip(tmp_path: Path) -> None:
+    """A root's archive patterns (#391): written only when there are some."""
+    plain = RootConfig("r", "Fonts", "D:/Fonts")
+    assert "archives" not in dump_keep_config(_config(plain))
+    root = RootConfig("r", "Fonts", "D:/Fonts", archives=["Aurora Studio/**", "*.zip"])
+    path = tmp_path / "keep.toml"
+    save_keep_config(_config(root), path)
+    assert "archives = ['Aurora Studio/**', '*.zip']" in path.read_text(encoding="utf-8")
+    assert load_keep_config(path).roots[0].archives == ["Aurora Studio/**", "*.zip"]

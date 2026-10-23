@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 26
+KEEP_FORMAT_VERSION = 27
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -112,6 +112,11 @@ class RootConfig:
     """``assets = "Attachments"``: where its Markdown files' relative pictures and links are
     looked for when they aren't beside the file (``core/assets.py``, #418): relative to the
     root's top, or to each file's folder with a leading ``./``. ``""``: the keep's default."""
+    archives: list[str] = field(default_factory=list)
+    """``archives = ["Aurora Studio/**"]``: every archive under these folders (patterns as
+    for ``exclude``; ``"**"``, the whole root) has all its members read as resources, those
+    added later too (#391, DESIGN.md §6 *Archive members*). A choice made for one archive
+    wins over these."""
 
 
 @dataclass
@@ -283,6 +288,8 @@ def dump_keep_config(config: KeepConfig) -> str:
             lines.append("writable = true")
         if root.assets:
             lines.append(f"assets = {toml_str(root.assets)}")
+        if root.archives:
+            lines.append(f"archives = {toml_list(root.archives)}")
         notes = {p: n for p, n in root.exclude_notes.items() if p in root.exclude and n}
         if notes:
             lines += ["", "[roots.exclude_notes]"]
@@ -425,6 +432,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             "watched",
             "writable",
             "assets",
+            "archives",
         }
         reader.warn_unknown(raw, known, where)
         watched, writable = raw.get("watched", True), raw.get("writable", False)
@@ -435,6 +443,9 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         exclude = raw.get("exclude", [])
         if not isinstance(exclude, list) or not all(isinstance(p, str) for p in exclude):
             raise KeepConfigError(path, f"{where} exclude must be a list of strings")
+        archives = raw.get("archives", [])
+        if not isinstance(archives, list) or not all(isinstance(p, str) for p in archives):
+            raise KeepConfigError(path, f"{where} archives must be a list of strings")
         notes = raw.get("exclude_notes", {})
         if not isinstance(notes, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in notes.items()
@@ -451,6 +462,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                 watched=watched,
                 writable=writable,
                 assets=_assets(path, raw, where),
+                archives=list(archives),
             )
         )
     seen: set[str] = set()

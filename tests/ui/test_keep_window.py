@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 from sqlalchemy import insert
 
+from tagalot.core.archive_members import MemberCounts
 from tagalot.core.keep import KeepError, RootConfig, ThemeRef, create_keep
 from tagalot.core.models import SavedSearch
 from tagalot.core.scanjob import ScanReport
@@ -136,6 +137,10 @@ def test_scan_summary() -> None:
     assert scan_summary([ok]) == "Scan finished: 2 new, 1 changed, 0 missing."
     assert scan_summary([ok, offline, broken]) == (
         "Scan finished: 2 new, 1 changed, 0 missing. Offline: nas. 1 file couldn't be read."
+    )
+    fonts = ScanReport("f", online=True, members=MemberCounts(new=3))
+    assert scan_summary([fonts]) == (
+        "Scan finished: 0 new, 0 changed, 0 missing, 3 new inside archives."
     )
 
 

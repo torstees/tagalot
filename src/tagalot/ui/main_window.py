@@ -2569,6 +2569,9 @@ def scan_summary(reports: list[ScanReport]) -> str:
     skipped = sum(r.skipped for r in reports)
     if skipped:
         parts.append(f"{skipped} skipped")
+    inside = sum(r.members.new for r in reports)
+    if inside:  # files read from inside archives (#391)
+        parts.append(f"{inside} new inside archives")
     text = "Scan finished: " + ", ".join(parts) + "."
     offline = [r.root_id for r in reports if not r.online]
     if offline:
