@@ -95,6 +95,8 @@ from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write
 from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
+from tagalot.ui.archive_actions import ArchiveActions
+from tagalot.ui.archive_dialog import THUMB_SIZE
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
@@ -240,6 +242,17 @@ class MainWindow(QMainWindow):
         self.tag_actions = TagActions(session, self)
         self.files = FileOpener(session, None, self)
         self.files.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+        self.archives = ArchiveActions(session, None, self)
+        self.archives.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+        self.archives.changed.connect(self._tags_changed)  # items may hide or come back
+        self.archives.scan_requested.connect(self._scan_roots)
+        self.archives.config_saved.connect(self._archives_config_saved)
+        self.archives.show_thumbnails = bool(self._ui_state.get("archive_thumbnails", False))
+        self.archives.thumbnails_toggled.connect(self._archive_thumbnails_toggled)
+        self.archives.thumbnail_size = clamp_size(
+            self._ui_state.get("archive_thumbnail_size"), THUMB_SIZE, session.thumbnail_max
+        )
+        self.archives.thumbnail_size_changed.connect(self._archive_thumbnail_size_changed)
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
         self.tag_actions.pictures_changed.connect(self.thumbnails.forget)
@@ -628,6 +641,7 @@ class MainWindow(QMainWindow):
             return dashboard
         if target.kind == "dedupe":
             dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
+            dedupe.archive_actions = self.archives
             dedupe.open_entity.connect(self.open_entity)
             dedupe.merge_requested.connect(self.merge_items)
             dedupe.versions_requested.connect(
@@ -737,6 +751,7 @@ class MainWindow(QMainWindow):
         search.add_to_requested.connect(self.add_to_container)
         search.action_requested.connect(self.run_action)
         search.file_opener = self.files
+        search.archive_actions = self.archives
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
             lambda mode: self._save_view_state("layouts", state_key, mode)
@@ -759,6 +774,18 @@ class MainWindow(QMainWindow):
             lambda keys: self._save_view_state("shown_columns", state_key, keys)
         )
         return search
+
+    def _archive_thumbnails_toggled(self, on: bool) -> None:
+        """Remember whether Choose what to read inside shows thumbnails."""
+        assert self.session is not None
+        self._ui_state["archive_thumbnails"] = on
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def _archive_thumbnail_size_changed(self, size: int) -> None:
+        """Remember how big Choose what to read inside draws thumbnails."""
+        assert self.session is not None
+        self._ui_state["archive_thumbnail_size"] = size
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _preview_toggled(self, visible: bool) -> None:
         """Show or hide the preview under the navigation, and remember it."""
@@ -801,6 +828,7 @@ class MainWindow(QMainWindow):
         detail.uncontain_requested.connect(self.tag_actions.uncontain)
         detail.action_requested.connect(self.run_action)
         detail.file_opener = self.files
+        detail.archive_actions = self.archives
 
     # --- the Details tab (#468) ---
 
@@ -2264,6 +2292,11 @@ class MainWindow(QMainWindow):
         self.keep_config.raise_()
         self.keep_config.activateWindow()
         return self.keep_config
+
+    def _archives_config_saved(self) -> None:
+        """A folder's archives are read now (#519): Keep configuration shows the pattern."""
+        if self.keep_config is not None:
+            self.keep_config.reload()
 
     def _scan_roots(self, root_ids: list[str]) -> None:
         if self.session is not None and not self.scans.scan(self.session, root_ids):

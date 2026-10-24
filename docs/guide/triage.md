@@ -59,7 +59,7 @@ Files scans leave out, grouped by the rule that leaves them out, with how many f
 - **Skip pattern “`Drafts/**`”**: a pattern in a folder's **Skip** box ([Keep configuration](keeps-and-folders.md#skipping-files)), or one **Skip in scans…** added. A file under two patterns is listed under both.
 - **Not a note in the notes folder**: the [notes folder](notes.md#the-notes-folder) keeps only notes, pictures, and archives.
 - **The theme doesn't read .bmp**, **Folders the theme doesn't record**: files the keep's theme leaves out. Another theme, or a newer version of it, may read them.
-- Inside archives: **Not read inside archives**, **Archives turned off**, **Hidden inside archives**, and **Inside skipped archives**.
+- Inside archives: **Not read inside archives**, **Archives turned off**, **Hidden inside archives**, and **Inside skipped archives**. An archive's right-click menu changes what's read inside it ([Reading inside archives](keeps-and-folders.md#reading-inside-archives)).
 - **Read again at the next scan**: no rule leaves these out any more (you removed the pattern), so the next scan reads them.
 
 Select a rule to list its files and see where the rule lives. To read the files again, change it there, then scan.

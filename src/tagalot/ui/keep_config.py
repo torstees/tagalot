@@ -182,6 +182,18 @@ class KeepConfigWindow(QWidget):
             "skips a file itself). Saved when you leave the box."
         )
         self.exclude.installEventFilter(self)
+        self.archives = QPlainTextEdit()
+        self.archives.setObjectName("archives")
+        self.archives.setPlaceholderText(
+            "One pattern per line, like Fonts/** or ** for every archive"
+        )
+        self.archives.setToolTip(
+            "The files inside archives (zip, 7z, rar) in folders matching these patterns are "
+            "read as files of their own, every one, those added later too. An archive's "
+            "right-click menu chooses for that one archive. Saved when you leave the box."
+        )
+        self.archives.setMaximumHeight(72)
+        self.archives.installEventFilter(self)
         self.status = QLabel()
         self.status.setObjectName("status")
         self.status.setTextFormat(Qt.TextFormat.RichText)
@@ -191,6 +203,7 @@ class KeepConfigWindow(QWidget):
         form.addRow("Folder:", path_row)
         form.addRow("On this computer:", local_row)
         form.addRow("Skip:", self.exclude)
+        form.addRow("Read inside archives:", self.archives)
         self.writable = QCheckBox("Let Write to file… change files in this folder")
         self.writable.setObjectName("writable")
         self.writable.setToolTip(
@@ -560,6 +573,7 @@ class KeepConfigWindow(QWidget):
         override = self.session.settings.root_overrides.get(self.session.keep.config.id, {})
         self.local.setText(override.get(root.id, ""))
         self.exclude.setPlainText("\n".join(skip_lines(root)))
+        self.archives.setPlainText("\n".join(root.archives))
         self.watch_button.setText("Stop watching" if root.watched else "Watch again")
         self.watch_button.setToolTip(
             "Stop scanning it; its items stay (shown offline) until you watch it again"
@@ -841,7 +855,7 @@ class KeepConfigWindow(QWidget):
         except KeepError as e:
             self._refused(str(e))
             return
-        offers_scan = "path" in changes or "exclude" in changes
+        offers_scan = "path" in changes or "exclude" in changes or "archives" in changes
         message = f"Saved {root.name}." + (" Scan it to update its files." if offers_scan else "")
         if "assets" in changes:
             message = f"Saved {root.name}. Covers are looked for there at the next scan (F5)."
@@ -895,6 +909,9 @@ class KeepConfigWindow(QWidget):
             if watched is self.exclude:
                 patterns, notes = parse_skip_lines(self.exclude.toPlainText().splitlines())
                 self._edit(exclude=patterns, exclude_notes=notes)
+            elif watched is self.archives:  # archives read whole (#391, #519)
+                lines = self.archives.toPlainText().splitlines()
+                self._edit(archives=list(dict.fromkeys(p.strip() for p in lines if p.strip())))
             elif watched is self.keep_ignore_keys:
                 self.set_keep_ignore_keys(self.keep_ignore_keys.toPlainText().splitlines())
             elif watched is self.user_ignore_keys:

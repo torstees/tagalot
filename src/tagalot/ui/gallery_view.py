@@ -38,6 +38,7 @@ from tagalot.core.kinds import file_kind
 from tagalot.core.models import ResourceStatus
 from tagalot.core.session import KeepSession
 from tagalot.core.thumbnails.image import Thumbnail
+from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.thumbnails import icon_for
 from tagalot.ui.workers import run_in_pool
@@ -140,6 +141,8 @@ class GalleryView(QWidget):
         self.session = session
         self.entity_id = entity_id
         self.file_opener = file_opener
+        self.archive_actions: ArchiveActions | None = None
+        """What to read inside an archive group's archive (#519)."""
         self._file_menu = file_menu
         self._pool = pool
         self.groups = gallery_groups(section.files)
@@ -391,6 +394,9 @@ class GalleryView(QWidget):
         open_action.triggered.connect(lambda: self.open_member(archive, name))
         reveal = menu.addAction("Show the archive in file manager")
         reveal.triggered.connect(lambda: self._reveal(archive))
+        if self.archive_actions is not None and not archive.archive:
+            menu.addSeparator()
+            self.archive_actions.add_archive_actions(menu, archive.resource_id)
         return menu
 
     def _member_menu(self, gallery: GalleryList, archive: FileRow, point: QPoint) -> None:

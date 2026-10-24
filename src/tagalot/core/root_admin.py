@@ -90,6 +90,7 @@ def edit_root(
     watched: bool | None = None,
     writable: bool | None = None,
     assets: str | None = None,
+    archives: list[str] | None = None,
 ) -> KeepConfig:
     """``config`` with one root changed. Raises :class:`KeepError` for a bad value."""
     roots = copy.deepcopy(config.roots)
@@ -113,6 +114,8 @@ def edit_root(
         root.watched = watched
     if writable is not None:
         root.writable = writable
+    if archives is not None:  # archives read whole (#391, #519)
+        root.archives = list(dict.fromkeys(p.strip() for p in archives if p.strip()))
     if assets is not None:
         try:
             root.assets = clean_setting(assets)

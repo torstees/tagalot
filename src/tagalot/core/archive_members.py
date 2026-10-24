@@ -318,8 +318,9 @@ def _wanted(
     """The members to read; for a member-by-member archive, recording the new ones as
     undecided and forgetting undecided ones it no longer holds."""
     names = {e.name for e in listing}
-    if mode is ArchiveMode.ALL:
-        return names
+    if mode is ArchiveMode.ALL:  # all but those hidden (#519); later ones are read too
+        hidden = {p for p, read in member_choices(conn, archive_id).items() if read is False}
+        return names - hidden
     if mode is ArchiveMode.NONE:
         return set()
     choices = member_choices(conn, archive_id)
