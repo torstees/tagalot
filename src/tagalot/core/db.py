@@ -286,6 +286,14 @@ def _v26_archive_members(conn: Connection) -> None:
     Base.metadata.tables["archive_member_choice"].create(conn, checkfirst=True)
 
 
+def _v27_skipped_index(conn: Connection) -> None:
+    """Format 28: an index of skipped files, for hiding items whose files are all
+    skipped (#526)."""
+    resource = Base.metadata.tables["resource"]
+    index = next(i for i in resource.indexes if i.name == "ix_resource_skipped")
+    index.create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -313,6 +321,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     24: _v24_tag_pictures,
     25: _v25_tag_icon_pictures,
     26: _v26_archive_members,
+    27: _v27_skipped_index,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

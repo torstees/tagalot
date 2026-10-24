@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Connection, Engine, insert
+from sqlalchemy import Connection, Engine, insert, update
 
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.detail import (
@@ -70,6 +70,16 @@ class Env:
     reader: Engine
     schema: ThemeSchema
     ids: dict[str, int]
+    db: Path
+
+    def skip(self, *relpaths: str) -> None:
+        """Flag files skipped, as a scan does for files it now leaves out (#152)."""
+        engine = create_keep_engine(self.db)
+        with engine.begin() as conn:
+            conn.execute(
+                update(Resource).where(Resource.relpath.in_(relpaths)).values(skipped=True)
+            )
+        engine.dispose()
 
     def detail(self, title: str) -> EntityDetail:
         with self.reader.connect() as conn:
@@ -125,7 +135,7 @@ def env(tmp_path: Path) -> Iterator[Env]:
     with DbWriter(engine) as writer:
         writer.run(fill)
     reader = create_keep_engine(keep.db_path, read_only=True)
-    yield Env(reader, schema, ids)
+    yield Env(reader, schema, ids, keep.db_path)
     reader.dispose()
 
 
@@ -166,6 +176,18 @@ def test_related_from_either_side(env: Env) -> None:
     assert [e.title for e in cast.entities] == ["Al Pacino", "Robert De Niro"]
     films = _section(env.detail("Al Pacino"), "related")
     assert (films.title, [e.title for e in films.entities]) == ("Films", ["Heat"])
+
+
+def test_skipped_pictures_and_items_are_left_out(env: Env) -> None:
+    """A gallery leaves out skipped pictures; an item whose files are all skipped is
+    hidden from related sections and contents counts (#526)."""
+    env.skip("Noir/stills/b.jpg")
+    stills = _section(env.detail("Heat"), "gallery").files
+    assert [s.relpath for s in stills] == ["stills/a.jpg"]
+
+    env.skip("Noir/Heat.mkv", "Noir/Heat poster.jpg", "stills/a.jpg")
+    assert _section(env.detail("Al Pacino"), "related").entities == ()
+    assert _section(env.detail("Noir"), "contents").count == 0
 
 
 def test_the_default_view_for_a_container(env: Env) -> None:

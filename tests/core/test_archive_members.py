@@ -33,6 +33,9 @@ from tagalot.core.models import (
     Tag,
 )
 from tagalot.core.scanjob import ScanReport, scan_root
+from tagalot.core.search import run_search
+from tagalot.core.search_spec import SearchSpec
+from tagalot.core.tags import TagTree
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writeback import _markdown_files
@@ -109,6 +112,12 @@ class Env:
 
     def run(self, job: Any) -> Any:
         return self.writer.run(job)
+
+    def listed(self) -> set[int]:
+        """The items a search of everything lists."""
+        with self.reader.connect() as conn:
+            hits = run_search(conn, SearchSpec(), TagTree.load(conn), limit=None)
+            return {h.id for h in hits}
 
 
 @pytest.fixture
@@ -271,14 +280,18 @@ def test_members_follow_their_archive(env: Env) -> None:
     env.scan(when=T0 + timedelta(hours=1))
     assert env.shown() == ALL
 
-    # Chosen none, over the pattern: skipped, kept.
+    # Chosen none, over the pattern: skipped, kept, and their items hidden (#526).
     pack = env.resource(PACK)
+    items = {env.entity_of(rel) for rel in ALL}
+    assert items <= env.listed()
     env.run(lambda conn: set_archive_mode(conn, pack, ArchiveMode.NONE))
     env.scan(when=T0 + timedelta(hours=2))
     assert env.members() == dict.fromkeys(ALL, (ResourceStatus.OK, True))
+    assert not items & env.listed()
     env.run(lambda conn: set_archive_mode(conn, pack, None))  # the pattern again
     env.scan(when=T0 + timedelta(hours=3))
     assert env.shown() == ALL
+    assert items <= env.listed()
 
     # The archive deleted: its members are missing too.
     (env.files / PACK).unlink()

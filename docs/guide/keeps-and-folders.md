@@ -54,7 +54,7 @@ When a folder can't be reached (a share that's down, a drive that isn't plugged 
 
 Each folder has a **Skip** list of patterns, one per line, for files to leave out: `**/Thumbs.db`, `**/Extras/**`, `Old/*.tmp`. New folders start with the usual operating-system and NAS leftovers (`.DS_Store`, `._*` files, `Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, Synology's `@eaDir` and `#recycle`). A pattern can have a note after ` # ` saying why: `Exports/papers.bib # my export`.
 
-Skipped files are left out at the next scan (their items aren't deleted, and come back if you remove the pattern). [Triage](triage.md)'s **Skip in scans…** adds a pattern for you.
+Skipped files are left out at the next scan. An item whose files are all skipped is hidden from lists, searches, and the dashboard, but isn't deleted: it comes back with its tags if you remove the pattern. [Triage](triage.md)'s **Skip in scans…** adds a pattern for you.
 
 ### On this computer
 

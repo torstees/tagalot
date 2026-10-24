@@ -27,6 +27,7 @@ from sqlalchemy import (
     TypeDecorator,
     event,
     func,
+    text,
 )
 from sqlalchemy.engine import Connection, Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -129,7 +130,12 @@ class Resource(Base):
     """A file or directory under a root, identified by root id and relative POSIX path."""
 
     __tablename__ = "resource"
-    __table_args__ = (Index(None, "root_id", "relpath", unique=True), Index(None, "fingerprint"))
+    __table_args__ = (
+        Index(None, "root_id", "relpath", unique=True),
+        Index(None, "fingerprint"),
+        # The few skipped files, for hiding items whose files are all skipped (#526).
+        Index("ix_resource_skipped", "id", sqlite_where=text("skipped = 1")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     root_id: Mapped[str] = mapped_column(ForeignKey("root.id"))
