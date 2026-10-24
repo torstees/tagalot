@@ -62,6 +62,7 @@ from tagalot.core.not_duplicates import (
 )
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
+from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.compare_view import ComparePane, known_root
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.thumbnails import ThumbnailLoader
@@ -96,6 +97,8 @@ class DedupePage(QWidget):
         super().__init__(parent)
         self.session = session
         self.file_opener = file_opener
+        self.archive_actions: ArchiveActions | None = None
+        """Hide inside its archive, for a copy inside one (#519): set by the window."""
         self.groups: list[DuplicateGroup] | None = None
         """The groups listed (dismissed ones only with Show dismissed)."""
         self.all_groups: list[DuplicateGroup] = []
@@ -541,8 +544,14 @@ class DedupePage(QWidget):
 
     def _menu(self, point: QPoint) -> None:
         file = self._file_at(self.tree.indexAt(point))
-        if file is None or file.path is None or self.file_opener is None:
-            return
+        menu = None if file is None else self.file_menu(file)
+        if menu is not None:
+            menu.exec(self.tree.viewport().mapToGlobal(point))
+
+    def file_menu(self, file: DuplicateFile) -> QMenu | None:
+        """A copy's right-click menu (``None`` without a path here to open it by)."""
+        if file.path is None or self.file_opener is None:
+            return None
         opener = self.file_opener
         menu = QMenu(self)
         # Looked up by id: a file inside an archive opens from a copy, and Show in file
@@ -555,11 +564,14 @@ class DedupePage(QWidget):
         reveal.triggered.connect(lambda: opener.act_on_resource(file.resource_id, REVEAL))
         if file.archive:
             open_file.setToolTip("Open a copy with its usual program; the archive isn't changed")
+            if self.archive_actions is not None:
+                # Duplicates never removes a file; a copy inside an archive can be hidden.
+                self.archive_actions.add_hide(menu, file.resource_id)
         for entity_id, title in file.items:
             menu.addAction(f"Open {title}").triggered.connect(
                 lambda _=False, e=entity_id: self.open_entity.emit(e)
             )
-        menu.exec(self.tree.viewport().mapToGlobal(point))
+        return menu
 
     def _activated(self, index: QModelIndex) -> None:
         file = self._file_at(index)

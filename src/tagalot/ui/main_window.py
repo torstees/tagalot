@@ -95,6 +95,7 @@ from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write
 from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
+from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
@@ -240,6 +241,11 @@ class MainWindow(QMainWindow):
         self.tag_actions = TagActions(session, self)
         self.files = FileOpener(session, None, self)
         self.files.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+        self.archives = ArchiveActions(session, None, self)
+        self.archives.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+        self.archives.changed.connect(self._tags_changed)  # items may hide or come back
+        self.archives.scan_requested.connect(self._scan_roots)
+        self.archives.config_saved.connect(self._archives_config_saved)
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
         self.tag_actions.pictures_changed.connect(self.thumbnails.forget)
@@ -628,6 +634,7 @@ class MainWindow(QMainWindow):
             return dashboard
         if target.kind == "dedupe":
             dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
+            dedupe.archive_actions = self.archives
             dedupe.open_entity.connect(self.open_entity)
             dedupe.merge_requested.connect(self.merge_items)
             dedupe.versions_requested.connect(
@@ -737,6 +744,7 @@ class MainWindow(QMainWindow):
         search.add_to_requested.connect(self.add_to_container)
         search.action_requested.connect(self.run_action)
         search.file_opener = self.files
+        search.archive_actions = self.archives
         search.zoom_requested.connect(self.zoom)
         search.layout_changed.connect(
             lambda mode: self._save_view_state("layouts", state_key, mode)
@@ -801,6 +809,7 @@ class MainWindow(QMainWindow):
         detail.uncontain_requested.connect(self.tag_actions.uncontain)
         detail.action_requested.connect(self.run_action)
         detail.file_opener = self.files
+        detail.archive_actions = self.archives
 
     # --- the Details tab (#468) ---
 
@@ -2264,6 +2273,11 @@ class MainWindow(QMainWindow):
         self.keep_config.raise_()
         self.keep_config.activateWindow()
         return self.keep_config
+
+    def _archives_config_saved(self) -> None:
+        """A folder's archives are read now (#519): Keep configuration shows the pattern."""
+        if self.keep_config is not None:
+            self.keep_config.reload()
 
     def _scan_roots(self, root_ids: list[str]) -> None:
         if self.session is not None and not self.scans.scan(self.session, root_ids):

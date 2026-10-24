@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.actions import actions_for
+from tagalot.core.archive_choices import is_archive
 from tagalot.core.assets import assets_folders
 from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
@@ -64,6 +65,7 @@ from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import entity_tags
 from tagalot.themes.api import entity_plural
+from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
@@ -319,6 +321,8 @@ class DetailPage(QWidget):
         self._write_back_added = False
         self._look_up_added = False
         self.file_opener: FileOpener | None = None
+        self.archive_actions: ArchiveActions | None = None
+        """What to read inside archives (#519): set by the window."""
         """Opens the item's files (the window sets it); without one, no file actions."""
         self.open_note_action = more.addAction("Open note")
         self.open_note_action.setObjectName("open_note_action")
@@ -1212,6 +1216,8 @@ class DetailPage(QWidget):
                 folder=file.kind == "dir",
                 inside_archive=bool(file.archive),
             )
+        if self.archive_actions is not None:
+            self._add_archive_actions(menu, file)
         if file.by_user and file.role is not None:
             menu.addSeparator()
             unlink = menu.addAction("Unlink from this item")
@@ -1222,11 +1228,28 @@ class DetailPage(QWidget):
             )
         return menu
 
+    def _add_archive_actions(self, menu: QMenu, file: FileRow) -> None:
+        """What to read inside an archive (#519): an archive's commands, Hide for a file
+        inside one, and a folder's archives."""
+        actions = self.archive_actions
+        assert actions is not None
+        if file.archive:
+            menu.addSeparator()
+            actions.add_hide(menu, file.resource_id)
+        elif file.kind == "file" and is_archive(file.relpath):
+            menu.addSeparator()
+            actions.add_archive_actions(menu, file.resource_id)
+        elif file.kind == "dir" and file.root_id:
+            menu.addSeparator()
+            actions.add_folder_action(menu, file.root_id, file.relpath)
+
     def _gallery(self, section: DetailSection) -> GalleryView:
         """The role's pictures in groups, archives' pictures included (#386)."""
-        return GalleryView(
+        gallery = GalleryView(
             section, self.session, self.entity_id, self.file_opener, self._file_menu, self._pool
         )
+        gallery.archive_actions = self.archive_actions
+        return gallery
 
     def _links(self, section: DetailSection) -> QWidget:
         """The related items as links, each with an x to remove it, and Add… (#260)."""

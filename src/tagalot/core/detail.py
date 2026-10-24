@@ -69,7 +69,7 @@ class FileRow:
     by_user: bool = False
     """Linked by hand (#243); it can be unlinked from the item's page."""
     root_id: str = ""
-    """Its root's id (set for a note's file, to find its assets folders)."""
+    """Its root's id."""
     archive: str = ""
     """For a file inside an archive (#391, #524): the archive's relpath. ``path`` is then
     the archive's: the member is opened from a copy taken out of it."""
@@ -474,6 +474,7 @@ def role_files(
                 row.role,
                 row.skipped,
                 row.by_user,
+                root_id=row.root_id,
                 archive=row.archive or "",
             )
         )

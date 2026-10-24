@@ -59,6 +59,7 @@ from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import TagTree
 from tagalot.themes.api import entity_label, entity_plural
+from tagalot.ui.archive_actions import ArchiveActions, InsideArchiveMenu, may_be_archive
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.field_filters import ChoiceCounts, FilterField
 from tagalot.ui.file_actions import (
@@ -237,6 +238,8 @@ class SearchPage(QWidget):
         self._card_override = list(card_lines) if card_lines is not None else None
         self.size_menu: QMenu | None = None
         self.file_opener: FileOpener | None = None
+        self.archive_actions: ArchiveActions | None = None
+        """What to read inside an item's archive (#519): set by the window."""
         """Opens items' files (the window sets it); without one, menus have no file actions."""
         """The window's Thumbnail size menu, offered in the grid's context menu too."""
         self.model = ResultsModel(session, type_labels=type_labels(session.schema), pool=pool)
@@ -549,6 +552,9 @@ class SearchPage(QWidget):
             )
             if opens_file(self.session.schema, hit.type):
                 menu.setDefaultAction(open_file)
+            archives = self.archive_actions
+            if archives is not None and may_be_archive(self.session.schema, hit.type):
+                menu.addMenu(InsideArchiveMenu(self.file_opener, archives, hit.id, menu))
         menu.addSeparator()
         set_picture = menu.addAction("Set picture…")
         set_picture.setToolTip("Choose a picture file for this item (Edit → Undo)")

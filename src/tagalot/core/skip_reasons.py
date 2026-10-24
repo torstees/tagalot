@@ -246,11 +246,12 @@ def _member_rules(conn: Connection, root: RootConfig) -> Callable[[int, str], tu
         mode = archive.effective(patterns)
         if mode is ArchiveMode.NONE:
             return (ARCHIVE_OFF if archive.mode is ArchiveMode.NONE else NOT_READ_INSIDE, root.id)
-        if mode is ArchiveMode.CHOSEN:
-            if archive_id not in choices:
-                choices[archive_id] = member_choices(conn, archive_id)
-            if not choices[archive_id].get(member_name(archive.relpath, relpath)):
-                return (MEMBER_HIDDEN, root.id)
+        if archive_id not in choices:
+            choices[archive_id] = member_choices(conn, archive_id)
+        read = choices[archive_id].get(member_name(archive.relpath, relpath))
+        # Member by member, only those chosen are read; read whole, all but those hidden.
+        if read is False or (mode is ArchiveMode.CHOSEN and not read):
+            return (MEMBER_HIDDEN, root.id)
         return (NEXT_SCAN, root.id)
 
     return rule
@@ -311,7 +312,8 @@ def _describe(key: tuple[str, ...], root: RootConfig) -> SkipRule:
         return SkipRule(
             kind,
             "Hidden inside archives",
-            "These files were hidden when choosing what to read inside their archives.",
+            "These files were hidden inside their archives. Right-click an archive, then "
+            "Choose what to read inside… to show them again, or Read everything inside.",
             root.name,
         )
     if kind == NOT_READ_INSIDE:
