@@ -27,6 +27,7 @@ from tagalot.core.search_spec import (
     TextFilter,
     TextMatch,
 )
+from tagalot.core.skipped_items import skipped_items
 from tagalot.core.tags import TagTree
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.triage import UNTAGGED
@@ -85,7 +86,10 @@ class Dashboard:
 
 def load_dashboard(conn: Connection, schema: ThemeSchema, tree: TagTree) -> Dashboard:
     """Everything the dashboard shows; see the module docstring."""
-    counts = dict(conn.execute(select(Entity.type, func.count()).group_by(Entity.type)).all())
+    kept = Entity.id.not_in(skipped_items())  # items whose files are all skipped (#526)
+    counts = dict(
+        conn.execute(select(Entity.type, func.count()).where(kept).group_by(Entity.type)).all()
+    )
     types = tuple(
         TypeCount(t.type_id, entity_plural(t.entity), int(counts.get(t.type_id, 0)))
         for t in schema.entities.values()
@@ -94,6 +98,7 @@ def load_dashboard(conn: Connection, schema: ThemeSchema, tree: TagTree) -> Dash
         SearchHit(i, t, title)
         for i, t, title in conn.execute(
             select(Entity.id, Entity.type, Entity.title)
+            .where(kept)
             .order_by(Entity.created_at.desc(), Entity.id.desc())
             .limit(RECENT)
         )

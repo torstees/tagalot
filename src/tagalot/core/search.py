@@ -47,6 +47,7 @@ from tagalot.core.search_spec import (
     TextFilter,
     TextMatch,
 )
+from tagalot.core.skipped_items import skipped_items
 from tagalot.core.tags import TagTree
 from tagalot.core.triage import triage_condition
 
@@ -430,6 +431,7 @@ class _Filter:
         return and_(
             or_(Entity.id.in_(matched), Entity.id.in_(contained)),
             self._not_excluded(Entity.id),
+            self._kept(Entity.id),
             self._shown(),
         )
 
@@ -496,6 +498,7 @@ class _Filter:
                     Entity.id.in_(union(select(b).where(a == other), select(a).where(b == other)))
                 )
         where.append(self._not_excluded(Entity.id))
+        where.append(self._kept(Entity.id))
         if spec.triage is not None:
             where.append(triage_condition(spec.triage, spec.inherit_tags, self.tree))
         # Field filters always apply to the listed entity: they belong to its type.
@@ -506,7 +509,7 @@ class _Filter:
             # entities first (a small set), then their ancestors via the closure's key.
             matching = self._materialize(
                 ("descendant matches",),
-                select(Entity.id).where(*own, self._not_excluded(Entity.id)),
+                select(Entity.id).where(*own, self._not_excluded(Entity.id), self._kept(Entity.id)),
             )
             containers = select(EntityAncestor.ancestor_id).where(
                 EntityAncestor.entity_id.in_(matching), EntityAncestor.depth > 0
@@ -536,6 +539,10 @@ class _Filter:
         if not self._excluded:
             return true()
         return entity_id.not_in(self._tagged(self._excluded))
+
+    def _kept(self, entity_id: IdColumn) -> ColumnElement[bool]:
+        """Not an item whose files are all skipped (#526): those are hidden everywhere."""
+        return entity_id.not_in(self._materialize(("skipped items",), skipped_items()))
 
     def _tagged(self, tag_ids: frozenset[int]) -> Select[int]:
         """Ids of entities carrying any of ``tag_ids``: directly, or with inheritance also

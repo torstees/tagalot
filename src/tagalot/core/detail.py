@@ -32,6 +32,7 @@ from tagalot.core.models import (
     Root,
 )
 from tagalot.core.roots import local_path
+from tagalot.core.skipped_items import skipped_items
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import (
@@ -350,12 +351,20 @@ def _load_section(
                 return None
             title = role.label or (section.name or "").replace("_", " ").capitalize()
             files = role_files(conn, entity_id, role.name, root_path)
-            if section.kind == "gallery" and not files:
-                return None  # no pictures: no empty box on the page (#389)
+            if section.kind == "gallery":
+                files = tuple(f for f in files if not f.skipped)  # left out, as in lists (#526)
+                if not files:
+                    return None  # no pictures: no empty box on the page (#389)
             return DetailSection(section.kind, title, files=files)
         case "contents":
             count = (
-                conn.scalar(select(func.count()).where(EntityContains.parent_id == entity_id)) or 0
+                conn.scalar(
+                    select(func.count()).where(
+                        EntityContains.parent_id == entity_id,
+                        EntityContains.child_id.not_in(skipped_items()),
+                    )
+                )
+                or 0
             )
             return DetailSection("contents", "Contents", count=int(count))
         case _:
@@ -497,7 +506,9 @@ def _related(
             select(t.c.a_id.label("other")).where(t.c.b_id == entity_id),
         )
     order: list[Any] = [Entity.title, Entity.id]
-    query = select(Entity.id, Entity.type, Entity.title).where(Entity.id.in_(others))
+    query = select(Entity.id, Entity.type, Entity.title).where(
+        Entity.id.in_(others), Entity.id.not_in(skipped_items())
+    )
     if rel.ordered and side == "b":  # a paper's authors, in their order (#317)
         query = query.join(t, (t.c.a_id == Entity.id) & (t.c.b_id == entity_id))
         order.insert(0, func.coalesce(t.c.position, LAST_POSITION))
