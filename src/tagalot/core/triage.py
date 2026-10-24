@@ -31,9 +31,10 @@ from sqlalchemy import (
     select,
     type_coerce,
 )
-from sqlalchemy.orm import InstrumentedAttribute
+from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from tagalot.core.keywords import keyword_index
+from tagalot.core.member_paths import shown_path
 from tagalot.core.models import (
     Entity,
     EntityAncestor,
@@ -140,6 +141,13 @@ class UnlinkedFile:
     relpath: str
     size: int | None
     status: ResourceStatus
+    archive: str | None = None
+    """For a file inside an archive: the archive's relpath (#524)."""
+
+    @property
+    def shown(self) -> str:
+        """Its path as shown (a member's: its archive's, then its path inside it)."""
+        return shown_path(self.relpath, self.archive)
 
 
 NotesFolder = tuple[str, str] | None
@@ -178,6 +186,7 @@ def unlinked_files(
     conn: Connection, limit: int | None = None, notes: NotesFolder = None
 ) -> list[UnlinkedFile]:
     """Files no item uses, by folder and path; not those in the notes folder."""
+    archive = aliased(Resource)
     query = (
         select(
             Resource.id,
@@ -186,8 +195,10 @@ def unlinked_files(
             Resource.relpath,
             Resource.size,
             Resource.status,
+            archive.relpath,
         )
         .join(Root, Root.id == Resource.root_id)
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .where(*_unlinked_where(notes))
         .order_by(Root.name, Resource.relpath)
         .limit(limit)

@@ -22,15 +22,16 @@ from dataclasses import dataclass, field
 from re import Pattern
 
 from sqlalchemy import Connection, select
+from sqlalchemy.orm import aliased
 
 from tagalot.core.archive_members import (
     ArchiveState,
     archive_patterns,
     archive_states,
     member_choices,
-    member_name,
 )
 from tagalot.core.keep import RootConfig
+from tagalot.core.member_paths import member_name, shown_path
 from tagalot.core.models import ArchiveMode, EntityResource, Resource, ResourceKind
 from tagalot.core.scanner import (
     NOTES_FOLDER_EXTENSIONS,
@@ -71,6 +72,13 @@ class SkippedFile:
     resource_id: int
     root_id: str
     relpath: str
+    archive: str = ""
+    """For a file inside an archive: the archive's relpath (#524)."""
+
+    @property
+    def shown(self) -> str:
+        """Its path as shown (a member's: its archive's, then its path inside it)."""
+        return shown_path(self.relpath, self.archive)
 
 
 @dataclass
@@ -118,6 +126,7 @@ def skip_reasons(
 ) -> SkippedReport:
     """Every rule that skips at least one file now, with its files and counts.
     ``notes`` is the notes folder's (root id, path), if the keep has one."""
+    archive = aliased(Resource)
     rows = conn.execute(
         select(
             Resource.id,
@@ -126,7 +135,9 @@ def skip_reasons(
             Resource.kind,
             Resource.ext,
             Resource.parent_resource_id,
+            archive.relpath,
         )
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .where(Resource.skipped.is_(True))
         .order_by(Resource.root_id, Resource.relpath)
     ).all()
@@ -138,11 +149,11 @@ def skip_reasons(
     members: dict[str, Callable[[int, str], tuple[str, ...]]] = {}
     patterns = {r.id: _patterns(r.exclude) for r in roots}
     files_of: dict[tuple[str, ...], list[int]] = {}
-    for rid, root_id, relpath, kind, ext, parent in rows:
+    for rid, root_id, relpath, kind, ext, parent, outer in rows:
         root = by_root.get(root_id)
         if root is None:
             continue  # a folder no longer in the keep: not this list's business
-        file = SkippedFile(rid, root_id, relpath)
+        file = SkippedFile(rid, root_id, relpath, outer or "")
         if parent is not None:
             if root_id not in members:
                 members[root_id] = _member_rules(conn, root)

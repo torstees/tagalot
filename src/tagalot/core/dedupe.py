@@ -4,7 +4,8 @@ Files are **exact duplicates** when their fingerprints match (size, first and la
 §5): cheap, and nearly always right. :func:`exact_groups` lists them, most space wasted
 first. To be sure, :func:`verify_group` reads every file of a group whole and compares
 full hashes, splitting the group if some differ in the middle. That reads whole files
-(slow on a share), so it runs only when asked, in a worker; results are kept for the
+(slow on a share; a file inside an archive, #524, is read from the archive), so it runs
+only when asked, in a worker; results are kept for the
 session (:class:`Verifier`), keyed by each file's size and time as it is when checked
 (so a file changed since the last scan is read again), not in the keep.
 
@@ -23,17 +24,23 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import rarfile
 from sqlalchemy import Connection, Table, func, select
+from sqlalchemy.orm import aliased
 
+from tagalot.core.member_paths import member_name, shown_path
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.roots import local_path
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.thumbnails.archive import ArchiveError, read_member
 from tagalot.themes.api import EntityRef, Record
 
 logger = logging.getLogger(__name__)
 
 CHUNK = 1 << 20
 """Bytes read at a time for a full hash."""
+MAX_MEMBER_BYTES = 256 * 1024 * 1024
+"""The largest file inside an archive that checking reads (as scans do, #391)."""
 
 
 @dataclass(frozen=True)
@@ -46,9 +53,16 @@ class DuplicateFile:
     mtime_ns: int | None
     status: ResourceStatus
     path: str | None
-    """This computer's path, or ``None`` if its root has none here."""
+    """This computer's path (a member's archive's), or ``None`` if its root has none here."""
     items: tuple[tuple[int, str], ...] = ()
     """``(entity id, title)`` of the items using it."""
+    archive: str = ""
+    """For a file inside an archive (#524): the archive's relpath."""
+
+    @property
+    def shown(self) -> str:
+        """Its path as shown (a member's: its archive's, then its path inside it)."""
+        return shown_path(self.relpath, self.archive)
 
 
 @dataclass(frozen=True)
@@ -65,14 +79,16 @@ class DuplicateGroup:
 
 def exact_groups(conn: Connection, root_path: Callable[[str], str | None]) -> list[DuplicateGroup]:
     """Files that share a fingerprint, grouped, most space wasted first. Missing and
-    skipped files are left out; offline ones are listed (they can't be verified)."""
+    skipped files are left out; offline ones are listed (they can't be verified). Files
+    inside archives are compared too (#524): their fingerprints are made from their
+    contents, like any file's."""
     usable = (
         Resource.kind == ResourceKind.FILE,
         Resource.fingerprint.is_not(None),
         Resource.status != ResourceStatus.MISSING,
         Resource.skipped.is_(False),
-        Resource.parent_resource_id.is_(None),
     )
+    archive = aliased(Resource)
     shared = (
         select(Resource.fingerprint)
         .where(*usable)
@@ -89,8 +105,10 @@ def exact_groups(conn: Connection, root_path: Callable[[str], str | None]) -> li
             Resource.mtime_ns,
             Resource.status,
             Resource.fingerprint,
+            archive.relpath.label("archive"),
         )
         .join(Root, Root.id == Resource.root_id)
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .where(*usable, Resource.fingerprint.in_(shared))
         .order_by(Resource.fingerprint, Root.name, Resource.relpath)
     ).all()
@@ -116,8 +134,9 @@ def exact_groups(conn: Connection, root_path: Callable[[str], str | None]) -> li
                 row.size or 0,
                 row.mtime_ns,
                 row.status,
-                local_path(base, row.relpath) if base is not None else None,
+                local_path(base, row.archive or row.relpath) if base is not None else None,
                 tuple(dict.fromkeys(items.get(row.id, []))),
+                row.archive or "",
             )
         )
     found = [DuplicateGroup(fp, files[0].size, tuple(files)) for fp, files in groups.items()]
@@ -173,6 +192,11 @@ class Verifier:
             if file.path is None:
                 unread[file.resource_id] = "its folder has no path on this computer"
                 continue
+            if file.archive:
+                problem = self._member(file, by_hash, changed)
+                if problem is not None:
+                    unread[file.resource_id] = problem
+                continue
             try:
                 # The file as it is now, not as the last scan saw it: it may have changed
                 # since (a hash cached for the old contents mustn't be reused).
@@ -193,6 +217,30 @@ class Verifier:
         identical = tuple(tuple(ids) for ids in by_hash.values() if len(ids) > 1)
         different = tuple(ids[0] for ids in by_hash.values() if len(ids) == 1)
         return Verification(identical, different, unread, tuple(changed))
+
+    def _member(
+        self, file: DuplicateFile, by_hash: dict[bytes, list[int]], changed: list[int]
+    ) -> str | None:
+        """Hash a file inside an archive, read from the archive (kept by the archive's
+        size and time as it is now); why it couldn't be read, else ``None``."""
+        assert file.path is not None
+        try:
+            st = os.stat(file.path)
+            key = (file.resource_id, st.st_size, st.st_mtime_ns)
+            with self._lock:
+                digest = self._hashes.get(key)
+            if digest is None:
+                name = member_name(file.archive, file.relpath)
+                data = read_member(file.path, name, MAX_MEMBER_BYTES)
+                if len(data) != file.size:
+                    changed.append(file.resource_id)
+                digest = hashlib.blake2b(data, digest_size=32).digest()
+                with self._lock:
+                    self._hashes[key] = digest
+        except (ArchiveError, OSError, rarfile.Error) as e:
+            return getattr(e, "strerror", None) or str(e) or type(e).__name__
+        by_hash.setdefault(digest, []).append(file.resource_id)
+        return None
 
 
 # --- near-duplicates (the theme's blocking keys and similarity) ---

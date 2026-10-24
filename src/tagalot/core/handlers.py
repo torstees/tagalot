@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import Connection, select
 
-from tagalot.core.detail import FileRow, note_file, role_files
+from tagalot.core.detail import FileRow, note_file, resource_file, role_files
 from tagalot.core.models import Entity, ResourceStatus
 from tagalot.core.theme_schema import ThemeSchema
 
@@ -40,15 +40,25 @@ class CannotOpen(Exception):
 class FileToOpen:
     resource_id: int
     path: str
-    """This machine's path."""
+    """This machine's path (for a file inside an archive, the archive's)."""
     is_dir: bool
     role: str | None = None
     """The role the item links it in (per-role overrides use it)."""
+    member: str = ""
+    """For a file inside an archive (#524): its path inside it. It is opened from a copy
+    taken out of the archive (the UI extracts it first), and shown in the file manager as
+    the archive."""
 
     @property
     def ext(self) -> str:
         """The extension, lowercased with its dot (``".psd"``), or ``""``."""
-        return posixpath.splitext(_name(self.path))[1].lower()
+        name = self.member.rpartition("/")[2] if self.member else _name(self.path)
+        return posixpath.splitext(name)[1].lower()
+
+    @property
+    def name(self) -> str:
+        """Its file name (a member's own, not its archive's)."""
+        return self.member.rpartition("/")[2] if self.member else _name(self.path)
 
 
 @dataclass(frozen=True)
@@ -96,12 +106,23 @@ def resource_to_open(
     return found
 
 
+def file_to_open(
+    conn: Connection, resource_id: int, root_path: Callable[[str], str | None]
+) -> tuple[FileRow, ...]:
+    """Any one file, as :func:`choose_file` takes it (empty if it's gone): Triage's and
+    Duplicates' rows, which aren't one item's."""
+    found = resource_file(conn, resource_id, root_path)
+    return () if found is None else (found,)
+
+
 def choose_file(files: Sequence[FileRow]) -> FileToOpen:
     """The first file that can be opened: known to be there at the last scan, with a path on
     this computer. Otherwise :class:`CannotOpen` says why the first one can't."""
     for file in files:
         if file.status is ResourceStatus.OK and file.path is not None:
-            return FileToOpen(file.resource_id, file.path, file.kind == "dir", file.role)
+            return FileToOpen(
+                file.resource_id, file.path, file.kind == "dir", file.role, file.member
+            )
     if not files:
         raise CannotOpen("Nothing to open: this item has no files.")
     first = files[0]

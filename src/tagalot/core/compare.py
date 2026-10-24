@@ -230,7 +230,7 @@ def _files(
         sizes = [f.size for f in files if f.size is not None]
         put(column, "size", "Size", format_bytes(sum(sizes)) if sizes else "")
         places = [
-            f"{f.root_name} {PATH_MARK} {f.relpath}" if f.relpath else f.root_name
+            f"{f.root_name} {PATH_MARK} {f.shown}" if f.relpath else f.root_name
             for f in linked[:MAX_FILES]
         ]
         if len(linked) > MAX_FILES:

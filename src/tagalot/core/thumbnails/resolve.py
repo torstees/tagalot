@@ -10,14 +10,18 @@ come from ``thumbs.db`` when cached, and files are only read for resources that 
 
 import contextlib
 import logging
+import tempfile
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from PIL import Image
 from sqlalchemy import Connection, Engine, Row, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from tagalot.core.member_paths import PATH_MARK, member_name
 from tagalot.core.models import (
     Entity,
     EntityContains,
@@ -32,10 +36,10 @@ from tagalot.core.models import (
 from tagalot.core.roots import local_path
 from tagalot.core.see_through import counts_in
 from tagalot.core.theme_schema import ThemeSchema
-from tagalot.core.thumbnails.archive import ArchiveError, read_pictures
+from tagalot.core.thumbnails.archive import ArchiveError, read_member, read_pictures
 from tagalot.core.thumbnails.cache import ThumbCache, online_key, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
-from tagalot.core.thumbnails.render import load_image_bytes, renderer_for
+from tagalot.core.thumbnails.render import Renderer, load_image_bytes, renderer_for
 from tagalot.core.thumbnails.title_card import Card, title_card
 from tagalot.core.writer import DbWriter, WriterClosedError
 from tagalot.themes.api import (
@@ -64,10 +68,14 @@ _RESOURCE_COLUMNS = (
     Resource.size,
     Resource.mtime_ns,
     Resource.status,
+    Resource.parent_resource_id,
 )
 
 MEMBER_RENDERER, MEMBER_RENDERER_VERSION = "archive-member", 1
 """How a picture inside an archive is made, in its cache key (with its path inside)."""
+
+MAX_MEMBER_BYTES = 256 * 1024 * 1024
+"""The largest file inside an archive (a member resource, #524) drawn, as scans read."""
 
 FALLBACK_ICON = "entity"
 """The icon shown when a chain ends without an :class:`Icon`."""
@@ -448,11 +456,15 @@ class _Resolution:
         if self._status.get(resource.id) != ResourceStatus.OK or self.owner.failed(key):
             return None
         try:
-            image = renderer.load(resource.path, size)
+            if resource.archive is not None and resource.archive_path:
+                image = _member_image(resource, renderer, size)
+            else:
+                image = renderer.load(resource.path, size)
             picture = None if image is None else make_thumbnail(image, size)
         except Exception as e:  # unreadable, corrupt, or unsupported: try the next one
-            logger.warning("Can't make a thumbnail of %s: %s", resource.path, e)
-            self._problems.append((resource.path, f"{type(e).__name__}: {e}"))
+            where = _where(resource)
+            logger.warning("Can't make a thumbnail of %s: %s", where, e)
+            self._problems.append((where, f"{type(e).__name__}: {e}"))
             self.owner.record_failure(resource, str(e) or type(e).__name__)
             picture = None
         if picture is None:
@@ -556,6 +568,24 @@ class _Resolution:
         except (KeyError, StopIteration):  # a root no longer in keep.toml
             return None
         self._status[row.id] = row.status
+        if row.parent_resource_id is not None:  # inside an archive (#524)
+            archive = self.conn.scalar(
+                select(Resource.relpath).where(Resource.id == row.parent_resource_id)
+            )
+            if archive is None:
+                return None
+            return ResourceInfo(
+                row.id,
+                row.root_id,
+                row.relpath,
+                row.kind.value,
+                row.ext,
+                row.size,
+                row.mtime_ns,
+                "",
+                archive=archive,
+                archive_path=local_path(root, archive),
+            )
         return ResourceInfo(
             row.id,
             row.root_id,
@@ -566,3 +596,29 @@ class _Resolution:
             row.mtime_ns,
             local_path(root, row.relpath),
         )
+
+
+def _member_image(resource: ResourceInfo, renderer: Renderer, size: int) -> Image.Image | None:
+    """Draw a file inside an archive (#524): copied out of the archive into a temporary
+    folder for the renderer, which reads files, and deleted after. The archive is only
+    read."""
+    assert resource.archive is not None
+    assert resource.archive_path is not None
+    name = member_name(resource.archive, resource.relpath)
+    data = read_member(resource.archive_path, name, MAX_MEMBER_BYTES)
+    with tempfile.TemporaryDirectory(prefix="tagalot-thumb-") as folder:
+        copy = Path(folder) / f"member{resource.ext}"
+        copy.write_bytes(data)
+        image = renderer.load(str(copy), size)
+        if image is not None:
+            image.load()  # read it all before the copy goes
+        return image
+
+
+def _where(resource: ResourceInfo) -> str:
+    """The file's path for messages: a member's archive's, then its path inside it."""
+    if resource.archive is not None and resource.archive_path:
+        return (
+            f"{resource.archive_path} {PATH_MARK} {member_name(resource.archive, resource.relpath)}"
+        )
+    return resource.path

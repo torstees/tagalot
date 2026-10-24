@@ -75,3 +75,5 @@ Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** can
 - **Open with ▸ Choose a program…** picks a program just this once; **Always open .ext files with…** makes it the program Tagalot uses for that kind of file (saved in your [settings](../reference/keep-files.md#settingstoml); **Stop using…** undoes that).
 
 If the file can't be opened, the status bar says why: it's missing, its folder is offline, or the folder has no path on this computer.
+
+**A file inside an archive** (a font in a zip, when the keep reads inside its archives) shows as the archive, then its path inside it: `Aurora Studio/pack.zip › fonts/Regular.ttf`. **Open file** and **Open with** open a copy taken out of the archive (the archive isn't changed, and neither is anything you save in the copy), and **Show the archive in file manager** shows the archive.

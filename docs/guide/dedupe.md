@@ -8,6 +8,8 @@ Files with the same fingerprint, grouped, the most space wasted first ("3 groups
 
 A fingerprint is quick to take but samples the file. **Check** reads the selected groups' files whole to be sure (**Check all** does every group); each copy then says *same*, *differs*, or *couldn't read* (offline, say).
 
+Files inside archives the keep reads are compared too, so a font in a zip and a loose copy of it are one group. They show as the archive, then the path inside it (`pack.zip › fonts/Regular.ttf`); **Open file** opens a copy, and **Show the archive in file manager** shows the archive.
+
 ## Similar items
 
 The theme's near-duplicates, most alike first: songs with the same artist and title and about the same length, pictures that look the same, books by one writer with nearly the same title, papers sharing a DOI or arXiv ID.

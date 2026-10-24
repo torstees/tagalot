@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy import Connection, func, select, union
+from sqlalchemy.orm import aliased
 
 from tagalot.core.assets import ASSETS
 from tagalot.core.extra_keys import EXTRA
@@ -19,6 +20,8 @@ from tagalot.core.ingest import TITLE, merged_into
 from tagalot.core.item_pictures import OwnPicture, own_picture
 from tagalot.core.keywords import ItemKeyword, item_keywords
 from tagalot.core.linked_fields import read_only_reason
+from tagalot.core.member_paths import PATH_MARK as PATH_MARK  # where it was
+from tagalot.core.member_paths import member_name, shown_path
 from tagalot.core.models import (
     LAST_POSITION,
     Entity,
@@ -57,7 +60,8 @@ class FileRow:
     size: int | None
     status: ResourceStatus
     path: str | None
-    """This machine's path, or ``None`` if its root isn't configured here."""
+    """This machine's path (a member's archive's, for a file inside one), or ``None`` if its
+    root isn't configured here."""
     role: str | None = None
     """The role it is linked in."""
     skipped: bool = False
@@ -66,6 +70,19 @@ class FileRow:
     """Linked by hand (#243); it can be unlinked from the item's page."""
     root_id: str = ""
     """Its root's id (set for a note's file, to find its assets folders)."""
+    archive: str = ""
+    """For a file inside an archive (#391, #524): the archive's relpath. ``path`` is then
+    the archive's: the member is opened from a copy taken out of it."""
+
+    @property
+    def member(self) -> str:
+        """Its path inside its archive, or ``""`` for a file of its own."""
+        return member_name(self.archive, self.relpath) if self.archive else ""
+
+    @property
+    def shown(self) -> str:
+        """Its path as shown: a member's is its archive's, then its path inside it."""
+        return shown_path(self.relpath, self.archive)
 
 
 @dataclass(frozen=True)
@@ -152,9 +169,6 @@ class EntityDetail:
     picture: OwnPicture | None = None
     """Its own picture, chosen by the user or given by its note (#439), if any."""
 
-
-PATH_MARK = "\u203a"
-"""Between a root's name and a path inside it."""
 
 MAX_ROWS = 200
 """Files or entities listed per section; the section says how many more there are."""
@@ -264,6 +278,7 @@ def note_file(
     conn: Connection, entity_id: int, root_path: Callable[[str], str | None]
 ) -> FileRow | None:
     """The file the entity's note was read from (§9 *Notes*), or ``None``."""
+    archive = aliased(Resource)
     row = conn.execute(
         select(
             Resource.id,
@@ -274,7 +289,9 @@ def note_file(
             Resource.size,
             Resource.status,
             Resource.skipped,
+            archive.relpath.label("archive"),
         )
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .join(EntityNote, EntityNote.resource_id == Resource.id)
         .join(Root, Root.id == Resource.root_id)
         .where(EntityNote.entity_id == entity_id)
@@ -289,10 +306,11 @@ def note_file(
         row.kind.value,
         row.size,
         row.status,
-        local_path(base, row.relpath) if base is not None else None,
+        local_path(base, row.archive or row.relpath) if base is not None else None,
         NOTE_ROLE,
         row.skipped,
         root_id=row.root_id,
+        archive=row.archive or "",
     )
 
 
@@ -413,7 +431,9 @@ def role_files(
     resource_id: int | None = None,
 ) -> tuple[FileRow, ...]:
     """The entity's files in ``role`` (every role if ``None``), in their sort order; with
-    ``resource_id``, only that one of them."""
+    ``resource_id``, only that one of them. A file inside an archive (#524) has the
+    archive's path."""
+    archive = aliased(Resource)
     query = (
         select(
             Resource.id,
@@ -426,7 +446,9 @@ def role_files(
             EntityResource.role,
             Resource.skipped,
             EntityResource.by_user,
+            archive.relpath.label("archive"),
         )
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .join(EntityResource, EntityResource.resource_id == Resource.id)
         .join(Root, Root.id == Resource.root_id)
         .where(EntityResource.entity_id == entity_id)
@@ -448,13 +470,53 @@ def role_files(
                 row.kind.value,
                 row.size,
                 row.status,
-                local_path(base, row.relpath) if base is not None else None,
+                local_path(base, row.archive or row.relpath) if base is not None else None,
                 row.role,
                 row.skipped,
                 row.by_user,
+                archive=row.archive or "",
             )
         )
     return tuple(found)
+
+
+def resource_file(
+    conn: Connection, resource_id: int, root_path: Callable[[str], str | None]
+) -> FileRow | None:
+    """One file, whichever item uses it (Triage's and Duplicates' rows), or ``None`` if it
+    is gone. A file inside an archive has the archive's path, as in :func:`role_files`."""
+    archive = aliased(Resource)
+    row = conn.execute(
+        select(
+            Resource.id,
+            Resource.root_id,
+            Root.name,
+            Resource.relpath,
+            Resource.kind,
+            Resource.size,
+            Resource.status,
+            Resource.skipped,
+            archive.relpath.label("archive"),
+        )
+        .outerjoin(archive, archive.id == Resource.parent_resource_id)
+        .join(Root, Root.id == Resource.root_id)
+        .where(Resource.id == resource_id)
+    ).first()
+    if row is None:
+        return None
+    base = root_path(row.root_id)
+    return FileRow(
+        row.id,
+        row.name,
+        row.relpath,
+        row.kind.value,
+        row.size,
+        row.status,
+        local_path(base, row.archive or row.relpath) if base is not None else None,
+        skipped=row.skipped,
+        root_id=row.root_id,
+        archive=row.archive or "",
+    )
 
 
 def _related_sections(

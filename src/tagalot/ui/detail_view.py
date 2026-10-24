@@ -1210,6 +1210,7 @@ class DetailPage(QWidget):
                 entity_id=self.entity_id,
                 resource_id=file.resource_id,
                 folder=file.kind == "dir",
+                inside_archive=bool(file.archive),
             )
         if file.by_user and file.role is not None:
             menu.addSeparator()
@@ -1304,7 +1305,7 @@ def _form(body: QWidget) -> QFormLayout:
 
 
 def _file_label(file: FileRow) -> QLabel:
-    text = html.escape(file.relpath or "(the root folder)")
+    text = html.escape(file.shown or "(the root folder)")
     facts = [html.escape(file.root_name)]
     if file.size is not None and file.kind == "file":
         facts.append(f"{file.size:,} bytes")
@@ -1320,7 +1321,12 @@ def _file_label(file: FileRow) -> QLabel:
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setWordWrap(True)  # long paths wrap rather than widen the page
-    label.setToolTip(file.path or "This root has no path on this computer")
+    if file.path is None:
+        label.setToolTip("This root has no path on this computer")
+    elif file.archive:  # opened from a copy; the archive is never changed (#524)
+        label.setToolTip(f"Inside the archive {file.path}")
+    else:
+        label.setToolTip(file.path)
     return label
 
 

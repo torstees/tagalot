@@ -51,7 +51,7 @@ from tagalot.core.dedupe import (
     near_duplicates,
 )
 from tagalot.core.formats import format_bytes
-from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.handlers import OPEN, REVEAL
 from tagalot.core.not_duplicates import (
     EXACT,
     Dismissals,
@@ -431,7 +431,7 @@ class DedupePage(QWidget):
         return cells
 
     def _file_row(self, file: DuplicateFile) -> list[QStandardItem]:
-        folder, _, name = file.relpath.rpartition("/")
+        folder, _, name = file.shown.rpartition("/")
         where = f"{file.root_name} \u203a {folder}" if folder else file.root_name
         items = ", ".join(title for _, title in file.items) or "(no item)"
         cells = [
@@ -442,7 +442,12 @@ class DedupePage(QWidget):
             QStandardItem("offline" if file.status.value == "offline" else ""),
         ]
         cells[0].setData(file, _FILE)
-        cells[1].setToolTip(file.path or "Its folder has no path on this computer")
+        if file.path is None:
+            cells[1].setToolTip("Its folder has no path on this computer")
+        elif file.archive:  # opened from a copy; the archive is never changed (#524)
+            cells[1].setToolTip(f"Inside the archive {file.path}")
+        else:
+            cells[1].setToolTip(file.path)
         return cells
 
     # --- checking ---
@@ -538,14 +543,18 @@ class DedupePage(QWidget):
         file = self._file_at(self.tree.indexAt(point))
         if file is None or file.path is None or self.file_opener is None:
             return
-        opener, path = self.file_opener, file.path
+        opener = self.file_opener
         menu = QMenu(self)
-        menu.addAction("Open file").triggered.connect(
-            lambda: opener.act(FileToOpen(file.resource_id, path, False), OPEN)
+        # Looked up by id: a file inside an archive opens from a copy, and Show in file
+        # manager shows its archive (#524).
+        open_file = menu.addAction("Open file")
+        open_file.triggered.connect(lambda: opener.act_on_resource(file.resource_id, OPEN))
+        reveal = menu.addAction(
+            "Show the archive in file manager" if file.archive else "Show in file manager"
         )
-        menu.addAction("Show in file manager").triggered.connect(
-            lambda: opener.act(FileToOpen(file.resource_id, path, False), REVEAL)
-        )
+        reveal.triggered.connect(lambda: opener.act_on_resource(file.resource_id, REVEAL))
+        if file.archive:
+            open_file.setToolTip("Open a copy with its usual program; the archive isn't changed")
         for entity_id, title in file.items:
             menu.addAction(f"Open {title}").triggered.connect(
                 lambda _=False, e=entity_id: self.open_entity.emit(e)
