@@ -515,7 +515,9 @@ _UNSAFE = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 
 def _safe_parts(name: str) -> list[str]:
     """The member's path as parts that are safe file names on any OS."""
-    parts = [_UNSAFE.sub("_", p) for p in PurePosixPath(name).parts if p not in ("", ".", "..")]
+    # Split on "/" (not PurePosixPath, whose parts keep a leading "/", which would make
+    # the copy's path absolute: outside the temporary folder).
+    parts = [_UNSAFE.sub("_", p) for p in name.split("/") if p not in ("", ".", "..")]
     return parts or ["member"]
 
 

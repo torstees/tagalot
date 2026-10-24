@@ -9,6 +9,7 @@ from PIL import Image
 from sqlalchemy import delete, select, update
 
 from tagalot.builtin_themes.generic import GenericTheme
+from tagalot.core.archive_members import _safe_parts
 from tagalot.core.dedupe import Verifier, exact_groups
 from tagalot.core.detail import FileRow, resource_file, role_files
 from tagalot.core.gallery import extract_member
@@ -71,6 +72,8 @@ def test_opening_copies_the_member_out(env: Env, tmp_path: Path) -> None:
     # Recorded names have no leading "/" or empty parts; the archive's may.
     bold = extract_member(archive, "/fonts//Bold.ttf", tmp_path / "b")
     assert bold.read_bytes() == b"bold font"
+    # ...and the copy stays in its folder, whatever the name (a leading "/" or "..").
+    assert bold == tmp_path / "b" / "fonts" / "Bold.ttf"
     assert Path(archive).read_bytes() == before  # only read
 
 
@@ -178,3 +181,13 @@ def test_write_to_file_says_a_member_is_inside_an_archive(env: Env) -> None:
     assert write.relpath == f"{PACK}/readme.md"
     assert write.problem == INSIDE_ARCHIVE
     assert not write.changes
+
+
+def test_copies_never_leave_their_folder() -> None:
+    """A member's name never makes its copy's path absolute or climb out of the folder,
+    on any OS (found on Linux CI: a leading "/" kept by ``PurePosixPath.parts``)."""
+    for name in ("/etc/passwd", "../../up.txt", "a/../../b.txt", r"c:\x\y.txt", "//a//b.txt"):
+        parts = _safe_parts(name)
+        assert parts
+        assert all(p not in ("", ".", "..") and "/" not in p and "\\" not in p for p in parts)
+        assert not Path(*parts).is_absolute()

@@ -169,7 +169,7 @@ def rar_tool() -> bool:
     return True
 
 
-_UNSAFE = re.compile(r'[<>:"|?*\x00-\x1f]')
+_UNSAFE = re.compile(r'[<>:"\\|?*\x00-\x1f]')
 
 
 def extract_member(path: str, name: str, folder: Path) -> Path:
@@ -178,7 +178,9 @@ def extract_member(path: str, name: str, folder: Path) -> Path:
     and return the copy's path. The archive is only read. Raises :class:`ArchiveError` or
     ``OSError``."""
     data = read_member(path, name, MAX_OPENED_BYTES)
-    parts = [_UNSAFE.sub("_", p) for p in PurePosixPath(name).parts if p not in ("", ".", "..")]
+    # Split on "/" (not PurePosixPath, whose parts keep a leading "/", which would make
+    # the copy's path absolute: outside ``folder``); a backslash is a character, made safe.
+    parts = [_UNSAFE.sub("_", p) for p in name.split("/") if p not in ("", ".", "..")]
     if not parts:
         raise ArchiveError(f"{name!r} isn't a file name")
     where = folder.joinpath(*parts)
