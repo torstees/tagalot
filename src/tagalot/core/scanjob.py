@@ -9,13 +9,29 @@ import json
 import logging
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
 
 from sqlalchemy import Connection, Engine, select, update
+from sqlalchemy.orm import aliased
 
+from tagalot.core.archive_members import (
+    ArchiveState,
+    MemberCounts,
+    MemberPlan,
+    apply_listing,
+    archive_patterns,
+    archive_states,
+    extracted,
+    list_members,
+    member_info,
+    set_aside,
+    wake_members,
+)
+from tagalot.core.archive_members import store_fingerprints as store_member_fingerprints
 from tagalot.core.fingerprint import (
     FingerprintJob,
     FingerprintResult,
@@ -39,7 +55,7 @@ from tagalot.core.markdown_check import (
     is_markdown,
     record_markdown_problems,
 )
-from tagalot.core.models import Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import ArchiveMode, Resource, ResourceKind, ResourceStatus, Root
 from tagalot.core.note_keys import sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
@@ -63,6 +79,7 @@ from tagalot.core.scanner import (
 from tagalot.core.see_through import counts_in, hidden_dir, logical
 from tagalot.core.theme_options import effective_options
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.thumbnails.archive import ArchiveError
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import ResourceInfo, Theme
 
@@ -109,6 +126,8 @@ class ScanReport:
     ingest_errors: list[tuple[str, str]] = field(default_factory=list)
     """``(relative path, message)`` for resources whose ingest failed; they stay pending."""
     ingest_warnings: list[IngestWarning] = field(default_factory=list)
+    members: MemberCounts = field(default_factory=MemberCounts)
+    """What happened to files inside archives the user chose to look inside (#391)."""
 
 
 def scan_root(
@@ -226,6 +245,7 @@ def scan_root(
         report.fingerprinted += writer.run(partial(_store, batch))
 
     report.moves = writer.run(partial(_moves, applied))
+    _sync_members(writer, reader, root, path, extensions, when, report, say)
     if theme is not None and schema is not None:
         options = effective_options(
             theme, theme_options or {}, root.options, (root.assets, markdown_assets)
@@ -267,6 +287,50 @@ def scan_root(
         len(report.ingest_errors),
     )
     return report
+
+
+def _sync_members(
+    writer: DbWriter,
+    reader: Engine,
+    root: RootConfig,
+    path: str,
+    extensions: Collection[str] | None,
+    when: datetime,
+    report: ScanReport,
+    say: Progress,
+) -> None:
+    """Record the members of the root's archives that are read (#391,
+    ``core.archive_members``): each such archive is listed again when it changed since it
+    was last listed. Archives not read now take their members with them."""
+    with reader.connect() as conn:
+        states = archive_states(conn, root.id)
+    patterns = archive_patterns(root.archives)
+    reading: list[tuple[ArchiveState, ArchiveMode]] = []
+    for archive in states:
+        mode = archive.effective(patterns)
+        if (
+            archive.status is ResourceStatus.OK
+            and not archive.skipped
+            and mode is not ArchiveMode.NONE
+        ):
+            reading.append((archive, mode))
+        elif archive.has_members or archive.listed is not None:
+            writer.run(partial(set_aside, archive=archive))
+    for number, (archive, mode) in enumerate(reading, start=1):
+        if not archive.needs_listing():
+            writer.run(partial(wake_members, archive_id=archive.id))
+            continue
+        say(f"Looking inside archives in {root.name}: {number} of {len(reading)}…")
+        try:
+            listing = list_members(local_path(path, archive.relpath), extensions)
+        except (ArchiveError, OSError) as e:
+            report.read_errors.append((archive.relpath, f"Can't look inside it: {e}"))
+            logger.warning("Can't list %s in root %s: %s", archive.relpath, root.id, e)
+            continue
+        plan = MemberPlan(archive, mode, listing)
+        counts = writer.run(partial(apply_listing, root_id=root.id, plan=plan, when=when))
+        for name in ("new", "changed", "missing", "skipped", "undecided"):
+            setattr(report.members, name, getattr(report.members, name) + getattr(counts, name))
 
 
 # Writer jobs: module-level functions so each is a plain Callable[[Connection], T].
@@ -417,6 +481,7 @@ def _ingest_pending(
     pending, notes = _without_notes(reader, theme, pending, notes_folder)
     if notes:
         writer.run(partial(_mark_ingested, [r.id for r in notes], when))
+    pending += _pending_members(reader, root, path, see_through)
     pending = _read_last(reader, root, path, theme, pending, see_through)
     _ingest_files(writer, reader, root, theme, schema, when, report, say, options, pending)
     if gallery_roles(schema):  # gallery roles filled from folders (#387)
@@ -457,6 +522,45 @@ def _ingest_pending(
     writer.run(partial(fill_note_pictures, root_id=root.id, notes_folder=notes_folder))
     if folder_table(schema) is not None:  # what folders' notes say they belong to (#449)
         writer.run(partial(link_folder_fields, schema=schema, root_id=root.id))
+
+
+def _pending_members(
+    reader: Engine, root: RootConfig, path: str, see_through: frozenset[str]
+) -> list[ResourceInfo]:
+    """The root's members of archives waiting to be read (#391), as the theme gets them:
+    counting in the archive's folder, to be extracted before they're read."""
+    archive = aliased(Resource)
+    with reader.connect() as conn:
+        rows = conn.execute(
+            select(
+                Resource.id,
+                Resource.relpath,
+                Resource.kind,
+                Resource.ext,
+                Resource.size,
+                Resource.mtime_ns,
+                archive.relpath,
+            )
+            .join(archive, archive.id == Resource.parent_resource_id)
+            .where(
+                Resource.root_id == root.id,
+                Resource.status == ResourceStatus.OK,
+                Resource.skipped.is_(False),
+                Resource.ingested_at.is_(None),
+                archive.status == ResourceStatus.OK,
+            )
+            .order_by(Resource.relpath)
+        ).all()
+    return [
+        member_info(
+            root.id,
+            (rid, rel, kind, ext, size, mtime),
+            outer,
+            local_path(path, outer),
+            see_through,
+        )
+        for rid, rel, kind, ext, size, mtime, outer in rows
+    ]
 
 
 def _check_markdown(
@@ -528,19 +632,41 @@ def _ingest_files(
         chunks = [batch[i : i + PREPARE_CHUNK] for i in range(0, len(batch), PREPARE_CHUNK)]
         return [pool.submit(_prepare, ingester, chunk, root) for chunk in chunks]
 
+    # Members of archives are copied out for each batch, and the copies dropped once it's
+    # ingested (#391).
+    copies: dict[int, ExitStack] = {}
+
+    def take_out(number: int) -> list[ResourceInfo]:
+        stack = ExitStack()
+        copies[number] = stack
+        found = stack.enter_context(extracted(batches[number]))
+        report.ingest_errors.extend(found.errors)
+        if found.fingerprints:
+            writer.run(partial(store_member_fingerprints, fingerprints=found.fingerprints))
+        return found.resources
+
     try:
-        reading = start_reading(batches[0])
-        for number, batch in enumerate(batches):
-            done = f"{number * INGEST_BATCH + len(batch)} of {len(pending)} in {root.name}"
+        ready = take_out(0)
+        reading = start_reading(ready)
+        for number in range(len(batches)):
+            batch = ready
+            done = (
+                f"{number * INGEST_BATCH + len(batches[number])} of {len(pending)} in {root.name}"
+            )
             prepared: dict[int, Any] = {}
             if pool is not None:
                 say(f"Reading {done}…")
                 batch, prepared = _gather(reading, report)
-                if number + 1 < len(batches):
-                    reading = start_reading(batches[number + 1])
+            if number + 1 < len(batches):
+                ready = take_out(number + 1)
+                if pool is not None:
+                    reading = start_reading(ready)
             say(f"Ingesting {done}…")
             _ingest_batch(writer, ingester, schema, batch, when, prepared, options, report, root)
+            copies.pop(number).close()
     finally:
+        for stack in copies.values():
+            stack.close()
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
 

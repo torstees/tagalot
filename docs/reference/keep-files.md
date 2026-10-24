@@ -30,6 +30,7 @@ exclude = [                                 # Skip patterns
 # watched = false                           # not scanned; its items stay, offline
 # writable = true                           # Write to file… may change files here
 # assets = "Attachments"                    # Markdown files' assets folder (./ : from each file)
+# archives = ["Fonts/**"]                   # read the files inside these folders' archives
 
 [roots.exclude_notes]                       # why a Skip pattern is there
 'Old/**' = 'not sorted yet'

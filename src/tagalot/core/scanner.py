@@ -12,7 +12,16 @@ from typing import Any
 
 from sqlalchemy import Connection, bindparam, delete, exists, insert, select, update
 
-from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import (
+    ArchiveMemberChoice,
+    ArchiveRead,
+    Entity,
+    EntityResource,
+    Resource,
+    ResourceKind,
+    ResourceStatus,
+    Root,
+)
 from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
 from tagalot.core.see_through import logical
 from tagalot.themes.api import KIND_EXTENSIONS, Kind
@@ -538,6 +547,40 @@ def _file_name(c: _Candidate) -> str:
     return posixpath.basename(c.path).casefold()
 
 
+def _move_members(conn: Connection, old_id: int, new_id: int) -> None:
+    """An archive moved: the files inside it read as resources (#391) follow it, their
+    paths now under its new one, and so do the choices made for it."""
+    old_path = conn.scalar(select(Resource.relpath).where(Resource.id == old_id))
+    new = conn.execute(select(Resource.root_id, Resource.relpath).where(Resource.id == new_id))
+    found = new.one_or_none()
+    if old_path is None or found is None:
+        return
+    root_id, new_path = found
+    members = conn.execute(
+        select(Resource.id, Resource.relpath).where(Resource.parent_resource_id == old_id)
+    ).all()
+    for member_id, relpath in members:
+        inside = relpath[len(old_path) + 1 :]
+        conn.execute(
+            update(Resource)
+            .where(Resource.id == member_id)
+            .values(parent_resource_id=new_id, root_id=root_id, relpath=f"{new_path}/{inside}")
+        )
+    if (
+        conn.scalar(select(ArchiveRead.resource_id).where(ArchiveRead.resource_id == new_id))
+        is None
+    ):
+        conn.execute(
+            update(ArchiveRead).where(ArchiveRead.resource_id == old_id).values(resource_id=new_id)
+        )
+    conn.execute(
+        update(ArchiveMemberChoice)
+        .where(ArchiveMemberChoice.archive_id == old_id)
+        .values(archive_id=new_id)
+        .prefix_with("OR IGNORE")
+    )
+
+
 def _transfer(conn: Connection, old_id: int, new_id: int) -> None:
     conn.execute(
         update(EntityResource)
@@ -548,11 +591,7 @@ def _transfer(conn: Connection, old_id: int, new_id: int) -> None:
     conn.execute(
         update(Entity).where(Entity.thumb_resource_id == old_id).values(thumb_resource_id=new_id)
     )
-    conn.execute(
-        update(Resource)
-        .where(Resource.parent_resource_id == old_id)
-        .values(parent_resource_id=new_id)
-    )
+    _move_members(conn, old_id, new_id)
     first_seen = select(Resource.first_seen_at).where(Resource.id == old_id).scalar_subquery()
     conn.execute(update(Resource).where(Resource.id == new_id).values(first_seen_at=first_seen))
     conn.execute(delete(Resource).where(Resource.id == old_id))  # leftover links cascade

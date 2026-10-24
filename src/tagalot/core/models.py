@@ -496,6 +496,51 @@ class TagIconPicture(Base):
     height: Mapped[int]
 
 
+class ArchiveMode(enum.StrEnum):
+    """What the user chose to read inside one archive (#391)."""
+
+    ALL = "all"
+    CHOSEN = "chosen"
+    NONE = "none"
+
+
+class ArchiveRead(Base):
+    """How an archive's members are read as resources (#391, DESIGN.md §6 *Archive
+    members*), and when its listing was last read: a row per archive that has been looked
+    inside, or that the user chose for.
+
+    ``mode`` is the user's choice for this archive: ``all`` (every member, those added
+    later too), ``chosen`` (the members marked read in ``archive_member_choice``), ``none``
+    (none, over a folder pattern), or ``None`` (as the root's ``archives`` patterns say).
+    ``listed_size`` and ``listed_mtime_ns`` are the archive's when its members were last
+    listed: a scan lists it again only when they change, or when it has never been listed.
+    """
+
+    __tablename__ = "archive_read"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    mode: Mapped[ArchiveMode | None] = mapped_column(_enum(ArchiveMode))
+    listed_size: Mapped[int | None]
+    listed_mtime_ns: Mapped[int | None]
+
+
+class ArchiveMemberChoice(Base):
+    """What the user decided for one member of an archive read member by member (#391):
+    ``read`` true (read it), false (hidden), or ``None`` (not decided yet: a member that
+    appeared after the choice, listed for review in Triage, #520). ``path`` is the member's
+    path inside the archive, with ``/``."""
+
+    __tablename__ = "archive_member_choice"
+
+    archive_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    path: Mapped[str] = mapped_column(primary_key=True)
+    read: Mapped[bool | None]
+
+
 class DedupeDismissal(Base):
     """A group of identical files or a pair of similar items the user marked as not a
     duplicate (§12 Dedupe, #121): hidden from the Dedupe page.
