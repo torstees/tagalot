@@ -185,6 +185,23 @@ def read_pictures(path: str, names: Sequence[str]) -> Iterator[tuple[str, bytes 
                 yield name, None
 
 
+def member_key(name: str) -> str:
+    """A member's path as members are recorded (#391): no empty parts or leading ``/``."""
+    return "/".join(p for p in name.split("/") if p)
+
+
+def read_member(path: str, name: str, limit: int) -> bytes:
+    """The contents of the member ``name`` (its path inside the archive, as recorded) of the
+    archive at ``path``, at most ``limit`` bytes. The archive is only read. Raises
+    :class:`ArchiveError` or ``OSError``."""
+    with open_archive(path) as archive:
+        wanted = member_key(name)
+        member = next((m for m in archive.members() if member_key(m.name) == wanted), None)
+        if member is None:
+            raise ArchiveError(f"{name} isn't in the archive any more")
+        return archive.read(member, limit)
+
+
 # --- formats ---
 
 

@@ -33,6 +33,7 @@ from tagalot.core.thumbnails.archive import (
     is_candidate_image,
     natural_key,
     open_archive,
+    read_member,
 )
 from tagalot.themes.api import KIND_EXTENSIONS, Kind
 
@@ -176,11 +177,7 @@ def extract_member(path: str, name: str, folder: Path) -> Path:
     archive's own in the session's temporary folder), keeping its path inside the archive,
     and return the copy's path. The archive is only read. Raises :class:`ArchiveError` or
     ``OSError``."""
-    with open_archive(path) as archive:
-        member = next((m for m in archive.members() if m.name == name), None)
-        if member is None:
-            raise ArchiveError(f"{name} isn't in the archive any more")
-        data = archive.read(member, MAX_OPENED_BYTES)
+    data = read_member(path, name, MAX_OPENED_BYTES)
     parts = [_UNSAFE.sub("_", p) for p in PurePosixPath(name).parts if p not in ("", ".", "..")]
     if not parts:
         raise ArchiveError(f"{name!r} isn't a file name")

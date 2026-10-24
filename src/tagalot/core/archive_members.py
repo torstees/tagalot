@@ -40,6 +40,7 @@ from sqlalchemy import Connection, delete, insert, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core.fingerprint import fingerprint_file
+from tagalot.core.member_paths import member_name, member_relpath
 from tagalot.core.models import (
     ArchiveMemberChoice,
     ArchiveMode,
@@ -59,17 +60,6 @@ ARCHIVE_EXTENSIONS = KIND_EXTENSIONS[Kind.ARCHIVE]
 MAX_MEMBER_BYTES = 256 * 1024 * 1024
 """Members larger than this aren't read: the theme would get them through memory."""
 BATCH = 500
-
-
-def member_relpath(archive: str, name: str) -> str:
-    """The relpath of the member ``name`` (its path inside the archive) of the archive at
-    ``archive`` (its relpath)."""
-    return f"{archive}/{name}"
-
-
-def member_name(archive: str, relpath: str) -> str:
-    """The member's path inside the archive, from its relpath."""
-    return relpath[len(archive) + 1 :]
 
 
 @dataclass(frozen=True)

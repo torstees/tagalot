@@ -321,11 +321,14 @@ def test_members_move_with_their_archive(env: Env) -> None:
 
 
 def test_write_to_file_never_picks_a_member(env: Env) -> None:
+    """It's marked, for Write to file… to say why it isn't written (#524)."""
     env.archives = ["**"]
     env.scan()
     readme = env.entity_of(f"{PACK}/readme.md")
     with env.reader.connect() as conn:
-        assert _markdown_files(conn, env.schema, readme, File) == []
+        [found] = _markdown_files(conn, env.schema, readme, File)
+    assert found[2] == f"{PACK}/readme.md"
+    assert found[5] is True  # inside an archive
 
 
 @pytest.mark.slow

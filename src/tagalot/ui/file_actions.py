@@ -12,6 +12,10 @@ open .ext files with…" (a per-user override in ``settings.toml``), and, when o
 
 "File manager" chooses what Show in … uses (#457): the user's own file manager (a per-user
 ``[file_manager] command`` template), or the system's.
+
+A file inside an archive (#524) is opened, and opened with a program, from a copy taken
+out of the archive into the session's temporary folder, in a worker; the archive is only
+read. Show in file manager shows the archive.
 """
 
 import ctypes
@@ -19,6 +23,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import shiboken6
@@ -27,6 +32,7 @@ from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import QAbstractItemView, QFileDialog, QMenu, QWidget
 
 from tagalot.core.detail import FileRow
+from tagalot.core.gallery import extract_member
 from tagalot.core.handlers import (
     OPEN,
     OPEN_WITH,
@@ -38,6 +44,7 @@ from tagalot.core.handlers import (
     expand_command,
     file_manager_command,
     file_manager_name,
+    file_to_open,
     files_to_open,
     open_with_command,
     program_command,
@@ -110,18 +117,24 @@ def add_file_actions(
     entity_id: int,
     resource_id: int | None = None,
     folder: bool = False,
+    inside_archive: bool = False,
 ) -> QAction:
     """Add "Open file" (or "Open folder"), "Show in file manager", and, for files, the "Open
     with" submenu, for the entity's file (or one of them, ``resource_id``). Returns the
-    "Open file" action."""
+    "Open file" action. A file ``inside_archive`` (#524) opens from a copy, and Show in …
+    shows its archive, which the menu says."""
 
     def lookup(on_done: Callable[[FileToOpen | CannotOpen], None]) -> None:
         opener.lookup(entity_id, resource_id, on_done)
 
     open_action = menu.addAction("Open folder" if folder else "Open file")
-    open_action.setToolTip("Open it with its usual program")
+    open_action.setToolTip(
+        "Open a copy with its usual program; the archive isn't changed"
+        if inside_archive
+        else "Open it with its usual program"
+    )
     open_action.triggered.connect(lambda: lookup(lambda f: opener.act(f, OPEN)))
-    reveal = menu.addAction(opener.reveal_label())
+    reveal = menu.addAction(opener.reveal_label(inside_archive))
     reveal.triggered.connect(lambda: lookup(lambda f: opener.act(f, REVEAL)))
     menu.addMenu(FileManagerMenu(opener, menu))
     if not folder:
@@ -224,6 +237,22 @@ class FileOpener(QObject):
 
         run_in_pool(job, on_done=on_done, pool=self._pool)
 
+    def act_on_resource(self, resource_id: int, how: str) -> None:
+        """Open, reveal, or "open with" one file, whichever item uses it (Triage's and
+        Duplicates' rows), looking it up in a worker: a file inside an archive is opened
+        from a copy, and shown as its archive."""
+        session = self.session
+
+        def job() -> FileToOpen | CannotOpen:
+            with session.reader.connect() as conn:
+                files = file_to_open(conn, resource_id, self._root_path)
+            try:
+                return choose_file(files)
+            except CannotOpen as e:
+                return e
+
+        run_in_pool(job, on_done=lambda file: self.act(file, how), pool=self._pool)
+
     def open_entity(self, entity_id: int, how: str = OPEN) -> None:
         """Open the entity's first file that can be opened (its primary role's)."""
         self.lookup(entity_id, None, lambda file: self.act(file, how))
@@ -238,6 +267,8 @@ class FileOpener(QObject):
         """Open, reveal, or "open with" a found file; or say why there's none."""
         if isinstance(file, CannotOpen):
             self.message.emit(str(file))
+        elif file.member and how != REVEAL:
+            self._extract(file, how)
         elif how == REVEAL:
             self.reveal(file)
         elif how == OPEN_WITH:
@@ -249,6 +280,27 @@ class FileOpener(QObject):
                 self.message.emit(f"The command for {file.ext} files doesn't work: {e}")
         else:
             self.open(file)
+
+    def _extract(self, file: FileToOpen, how: str) -> None:
+        """Copy a file out of its archive into the session's temporary folder, in a worker,
+        then open (or "open with") the copy. The archive is only read."""
+        folder = self.session.temp_dir() / "members" / str(file.resource_id)
+        archive, member = file.path, file.member
+
+        def done(copy: Path) -> None:
+            if shiboken6.isValid(self):
+                self.act(replace(file, path=str(copy), member=""), how)
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                self.message.emit(f"Couldn't open {file.name} from {archive}: {error}")
+
+        run_in_pool(
+            lambda: extract_member(archive, member, folder),
+            on_done=done,
+            on_error=failed,
+            pool=self._pool,
+        )
 
     # --- overrides ---
 
@@ -280,10 +332,12 @@ class FileOpener(QObject):
 
     # --- the file manager (#457) ---
 
-    def reveal_label(self) -> str:
-        """``Show in file manager``, or ``Show in Directory Opus`` with the user's own."""
+    def reveal_label(self, archive: bool = False) -> str:
+        """``Show in file manager``, or ``Show in Directory Opus`` with the user's own;
+        ``Show the archive in …`` for a file inside one (#524)."""
         command = self.session.settings.file_manager
-        return f"Show in {file_manager_name(command)}" if command else "Show in file manager"
+        where = file_manager_name(command) if command else "file manager"
+        return f"Show the archive in {where}" if archive else f"Show in {where}"
 
     def choose_file_manager(self) -> None:
         """Ask for a file manager, then show files in it from now on."""

@@ -383,6 +383,9 @@ class WritePlan:
     """``(item title, reason)`` for items with no file to write."""
 
 
+INSIDE_ARCHIVE = "it's inside an archive, and Tagalot never changes archives"
+"""Why a file inside an archive (#391) isn't written (#524)."""
+
 NOTES_FOLDER_LOCKED = (
     "the notes folder doesn't let Write to file… change notes (Keep configuration → Notes, "
     "or its watched folder's Write back)"
@@ -417,8 +420,10 @@ def plan_write_back(
         if entity_type is None:
             plan.skipped.append((title, "its type isn't in this keep's theme"))
             continue
+        found = _markdown_files(conn, schema, entity_id, entity_type)
+        members = {f[0] for f in found if f[5]}
         files: list[tuple[int, str, str, int | None, int | None, str | None]] = [
-            (*f, None) for f in _markdown_files(conn, schema, entity_id, entity_type)
+            (*f[:5], None) for f in found
         ]
         files += _note_files(conn, entity_id, {f[0] for f in files})
         if not files:
@@ -446,7 +451,9 @@ def plan_write_back(
                 entity_id, title, resource_id, root_id, relpath, path, size, mtime, note=note
             )
             shared = _shared_note(conn, resource_id, entity_id) if note else None
-            if not may_write(write, allowed, notes_write_back):
+            if resource_id in members:  # never written: said so, not left out (#524)
+                plan.files.append(_problem(write, INSIDE_ARCHIVE))
+            elif not may_write(write, allowed, notes_write_back):
                 plan.files.append(
                     _problem(
                         write,
@@ -526,7 +533,9 @@ def _problem(write: FileWrite, problem: str) -> FileWrite:
 
 def _markdown_files(
     conn: Connection, schema: ThemeSchema, entity_id: int, entity_type: type
-) -> list[tuple[int, str, str, int | None, int | None]]:
+) -> list[tuple[int, str, str, int | None, int | None, bool]]:
+    """The item's Markdown files (its primary role's), each with whether it is inside an
+    archive: nothing writes into one (#391), and Write to file… says so (#524)."""
     primary = next((r.name for r in entity_type.roles if r.primary), None)  # type: ignore[attr-defined]
     query = (
         select(
@@ -536,20 +545,20 @@ def _markdown_files(
             Resource.size,
             Resource.mtime_ns,
             Resource.ext,
+            Resource.parent_resource_id,
         )
         .join(EntityResource, EntityResource.resource_id == Resource.id)
         .where(
             EntityResource.entity_id == entity_id,
             Resource.status == ResourceStatus.OK,
-            Resource.parent_resource_id.is_(None),  # nothing writes into an archive (#391)
         )
         .order_by(Resource.relpath)
     )
     if primary is not None:
         query = query.where(EntityResource.role == primary)
     return [
-        (rid, root, rel, size, mtime)
-        for rid, root, rel, size, mtime, ext in conn.execute(query)
+        (rid, root, rel, size, mtime, parent is not None)
+        for rid, root, rel, size, mtime, ext, parent in conn.execute(query)
         if ext in MARKDOWN
     ]
 

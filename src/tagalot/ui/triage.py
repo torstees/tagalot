@@ -172,7 +172,7 @@ class UnlinkedModel(QAbstractTableModel):
         if column == 0:
             return file.root_name
         if column == 1:
-            return file.relpath
+            return file.shown
         if column == 2:
             return format_bytes(file.size) if file.size is not None else ""
         return "offline" if file.status is ResourceStatus.OFFLINE else ""
@@ -342,7 +342,7 @@ class SkippedFilesModel(QAbstractTableModel):
         file = self.files[index.row()]
         if index.column() == 0:
             return self.root_names.get(file.root_id, file.root_id)
-        return file.relpath
+        return file.shown
 
 
 def skip_rule_details(rule: SkipRule) -> str:
@@ -776,15 +776,8 @@ class TriagePage(QWidget):
         files = self.selected_files()
         if not files or self.file_opener is None:
             return
-        file = files[0]
-        try:
-            base = self.session.root_path(file.root_id)
-        except StopIteration:
-            self.message.emit(f"{file.root_name} has no folder on this computer.")
-            return
-        self.file_opener.act(
-            FileToOpen(file.resource_id, local_path(base, file.relpath), False), how
-        )
+        # Looked up by id: a file inside an archive opens from a copy (#524).
+        self.file_opener.act_on_resource(files[0].resource_id, how)
 
     def selected_note(self) -> MarkdownRow | None:
         rows = self.notes_table.selectionModel().selectedRows()

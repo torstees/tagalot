@@ -10,7 +10,7 @@ Notes in the [notes folder](notes.md#the-notes-folder) have a switch of their ow
 
 ## Writing
 
-Select items and choose **Write to file…** (right-click, or More ▾ on an item's page; it's there for every item). Nothing is written yet: Tagalot reads the files and shows a preview of each one's front matter, before and after, with a box to leave it out. A note is marked "(its note)" in the list. It also says why a file won't be written: its folder doesn't allow it, it changed since Tagalot last read it, its front matter doesn't parse, or it's a note two items share (a movie's folder note is its folder's too, so the movie's tags would go to the folder as well).
+Select items and choose **Write to file…** (right-click, or More ▾ on an item's page; it's there for every item). Nothing is written yet: Tagalot reads the files and shows a preview of each one's front matter, before and after, with a box to leave it out. A note is marked "(its note)" in the list. It also says why a file won't be written: its folder doesn't allow it, it changed since Tagalot last read it, its front matter doesn't parse, or it's a note two items share (a movie's folder note is its folder's too, so the movie's tags would go to the folder as well), or it's inside an archive, which Tagalot never changes.
 
 **Write N files** then, for each file still ticked:
 
