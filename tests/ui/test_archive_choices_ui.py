@@ -289,22 +289,32 @@ def test_show_all_hide_all_and_thumbnails(qtbot: QtBot, window: MainWindow) -> N
     dialog.show_all.click()
     assert dialog.hidden() == set()
 
-    # Show thumbnails draws each file, and the keep remembers it.
+    # Show thumbnails swaps the tree for a grid of tiles; clicking one hides it.
+    blank = dialog.tiles()["UI pack/cover.png"].icon().cacheKey()
     with qtbot.waitSignal(dialog.thumbnails_drawn, timeout=10_000):
         dialog.show_thumbnails.setChecked(True)
-    cover = dialog.model.itemFromIndex(_row(dialog, "cover.png"))
-    assert not cover.icon().isNull()
-    assert dialog.tree.iconSize().width() > 16
+    assert dialog.views.currentWidget() is dialog.grid
+    assert dialog.grid.iconSize().width() == 96
+    cover = dialog.tiles()["UI pack/cover.png"]
+    assert cover.icon().cacheKey() != blank  # its thumbnail, not the file icon
+    dialog._tile_clicked(cover.index())
+    assert dialog.hidden() == {"UI pack/cover.png"}
+    assert cover.font().strikeOut()
+    dialog.show_hidden.setChecked(False)
+    assert dialog.grid.isRowHidden(cover.row())
+    dialog.show_hidden.setChecked(True)
+    dialog._tile_clicked(cover.index())
+    assert dialog.hidden() == set()
     dialog.show_thumbnails.setChecked(False)
-    assert cover.icon().isNull()
+    assert dialog.views.currentWidget() is dialog.tree
     dialog.show_thumbnails.setChecked(True)
-    assert not cover.icon().isNull()  # drawn already
     dialog.reject()
     qtbot.waitUntil(lambda: window.archives.dialog is None, timeout=5000)
 
-    reopened = _dialog(qtbot, window)
+    reopened = _dialog(qtbot, window)  # the keep remembers it
     assert reopened.show_thumbnails.isChecked()
-    again = reopened.model.itemFromIndex(_row(reopened, "cover.png"))
-    qtbot.waitUntil(lambda: not again.icon().isNull(), timeout=10_000)
+    assert reopened.views.currentWidget() is reopened.grid
+    again = reopened.tiles()["UI pack/cover.png"]
+    qtbot.waitUntil(lambda: again.icon().cacheKey() != blank, timeout=10_000)
     state = load_ui_state(_session(window).keep.ui_state_path)
     assert state["archive_thumbnails"] is True

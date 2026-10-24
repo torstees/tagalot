@@ -5,8 +5,9 @@ it), and kind chips that hide or show every file of a type at once.
 Hidden rows stay listed, greyed and struck through, like a kind chip that's off; clicking ✕
 again shows them. **Show hidden files** tucks them away in a long list. **Show all** and
 **Hide all** start from everything or nothing, whichever leaves fewer clicks. **Show
-thumbnails** draws each file it can (pictures, fonts, PDFs...), a few at a time in a worker,
-cached like a gallery's archive pictures. The archive's listing is read in a worker. Files
+thumbnails** swaps the tree for a grid of the files' thumbnails (pictures, fonts, PDFs...),
+drawn a few at a time in a worker and cached like a gallery's archive pictures; clicking a
+tile hides or shows it. The archive's listing is read in a worker. Files
 the keep's theme doesn't read aren't listed (the dialog says which kinds were left out), nor
 are folders' own entries, archives inside the archive, and hidden files, as scans leave them
 out (#391).
@@ -24,6 +25,7 @@ from PySide6.QtCore import QModelIndex, QSize, Qt, QThreadPool, Signal
 from PySide6.QtGui import (
     QIcon,
     QImage,
+    QPainter,
     QPalette,
     QPixmap,
     QStandardItem,
@@ -36,7 +38,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListView,
     QPushButton,
+    QStackedWidget,
+    QStyle,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -55,8 +60,10 @@ HIDE_MARK = chr(0x00D7)  # MULTIPLICATION SIGN, as on the filter bar's chips
 NAME, SIZE, HIDE = 0, 1, 2
 PATH = Qt.ItemDataRole.UserRole + 1
 """A file row's path inside the archive (folders have none)."""
-THUMB_SIZE = 48
-"""How big a file's thumbnail is drawn in the list, in pixels."""
+THUMB_SIZE = 96
+"""How big a file's thumbnail is drawn in the grid, in pixels."""
+HIDDEN_OPACITY = 0.3
+"""How faint a hidden file's thumbnail is."""
 THUMB_BATCH = 24
 """Thumbnails drawn per worker job: the first show soon, and closing the dialog stops it."""
 
@@ -105,7 +112,7 @@ class ChooseInsideDialog(QDialog):
         self.current = current
         self._pool = pool
         self._resolver = thumbnails
-        self._pictures: dict[str, QIcon] = {}
+        self._pictures: dict[str, QPixmap] = {}
         """Thumbnails drawn so far, by path inside the archive."""
         self._to_draw: list[str] | None = None
         """Files whose thumbnails are still to draw (``None``: not started)."""
@@ -119,6 +126,8 @@ class ChooseInsideDialog(QDialog):
         """Files the theme doesn't read here, not listed."""
         self._hidden: set[str] = set()
         self.error: str | None = None
+        self._tip: dict[str, str] = {}
+        """A tile's tooltip's first line, by path: the path and size."""
 
         self.title = QLabel(f"Reading inside <b>{current.name}</b>…")
         self.title.setObjectName("archive_name")
@@ -139,6 +148,24 @@ class ChooseInsideDialog(QDialog):
         header.setSectionResizeMode(SIZE, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(HIDE, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.clicked.connect(self._clicked)
+        self.grid_model = QStandardItemModel(self)
+        """The files alone, one tile each, for the grid."""
+        self.grid = QListView()
+        self.grid.setObjectName("inside_grid")
+        self.grid.setModel(self.grid_model)
+        self.grid.setViewMode(QListView.ViewMode.IconMode)
+        self.grid.setResizeMode(QListView.ResizeMode.Adjust)
+        self.grid.setMovement(QListView.Movement.Static)
+        self.grid.setUniformItemSizes(True)
+        self.grid.setWordWrap(True)
+        self.grid.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
+        self.grid.setGridSize(QSize(THUMB_SIZE + 32, THUMB_SIZE + 44))
+        self.grid.setSpacing(4)
+        self.grid.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
+        self.grid.clicked.connect(self._tile_clicked)
+        self.views = QStackedWidget()
+        self.views.addWidget(self.tree)
+        self.views.addWidget(self.grid)
         self.show_hidden = QCheckBox("Show hidden files")
         self.show_hidden.setObjectName("show_hidden")
         self.show_hidden.setChecked(True)
@@ -179,7 +206,7 @@ class ChooseInsideDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self.title)
         layout.addWidget(self.chips)
-        layout.addWidget(self.tree, 1)
+        layout.addWidget(self.views, 1)
         options = QHBoxLayout()
         options.addWidget(self.show_hidden)
         options.addWidget(self.show_thumbnails)
@@ -190,7 +217,7 @@ class ChooseInsideDialog(QDialog):
         layout.addWidget(self.summary)
         layout.addWidget(self.buttons)
 
-        self._style_tree()
+        self._show_view()
         run_in_pool(
             lambda: list_members(archive_path),
             on_done=self._listed,
@@ -269,7 +296,13 @@ class ChooseInsideDialog(QDialog):
             item = QStandardItem(name)
             item.setData(path, PATH)
             item.setToolTip(path)
-            folder(parent).appendRow(self._row(item, format_bytes(self.files[path].size)))
+            size = format_bytes(self.files[path].size)
+            folder(parent).appendRow(self._row(item, size))
+            tile = QStandardItem(self._placeholder(), name)
+            tile.setData(path, PATH)
+            tile.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            self.grid_model.appendRow(tile)
+            self._tip[path] = f"{path} ({size})"
         for path, item in folders.items():
             count = sum(1 for p in self.files if p.startswith(path + "/"))
             item.setText(f"{item.text()}  ({count:,})")
@@ -285,20 +318,44 @@ class ChooseInsideDialog(QDialog):
     # --- thumbnails ---
 
     def _thumbnails_toggled(self, on: bool) -> None:
-        self._style_tree()
-        for item in self._items(self.model.invisibleRootItem()):
-            path = item.data(PATH)
-            if isinstance(path, str):
-                item.setIcon(self._pictures.get(path, QIcon()) if on else QIcon())
+        self._show_view()
         if on and self.files:
             self._draw_thumbnails()
         self.thumbnails_toggled.emit(on)
 
-    def _style_tree(self) -> None:
+    def _show_view(self) -> None:
+        """The grid of thumbnails when the box is ticked, else the tree."""
         on = self.show_thumbnails.isChecked()
-        # A folder's row is shorter than a file's with a picture: rows can't share a height.
-        self.tree.setUniformRowHeights(not on)
-        self.tree.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE) if on else QSize())
+        self.views.setCurrentWidget(self.grid if on else self.tree)
+        if on and self.width() < 760:
+            self.resize(760, max(self.height(), 620))
+
+    def _placeholder(self) -> QIcon:
+        return self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
+    def _tile_icon(self, path: str, hidden: bool) -> QIcon:
+        """A tile's picture: its thumbnail (faint when hidden), else a file icon."""
+        picture = self._pictures.get(path)
+        if picture is None:
+            return self._placeholder()
+        if not hidden:
+            return QIcon(picture)
+        faint = QPixmap(picture.size())
+        faint.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(faint)
+        painter.setOpacity(HIDDEN_OPACITY)
+        painter.drawPixmap(0, 0, picture)
+        painter.end()
+        return QIcon(faint)
+
+    def tiles(self) -> dict[str, QStandardItem]:
+        """The grid's tiles, by path inside the archive."""
+        found = {}
+        for row in range(self.grid_model.rowCount()):
+            tile = self.grid_model.item(row)
+            if tile is not None:
+                found[str(tile.data(PATH))] = tile
+        return found
 
     def _draw_thumbnails(self) -> None:
         """Draw the files' thumbnails a batch at a time, while the box stays ticked."""
@@ -330,17 +387,11 @@ class ChooseInsideDialog(QDialog):
         if not shiboken6.isValid(self):
             return
         self._drawing = False
-        on = self.show_thumbnails.isChecked()
-        items = {
-            item.data(PATH): item
-            for item in self._items(self.model.invisibleRootItem())
-            if isinstance(item.data(PATH), str)
-        }
+        tiles = self.tiles()
         for name, image in images:
-            icon = QIcon(QPixmap.fromImage(image))
-            self._pictures[name] = icon
-            if on and name in items:
-                items[name].setIcon(icon)
+            self._pictures[name] = QPixmap.fromImage(image)
+            if name in tiles:
+                tiles[name].setIcon(self._tile_icon(name, name in self._hidden))
         self._draw_thumbnails()
 
     def _not_drawn(self, error: BaseException) -> None:
@@ -354,6 +405,11 @@ class ChooseInsideDialog(QDialog):
     def _clicked(self, index: QModelIndex) -> None:
         if index.column() == HIDE:
             self.toggle(index.siblingAtColumn(NAME))
+
+    def _tile_clicked(self, index: QModelIndex) -> None:
+        path = index.data(PATH)
+        if isinstance(path, str):
+            self.set_hidden({path}, path not in self._hidden)
 
     def toggle(self, index: QModelIndex) -> None:
         """What ✕ does on a row: a file hides or shows; a folder hides everything under
@@ -405,6 +461,16 @@ class ChooseInsideDialog(QDialog):
                 tip = "Hide it: don't read it" if file else "Hide everything in it"
             cells[HIDE].setToolTip(tip)
             self.tree.setRowHidden(item.row(), parent.index(), hiding and hidden)
+        for path, tile in self.tiles().items():
+            hidden = path in self._hidden
+            font = tile.font()
+            font.setStrikeOut(hidden)
+            tile.setFont(font)
+            tile.setForeground(dim if hidden else plain)
+            tile.setIcon(self._tile_icon(path, hidden))
+            click = "Click to show it again" if hidden else "Click to hide it: don't read it"
+            tile.setToolTip(f"{self._tip.get(path, path)}\n{click}")
+            self.grid.setRowHidden(tile.row(), hiding and hidden)
         self._update_chips()
         shown, total = len(self.files) - len(self._hidden), len(self.files)
         if total:
