@@ -129,7 +129,7 @@ from tagalot.ui.tag_panel import TagPanel
 from tagalot.ui.tag_picker import TagPickerDialog, map_dialog
 from tagalot.ui.tag_types_dialog import TagTypesDialog
 from tagalot.ui.thumbnails import ThumbnailLoader, clamp_size, size_presets, zoomed
-from tagalot.ui.triage import UNTAGGED_TAB, TriagePage
+from tagalot.ui.triage import NEW_TAB, UNTAGGED_TAB, TriagePage
 from tagalot.ui.workers import ScanController, run_in_pool
 from tagalot.ui.write_back_dialog import WriteBackDialog
 
@@ -655,6 +655,7 @@ class MainWindow(QMainWindow):
                 lambda title, spec, key: self._search_page(title, spec, key),
                 self.files,
             )
+            triage.archive_actions = self.archives
             triage.dismiss_requested.connect(self.tag_actions.dismiss)
             triage.delete_requested.connect(self.delete_items)
             triage.skip_requested.connect(self._skip_files)
@@ -1858,11 +1859,12 @@ class MainWindow(QMainWindow):
         if isinstance(page, SearchPage):
             page.filter_bar.set_field_filter(value_filter.field, value_filter)
 
-    def _open_triage(self) -> None:
+    def _open_triage(self, tab: str = "untagged") -> None:
+        """Open Triage on a tab: ``untagged``, or ``new`` (New in archives, #520)."""
         self.navigation.select(NavTarget("triage", label="Triage"))
         page = self.stack.currentWidget()
         if isinstance(page, TriagePage):
-            page.tabs.setCurrentIndex(UNTAGGED_TAB)
+            page.tabs.setCurrentIndex(NEW_TAB if tab == "new" else UNTAGGED_TAB)
 
     def delete_items(self, ids: list[int]) -> None:
         """Delete items from the triage list, after asking; Edit → Undo brings them back."""

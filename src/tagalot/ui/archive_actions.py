@@ -13,7 +13,7 @@ items hide, keeping their tags), and a scan of the archive's folder reads the on
 wanted. The archive itself is only ever read.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
@@ -34,6 +34,7 @@ from tagalot.core.archive_members import ARCHIVE_EXTENSIONS
 from tagalot.core.handlers import CannotOpen, FileToOpen
 from tagalot.core.member_paths import member_name
 from tagalot.core.models import ArchiveMode, Resource
+from tagalot.core.new_in_archives import NewInArchive, hide_new
 from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
 from tagalot.core.theme_schema import ThemeSchema
@@ -119,6 +120,20 @@ class ArchiveActions(QObject):
     def choose(self, archive_id: int) -> None:
         """Open the dialog for the archive (once its choices are read)."""
         self._with_choices(archive_id, self._open_dialog)
+
+    def hide_new(self, archives: Sequence[NewInArchive]) -> None:
+        """Triage's **Hide all new** (#520): record these archives' new files hidden,
+        without opening the dialog; they leave New in archives."""
+        if not archives:
+            return
+        ids = [a.archive_id for a in archives]
+        count = sum(a.count for a in archives)
+        files = f"{count:,} new file{'' if count == 1 else 's'}"
+        where = archives[0].name if len(archives) == 1 else f"{len(archives):,} archives"
+        self._write(
+            lambda conn: hide_new(conn, ids),
+            f"Hid {files} inside {where}. Right-click an archive → {CHOOSE} shows them again.",
+        )
 
     def read_everything(self, archive_id: int) -> None:
         def act(current: ArchiveChoices) -> None:

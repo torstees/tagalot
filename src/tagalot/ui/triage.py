@@ -17,6 +17,10 @@ Tabs, each with how many it holds:
   tried and what is there now, and pictures that can't be drawn (#426); with Open page,
   Show the file, Re-read from file, and Ignore (for the item, the value everywhere, or
   every item of the type); Show ignored lists ignored rows, to stop ignoring them.
+- **New in archives:** archives read member by member that hold files not decided on
+  (#520, ``core.new_in_archives``), each with how many and of which kinds, the most
+  recently changed first; Review… (or a double-click) opens Choose what to read inside…,
+  where they're marked new and start hidden, and Hide all new records them hidden.
 - **Skipped:** each rule that skips files now (a Skip pattern, the notes folder, what the
   theme doesn't read, archive members not read), with how many files and how many items
   it hides (#527, ``core.skip_reasons``); selecting one lists its files and says where the
@@ -29,6 +33,7 @@ handles the requests: dismissing and deleting are undo steps (``TagActions``).
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 import shiboken6
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt, Signal
@@ -53,6 +58,7 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
 from tagalot.core.markdown_check import MarkdownFileProblem, markdown_problems
 from tagalot.core.models import ResourceStatus
+from tagalot.core.new_in_archives import NewInArchive, count_new_in_archives, new_in_archives
 from tagalot.core.picture_problems import (
     CANT_DRAW,
     ITEM,
@@ -80,6 +86,7 @@ from tagalot.core.triage import (
     unlinked_files,
 )
 from tagalot.themes.api import entity_label
+from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.search_view import SearchPage
@@ -95,8 +102,9 @@ MAX_FILES = 10_000
     KEYWORDS_TAB,
     MARKDOWN_TAB,
     PICTURES_TAB,
+    NEW_TAB,
     SKIPPED_TAB,
-) = range(7)
+) = range(8)
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
@@ -104,6 +112,7 @@ _TITLES = {
     KEYWORDS_TAB: "Unmatched keywords",
     MARKDOWN_TAB: "Markdown",
     PICTURES_TAB: "Pictures",
+    NEW_TAB: "New in archives",
     SKIPPED_TAB: "Skipped",
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
@@ -126,6 +135,7 @@ class Counts:
     notes: int = 0
     pictures: int = 0
     skipped: int = 0
+    new_in_archives: int = 0
 
 
 MarkdownRow = NoteProblem | MarkdownFileProblem
@@ -133,7 +143,14 @@ MarkdownRow = NoteProblem | MarkdownFileProblem
 matter has problems (#438)."""
 
 
-Loaded = tuple[Counts, list[UnlinkedFile], list[MarkdownRow], list[PictureProblem], SkippedReport]
+Loaded = tuple[
+    Counts,
+    list[UnlinkedFile],
+    list[MarkdownRow],
+    list[PictureProblem],
+    SkippedReport,
+    list[NewInArchive],
+]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
 
@@ -345,6 +362,59 @@ class SkippedFilesModel(QAbstractTableModel):
         return file.shown
 
 
+class NewInArchivesModel(QAbstractTableModel):
+    """Archives with new files to review (#520): archive, folder, what's new, changed."""
+
+    HEADERS = ("Archive", "Folder", "New", "Changed")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.archives: list[NewInArchive] = []
+        self.root_names: dict[str, str] = {}
+
+    def set_archives(self, archives: list[NewInArchive], root_names: dict[str, str]) -> None:
+        self.beginResetModel()
+        self.archives = archives
+        self.root_names = root_names
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.archives)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid():
+            return None
+        archive = self.archives[index.row()]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            shown = archive.paths[:20]
+            more = archive.count - len(shown)
+            return "\n".join([archive.relpath, *shown] + ([f"and {more:,} more"] if more else []))
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        return (
+            archive.relpath,
+            self.root_names.get(archive.root_id, archive.root_id),
+            archive.summary,
+            _when(archive.mtime_ns),
+        )[index.column()]
+
+
+def _when(mtime_ns: int | None) -> str:
+    if mtime_ns is None:
+        return ""
+    return datetime.fromtimestamp(mtime_ns / 1e9).strftime("%Y-%m-%d %H:%M")
+
+
 def skip_rule_details(rule: SkipRule) -> str:
     """What the details under the Skipped tab's rules say about one."""
     files = "1 file" if rule.count == 1 else f"{rule.count:,} files"
@@ -414,6 +484,8 @@ class TriagePage(QWidget):
         super().__init__(parent)
         self.session = session
         self.file_opener = file_opener
+        self.archive_actions: ArchiveActions | None = None
+        """The window's archive commands: New in archives' Review… and Hide all new."""
         self.counts: Counts | None = None
         self._refreshes = 0
         """How many refreshes have started; a result shows only if it is the latest's."""
@@ -644,6 +716,44 @@ class TriagePage(QWidget):
         self.skipped_stack.addWidget(self.skipped_empty)
         skipped_tab = _tab(self.skipped_stack, [], self.skipped_note)
 
+        self.new_archives = NewInArchivesModel()
+        self.new_table = QTableView()
+        self.new_table.setObjectName("new_in_archives")
+        self.new_table.setModel(self.new_archives)
+        self.new_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.new_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.new_table.verticalHeader().hide()
+        header = self.new_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.new_table.doubleClicked.connect(lambda _: self.review())
+        review = QPushButton("Review\u2026")
+        review.setToolTip(
+            "Choose what to read inside the selected archive: its new files are marked new "
+            "and start hidden"
+        )
+        review.clicked.connect(self.review)
+        hide_new = QPushButton("Hide all new")
+        hide_new.setToolTip(
+            "Leave the selected archives' new files out without looking (Choose what to read "
+            "inside… shows them again)"
+        )
+        hide_new.clicked.connect(self.hide_new)
+        self.new_note = QLabel(
+            "Archives read file by file have new files, not read until you choose: review "
+            "them, or hide them all."
+        )
+        self.new_note.setWordWrap(True)
+        self.new_empty = EmptyState(
+            "Nothing new inside archives",
+            "Every file inside the archives read file by file has been decided on.",
+        )
+        self.new_stack = QStackedWidget()
+        self.new_stack.addWidget(self.new_table)
+        self.new_stack.addWidget(self.new_empty)
+        new_tab = _tab(self.new_stack, [review, hide_new], self.new_note)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
@@ -651,6 +761,7 @@ class TriagePage(QWidget):
         self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
         self.tabs.addTab(notes_tab, _TITLES[MARKDOWN_TAB])
         self.tabs.addTab(pictures_tab, _TITLES[PICTURES_TAB])
+        self.tabs.addTab(new_tab, _TITLES[NEW_TAB])
         self.tabs.addTab(skipped_tab, _TITLES[SKIPPED_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
@@ -683,9 +794,10 @@ class TriagePage(QWidget):
                     len(markdown := _markdown_rows(conn)),
                     sum(1 for p in pictures if not p.ignored),
                     skipped.total,
+                    count_new_in_archives(conn),
                 )
                 files = unlinked_files(conn, MAX_FILES, notes)
-                return counts, files, markdown, pictures, skipped
+                return counts, files, markdown, pictures, skipped, new_in_archives(conn)
 
         # Refreshes overlap (a change, then Show ignored): only the latest is shown, or an
         # older one finishing last would put back what it saw (#406).
@@ -705,6 +817,7 @@ class TriagePage(QWidget):
         notes: list[MarkdownRow] | None = None,
         pictures: list[PictureProblem] | None = None,
         skipped: SkippedReport | None = None,
+        new: list[NewInArchive] | None = None,
     ) -> None:
         self.counts = counts
         for tab, n in (
@@ -714,9 +827,13 @@ class TriagePage(QWidget):
             (KEYWORDS_TAB, counts.keywords),
             (MARKDOWN_TAB, counts.notes),
             (PICTURES_TAB, counts.pictures),
+            (NEW_TAB, counts.new_in_archives),
             (SKIPPED_TAB, counts.skipped),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
+        names = {r.id: r.name for r in self.session.keep.config.roots}
+        self.new_archives.set_archives(new or [], names)
+        self.new_stack.setCurrentWidget(self.new_table if new else self.new_empty)
         self._show_skipped(skipped.rules if skipped is not None else [])
         self.pictures.set_problems(pictures or [])
         self.pictures_stack.setCurrentIndex(0 if pictures else 1)
@@ -756,6 +873,27 @@ class TriagePage(QWidget):
         names = {r.id: r.name for r in self.session.keep.config.roots}
         self.skipped_files.set_files(rule.files if rule is not None else [], names)
         self.skip_details.setText(SKIPPED_HINT if rule is None else skip_rule_details(rule))
+
+    def selected_new(self) -> list[NewInArchive]:
+        """The archives selected in New in archives."""
+        rows = sorted(i.row() for i in self.new_table.selectionModel().selectedRows())
+        return [self.new_archives.archives[r] for r in rows]
+
+    def review(self) -> None:
+        """Choose what to read inside the selected archive (the first, if several)."""
+        chosen = self.selected_new()
+        if not chosen:
+            self.message.emit("Select an archive to review.")
+        elif self.archive_actions is not None:
+            self.archive_actions.choose(chosen[0].archive_id)
+
+    def hide_new(self) -> None:
+        """Hide all new: record the selected archives' new files hidden."""
+        chosen = self.selected_new()
+        if not chosen:
+            self.message.emit("Select the archives whose new files to hide.")
+        elif self.archive_actions is not None:
+            self.archive_actions.hide_new(chosen)
 
     def current_search(self) -> SearchPage | None:
         """The search page of the current tab (tagging applies to its selection)."""

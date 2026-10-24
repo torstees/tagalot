@@ -17,6 +17,7 @@ from sqlalchemy import ColumnElement, Connection, func, select
 from tagalot.core.formats import format_value
 from tagalot.core.ingest import IngestSession
 from tagalot.core.models import Entity, EntityTag
+from tagalot.core.new_in_archives import count_new_in_archives
 from tagalot.core.root_admin import RootStatus, root_statuses
 from tagalot.core.search import SearchHit, count_matches
 from tagalot.core.search_spec import (
@@ -78,6 +79,8 @@ class Dashboard:
     least_used: tuple[TagUse, ...]
     """Tags used least (unused ones first): candidates for a tidy-up."""
     theme_cards: tuple["ThemeCard", ...] = ()
+    new_in_archives: int = 0
+    """Archives with new files to review (Triage's New in archives, #520)."""
 
     @property
     def untagged_share(self) -> float:
@@ -118,6 +121,7 @@ def load_dashboard(conn: Connection, schema: ThemeSchema, tree: TagTree) -> Dash
         most_used=tuple(u for u in by_most[:TAGS_SHOWN] if u.count),
         least_used=_least(by_least, by_most[:TAGS_SHOWN]),
         theme_cards=theme_cards(conn, schema),
+        new_in_archives=count_new_in_archives(conn),
     )
 
 
