@@ -246,6 +246,8 @@ class MainWindow(QMainWindow):
         self.archives.changed.connect(self._tags_changed)  # items may hide or come back
         self.archives.scan_requested.connect(self._scan_roots)
         self.archives.config_saved.connect(self._archives_config_saved)
+        self.archives.show_thumbnails = bool(self._ui_state.get("archive_thumbnails", False))
+        self.archives.thumbnails_toggled.connect(self._archive_thumbnails_toggled)
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
         self.tag_actions.pictures_changed.connect(self.thumbnails.forget)
@@ -767,6 +769,12 @@ class MainWindow(QMainWindow):
             lambda keys: self._save_view_state("shown_columns", state_key, keys)
         )
         return search
+
+    def _archive_thumbnails_toggled(self, on: bool) -> None:
+        """Remember whether Choose what to read inside shows thumbnails."""
+        assert self.session is not None
+        self._ui_state["archive_thumbnails"] = on
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _preview_toggled(self, visible: bool) -> None:
         """Show or hide the preview under the navigation, and remember it."""

@@ -60,6 +60,8 @@ class ArchiveActions(QObject):
     """Scan these roots (by id), to read members now wanted."""
     config_saved = Signal()
     """``keep.toml`` changed (a folder's archives are read now)."""
+    thumbnails_toggled = Signal(bool)
+    """The dialog's **Show thumbnails** was ticked or unticked."""
 
     def __init__(self, session: KeepSession, pool: QThreadPool | None, window: QWidget) -> None:
         super().__init__(window)
@@ -68,6 +70,9 @@ class ArchiveActions(QObject):
         self._window = window
         self.dialog: ChooseInsideDialog | None = None
         """The dialog open now, if any."""
+        self.show_thumbnails = False
+        """Whether the dialog starts with **Show thumbnails** ticked (the window remembers
+        it in the keep's UI state, through :attr:`thumbnails_toggled`)."""
 
     # --- menus ---
 
@@ -203,7 +208,10 @@ class ArchiveActions(QObject):
             theme.extensions or None,
             self._pool,
             self._window,
+            thumbnails=self.session.thumbnails,
+            show_thumbnails=self.show_thumbnails,
         )
+        dialog.thumbnails_toggled.connect(self._thumbnails_toggled)
         dialog.loaded.connect(lambda: self._loaded(dialog))
         dialog.accepted.connect(lambda: self._save(dialog))
         dialog.finished.connect(lambda _: self._closed(dialog))
@@ -230,6 +238,10 @@ class ArchiveActions(QObject):
             f"Saved what's read inside {current.name}: {what}scanning to read the others.",
             current.root_id,
         )
+
+    def _thumbnails_toggled(self, on: bool) -> None:
+        self.show_thumbnails = on
+        self.thumbnails_toggled.emit(on)
 
     def _closed(self, dialog: ChooseInsideDialog) -> None:
         if self.dialog is dialog:

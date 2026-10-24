@@ -17,6 +17,7 @@ from tagalot.core.models import Entity, EntityResource, Resource
 from tagalot.core.search import SearchHit
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
+from tagalot.core.ui_state import load_ui_state
 from tagalot.ui.archive_actions import (
     CHOOSE,
     HIDE,
@@ -273,3 +274,37 @@ def test_a_search_results_archive_menu(qtbot: QtBot, window: MainWindow) -> None
     qtbot.waitUntil(
         lambda: [a.text() for a in submenu.actions()] == [CHOOSE, READ_ALL, STOP], timeout=5000
     )
+
+
+def test_show_all_hide_all_and_thumbnails(qtbot: QtBot, window: MainWindow) -> None:
+    dialog = _dialog(qtbot, window)
+    assert not dialog.show_thumbnails.isChecked()  # off unless chosen
+
+    # Hide all, then show the one to read: the fewest clicks for a few files.
+    dialog.hide_all.click()
+    assert dialog.shown() == set()
+    dialog._clicked(_row(dialog, "cover.png").siblingAtColumn(HIDE_COLUMN))
+    assert dialog.shown() == {"UI pack/cover.png"}
+    assert dialog.summary.text().startswith("1 of 4 files will be read.")
+    dialog.show_all.click()
+    assert dialog.hidden() == set()
+
+    # Show thumbnails draws each file, and the keep remembers it.
+    with qtbot.waitSignal(dialog.thumbnails_drawn, timeout=10_000):
+        dialog.show_thumbnails.setChecked(True)
+    cover = dialog.model.itemFromIndex(_row(dialog, "cover.png"))
+    assert not cover.icon().isNull()
+    assert dialog.tree.iconSize().width() > 16
+    dialog.show_thumbnails.setChecked(False)
+    assert cover.icon().isNull()
+    dialog.show_thumbnails.setChecked(True)
+    assert not cover.icon().isNull()  # drawn already
+    dialog.reject()
+    qtbot.waitUntil(lambda: window.archives.dialog is None, timeout=5000)
+
+    reopened = _dialog(qtbot, window)
+    assert reopened.show_thumbnails.isChecked()
+    again = reopened.model.itemFromIndex(_row(reopened, "cover.png"))
+    qtbot.waitUntil(lambda: not again.icon().isNull(), timeout=10_000)
+    state = load_ui_state(_session(window).keep.ui_state_path)
+    assert state["archive_thumbnails"] is True

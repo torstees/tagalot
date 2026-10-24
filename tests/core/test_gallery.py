@@ -19,7 +19,7 @@ from tagalot.core.gallery import (
 from tagalot.core.models import ResourceStatus
 from tagalot.core.thumbnails import archive
 from tagalot.core.thumbnails.cache import ThumbCache
-from tests.core.media_files import png_bytes
+from tests.core.media_files import font_bytes, png_bytes
 from tests.core.test_archive_reader import FakeRar, _rar, write_7z, write_zip
 from tests.core.test_thumb_resolve import T0
 from tests.core.test_thumb_resolve import Env as ThumbEnv
@@ -181,6 +181,20 @@ def test_thumbnails_are_cached_by_archive_member_and_its_time(
         cache.close()
     reread = dict(env.resolver().archive_thumbnails(scans, ["a.png"]))
     assert reread["a.png"] is not None  # from the cache, though the archive is gone
+
+
+def test_a_font_inside_an_archive_is_drawn_too(thumb_env: ThumbEnv) -> None:
+    """Choose what to read inside (#519) draws every file it can, not just pictures."""
+    env = thumb_env
+    write_zip(
+        env.files / "Blue Train/fonts.zip",
+        {"fonts/Regular.ttf": font_bytes(), "read me.txt": b"notes"},
+    )
+    env.scan(T0 + timedelta(hours=1))
+    fonts = env.resource("Blue Train/fonts.zip")
+    found = dict(env.resolver().archive_thumbnails(fonts, ["fonts/Regular.ttf", "read me.txt"]))
+    assert found["fonts/Regular.ttf"] is not None  # a font sample
+    assert found["read me.txt"] is None  # nothing draws text
 
 
 def test_a_damaged_archive_is_reported_not_raised(thumb_env: ThumbEnv) -> None:

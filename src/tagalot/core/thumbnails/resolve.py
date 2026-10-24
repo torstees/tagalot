@@ -39,7 +39,12 @@ from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError, read_member, read_pictures
 from tagalot.core.thumbnails.cache import ThumbCache, online_key, thumb_key
 from tagalot.core.thumbnails.image import Thumbnail, make_thumbnail
-from tagalot.core.thumbnails.render import Renderer, load_image_bytes, renderer_for
+from tagalot.core.thumbnails.render import (
+    Renderer,
+    load_image,
+    load_image_bytes,
+    renderer_for,
+)
 from tagalot.core.thumbnails.title_card import Card, title_card
 from tagalot.core.writer import DbWriter, WriterClosedError
 from tagalot.themes.api import (
@@ -152,10 +157,11 @@ class ThumbnailResolver:
     def archive_thumbnails(
         self, resource_id: int, names: Sequence[str]
     ) -> list[tuple[str, Thumbnail | None]]:
-        """Thumbnails of pictures inside an archive (a gallery's archive group, #386), each
-        made and cached if needed, by the archive, the member's path, and the archive's
-        size and time; ``None`` for one that can't be read. Does I/O: call it from a
-        worker. A damaged archive is reported, never raised."""
+        """Thumbnails of files inside an archive (a gallery's archive group, #386; Choose
+        what to read inside, #519), each made and cached if needed, by the archive, the
+        member's path, and the archive's size and time; ``None`` for one that can't be read
+        or that nothing draws (:func:`member_renderer`). Does I/O: call it from a worker. A
+        damaged archive is reported, never raised."""
         with self.reader.connect() as conn:
             archive = _Resolution(self, conn).resource(resource_id)
         if archive is None or not archive.path:
@@ -184,9 +190,11 @@ class ThumbnailResolver:
         try:
             for name, data in read_pictures(archive.path, wanted):
                 picture = None
-                if data is not None:
+                renderer = member_renderer(name)
+                if data is not None and renderer is not None:
                     try:
-                        picture = make_thumbnail(load_image_bytes(data, size), size)
+                        image = _draw_member(data, name, renderer, size)
+                        picture = None if image is None else make_thumbnail(image, size)
                     except Exception as e:  # corrupt or unsupported: the others still show
                         problems.append(
                             (f"{archive.path} \u203a {name}", f"{type(e).__name__}: {e}")
@@ -606,8 +614,28 @@ def _member_image(resource: ResourceInfo, renderer: Renderer, size: int) -> Imag
     assert resource.archive_path is not None
     name = member_name(resource.archive, resource.relpath)
     data = read_member(resource.archive_path, name, MAX_MEMBER_BYTES)
+    return _draw_member(data, name, renderer, size)
+
+
+def _ext(name: str) -> str:
+    base = name.rpartition("/")[2]
+    dot = base.rfind(".")
+    return base[dot:].lower() if dot > 0 else ""
+
+
+def member_renderer(name: str) -> Renderer | None:
+    """The renderer for a file inside an archive, by its extension (an image, a font, a
+    PDF...); ``None`` when nothing draws its kind."""
+    return renderer_for(ResourceInfo(0, "", name, "file", _ext(name), None, None, ""))
+
+
+def _draw_member(data: bytes, name: str, renderer: Renderer, size: int) -> Image.Image | None:
+    """Draw a file read out of an archive: an image from memory, anything else from a copy
+    in a temporary folder for the renderer, which reads files, deleted after."""
+    if renderer.load is load_image:
+        return load_image_bytes(data, size)
     with tempfile.TemporaryDirectory(prefix="tagalot-thumb-") as folder:
-        copy = Path(folder) / f"member{resource.ext}"
+        copy = Path(folder) / f"member{_ext(name)}"
         copy.write_bytes(data)
         image = renderer.load(str(copy), size)
         if image is not None:
