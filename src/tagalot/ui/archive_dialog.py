@@ -7,10 +7,10 @@ again shows them. **Show hidden files** tucks them away in a long list. **Show a
 **Hide all** start from everything or nothing, whichever leaves fewer clicks. **Show
 thumbnails** swaps the tree for a grid of the files' thumbnails (pictures, fonts, PDFs...),
 drawn a few at a time in a worker and cached like a gallery's archive pictures; clicking a
-tile hides or shows it. The archive's listing is read in a worker. Files
-the keep's theme doesn't read aren't listed (the dialog says which kinds were left out), nor
-are folders' own entries, archives inside the archive, and hidden files, as scans leave them
-out (#391).
+tile hides or shows it. Their size is picked beside the box, or with Ctrl and the wheel.
+The archive's listing is read in a worker. Files the keep's theme doesn't read aren't
+listed (the dialog says which kinds were left out), nor are folders' own entries, archives
+inside the archive, and hidden files, as scans leave them out (#391).
 
 The dialog only gathers the choice: :meth:`ChooseInsideDialog.shown` and
 :meth:`ChooseInsideDialog.hidden` are read on OK, and saved by the window's
@@ -30,9 +30,11 @@ from PySide6.QtGui import (
     QPixmap,
     QStandardItem,
     QStandardItemModel,
+    QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -53,6 +55,7 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.kinds import NO_EXTENSION
 from tagalot.core.thumbnails.resolve import ThumbnailResolver, member_renderer
 from tagalot.ui.kind_chips import KindChips, kind_label
+from tagalot.ui.thumbnails import zoom_sizes, zoomed
 from tagalot.ui.workers import run_in_pool
 
 HIDE_MARK = chr(0x00D7)  # MULTIPLICATION SIGN, as on the filter bar's chips
@@ -61,7 +64,8 @@ NAME, SIZE, HIDE = 0, 1, 2
 PATH = Qt.ItemDataRole.UserRole + 1
 """A file row's path inside the archive (folders have none)."""
 THUMB_SIZE = 96
-"""How big a file's thumbnail is drawn in the grid, in pixels."""
+"""How big a file's thumbnail is drawn in the grid unless the user picks another size, in
+pixels."""
 HIDDEN_OPACITY = 0.3
 """How faint a hidden file's thumbnail is."""
 THUMB_BATCH = 24
@@ -87,6 +91,22 @@ def _kind(name: str) -> str:
     return base[dot:].lower() if dot > 0 else NO_EXTENSION
 
 
+class InsideGrid(QListView):
+    """The grid of thumbnails: Ctrl and the wheel ask for bigger or smaller ones."""
+
+    zoom_requested = Signal(int)
+    """+1 bigger, -1 smaller."""
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            steps = event.angleDelta().y()
+            if steps:
+                self.zoom_requested.emit(1 if steps > 0 else -1)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+
 class ChooseInsideDialog(QDialog):
     """Choose which files inside one archive are read."""
 
@@ -96,6 +116,8 @@ class ChooseInsideDialog(QDialog):
     """Every file's thumbnail that can be drawn is shown."""
     thumbnails_toggled = Signal(bool)
     """**Show thumbnails** was ticked or unticked (the window remembers it)."""
+    thumbnail_size_changed = Signal(int)
+    """Another thumbnail size was picked (the window remembers it)."""
 
     def __init__(
         self,
@@ -106,7 +128,11 @@ class ChooseInsideDialog(QDialog):
         parent: QWidget | None = None,
         thumbnails: ThumbnailResolver | None = None,
         show_thumbnails: bool = False,
+        thumbnail_size: int = THUMB_SIZE,
+        largest: int = THUMB_SIZE,
     ) -> None:
+        """``largest`` is the keep's thumbnail size (they're made at it, so none is drawn
+        bigger); ``thumbnail_size`` is the size to start at."""
         super().__init__(parent)
         self.setObjectName("choose_inside")
         self.current = current
@@ -117,6 +143,8 @@ class ChooseInsideDialog(QDialog):
         self._to_draw: list[str] | None = None
         """Files whose thumbnails are still to draw (``None``: not started)."""
         self._drawing = False
+        self.thumbnail_size = 0
+        """How big the thumbnails are drawn, in pixels."""
         self.setWindowTitle(f"Choose what to read inside {current.name}")
         self.resize(560, 520)
         self._extensions = None if extensions is None else {e.lower() for e in extensions}
@@ -150,7 +178,7 @@ class ChooseInsideDialog(QDialog):
         self.tree.clicked.connect(self._clicked)
         self.grid_model = QStandardItemModel(self)
         """The files alone, one tile each, for the grid."""
-        self.grid = QListView()
+        self.grid = InsideGrid()
         self.grid.setObjectName("inside_grid")
         self.grid.setModel(self.grid_model)
         self.grid.setViewMode(QListView.ViewMode.IconMode)
@@ -158,9 +186,10 @@ class ChooseInsideDialog(QDialog):
         self.grid.setMovement(QListView.Movement.Static)
         self.grid.setUniformItemSizes(True)
         self.grid.setWordWrap(True)
-        self.grid.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
-        self.grid.setGridSize(QSize(THUMB_SIZE + 32, THUMB_SIZE + 44))
         self.grid.setSpacing(4)
+        self.grid.zoom_requested.connect(
+            lambda step: self.set_thumbnail_size(zoomed(self.thumbnail_size, step, largest))
+        )
         self.grid.setEditTriggers(QListView.EditTrigger.NoEditTriggers)
         self.grid.clicked.connect(self._tile_clicked)
         self.views = QStackedWidget()
@@ -177,6 +206,15 @@ class ChooseInsideDialog(QDialog):
         self.show_thumbnails.setChecked(show_thumbnails and thumbnails is not None)
         self.show_thumbnails.setVisible(thumbnails is not None)
         self.show_thumbnails.toggled.connect(self._thumbnails_toggled)
+        self.size_box = QComboBox()
+        self.size_box.setObjectName("thumbnail_size")
+        self.size_box.setToolTip("How big the thumbnails are (or Ctrl and the wheel)")
+        for size in zoom_sizes(largest):
+            self.size_box.addItem(f"{size} px", size)
+        self.size_box.activated.connect(
+            lambda row: self.set_thumbnail_size(int(self.size_box.itemData(row)))
+        )
+        self._apply_size(max(zoom_sizes(largest)[0], min(thumbnail_size, largest)))
         self.show_all = QPushButton("Show all")
         self.show_all.setObjectName("show_all")
         self.show_all.setToolTip("Read every file listed; then hide the few to leave out")
@@ -210,6 +248,7 @@ class ChooseInsideDialog(QDialog):
         options = QHBoxLayout()
         options.addWidget(self.show_hidden)
         options.addWidget(self.show_thumbnails)
+        options.addWidget(self.size_box)
         options.addStretch(1)
         options.addWidget(self.show_all)
         options.addWidget(self.hide_all)
@@ -323,10 +362,27 @@ class ChooseInsideDialog(QDialog):
             self._draw_thumbnails()
         self.thumbnails_toggled.emit(on)
 
+    def set_thumbnail_size(self, size: int) -> None:
+        """Draw the thumbnails ``size`` pixels big (the longer side), and say so."""
+        if size != self.thumbnail_size:
+            self._apply_size(size)
+            self.thumbnail_size_changed.emit(size)
+
+    def _apply_size(self, size: int) -> None:
+        self.thumbnail_size = size
+        self.grid.setIconSize(QSize(size, size))
+        self.grid.setGridSize(QSize(size + 32, size + 44))
+        row = self.size_box.findData(size)
+        if row < 0:  # a size between the steps (the keep's thumbnails got smaller)
+            self.size_box.addItem(f"{size} px", size)
+            row = self.size_box.count() - 1
+        self.size_box.setCurrentIndex(row)
+
     def _show_view(self) -> None:
         """The grid of thumbnails when the box is ticked, else the tree."""
         on = self.show_thumbnails.isChecked()
         self.views.setCurrentWidget(self.grid if on else self.tree)
+        self.size_box.setVisible(on)
         if on and self.width() < 760:
             self.resize(760, max(self.height(), 620))
 

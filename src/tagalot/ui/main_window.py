@@ -96,6 +96,7 @@ from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
 from tagalot.ui.archive_actions import ArchiveActions
+from tagalot.ui.archive_dialog import THUMB_SIZE
 from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
@@ -248,6 +249,10 @@ class MainWindow(QMainWindow):
         self.archives.config_saved.connect(self._archives_config_saved)
         self.archives.show_thumbnails = bool(self._ui_state.get("archive_thumbnails", False))
         self.archives.thumbnails_toggled.connect(self._archive_thumbnails_toggled)
+        self.archives.thumbnail_size = clamp_size(
+            self._ui_state.get("archive_thumbnail_size"), THUMB_SIZE, session.thumbnail_max
+        )
+        self.archives.thumbnail_size_changed.connect(self._archive_thumbnail_size_changed)
         self.tag_actions.changed.connect(self._tags_changed)
         self.tag_actions.message.connect(self._tag_message)
         self.tag_actions.pictures_changed.connect(self.thumbnails.forget)
@@ -774,6 +779,12 @@ class MainWindow(QMainWindow):
         """Remember whether Choose what to read inside shows thumbnails."""
         assert self.session is not None
         self._ui_state["archive_thumbnails"] = on
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def _archive_thumbnail_size_changed(self, size: int) -> None:
+        """Remember how big Choose what to read inside draws thumbnails."""
+        assert self.session is not None
+        self._ui_state["archive_thumbnail_size"] = size
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
 
     def _preview_toggled(self, visible: bool) -> None:

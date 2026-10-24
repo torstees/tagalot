@@ -294,7 +294,15 @@ def test_show_all_hide_all_and_thumbnails(qtbot: QtBot, window: MainWindow) -> N
     with qtbot.waitSignal(dialog.thumbnails_drawn, timeout=10_000):
         dialog.show_thumbnails.setChecked(True)
     assert dialog.views.currentWidget() is dialog.grid
-    assert dialog.grid.iconSize().width() == 96
+    assert dialog.grid.iconSize().width() == 96  # the default size
+    assert dialog.size_box.currentData() == 96
+    largest = _session(window).thumbnail_max
+    assert dialog.size_box.itemData(dialog.size_box.count() - 1) == largest
+    dialog.size_box.activated.emit(dialog.size_box.findData(160))  # picked from the box
+    assert dialog.grid.iconSize().width() == 160
+    dialog.grid.zoom_requested.emit(1)  # Ctrl and the wheel
+    assert dialog.grid.iconSize().width() == 192
+    assert dialog.size_box.currentData() == 192
     cover = dialog.tiles()["UI pack/cover.png"]
     assert cover.icon().cacheKey() != blank  # its thumbnail, not the file icon
     dialog._tile_clicked(cover.index())
@@ -314,7 +322,9 @@ def test_show_all_hide_all_and_thumbnails(qtbot: QtBot, window: MainWindow) -> N
     reopened = _dialog(qtbot, window)  # the keep remembers it
     assert reopened.show_thumbnails.isChecked()
     assert reopened.views.currentWidget() is reopened.grid
+    assert reopened.grid.iconSize().width() == 192  # the size picked last
     again = reopened.tiles()["UI pack/cover.png"]
     qtbot.waitUntil(lambda: again.icon().cacheKey() != blank, timeout=10_000)
     state = load_ui_state(_session(window).keep.ui_state_path)
     assert state["archive_thumbnails"] is True
+    assert state["archive_thumbnail_size"] == 192

@@ -38,7 +38,7 @@ from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.themes.api import Kind
-from tagalot.ui.archive_dialog import ChooseInsideDialog, left_out_message
+from tagalot.ui.archive_dialog import THUMB_SIZE, ChooseInsideDialog, left_out_message
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.workers import run_in_pool
 
@@ -62,6 +62,8 @@ class ArchiveActions(QObject):
     """``keep.toml`` changed (a folder's archives are read now)."""
     thumbnails_toggled = Signal(bool)
     """The dialog's **Show thumbnails** was ticked or unticked."""
+    thumbnail_size_changed = Signal(int)
+    """The dialog's thumbnails were made bigger or smaller."""
 
     def __init__(self, session: KeepSession, pool: QThreadPool | None, window: QWidget) -> None:
         super().__init__(window)
@@ -73,6 +75,9 @@ class ArchiveActions(QObject):
         self.show_thumbnails = False
         """Whether the dialog starts with **Show thumbnails** ticked (the window remembers
         it in the keep's UI state, through :attr:`thumbnails_toggled`)."""
+        self.thumbnail_size = THUMB_SIZE
+        """How big the dialog's thumbnails start (remembered like :attr:`show_thumbnails`,
+        through :attr:`thumbnail_size_changed`)."""
 
     # --- menus ---
 
@@ -210,8 +215,11 @@ class ArchiveActions(QObject):
             self._window,
             thumbnails=self.session.thumbnails,
             show_thumbnails=self.show_thumbnails,
+            thumbnail_size=self.thumbnail_size,
+            largest=self.session.thumbnail_max,
         )
         dialog.thumbnails_toggled.connect(self._thumbnails_toggled)
+        dialog.thumbnail_size_changed.connect(self._thumbnail_size_changed)
         dialog.loaded.connect(lambda: self._loaded(dialog))
         dialog.accepted.connect(lambda: self._save(dialog))
         dialog.finished.connect(lambda _: self._closed(dialog))
@@ -242,6 +250,10 @@ class ArchiveActions(QObject):
     def _thumbnails_toggled(self, on: bool) -> None:
         self.show_thumbnails = on
         self.thumbnails_toggled.emit(on)
+
+    def _thumbnail_size_changed(self, size: int) -> None:
+        self.thumbnail_size = size
+        self.thumbnail_size_changed.emit(size)
 
     def _closed(self, dialog: ChooseInsideDialog) -> None:
         if self.dialog is dialog:
