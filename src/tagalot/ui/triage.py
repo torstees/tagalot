@@ -17,6 +17,10 @@ Tabs, each with how many it holds:
   tried and what is there now, and pictures that can't be drawn (#426); with Open page,
   Show the file, Re-read from file, and Ignore (for the item, the value everywhere, or
   every item of the type); Show ignored lists ignored rows, to stop ignoring them.
+- **Skipped:** each rule that skips files now (a Skip pattern, the notes folder, what the
+  theme doesn't read, archive members not read), with how many files and how many items
+  it hides (#527, ``core.skip_reasons``); selecting one lists its files and says where the
+  rule lives.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -63,6 +67,7 @@ from tagalot.core.roots import local_path
 from tagalot.core.search import count_matches
 from tagalot.core.search_spec import SearchSpec
 from tagalot.core.session import KeepSession
+from tagalot.core.skip_reasons import SkippedFile, SkippedReport, SkipRule, ThemeScope, skip_reasons
 from tagalot.core.triage import (
     KEYWORDS,
     MISSING,
@@ -83,7 +88,15 @@ from tagalot.ui.workers import run_in_pool
 MAX_FILES = 10_000
 """Unlinked files listed at once (the count shows them all)."""
 
-UNLINKED_TAB, UNTAGGED_TAB, MISSING_TAB, KEYWORDS_TAB, MARKDOWN_TAB, PICTURES_TAB = range(6)
+(
+    UNLINKED_TAB,
+    UNTAGGED_TAB,
+    MISSING_TAB,
+    KEYWORDS_TAB,
+    MARKDOWN_TAB,
+    PICTURES_TAB,
+    SKIPPED_TAB,
+) = range(7)
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
@@ -91,8 +104,10 @@ _TITLES = {
     KEYWORDS_TAB: "Unmatched keywords",
     MARKDOWN_TAB: "Markdown",
     PICTURES_TAB: "Pictures",
+    SKIPPED_TAB: "Skipped",
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
+SKIPPED_HINT = "Select a rule to see its files and where it lives."
 IGNORED_AS = {
     ITEM: "ignored for this item",
     VALUE: "ignored in every file",
@@ -110,6 +125,7 @@ class Counts:
     keywords: int = 0
     notes: int = 0
     pictures: int = 0
+    skipped: int = 0
 
 
 MarkdownRow = NoteProblem | MarkdownFileProblem
@@ -117,7 +133,7 @@ MarkdownRow = NoteProblem | MarkdownFileProblem
 matter has problems (#438)."""
 
 
-Loaded = tuple[Counts, list[UnlinkedFile], list[MarkdownRow], list[PictureProblem]]
+Loaded = tuple[Counts, list[UnlinkedFile], list[MarkdownRow], list[PictureProblem], SkippedReport]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
 
@@ -244,6 +260,102 @@ class PicturesModel(QAbstractTableModel):
             summary,
             problem.relpath,
         )[index.column()]
+
+
+class SkipRulesModel(QAbstractTableModel):
+    """The rules that skip files: rule, folder, files, items hidden (#527)."""
+
+    HEADERS = ("Rule", "Folder", "Files", "Items hidden")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rules: list[SkipRule] = []
+
+    def set_rules(self, rules: list[SkipRule]) -> None:
+        self.beginResetModel()
+        self.rules = rules
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.rules)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid():
+            return None
+        rule = self.rules[index.row()]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return rule.where
+        if role == Qt.ItemDataRole.TextAlignmentRole and index.column() >= 2:
+            return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        return (
+            rule.title,
+            rule.root_name or "Every folder",
+            f"{rule.count:,}",
+            f"{rule.hidden:,}" if rule.hidden else "",
+        )[index.column()]
+
+
+class SkippedFilesModel(QAbstractTableModel):
+    """One rule's files: folder and path."""
+
+    HEADERS = ("Folder", "Path")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: list[SkippedFile] = []
+        self.root_names: dict[str, str] = {}
+
+    def set_files(self, files: list[SkippedFile], root_names: dict[str, str]) -> None:
+        self.beginResetModel()
+        self.files = files
+        self.root_names = root_names
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.files)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+        file = self.files[index.row()]
+        if index.column() == 0:
+            return self.root_names.get(file.root_id, file.root_id)
+        return file.relpath
+
+
+def skip_rule_details(rule: SkipRule) -> str:
+    """What the details under the Skipped tab's rules say about one."""
+    files = "1 file" if rule.count == 1 else f"{rule.count:,} files"
+    lines = [f"{rule.title}: {files}."]
+    if rule.hidden:
+        items = "1 item is" if rule.hidden == 1 else f"{rule.hidden:,} items are"
+        lines.append(f"{items} hidden because all of their files are skipped.")
+    lines.append(rule.where)
+    if rule.count > len(rule.files):
+        lines.append(f"Showing the first {len(rule.files):,}.")
+    return " ".join(lines)
 
 
 def picture_details(problem: PictureProblem) -> str:
@@ -483,6 +595,55 @@ class TriagePage(QWidget):
         )
         self._picture_selection_changed()
 
+        self.skip_rules = SkipRulesModel()
+        self.skip_rules_table = QTableView()
+        self.skip_rules_table.setObjectName("skip_rules")
+        self.skip_rules_table.setModel(self.skip_rules)
+        self.skip_rules_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.skip_rules_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.skip_rules_table.verticalHeader().hide()
+        header = self.skip_rules_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in (1, 2, 3):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.skip_rules_table.selectionModel().selectionChanged.connect(
+            lambda *_: self._skip_rule_selected()
+        )
+        self.skip_details = QLabel(SKIPPED_HINT)
+        self.skip_details.setObjectName("skip_details")
+        self.skip_details.setWordWrap(True)
+        self.skip_details.setTextFormat(Qt.TextFormat.PlainText)
+        self.skip_details.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.skipped_files = SkippedFilesModel()
+        self.skipped_files_table = QTableView()
+        self.skipped_files_table.setObjectName("skipped_files")
+        self.skipped_files_table.setModel(self.skipped_files)
+        self.skipped_files_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.skipped_files_table.verticalHeader().hide()
+        header = self.skipped_files_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        rules = QWidget()
+        rules_layout = QVBoxLayout(rules)
+        rules_layout.setContentsMargins(0, 0, 0, 0)
+        rules_layout.addWidget(self.skip_rules_table, 1)
+        rules_layout.addWidget(self.skip_details)
+        rules_layout.addWidget(self.skipped_files_table, 2)
+        self.skipped_note = QLabel(
+            "Files scans leave out, by the rule that leaves them out. An item whose files are "
+            "all skipped is hidden until one of them is read again."
+        )
+        self.skipped_note.setWordWrap(True)
+        self.skipped_empty = EmptyState(
+            "Nothing is skipped", "Scans read every file in your folders that the theme takes."
+        )
+        self.skipped_stack = QStackedWidget()
+        self.skipped_stack.addWidget(rules)
+        self.skipped_stack.addWidget(self.skipped_empty)
+        skipped_tab = _tab(self.skipped_stack, [], self.skipped_note)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
@@ -490,6 +651,7 @@ class TriagePage(QWidget):
         self.tabs.addTab(keywords_tab, _TITLES[KEYWORDS_TAB])
         self.tabs.addTab(notes_tab, _TITLES[MARKDOWN_TAB])
         self.tabs.addTab(pictures_tab, _TITLES[PICTURES_TAB])
+        self.tabs.addTab(skipped_tab, _TITLES[SKIPPED_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         self.refresh()
@@ -504,11 +666,15 @@ class TriagePage(QWidget):
         known, show_ignored = _known(session), self.show_ignored.isChecked()
         config = session.keep.config
         notes = None if config.notes_root is None else (config.notes_root, config.notes_path)
+        roots = list(config.roots)
+        theme = session.theme
+        scope = ThemeScope(theme.extensions or None, theme.dirs, session.see_through)
 
         def job() -> Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
                 pictures = picture_problems(conn, known, ignored=show_ignored)
+                skipped = skip_reasons(conn, roots, scope, notes)
                 counts = Counts(
                     count_unlinked(conn, notes),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
@@ -516,9 +682,10 @@ class TriagePage(QWidget):
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
                     len(markdown := _markdown_rows(conn)),
                     sum(1 for p in pictures if not p.ignored),
+                    skipped.total,
                 )
                 files = unlinked_files(conn, MAX_FILES, notes)
-                return counts, files, markdown, pictures
+                return counts, files, markdown, pictures, skipped
 
         # Refreshes overlap (a change, then Show ignored): only the latest is shown, or an
         # older one finishing last would put back what it saw (#406).
@@ -537,6 +704,7 @@ class TriagePage(QWidget):
         files: list[UnlinkedFile],
         notes: list[MarkdownRow] | None = None,
         pictures: list[PictureProblem] | None = None,
+        skipped: SkippedReport | None = None,
     ) -> None:
         self.counts = counts
         for tab, n in (
@@ -546,8 +714,10 @@ class TriagePage(QWidget):
             (KEYWORDS_TAB, counts.keywords),
             (MARKDOWN_TAB, counts.notes),
             (PICTURES_TAB, counts.pictures),
+            (SKIPPED_TAB, counts.skipped),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
+        self._show_skipped(skipped.rules if skipped is not None else [])
         self.pictures.set_problems(pictures or [])
         self.pictures_stack.setCurrentIndex(0 if pictures else 1)
         self._picture_selection_changed()
@@ -564,6 +734,28 @@ class TriagePage(QWidget):
                 "Files no item uses: the theme didn't recognize them, or they're extras "
                 "(a cover image is read from its folder without being linked)."
             )
+
+    def _show_skipped(self, rules: list[SkipRule]) -> None:
+        """Show the rules, keeping the one selected when it's still there."""
+        chosen = self.selected_skip_rule()
+        key = None if chosen is None else (chosen.kind, chosen.root_name, chosen.value)
+        self.skip_rules.set_rules(rules)
+        self.skipped_stack.setCurrentIndex(0 if rules else 1)
+        for row, rule in enumerate(rules):
+            if (rule.kind, rule.root_name, rule.value) == key:
+                self.skip_rules_table.selectRow(row)
+                break
+        self._skip_rule_selected()
+
+    def selected_skip_rule(self) -> SkipRule | None:
+        rows = self.skip_rules_table.selectionModel().selectedRows()
+        return self.skip_rules.rules[rows[0].row()] if rows else None
+
+    def _skip_rule_selected(self) -> None:
+        rule = self.selected_skip_rule()
+        names = {r.id: r.name for r in self.session.keep.config.roots}
+        self.skipped_files.set_files(rule.files if rule is not None else [], names)
+        self.skip_details.setText(SKIPPED_HINT if rule is None else skip_rule_details(rule))
 
     def current_search(self) -> SearchPage | None:
         """The search page of the current tab (tagging applies to its selection)."""

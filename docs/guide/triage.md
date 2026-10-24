@@ -52,4 +52,16 @@ Items whose pictures are missing or broken:
 
 Each is a step you can undo. Tick **Show ignored** to see ignored rows (greyed, saying how), and **Stop ignoring** to list one again. Placeholders such as `cover: None`, `null`, `N/A`, or `-` already mean "no cover", so they're never listed.
 
+## Skipped
+
+Files scans leave out, grouped by the rule that leaves them out, with how many files each rule skips and how many items it hides. An item whose files are all skipped is hidden from lists and searches until one of its files is read again; its tags are kept.
+
+- **Skip pattern “`Drafts/**`”**: a pattern in a folder's **Skip** box ([Keep configuration](keeps-and-folders.md#skipping-files)), or one **Skip in scans…** added. A file under two patterns is listed under both.
+- **Not a note in the notes folder**: the [notes folder](notes.md#the-notes-folder) keeps only notes, pictures, and archives.
+- **The theme doesn't read .bmp**, **Folders the theme doesn't record**: files the keep's theme leaves out. Another theme, or a newer version of it, may read them.
+- Inside archives: **Not read inside archives**, **Archives turned off**, **Hidden inside archives**, and **Inside skipped archives**.
+- **Read again at the next scan**: no rule leaves these out any more (you removed the pattern), so the next scan reads them.
+
+Select a rule to list its files and see where the rule lives. To read the files again, change it there, then scan.
+
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

@@ -15,7 +15,14 @@ from tagalot.ui.main_window import MainWindow
 from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
-from tagalot.ui.triage import KEYWORDS_TAB, MISSING_TAB, UNTAGGED_TAB, TriagePage
+from tagalot.ui.triage import (
+    KEYWORDS_TAB,
+    MISSING_TAB,
+    SKIPPED_HINT,
+    SKIPPED_TAB,
+    UNTAGGED_TAB,
+    TriagePage,
+)
 from tests.ui.test_music_views import session, window
 
 pytestmark = pytest.mark.gui
@@ -61,7 +68,9 @@ def test_the_three_lists(qtbot: QtBot, window: MainWindow) -> None:
         "Unmatched keywords (10)",  # songs whose genres match no tag (#295)
         "Markdown (0)",  # the notes folder (#382), front matter (#438)
         "Pictures (0)",  # pictures not found or that can't be drawn (#426)
+        "Skipped (0)",  # files scans leave out, by rule (#527)
     ]
+    assert page.skipped_stack.currentWidget() is page.skipped_empty
     assert [f.relpath for f in page.files.files] == ["Miles Davis/Kind of Blue/cover.jpg"]
     assert window.current_items_page() is None  # the files tab has no items to tag
     page.tabs.setCurrentIndex(UNTAGGED_TAB)
@@ -93,6 +102,31 @@ def test_skipping_a_file_in_scans(qtbot: QtBot, window: MainWindow, session: Kee
     with qtbot.waitSignal(window.scans.finished, timeout=10_000):
         window.scan_now()
     qtbot.waitUntil(lambda: _tab_texts(page)[0] == "Unlinked files (0)", timeout=5000)
+
+    # Skipped lists the pattern now, with its file (#527).
+    qtbot.waitUntil(
+        lambda: page.tabs.tabText(SKIPPED_TAB) == "Skipped (1)",
+        timeout=5000,
+    )
+    [rule] = page.skip_rules.rules
+    assert (rule.title, rule.root_name, rule.count, rule.hidden) == (
+        "Skip pattern \u201cMiles Davis/Kind of Blue/cover.jpg\u201d",
+        root.name,
+        1,
+        0,  # no item used it
+    )
+    assert page.skip_details.text() == SKIPPED_HINT
+    page.tabs.setCurrentIndex(SKIPPED_TAB)
+    page.skip_rules_table.selectRow(0)
+    assert [f.relpath for f in page.skipped_files.files] == ["Miles Davis/Kind of Blue/cover.jpg"]
+    assert "Remove the pattern to read these files again." in page.skip_details.text()
+
+    # A refresh keeps the rule selected.
+    page.counts = None
+    page.refresh()
+    qtbot.waitUntil(lambda: page.counts is not None, timeout=5000)
+    assert page.selected_skip_rule() is not None
+    assert page.skipped_files.rowCount() == 1
 
 
 def test_tagging_untagged_items_and_dismissing_them(
