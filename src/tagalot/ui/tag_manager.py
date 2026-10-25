@@ -23,7 +23,7 @@ Merge, delete, colors, aliases, and descriptions come with later tasks.
 """
 
 import html
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import shiboken6
@@ -211,11 +211,16 @@ class TagDetails(QFrame):
     alias_removed = Signal(int, str)
     types_requested = Signal(int)
     """Change which item types the tag applies to (#135)."""
+    group_toggled = Signal(int, int, bool)
+    """Put the tag in a group (``True``) or take it out (#536): tag id, group id."""
+    group_new_requested = Signal(str, list)
+    """**New group…**: a name, and the tags to hold (this one)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.tag_id: int | None = None
+        self._tree: TagTree | None = None
         self._color: str | None = None
         self._saved_description = ""
         self._drafts: dict[int, str] = {}
@@ -325,6 +330,18 @@ class TagDetails(QFrame):
         self.plurals: dict[str, str] = {}
         """``{type id: "Books"}`` for naming types (set by the page)."""
 
+        # Groups (#536): the ones it is in, and Change ▾ to tick others or make one.
+        self.groups = QLabel()
+        self.groups.setWordWrap(True)
+        self.change_groups = QPushButton("Change")
+        self.groups_menu = QMenu(self.change_groups)
+        self.groups_menu.aboutToShow.connect(self._fill_groups_menu)
+        self.change_groups.setMenu(self.groups_menu)
+        groups_row = QHBoxLayout()
+        groups_row.setContentsMargins(0, 0, 0, 0)
+        groups_row.addWidget(self.groups, 1)
+        groups_row.addWidget(self.change_groups)
+
         # Aliases: a short list, Remove, and a box to add one.
         self.aliases = QListWidget()
         self.aliases.setMaximumHeight(self.fontMetrics().lineSpacing() * 4 + 12)
@@ -357,6 +374,7 @@ class TagDetails(QFrame):
         form.addRow("Description:", description_box)
         form.addRow("Picture:", picture_row)
         form.addRow("Applies to:", types_row)
+        form.addRow("Groups:", groups_row)
         form.addRow("Also called:", alias_box)
         form.addRow("Used on:", self.counts)
         self.fields = QWidget()
@@ -376,6 +394,7 @@ class TagDetails(QFrame):
             # current tag) or a look at another tag mustn't throw it away.
             self._drafts[self.tag_id] = self.description.toPlainText()
         self.tag_id = tag_id if shown else None
+        self._tree = tree
         self.title.setVisible(shown)
         self.fields.setVisible(shown)
         self.empty.setVisible(not shown)
@@ -443,6 +462,7 @@ class TagDetails(QFrame):
         keep = draft is not None and draft.strip() != saved.strip()
         self.description.setPlainText(draft if keep and draft is not None else saved)
         self.types.setText(types_text(tree, tag_id, self.plurals))
+        self.groups.setText(groups_text(tree, tag_id))
         self.aliases.clear()
         self.aliases.addItems(list(tree.aliases(tag_id)))
         if not same_tag:
@@ -457,6 +477,31 @@ class TagDetails(QFrame):
                 f"{usage.with_subtags:,} with its sub-tags"
             )
         self._update_buttons()
+
+    def _fill_groups_menu(self) -> None:
+        """Each group, ticked when the tag is in it itself, then **New group…**."""
+        menu = self.groups_menu
+        menu.clear()
+        tree, tag_id = self._tree, self.tag_id
+        if tree is None or tag_id is None:
+            return
+        for group in tree.groups():
+            action = menu.addAction(group.name)
+            action.setCheckable(True)
+            action.setChecked(tag_id in group.tags)
+            action.triggered.connect(
+                lambda on, g=group.id, t=tag_id: self.group_toggled.emit(t, g, on)
+            )
+        if tree.groups():
+            menu.addSeparator()
+        menu.addAction("New group\u2026", self.ask_new_group)
+
+    def ask_new_group(self) -> None:
+        """Ask for a name, then make a group holding this tag."""
+        tag_id = self.tag_id
+        name = ask_name(self, "New group", "Name of the new tag group:")
+        if name is not None and tag_id is not None:
+            self.group_new_requested.emit(name, [tag_id])
 
     def description_changed(self) -> bool:
         """Whether the description box differs from the saved description."""
@@ -530,6 +575,18 @@ def ask_name(parent: QWidget, title: str, label: str, text: str = "") -> str | N
     return name.strip() or None if ok else None
 
 
+def groups_text(tree: TagTree, tag_id: int) -> str:
+    """The groups a tag is in, itself or through a tag above it (#536): "Trips, Everyday;
+    through 'Places': Holidays", or "None"."""
+    own = [tree.group(g).name for g in tree.groups_of(tag_id)]
+    parts = [", ".join(own)] if own else []
+    for ancestor in reversed(tree.ancestors(tag_id)):
+        names = [tree.group(g).name for g in tree.groups_of(ancestor)]
+        if names:
+            parts.append(f"through {tree.node(ancestor).name!r}: {', '.join(names)}")
+    return "; ".join(parts) or "None"
+
+
 class TagManagerPage(QWidget):
     """The Tag manager page: filter, tree with counts, and the selected tag's details.
 
@@ -550,6 +607,12 @@ class TagManagerPage(QWidget):
     export_requested = Signal(bool)
     """Export tags…: with which items have each tag (#396), or not."""
     import_requested = Signal()
+    group_new_requested = Signal(str, list)
+    """Make a tag group (#536): its name, and the tags it holds."""
+    group_rename_requested = Signal(int, str, str)
+    """Group id, new name, old name."""
+    group_delete_requested = Signal(int, str)
+    """Group id, and its name (its tags stay)."""
 
     def __init__(
         self,
@@ -661,6 +724,16 @@ class TagManagerPage(QWidget):
             self.delete_button,
         ):
             self.toolbar.addWidget(button)
+        self.groups_button = QPushButton("Groups")
+        self.groups_button.setToolTip(
+            "The tag groups: what each holds, and renaming or deleting them (their tags stay)"
+        )
+        self.groups_menu = QMenu(self.groups_button)
+        self.groups_menu.aboutToShow.connect(self._fill_groups_menu)
+        self.groups_menu.setToolTipsVisible(True)
+        self.groups_button.setMenu(self.groups_menu)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.groups_button)
         self.toolbar.addSeparator()
         self.toolbar.addWidget(self.export_button)
         self.toolbar.addWidget(self.import_button)
@@ -677,6 +750,7 @@ class TagManagerPage(QWidget):
 
         self.details = TagDetails()
         self.details.plurals = dict(type_plurals(session.schema))
+        self.details.group_new_requested.connect(self.group_new_requested)
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -799,6 +873,54 @@ class TagManagerPage(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.delete_requested.emit(tag_id, dialog.mode())
 
+    # --- tag groups (#536) ---
+
+    def _fill_groups_menu(self) -> None:
+        """Each group as a submenu (what it holds, **Rename…**, **Delete**), then **New
+        group…**."""
+        menu = self.groups_menu
+        menu.clear()
+        tree = self.model.tree
+        groups = tree.groups() if tree is not None else ()
+        for group in groups:
+            assert tree is not None
+            count = len(group.tags)
+            sub = menu.addMenu(f"{group.name} ({count} tag{'' if count == 1 else 's'})")
+            names = [PATH_SEPARATOR.join(tree.path(t)) for t in tree.group_tops(group.id)] + [
+                PATH_SEPARATOR.join(tree.path(t))
+                for t in sorted(group.tags - set(tree.group_tops(group.id)))
+            ]
+            for name in names[:GROUP_LISTED]:
+                sub.addAction(name).setEnabled(False)
+            if len(names) > GROUP_LISTED:
+                sub.addAction(f"and {len(names) - GROUP_LISTED} more").setEnabled(False)
+            if not names:
+                sub.addAction("No tags yet").setEnabled(False)
+            sub.addSeparator()
+            sub.addAction("Rename\u2026", self._renaming(group.id, group.name))
+            sub.addAction("Delete", self._deleting(group.id, group.name))
+        if groups:
+            menu.addSeparator()
+        menu.addAction("New group\u2026", self.new_group)
+
+    def _renaming(self, group_id: int, name: str) -> Callable[[], None]:
+        return lambda: self.rename_group(group_id, name)
+
+    def _deleting(self, group_id: int, name: str) -> Callable[[], None]:
+        return lambda: self.group_delete_requested.emit(group_id, name)
+
+    def rename_group(self, group_id: int, old: str) -> None:
+        name = ask_name(self, "Rename group", "New name of the tag group:", old)
+        if name is not None:
+            self.group_rename_requested.emit(group_id, name, old)
+
+    def new_group(self) -> None:
+        """Make a group holding the selected tag, if one is selected."""
+        name = ask_name(self, "New group", "Name of the new tag group:")
+        if name is not None:
+            current = self.current_tag()
+            self.group_new_requested.emit(name, [current] if current is not None else [])
+
     def _rename_requested(self, tag_id: int, name: str) -> None:
         tree = self.model.tree
         if tree is not None and tag_id in tree:
@@ -860,6 +982,10 @@ class TagManagerPage(QWidget):
             self._expanded.add(tag_id)
         else:
             self._expanded.discard(tag_id)
+
+
+GROUP_LISTED = 12
+"""The most tags a group's submenu lists."""
 
 
 def types_text(tree: TagTree, tag_id: int, plurals: Mapping[str, str]) -> str:

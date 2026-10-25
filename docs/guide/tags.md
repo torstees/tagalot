@@ -26,6 +26,7 @@ When you tag one kind of thing at a time (trips one evening, people the next), a
 - **Putting tags in a group:** right-click a tag (or several selected in the tree) → **Groups** → tick a group, or **New group…** to make one with them. Untick to take them out.
 - **Showing groups:** the **All tags** button beside the box (**Groups ▾**) lists your groups. Tick one or more, and the panel shows each group's name as a heading with its tags under it, in place of the whole tree. **All tags** shows everything again, and right-clicking a heading offers **Stop showing** it.
 - **Nothing is out of reach:** while you type, matches outside the groups shown are listed after them, under **Other tags**.
+- **In the tag manager:** the details show the tag's **Groups** (and those it's in through a tag above it), with **Change** to tick groups or make one. **Groups** on its toolbar lists each group with its tags, to **Rename…** or **Delete** one (its tags stay), or make a **New group…**.
 - Groups belong to the keep, so everyone who opens it sees them; which groups the panel shows is yours alone. Making and changing groups can be undone like any tag change.
 
 Every tagging is one step you can undo (**Edit → Undo**, Ctrl+Z).
@@ -40,6 +41,7 @@ TOOLS → **Tag manager** (the Tags and Details panel steps aside while it's ope
 - **Delete…** asks, for a tag with sub-tags, whether to delete them too or move them up a level, and says how many items will lose a tag. Items themselves are never deleted.
 - The details on the right: the tag's **icon** (below), its **color**, a **description** (shown in tooltips; finding a tag matches it too), a **picture** (**Choose picture…**: shown above the description in its tooltips, up to 240 px; Tagalot keeps a copy in the keep, so the file can move or go), **other names** (aliases: they find the tag in the panel and the search box, and match [file keywords](file-keywords.md)), and **what it applies to**.
 - **Undo** and **Redo** buttons on its toolbar, the same history as Edit → Undo.
+- **Groups** lists the [tag groups](#tag-groups), to rename or delete them.
 - **Export tags…** and **Import tags…** save the whole tree to a file and load one back (below).
 
 ### Tag icons
