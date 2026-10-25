@@ -24,7 +24,7 @@ from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QHideEvent, QShowEvent
+from PySide6.QtGui import QHideEvent, QPalette, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -60,7 +61,7 @@ from tagalot.core.keep_settings import (
     with_option,
 )
 from tagalot.core.note_keys import NoteKeyError, check_key
-from tagalot.core.online import consent_text, tokens_text
+from tagalot.core.online import consent_text, needed_env, tokens_text
 from tagalot.core.root_admin import (
     RemovalCounts,
     RootStatus,
@@ -75,7 +76,7 @@ from tagalot.core.root_admin import (
 )
 from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
-from tagalot.core.settings import save_settings
+from tagalot.core.settings import ENV_NAME, save_settings
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
@@ -392,7 +393,7 @@ class KeepConfigWindow(QWidget):
         self.find_by_row.setLayout(find_by_row)
         find_by_row.setContentsMargins(0, 0, 0, 0)
         self.find_by_row.setVisible(any(s.titles for s in theme.online_sources))
-        self.tokens = QLabel(tokens_text(theme.online_sources))
+        self.tokens = QLabel(tokens_text(theme.online_sources, session.environment()))
         self.tokens.setWordWrap(True)
         self.tokens.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.tokens.setVisible(bool(self.tokens.text()))
@@ -433,6 +434,7 @@ class KeepConfigWindow(QWidget):
         column.addLayout(form)
         column.addWidget(self.keep_options)
         column.addWidget(self.online)
+        column.addWidget(self._environment_box())
         column.addWidget(self.contents)
         column.addStretch(1)
         return tab
@@ -621,6 +623,148 @@ class KeepConfigWindow(QWidget):
         root = self.current_root()
         if root is not None:
             self.status.setText(describe_status(root, self.statuses.get(root.id)))
+
+    # --- the keep's environment (#544) ---
+
+    def _environment_box(self) -> QGroupBox:
+        """**Environment**: the keep's variables for this user (an online service's key),
+        kept in their ``settings.toml``, never in the keep."""
+        box = QGroupBox("Environment")
+        self.env_list = QListWidget()
+        self.env_list.setMaximumHeight(self.fontMetrics().lineSpacing() * 5 + 12)
+        self.env_list.currentItemChanged.connect(lambda *_: self._env_buttons())
+        self.env_list.itemDoubleClicked.connect(lambda _: self.set_env_value())
+        self.env_show = QCheckBox("Show values")
+        self.env_show.toggled.connect(lambda _: self.show_environment())
+        self.env_set = QPushButton("Set\u2026")
+        self.env_set.setToolTip("Give the selected variable a value")
+        self.env_set.clicked.connect(self.set_env_value)
+        self.env_add = QPushButton("Add\u2026")
+        self.env_add.setToolTip("Add a variable by name")
+        self.env_add.clicked.connect(self.add_env)
+        self.env_remove = QPushButton("Remove")
+        self.env_remove.clicked.connect(self.remove_env)
+        about = QLabel(
+            "Variables such as an online service's key, for this keep. Yours alone, on this "
+            "computer: they're kept in your settings, not in the keep, and win over the "
+            "system's environment variables of the same name."
+        )
+        about.setWordWrap(True)
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.addWidget(self.env_set)
+        buttons.addWidget(self.env_add)
+        buttons.addWidget(self.env_remove)
+        buttons.addStretch(1)
+        buttons.addWidget(self.env_show)
+        layout = QVBoxLayout(box)
+        layout.addWidget(about)
+        layout.addWidget(self.env_list)
+        layout.addLayout(buttons)
+        self.show_environment()
+        return box
+
+    def show_environment(self) -> None:
+        """List the keep's variables (values hidden unless **Show values**), then those its
+        theme's services need that aren't set."""
+        current = self.env_list.currentItem()
+        selected = current.data(Qt.ItemDataRole.UserRole) if current is not None else None
+        env = self.session.environment()
+        needs = dict(needed_env(self.session.theme.online_sources))
+        self.env_list.clear()
+        for name, value in sorted(env.items()):
+            shown = value if self.env_show.isChecked() else "\u2022" * 8
+            item = QListWidgetItem(f"{name} = {shown}")
+            if name in needs:
+                item.setToolTip(f"{needs[name]} uses it")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.env_list.addItem(item)
+        for name, sources in needs.items():
+            if name in env:
+                continue
+            item = QListWidgetItem(f"{name}: not set ({sources} needs it)")
+            item.setForeground(self.palette().color(QPalette.ColorRole.PlaceholderText))
+            item.setToolTip(f"Select it and click Set\u2026 to give {sources} your key")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.env_list.addItem(item)
+        for row in range(self.env_list.count()):
+            if self.env_list.item(row).data(Qt.ItemDataRole.UserRole) == selected:
+                self.env_list.setCurrentRow(row)
+        self._env_buttons()
+
+    def _env_buttons(self) -> None:
+        current = self.env_list.currentItem()
+        name = current.data(Qt.ItemDataRole.UserRole) if current is not None else None
+        self.env_set.setEnabled(name is not None)
+        self.env_remove.setEnabled(name is not None and name in self.session.environment())
+
+    def _env_name(self) -> str | None:
+        current = self.env_list.currentItem()
+        name = current.data(Qt.ItemDataRole.UserRole) if current is not None else None
+        return name if isinstance(name, str) else None
+
+    def ask_env_name(self) -> str | None:
+        """The name of a variable to add (tests replace it)."""
+        name, ok = QInputDialog.getText(self, "Add a variable", "Name, such as TAGALOT_TMDB_TOKEN:")
+        return name.strip() or None if ok else None
+
+    def ask_env_value(self, name: str) -> str | None:
+        """A variable's value, typed hidden; ``None`` if cancelled (tests replace it)."""
+        value, ok = QInputDialog.getText(
+            self, f"Set {name}", f"Value of {name}:", QLineEdit.EchoMode.Password
+        )
+        return value if ok else None
+
+    def set_env_value(self) -> None:
+        name = self._env_name()
+        if name is not None:
+            self._save_env(name)
+
+    def add_env(self) -> None:
+        name = self.ask_env_name()
+        if name is None:
+            return
+        if not ENV_NAME.fullmatch(name):  # said before asking for its value
+            QMessageBox.warning(
+                self,
+                "Environment",
+                f"{name!r} can't name an environment variable: use letters, digits, and _, "
+                "not starting with a digit.",
+            )
+            return
+        self._save_env(name)
+
+    def remove_env(self) -> None:
+        name = self._env_name()
+        if name is not None and name in self.session.environment():
+            self._change_env(name, None, f"Removed {name} from this keep's environment.")
+
+    def _save_env(self, name: str) -> None:
+        value = self.ask_env_value(name)
+        if value is None:
+            return
+        if not value.strip():
+            self._change_env(name, None, f"Removed {name} from this keep's environment.")
+        else:
+            self._change_env(name, value, f"Set {name} for this keep.")
+
+    def _change_env(self, name: str, value: str | None, message: str) -> None:
+        settings, keep_id = self.session.settings, self.session.keep.config.id
+        try:
+            settings.set_env(keep_id, name, value)
+        except ValueError as e:
+            QMessageBox.warning(self, "Environment", str(e))
+            return
+        settings_path = self.settings_path
+        self.show_environment()
+        self.tokens.setText(
+            tokens_text(self.session.theme.online_sources, self.session.environment())
+        )
+        self.tokens.setVisible(bool(self.tokens.text()))
+        self.online_sends.setText(
+            consent_text(self.session.online_sources(), self.session.keep.config.online_find_by)
+        )
+        self._run(lambda: save_settings(settings, settings_path), message)
 
     def _show_settings(self) -> None:
         """The Thumbnails and Keep tabs, from the saved configuration."""

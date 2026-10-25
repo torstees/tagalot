@@ -4,6 +4,7 @@ service without one isn't used or asked about; and addresses that find an item b
 sent only when the keep allows it, the ID a search finds being looked up in the same run."""
 
 import logging
+import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dc_field
@@ -23,11 +24,12 @@ from tagalot.core.online import (
     Reply,
     consent_text,
     look_up,
+    needed_env,
     tokens_text,
     usable,
 )
 from tagalot.core.session import KeepSession
-from tagalot.core.settings import Settings
+from tagalot.core.settings import Settings, load_settings, save_settings
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
@@ -188,7 +190,7 @@ def test_a_token_is_sent_only_while_set_and_kept_nowhere(
     env.web.answers[f"{API}/film/949"] = Reply(200, b'{"plot": "A heist."}')
     monkeypatch.delenv(TOKEN_ENV, raising=False)
     assert usable(Films.online_sources) == []
-    assert "set the TAGALOT_TEST_FILMS_TOKEN environment variable" in tokens_text([FILMS])
+    assert "set TAGALOT_TEST_FILMS_TOKEN to yours under Environment" in tokens_text([FILMS])
     report = env.look_up([heat])
     assert env.web.urls == []  # not set: the service isn't used, and that isn't a problem
     assert report.problems == []
@@ -305,3 +307,71 @@ def test_find_by_is_kept_in_keep_toml_and_tokens_decide_the_services(
     other = create_keep(tmp_path / "other", "Other", ThemeRef("generic", 1))
     with pytest.raises(KeepError, match="not 'names'"):
         with_online_find_by(other.config, "names")
+
+
+def test_the_keeps_environment_wins_over_the_real_one(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#544: a keep's variables, from the user's settings, ahead of the environment."""
+    monkeypatch.setenv(TOKEN_ENV, "from-the-system")
+    [heat] = env.films(("Heat", 1995, "949"))
+    assert usable([FILMS], {}) == [FILMS]
+    clock = Clock()
+    fetcher = Fetcher(
+        [FILMS],
+        opener=env.web,
+        clock=clock,
+        sleep=clock.sleep,
+        env={TOKEN_ENV: "from-the-keep"},
+    )
+    look_up(env.writer, env.reader, env.schema, Films(), [heat], fetcher=fetcher)
+    [(_, headers)] = env.web.requests
+    assert headers["Authorization"] == "Bearer from-the-keep"
+
+    monkeypatch.delenv(TOKEN_ENV)
+    assert usable([FILMS]) == []
+    assert usable([FILMS], {TOKEN_ENV: "from-the-keep"}) == [FILMS]
+    assert tokens_text([FILMS], {TOKEN_ENV: "from-the-keep"}) == ""
+    assert needed_env([FILMS, OnlineSource("Other", "other.test", "IDs")]) == [
+        (TOKEN_ENV, "Films DB")
+    ]
+
+
+def test_a_keeps_environment_is_kept_in_the_users_settings(tmp_path: Path) -> None:
+    keep_id = uuid.uuid4()
+    settings = Settings()
+    settings.set_env(keep_id, "TAGALOT_TMDB_TOKEN", "  secret  ")
+    settings.set_env(keep_id, "OTHER", "x")
+    with pytest.raises(ValueError, match="can't name an environment variable"):
+        settings.set_env(keep_id, "1 BAD", "x")
+    path = tmp_path / "settings.toml"
+    save_settings(settings, path)
+    text = path.read_text(encoding="utf-8")
+    assert f"[environment.{keep_id}]\nTAGALOT_TMDB_TOKEN = 'secret'\nOTHER = 'x'\n" in text
+    loaded = load_settings(path)
+    assert loaded.environment(keep_id) == {"TAGALOT_TMDB_TOKEN": "secret", "OTHER": "x"}
+    loaded.set_env(keep_id, "OTHER", "")
+    loaded.set_env(keep_id, "TAGALOT_TMDB_TOKEN", None)
+    assert loaded.environment(keep_id) == {}
+    assert keep_id not in loaded.keep_env
+    path.write_text(
+        f"[environment.'{keep_id}']\nGOOD = 'yes'\nBAD = 3\n'not a name' = 'no'\n",
+        encoding="utf-8",
+    )
+    assert load_settings(path).environment(keep_id) == {"GOOD": "yes"}  # the rest skipped
+
+
+def test_a_session_uses_its_keeps_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    themes = tmp_path / "themes"
+    themes.mkdir()
+    (themes / "films_tokens.py").write_text(THEME, encoding="utf-8")
+    keep = create_keep(tmp_path / "k", "K", ThemeRef("films_tokens", 1))
+    settings = Settings(theme_dirs=[themes])
+    settings.set_env(keep.config.id, TOKEN_ENV, "s3cret-value")
+    with KeepSession.open(keep.dir, settings) as session:
+        assert session.environment() == {TOKEN_ENV: "s3cret-value"}
+        assert [s.name for s in session.online_sources()] == ["Films DB", "Film Posters"]
+        assert "s3cret" not in keep.toml_path.read_text(encoding="utf-8")

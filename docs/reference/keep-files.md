@@ -83,6 +83,7 @@ It holds:
 - **programs for opening files** (Open with → Always open .ext files with…): `[[handlers]]` tables with `ext`, an optional `role`, and a `command` such as `"C:\Tools\viewer.exe" "{path}"` (placeholders `{path}`, `{dir}`, and `{name}`);
 - **your file manager** (File manager → Use a different file manager…): `[file_manager]` with a `command` template, the same placeholders; for Directory Opus, `"C:\Program Files\GPSoftware\Directory Opus\dopusrt.exe" /cmd Go "{path}"`. Without it, Show in file manager uses your computer's;
 - **extra themes folders** (`theme_dirs`);
+- **each keep's environment** (Keep tab → Environment): `[environment.<keep id>]`, variables such as `TAGALOT_TMDB_TOKEN = '…'`, an online service's key. Keep this file to yourself;
 - the folder last chosen in a folder picker.
 
 A missing file means the defaults; one that can't be read is renamed `settings.toml.invalid` and the defaults are used.

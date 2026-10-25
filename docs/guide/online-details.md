@@ -14,7 +14,9 @@ Change your answer in **Keep → Configure keep… → Keep** tab: **Look up det
 
 ## Services that need a token
 
-Some services need a token of your own (a free key from the service). Tagalot reads it from an environment variable when it looks things up, and never saves it: not in the keep, your settings, or the log. Until the variable is set, that service isn't used or mentioned when Tagalot asks, and the Keep tab says which variable to set. Set it (on Windows: **Edit environment variables for your account**), then start Tagalot again; a keep that looks things up then asks once about the service.
+Some services need a token of your own (a free key from the service). Give it to Tagalot in **Keep → Configure keep… → Keep** tab, under **Environment**: select the variable the service needs (`TAGALOT_TMDB_TOKEN: not set (TMDb needs it)`), click **Set…**, and paste your key. It's kept in your own settings on this computer, not in the keep, so a keep you share doesn't share your key; it's never written to the log. **Show values** shows what you've set, and **Remove** forgets it.
+
+An environment variable of the same name works too (on Windows: **Edit environment variables for your account**, then start Tagalot again); what you set in the keep wins over it. Until a token is set either way, that service isn't used or mentioned when Tagalot asks, and the Keep tab says which variable to set. Once it is, a keep that looks things up asks once about the service.
 
 ## What may identify an item
 
