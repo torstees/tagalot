@@ -11,9 +11,16 @@ tree) to the selected items, **Shift+Enter** to remove it; the panel emits
 is then selected, so typing the next tag replaces it. Typing letters in the tree goes to the
 filter box. The tag tree is loaded in a worker; call :meth:`TagPanel.reload` after tags
 change.
+
+**Tag groups** (#535): **Groups ▾** beside the filter box shows every tag, or only the groups
+ticked, each as a heading over its tags; while filtering, matches outside them follow under
+**Other tags**. Right-click a tag → **Groups ▸** puts it in a group or takes it out, or
+makes a new group with it. Which groups show is the user's (the window keeps it in
+``ui_state.json``).
 """
 
 import html
+from collections.abc import Iterable
 
 import shiboken6
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThreadPool, Signal
@@ -22,6 +29,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -52,6 +60,13 @@ class TagPanel(QWidget):
     back_requested = Signal()
     """**Back to …'s tags**: clear the selection in the page's contents, so the checks are
     the page's own item's again (#504)."""
+    groups_changed = Signal(object)
+    """The user chose which tag groups show (#535): a list of group ids, or ``None`` for
+    every tag."""
+    group_requested = Signal(int, list, bool)
+    """Put tags in a group (``True``) or take them out: group id, tag ids."""
+    new_group_requested = Signal(str, list)
+    """Make a group, by this name, holding these tags."""
 
     def __init__(
         self,
@@ -64,6 +79,7 @@ class TagPanel(QWidget):
         self.session = session
         self._pool = pool
         self._expanded: set[int] = set()  # the user's folds, kept while filtering
+        self._closed_headings: set[str] = set()  # group headings the user folded (#535)
         self._restoring = False
         self.loaded = False
 
@@ -118,11 +134,20 @@ class TagPanel(QWidget):
         self.collapse_button.setToolTip("Collapse all tags")
         self.collapse_button.clicked.connect(self.collapse_all)
 
+        self.groups_button = QToolButton()
+        self.groups_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.groups_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.groups_menu = QMenu(self.groups_button)
+        self.groups_menu.aboutToShow.connect(self._fill_groups_menu)
+        self.groups_button.setMenu(self.groups_menu)
+        self._show_groups_button()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         top = QHBoxLayout()
         top.setSpacing(2)
         top.addWidget(self.filter_edit, 1)
+        top.addWidget(self.groups_button)
         top.addWidget(self.expand_button)
         top.addWidget(self.collapse_button)
         layout.addLayout(top)
@@ -168,6 +193,7 @@ class TagPanel(QWidget):
         self.model.set_tree(tree)
         self._after_reset()
         self._restore_place(current, scrolled)
+        self._show_groups_button()  # a group renamed or deleted
 
     # --- state ---
 
@@ -217,14 +243,105 @@ class TagPanel(QWidget):
                 self._restoring = False
 
     def collapse_all(self) -> None:
-        """Close every tag, leaving the top level (#490)."""
+        """Close every tag, leaving the top level (#490): with groups showing, the
+        headings stay open, so their tags show."""
         self._expanded = set()
+        self._closed_headings = set()
         if not self.model.filtering:
             self._restoring = True
             try:
                 self.view.collapseAll()
+                for heading in self.model.headings():
+                    self.view.expand(heading)
             finally:
                 self._restoring = False
+
+    # --- tag groups (#535) ---
+
+    def set_groups(self, groups: Iterable[int] | None, *, by_user: bool = False) -> None:
+        """Show only these tag groups, as headings over their tags, or every tag
+        (``None``). ``by_user``: the user chose, so :attr:`groups_changed` says so."""
+        chosen = None if groups is None else list(dict.fromkeys(groups)) or None
+        current = self.current_tag()
+        self.model.set_groups(chosen)
+        self._after_reset()
+        if current is not None:
+            self.select_tag(current)
+        self._show_groups_button()
+        if by_user:
+            self.groups_changed.emit(chosen)
+
+    def _show_groups_button(self) -> None:
+        """ "All tags", the group shown, or how many, as the button's text."""
+        shown = self.model.shown_groups()
+        tree = self.model.tree
+        if shown is None or tree is None:
+            text = "All tags"
+        elif len(shown) == 1:
+            text = tree.group(shown[0]).name
+            if len(text) > GROUP_NAME_CHARS:
+                text = text[: GROUP_NAME_CHARS - 1] + "…"
+        else:
+            text = f"{len(shown)} groups"
+        self.groups_button.setText(text)
+        self.groups_button.setToolTip(
+            "Which tags show: every tag, or only tag groups you choose. Right-click a tag "
+            "→ Groups to put it in a group."
+        )
+
+    def _fill_groups_menu(self) -> None:
+        """**All tags**, then each group, ticked when shown."""
+        menu = self.groups_menu
+        menu.clear()
+        shown = self.model.shown_groups()
+        every = menu.addAction("All tags", lambda: self.set_groups(None, by_user=True))
+        every.setCheckable(True)
+        every.setChecked(shown is None)
+        menu.addSeparator()
+        tree = self.model.tree
+        groups = tree.groups() if tree is not None else ()
+        for group in groups:
+            action = menu.addAction(group.name)
+            action.setCheckable(True)
+            action.setChecked(shown is not None and group.id in shown)
+            action.toggled.connect(lambda on, g=group.id: self._toggle_group(g, on))
+        if not groups:
+            none = menu.addAction("No groups yet: right-click a tag → Groups → New group…")
+            none.setEnabled(False)
+
+    def _toggle_group(self, group_id: int, on: bool) -> None:
+        shown = list(self.model.shown_groups() or ())
+        if on and group_id not in shown:
+            shown.append(group_id)
+        elif not on and group_id in shown:
+            shown.remove(group_id)
+        self.set_groups(shown or None, by_user=True)
+
+    def groups_menu_for(self, tags: list[int], names: str) -> QMenu:
+        """**Groups ▸** for these tags: each group, ticked when they are all in it, then
+        **New group…**."""
+        tree = self.model.tree
+        menu = QMenu("Groups", self)
+        for group in tree.groups() if tree is not None else ():
+            action = menu.addAction(group.name)
+            action.setCheckable(True)
+            inside = all(t in group.tags for t in tags)
+            action.setChecked(inside)
+            action.setToolTip(
+                f"Take {names} out of this group" if inside else f"Put {names} in this group"
+            )
+            action.triggered.connect(lambda on, g=group.id: self.group_requested.emit(g, tags, on))
+        if not menu.isEmpty():
+            menu.addSeparator()
+        menu.addAction("New group…", lambda: self.ask_new_group(tags))
+        menu.setToolTipsVisible(True)
+        return menu
+
+    def ask_new_group(self, tags: list[int]) -> None:
+        """Ask for a name, then make a group holding ``tags``."""
+        name, ok = QInputDialog.getText(self, "New group", "Name of the new tag group:")
+        if ok and name.strip():
+            self.new_group_requested.emit(name, tags)
 
     # --- filtering ---
 
@@ -246,9 +363,11 @@ class TagPanel(QWidget):
                 self.view.expandAll()
             else:
                 for tag_id in self._expanded:
-                    index = self.model.index_of(tag_id)
-                    if index.isValid():
+                    for index in self.model.indexes_of(tag_id):
                         self.view.expand(index)
+                for heading in self.model.headings():
+                    if self.model.heading_key(heading) not in self._closed_headings:
+                        self.view.expand(heading)
         finally:
             self._restoring = False
         self._show_message()
@@ -258,6 +377,11 @@ class TagPanel(QWidget):
             return  # folds made while filtering don't replace the user's own
         tag_id = self.model.tag_id(index)  # type: ignore[arg-type]
         if tag_id is None:
+            key = self.model.heading_key(index)  # type: ignore[arg-type]
+            if key is not None and expanded:
+                self._closed_headings.discard(key)
+            elif key is not None:
+                self._closed_headings.add(key)
             return
         if expanded:
             self._expanded.add(tag_id)
@@ -272,6 +396,8 @@ class TagPanel(QWidget):
             text = "No tags yet."
         elif self.model.filtering and not self.model.matches():
             text = f"No tags match “{self.filter_edit.text().strip()}”."
+        elif not self.model.rowCount():
+            text = "No tags in the groups shown. Right-click a tag → Groups to add some."
         else:
             text = ""
         self.message.setText(text)
@@ -345,6 +471,8 @@ class TagPanel(QWidget):
         it is one of them), or ``None`` off the tags."""
         clicked = self.model.tag_id(index)
         tree = self.model.tree
+        if tree is not None and clicked is None and index.isValid():
+            return self.heading_menu(index)
         if clicked is None or tree is None:
             return None
         selected = [
@@ -373,6 +501,21 @@ class TagPanel(QWidget):
         if not count:
             add.setText(f"Add {names} to the selected items")
             remove.setText(f"Remove {names} from the selected items")
+        menu.addSeparator()
+        menu.addMenu(self.groups_menu_for(tags, names))
+        self.add_fold_actions(menu)
+        return menu
+
+    def heading_menu(self, index: QModelIndex) -> QMenu:
+        """A group heading's menu: stop showing that group, or show every tag (#535)."""
+        menu = QMenu(self)
+        key = self.model.heading_key(index) or ""
+        if key.startswith("group:"):
+            group_id = int(key.removeprefix("group:"))
+            name = index.data()
+            rest = [g for g in self.model.shown_groups() or () if g != group_id]
+            menu.addAction(f"Stop showing “{name}”", lambda: self.set_groups(rest, by_user=True))
+        menu.addAction("Show all tags", lambda: self.set_groups(None, by_user=True))
         self.add_fold_actions(menu)
         return menu
 
@@ -458,6 +601,10 @@ class TagPanel(QWidget):
             if first.isValid():
                 self.view.setCurrentIndex(first)
         self.view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+GROUP_NAME_CHARS = 16
+"""The most of a group's name **Groups ▾** shows."""
 
 
 def fold_icon(*, expand: bool, size: int = 16) -> QIcon:

@@ -295,12 +295,13 @@ class TagService:
 
     # --- tag groups (#534) ---
 
-    def add_group(self, name: str) -> int:
-        """Create a tag group; one undoable step."""
+    def add_group(self, name: str, tag_ids: Iterable[int] = ()) -> int:
+        """Create a tag group, holding ``tag_ids``; one undoable step."""
+        tags = frozenset(tag_ids)
         return self._record(
             lambda tree: f"Add group {' '.join(name.split())!r}",
             lambda tree: (),
-            lambda conn: add_group(conn, name),
+            lambda conn: add_group(conn, name, tags),
         )
 
     def rename_group(self, group_id: int, name: str) -> None:

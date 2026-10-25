@@ -186,6 +186,43 @@ class TagActions(QObject):
         what = f"{name!r} and its sub-tags" if mode is DeleteMode.SUBTREE else repr(name)
         self._run(work, lambda n: f"Deleted {what} ({items_text(n - 1)} lost a tag).")
 
+    # --- tag groups (#535) ---
+
+    def new_group(self, name: str, tag_ids: Iterable[int], names: str) -> None:
+        """Create a tag group holding these tags (``names``, how they read in messages);
+        one undo step."""
+        tags = list(tag_ids)
+        shown = " ".join(name.split())
+        self._run(
+            lambda: self.session.tags.add_group(name, tags) + 1,  # truthy: something changed
+            lambda _: f"Made the group {shown!r} with {names}.",
+        )
+
+    def set_in_group(
+        self, group_id: int, tag_ids: Iterable[int], inside: bool, names: str, group: str
+    ) -> None:
+        """Put tags in a group (``inside``) or take them out; one undo step."""
+        tags = list(tag_ids)
+        service = self.session.tags
+        if inside:
+            self._run(
+                lambda: service.add_to_group(group_id, tags),
+                lambda n: (
+                    f"Added {names} to the group {group!r}."
+                    if n
+                    else f"{names} is already in the group {group!r}."
+                ),
+            )
+        else:
+            self._run(
+                lambda: service.remove_from_group(group_id, tags),
+                lambda n: (
+                    f"Took {names} out of the group {group!r}."
+                    if n
+                    else f"{names} isn't in the group {group!r} itself."
+                ),
+            )
+
     def create(self, names: list[str], entity_ids: Iterable[int], path: str) -> None:
         """Create the tag at ``names`` (and missing parents), then apply it to
         ``entity_ids`` if there are any; ``path`` is how it reads in messages."""

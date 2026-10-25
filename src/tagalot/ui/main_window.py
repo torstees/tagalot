@@ -367,6 +367,14 @@ class MainWindow(QMainWindow):
         self.tag_panel.create_requested.connect(self.create_tag)
         self.tag_panel.search_requested.connect(self.add_tags_to_search)
         self.tag_panel.back_requested.connect(self._back_to_page_item)
+        groups = self._ui_state.get("tag_groups")
+        if isinstance(groups, list) and all(isinstance(g, int) for g in groups):
+            self.tag_panel.set_groups(groups)  # the groups this user shows (#535)
+        self.tag_panel.groups_changed.connect(self._save_tag_groups)
+        self.tag_panel.group_requested.connect(self._set_in_group)
+        self.tag_panel.new_group_requested.connect(
+            lambda name, tags: self.tag_actions.new_group(name, tags, self.tag_names(tags))
+        )
         # The panel's all / some / none checks follow the current page's selection. Selection
         # changes come in bursts (Shift+arrows), so the summary waits for a short pause.
         self._summary_generation = 0
@@ -1280,6 +1288,27 @@ class MainWindow(QMainWindow):
         tree = self.tag_panel.model.tree
         if tree is not None and tag_id in tree:
             self.tag_actions.delete(tag_id, mode, tree.node(tag_id).name)
+
+    # --- tag groups (#535) ---
+
+    def _save_tag_groups(self, groups: list[int] | None) -> None:
+        """Which tag groups the Tags panel shows: this user's, kept in ``ui_state.json``."""
+        assert self.session is not None
+        if groups is None:
+            self._ui_state.pop("tag_groups", None)
+        else:
+            self._ui_state["tag_groups"] = list(groups)
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def _set_in_group(self, group_id: int, tag_ids: list[int], inside: bool) -> None:
+        tree = self.tag_panel.model.tree
+        if tree is None:
+            return
+        try:
+            group = tree.group(group_id).name
+        except KeyError:
+            return
+        self.tag_actions.set_in_group(group_id, tag_ids, inside, self.tag_names(tag_ids), group)
 
     # --- the tag manager's details pane (§7) ---
 

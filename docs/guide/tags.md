@@ -19,6 +19,15 @@ On the right of the window (**View → Tags** shows or hides it).
 
 A tag can be limited to some kinds of item (see *What a tag applies to*, below); the panel hides tags that can't go on anything selected, and tagging skips items of other kinds, saying so.
 
+### Tag groups
+
+When you tag one kind of thing at a time (trips one evening, people the next), a **tag group** keeps the tags you need in view. A group is a named set of tags, each with its sub-tags; a tag can be in several groups.
+
+- **Putting tags in a group:** right-click a tag (or several selected in the tree) → **Groups** → tick a group, or **New group…** to make one with them. Untick to take them out.
+- **Showing groups:** the **All tags** button beside the box (**Groups ▾**) lists your groups. Tick one or more, and the panel shows each group's name as a heading with its tags under it, in place of the whole tree. **All tags** shows everything again, and right-clicking a heading offers **Stop showing** it.
+- **Nothing is out of reach:** while you type, matches outside the groups shown are listed after them, under **Other tags**.
+- Groups belong to the keep, so everyone who opens it sees them; which groups the panel shows is yours alone. Making and changing groups can be undone like any tag change.
+
 Every tagging is one step you can undo (**Edit → Undo**, Ctrl+Z).
 
 ## The tag manager
