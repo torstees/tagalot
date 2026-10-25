@@ -42,6 +42,9 @@ CONTENTS_INDEXES = ("words", "substrings")
 """What ``[contents] index`` can say (§8 *Search inside documents*); absent is Off."""
 ONLINE_ANSWERS = ("allow", "never")
 """What ``[online] lookups`` can say (§9 *Online details*)."""
+FIND_BY = ("ids", "title-year", "title")
+"""What ``[online] find_by`` can say (#485): what may identify an item to a service. IDs
+only (the default), IDs or a title with its year, or IDs or any title."""
 LEGACY_HOSTS = frozenset({"openlibrary.org", "api.crossref.org", "export.arxiv.org"})
 """The services the built-in themes used before each was asked about (#483): a keep that
 allowed lookups then, with no ``[online] allowed``, allowed these."""
@@ -144,6 +147,9 @@ class KeepConfig:
     online_refused: list[str] = field(default_factory=list)
     """``[online] refused``: hosts of services the user said not to use (#483), while
     others are allowed."""
+    online_find_by: str = "ids"
+    """``[online] find_by``: what may identify an item to a service (#485, :data:`FIND_BY`):
+    ``"ids"`` (the default), ``"title-year"``, or ``"title"``."""
     contents_index: str | None = None
     """``[contents] index``: ``"words"`` or ``"substrings"`` to search inside documents;
     ``None``, Off (nothing is read)."""
@@ -247,6 +253,8 @@ def dump_keep_config(config: KeepConfig) -> str:
         online_lines.append(f"allowed = {toml_list(config.online_allowed)}")
     if config.online_refused:
         online_lines.append(f"refused = {toml_list(config.online_refused)}")
+    if config.online_find_by != "ids":
+        online_lines.append(f"find_by = {toml_str(config.online_find_by)}")
     if online_lines:
         lines += ["", "[online]", *online_lines]
     if config.contents_index is not None:
@@ -347,9 +355,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     online_lookups = None
     online_allowed: list[str] | None = None
     online_refused: list[str] = []
+    online_find_by = "ids"
     if "online" in data:
         online = reader.table(data, "online")
-        reader.warn_unknown(online, {"lookups", "allowed", "refused"}, "[online]")
+        reader.warn_unknown(online, {"lookups", "allowed", "refused", "find_by"}, "[online]")
+        online_find_by = online.get("find_by", "ids")
+        if online_find_by not in FIND_BY:
+            raise KeepConfigError(path, '[online] find_by must be "ids", "title-year", or "title"')
         online_lookups = online.get("lookups")
         if online_lookups not in (None, *ONLINE_ANSWERS):
             raise KeepConfigError(path, '[online] lookups must be "allow" or "never"')
@@ -488,6 +500,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         online_lookups=online_lookups,
         online_allowed=online_allowed,
         online_refused=online_refused,
+        online_find_by=online_find_by,
         contents_index=contents_index,
         note_ignore_keys=note_ignore_keys,
         notes_root=notes_root,

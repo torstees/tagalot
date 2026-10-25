@@ -44,6 +44,7 @@ after_scan = false                          # don't make a scan's thumbnails in 
 
 [online]                                    # once you've answered the question
 lookups = "allow"                           # or "never"
+find_by = "title-year"                      # what may identify an item: "ids" (default), "title-year", "title"
 
 [contents]                                  # searching inside documents
 index = "words"                             # or "substrings"; absent: Off

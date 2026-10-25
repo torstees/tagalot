@@ -60,7 +60,7 @@ from tagalot.core.keep_settings import (
     with_option,
 )
 from tagalot.core.note_keys import NoteKeyError, check_key
-from tagalot.core.online import consent_text
+from tagalot.core.online import consent_text, tokens_text
 from tagalot.core.root_admin import (
     RemovalCounts,
     RootStatus,
@@ -374,11 +374,33 @@ class KeepConfigWindow(QWidget):
         self.online = QGroupBox("Online details")
         self.online_lookups = QCheckBox("Look up details online")
         self.online_lookups.toggled.connect(self._set_online_lookups)
-        sends = QLabel(consent_text(theme.online_sources))
-        sends.setWordWrap(True)
+        self.online_sends = QLabel()
+        self.online_sends.setWordWrap(True)
+        self.find_by = QComboBox()
+        for choice, find_by in FIND_BY_CHOICES:
+            self.find_by.addItem(choice, find_by)
+        self.find_by.setToolTip(
+            "What may identify an item to a service. Titles find items that have no ID, "
+            "such as a home video, but send their titles."
+        )
+        self.find_by.currentIndexChanged.connect(self._set_find_by)
+        find_by_row = QHBoxLayout()
+        find_by_row.addWidget(QLabel("Find items by:"))
+        find_by_row.addWidget(self.find_by)
+        find_by_row.addStretch()
+        self.find_by_row = QWidget()
+        self.find_by_row.setLayout(find_by_row)
+        find_by_row.setContentsMargins(0, 0, 0, 0)
+        self.find_by_row.setVisible(any(s.titles for s in theme.online_sources))
+        self.tokens = QLabel(tokens_text(theme.online_sources))
+        self.tokens.setWordWrap(True)
+        self.tokens.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.tokens.setVisible(bool(self.tokens.text()))
         online_column = QVBoxLayout(self.online)
         online_column.addWidget(self.online_lookups)
-        online_column.addWidget(sends)
+        online_column.addWidget(self.find_by_row)
+        online_column.addWidget(self.online_sends)
+        online_column.addWidget(self.tokens)
         self.online.setVisible(bool(theme.online_sources))
         self.contents = QGroupBox("Search inside documents")
         self.contents_index = QComboBox()
@@ -619,6 +641,12 @@ class KeepConfigWindow(QWidget):
         self.online_lookups.blockSignals(True)
         self.online_lookups.setChecked(config.online_lookups == "allow")
         self.online_lookups.blockSignals(False)
+        self.find_by.blockSignals(True)
+        self.find_by.setCurrentIndex(self.find_by.findData(config.online_find_by))
+        self.find_by.blockSignals(False)
+        self.online_sends.setText(
+            consent_text(self.session.online_sources(), config.online_find_by)
+        )
         self.contents_index.setCurrentIndex(self.contents_index.findData(config.contents_index))
         self.show_contents_stats()
         _clear_form(self.keep_options_form)
@@ -783,6 +811,16 @@ class KeepConfigWindow(QWidget):
             lambda: session.set_online_lookups("allow" if on else "never"),
             "Details are now looked up online." if on else "Nothing is looked up online now.",
             self.online_allowed.emit if on else None,
+        )
+
+    def _set_find_by(self, index: int) -> None:
+        session = self.session
+        find_by = self.find_by.itemData(index)
+        label = self.find_by.itemText(index)
+        self.online_sends.setText(consent_text(session.online_sources(), find_by))
+        self._run(
+            lambda: session.set_online_find_by(find_by),
+            f"Items are now found online by {label[0].lower()}{label[1:]}.",
         )
 
     def show_contents_stats(self) -> None:
@@ -1285,6 +1323,12 @@ class KeepConfigWindow(QWidget):
 
 CONTENTS_CHOICES = (("Off", None), ("Words", "words"), ("Substrings", "substrings"))
 """Keep configuration's choices for searching inside documents (§8)."""
+FIND_BY_CHOICES = (
+    ("IDs only", "ids"),
+    ("IDs, or a title with its year", "title-year"),
+    ("IDs, or any title", "title"),
+)
+"""Keep configuration's choices for what may identify an item to a service (#485)."""
 
 
 def describe_contents(stats: ContentsStats | None) -> str:

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 22
+API_VERSION = 23
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -49,7 +49,9 @@ filled from the item's own folder (:func:`role`'s ``own_folder``); version 20 ad
 see-through folders (:attr:`ResourceInfo.folder`, :attr:`ResourceInfo.folder_path`,
 :attr:`ResourceInfo.see_through`, :func:`files_in`); version 21 added pictures from
 online services (:meth:`IngestContext.online_picture`); version 22 added files inside
-archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`)."""
+archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`); version 23
+added services' tokens and finding items by title (:class:`OnlineSource`'s
+``token_env`` and ``titles``, :class:`OnlineRequest`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1268,6 +1270,7 @@ def default_thumbnail_chain(entity: type[Entity]) -> list[ThumbnailProvider]:
 # --- Online details (DESIGN.md §9 "Online details") ---
 
 _HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -1279,16 +1282,30 @@ class OnlineSource:
     from for it, and ``sends`` what it is sent, as a plural ("DOIs", "ISBNs"): the keep asks
     the user once whether to look things up, naming each service and what it is sent.
     ``interval`` is the fewest seconds between two requests to the host (arXiv asks for 3).
+
+    ``token_env`` names the environment variable holding the service's token, for a service
+    that needs one (``"TAGALOT_TMDB_TOKEN"``, API version 23): Tagalot reads it when looking
+    up and sends it as ``Authorization: Bearer``, never storing it. While it isn't set, the
+    service isn't used or asked about. ``titles`` says the theme may find items on the
+    service by title (:class:`OnlineRequest`'s ``by``), when the keep allows it (API version
+    23); the consent question then says titles may be sent too.
     """
 
     name: str
     host: str
     sends: str
     interval: float = 1.0
+    token_env: str | None = None
+    titles: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip() or not self.sends.strip():
             raise ThemeDeclarationError("an OnlineSource needs a name and what it is sent")
+        if self.token_env is not None and not _ENV_NAME.fullmatch(self.token_env):
+            raise ThemeDeclarationError(
+                f"OnlineSource {self.name!r}: token_env {self.token_env!r} must be an "
+                "environment variable's name, such as 'TAGALOT_TMDB_TOKEN'"
+            )
         if not _HOST.fullmatch(self.host):
             raise ThemeDeclarationError(
                 f"OnlineSource {self.name!r}: {self.host!r} must be a lowercase host name, "
@@ -1296,6 +1313,32 @@ class OnlineSource:
             )
         if self.interval < 0:
             raise ThemeDeclarationError(f"OnlineSource {self.name!r}: interval can't be negative")
+
+
+FindBy = Literal["id", "title-year", "title"]
+FIND_BY_KINDS: tuple[FindBy, ...] = typing.get_args(FindBy)
+
+
+@dataclass(frozen=True)
+class OnlineRequest:
+    """An address :meth:`Theme.online_requests` gives that finds the item by something
+    other than an identifier (API version 23): ``by="title-year"`` for a title with its year,
+    ``by="title"`` for a title alone. Each keep chooses what may identify its items (IDs
+    only, by default), and Tagalot drops the requests it doesn't allow, so a theme gives
+    every way it has and lets the keep decide. A plain string is an address by ID. Its
+    service must be declared with ``titles=True``.
+
+    A search's answer usually names the item's ID: set it in :meth:`Theme.online_details`,
+    and the item is looked up by ID in the same run."""
+
+    url: str
+    by: FindBy = "id"
+
+    def __post_init__(self) -> None:
+        if self.by not in FIND_BY_KINDS:
+            raise ValueError(
+                f"an OnlineRequest is by 'id', 'title-year', or 'title', not {self.by!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -1539,12 +1582,15 @@ class Theme:
         """
         return {}
 
-    def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
+    def online_requests(
+        self, entity_type: type[Entity], item: Record
+    ) -> Iterable[str | OnlineRequest]:
         """The addresses to fetch to look up one item, built from its fields (a paper's
         DOI): ``https`` addresses on the hosts of :attr:`online_sources`, any others being
         refused. None (the default) when there is nothing to look up. It runs in a worker
         for many items at a time, so it must be quick and must not go online itself.
-        API version 5."""
+        API version 5. An address that finds the item by title is an
+        :class:`OnlineRequest` (API version 23): the keep decides whether it is sent."""
         return ()
 
     def online_details(
@@ -1697,11 +1743,13 @@ __all__ = [
     "EntityRef",
     "FieldInfo",
     "FieldSpec",
+    "FindBy",
     "FolderImage",
     "Icon",
     "ImageFile",
     "IngestContext",
     "Kind",
+    "OnlineRequest",
     "OnlineResponse",
     "OnlineSource",
     "ParentThumbnail",

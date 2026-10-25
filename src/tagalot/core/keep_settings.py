@@ -15,6 +15,7 @@ from typing import Any
 from tagalot.core.assets import clean_setting
 from tagalot.core.keep import (
     CONTENTS_INDEXES,
+    FIND_BY,
     ONLINE_ANSWERS,
     KeepConfig,
     KeepError,
@@ -92,6 +93,16 @@ def with_online_services(
         online_refused=sorted(refused),
         roots=copy.deepcopy(config.roots),
     )
+
+
+def with_online_find_by(config: KeepConfig, find_by: str) -> KeepConfig:
+    """``config`` letting items be identified to services by ``find_by`` (#485):
+    ``"ids"``, ``"title-year"``, or ``"title"``."""
+    if find_by not in FIND_BY:
+        raise KeepError(
+            f"Items can be found by IDs, a title with its year, or a title, not {find_by!r}."
+        )
+    return replace(config, online_find_by=find_by, roots=copy.deepcopy(config.roots))
 
 
 def with_contents_index(config: KeepConfig, index: str | None) -> KeepConfig:

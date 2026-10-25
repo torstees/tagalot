@@ -15,9 +15,15 @@ they are fetched after the details, from the services the keep allows, and kept 
 Nothing here asks the user: :meth:`KeepSession.look_up` refuses unless the keep allows
 lookups (``[online] lookups = "allow"``), and only fetches from the services it allows
 (``[online] allowed``); addresses on others wait until the user allows them.
+
+A service that needs a token (``OnlineSource.token_env``, #485) is used only while its
+environment variable is set; the token is sent as ``Authorization: Bearer`` and never kept
+or logged. Addresses that find an item by title (``OnlineRequest``) are dropped unless the
+keep allows them (``[online] find_by``).
 """
 
 import logging
+import os
 import threading
 import time
 import urllib.error
@@ -39,7 +45,13 @@ from tagalot.core.ingest import IngestError, IngestSession
 from tagalot.core.models import CachedResponse, Entity, FieldSource, OnlinePicture, utcnow
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.writer import DbWriter
-from tagalot.themes.api import EntityRef, OnlineResponse, OnlineSource, Theme
+from tagalot.themes.api import (
+    EntityRef,
+    OnlineRequest,
+    OnlineResponse,
+    OnlineSource,
+    Theme,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +73,27 @@ MAX_REDIRECTS = 5
 """How many redirects one address may take (Open Library's covers take two, #484)."""
 ROUNDS = 2
 """How many times a run looks up items: those asked for, then those whose details the
-answers set (#484)."""
+answers set (#484), or that a search by title found the ID of (#485)."""
+ALLOWED_BY: dict[str, frozenset[str]] = {
+    "ids": frozenset({"id"}),
+    "title-year": frozenset({"id", "title-year"}),
+    "title": frozenset({"id", "title-year", "title"}),
+}
+"""What a keep's ``[online] find_by`` lets an :class:`OnlineRequest` be ``by`` (#485)."""
+
+
+def token(source: OnlineSource) -> str | None:
+    """The token ``source`` needs, from its environment variable; ``None`` when it needs
+    none or the variable isn't set (#485). Read each time, never kept."""
+    if source.token_env is None:
+        return None
+    return os.environ.get(source.token_env, "").strip() or None
+
+
+def usable(sources: Iterable[OnlineSource]) -> list[OnlineSource]:
+    """The services that can be used: those needing no token, and those whose token is set.
+    The others are left out of lookups and of the consent question (#485)."""
+    return [s for s in sources if s.token_env is None or token(s) is not None]
 
 
 class OnlineError(Exception):
@@ -235,9 +267,13 @@ class Fetcher:
                 if self._stopped():
                     raise UnavailableError("stopped")
                 self._wait_turn(host, source.interval)
-                logger.info("Looking up %s", url)
+                logger.info("Looking up %s", url)  # never the token
+                headers = {"User-Agent": USER_AGENT}
+                secret = token(source)
+                if secret is not None:
+                    headers["Authorization"] = f"Bearer {secret}"
                 try:
-                    reply = self._opener(url, {"User-Agent": USER_AGENT}, TIMEOUT)
+                    reply = self._opener(url, headers, TIMEOUT)
                 except (OSError, ValueError) as e:  # URLError and timeouts are OSErrors
                     reason = getattr(e, "reason", e)
                     self.down[host] = f"can't be reached ({reason})"
@@ -290,10 +326,15 @@ class Plan:
 
 
 def plan_lookups(
-    conn: Connection, schema: ThemeSchema, theme: Theme, entity_ids: Iterable[int]
+    conn: Connection,
+    schema: ThemeSchema,
+    theme: Theme,
+    entity_ids: Iterable[int],
+    find_by: str = "ids",
 ) -> Plan:
     """What to look up for these items (read-only: a worker runs it on the reader). Items
-    the theme has nothing to look up for are left out."""
+    the theme has nothing to look up for are left out, and so are addresses that find an
+    item in a way ``find_by`` doesn't allow, or on a service whose token isn't set (#485)."""
     plan = Plan()
     if not theme.online_sources:
         return plan
@@ -311,9 +352,7 @@ def plan_lookups(
         ref = EntityRef(entity_id, type_id)
         record = reader.get(ref)
         try:
-            urls = list(dict.fromkeys(theme.online_requests(entity_type, record)))
-            for url in urls:
-                source_for(url, theme.online_sources)
+            urls = _allowed_urls(theme.online_requests(entity_type, record), theme, find_by)
         except OnlineError as e:
             plan.problems.append(f"{record.title}: {e}")
             continue
@@ -325,6 +364,24 @@ def plan_lookups(
             plan.lookups.append(Lookup(ref, urls, {}))
     _fill_cached(conn, plan.lookups)
     return plan
+
+
+def _allowed_urls(requests: Iterable[str | OnlineRequest], theme: Theme, find_by: str) -> list[str]:
+    """The addresses of ``requests`` to fetch: each checked against the theme's services,
+    then those ``find_by`` doesn't allow and those on a service whose token isn't set
+    dropped, without a problem (#485)."""
+    allowed = ALLOWED_BY.get(find_by, ALLOWED_BY["ids"])
+    urls: list[str] = []
+    for request in requests:
+        url, by = (
+            (request.url, request.by) if isinstance(request, OnlineRequest) else (request, "id")
+        )
+        source = source_for(url, theme.online_sources)
+        if by != "id" and not source.titles:
+            raise OnlineError(f"{url!r}: {source.name} isn't declared with titles=True")
+        if by in allowed and (source.token_env is None or token(source) is not None):
+            urls.append(url)
+    return list(dict.fromkeys(urls))
 
 
 def _fill_cached(conn: Connection, lookups: Sequence[Lookup]) -> None:
@@ -348,11 +405,12 @@ def to_fetch(
     entity_ids: Iterable[int],
     *,
     refresh: bool = False,
+    find_by: str = "ids",
 ) -> int:
     """How many of these items would go online (read-only): those with an address that
     has no kept answer (any address, to ``refresh``). Asking for consent waits on this, so
     the question only comes when something would be sent."""
-    plan = plan_lookups(conn, schema, theme, entity_ids)
+    plan = plan_lookups(conn, schema, theme, entity_ids, find_by)
     return sum(1 for lookup in plan.lookups if lookup.missing(refresh))
 
 
@@ -504,6 +562,7 @@ def look_up(
     entity_ids: Iterable[int],
     *,
     refresh: bool = False,
+    find_by: str = "ids",
     fetcher: Fetcher | None = None,
     progress: Progress | None = None,
     stopped: Callable[[], bool] = lambda: False,
@@ -513,7 +572,7 @@ def look_up(
     batch at a time. Items whose services can't be reached are left for next time."""
     report = LookupReport()
     with reader.connect() as conn:
-        plan = plan_lookups(conn, schema, theme, entity_ids)
+        plan = plan_lookups(conn, schema, theme, entity_ids, find_by)
     report.problems += plan.problems
     if not plan.lookups:
         return report
@@ -535,6 +594,7 @@ def look_up(
 
     lookups = list(plan.lookups)
     planned = {lookup.entity.id for lookup in lookups}
+    asked = {u for lookup in lookups for u in lookup.urls}
     rounds = 1
     total = len(lookups)
     looked_up: list[int] = []
@@ -542,17 +602,24 @@ def look_up(
     while True:
         if done == len(lookups):
             write()
-            followers = sorted(updated - planned)
+            followers = sorted(updated)
             if rounds == ROUNDS or not followers or stopped():
                 break
             # Items the details named (a book's author, with the identifier Open Library
-            # gave): looked up now too, once (#484).
+            # gave), and items a search found the ID of (#485): looked up now too, once
+            # (#484), each for the addresses not asked for yet in this run.
             rounds += 1
             with reader.connect() as conn:
-                more = plan_lookups(conn, schema, theme, followers)
-            report.problems += more.problems
+                more = plan_lookups(conn, schema, theme, followers, find_by)
+            report.problems += [p for p in more.problems if p not in report.problems]
+            new = [
+                lookup
+                for lookup in more.lookups
+                if lookup.entity.id not in planned or not asked.issuperset(lookup.urls)
+            ]
             planned |= set(followers)
-            lookups += more.lookups
+            asked |= {u for lookup in new for u in lookup.urls}
+            lookups += new
             total = len(lookups)
             continue
         lookup = lookups[done]
@@ -632,15 +699,34 @@ def fetch_pictures(
             report.pictures.append(entity_id)
 
 
-def consent_text(sources: Sequence[OnlineSource]) -> str:
+TITLES_SENT = {"title-year": ", or titles with their years,", "title": ", or titles,"}
+"""What a service declared with ``titles`` may be sent besides, by ``[online] find_by``."""
+
+
+def consent_text(sources: Sequence[OnlineSource], find_by: str = "ids") -> str:
     """What looking up sends, for the consent question and Keep configuration: "Tagalot
     would send DOIs to Crossref and arXiv IDs to arXiv. Nothing else about your files leaves
-    this computer." """
-    parts = [f"{s.sends} to {s.name}" for s in sources]
+    this computer." A service that finds items by title, when the keep allows it, is sent
+    "TMDb IDs, or titles with their years," too (#485)."""
+    parts = [
+        f"{s.sends}{TITLES_SENT.get(find_by, '') if s.titles else ''} to {s.name}" for s in sources
+    ]
     if not parts:
         return "This keep's theme looks nothing up online."
     sent = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
     return f"Tagalot would send {sent}. Nothing else about your files leaves this computer."
+
+
+def tokens_text(sources: Sequence[OnlineSource]) -> str:
+    """How to turn on the services whose token isn't set, for the Keep tab (#485): "TMDb
+    needs a token: set the TAGALOT_TMDB_TOKEN environment variable to yours, then start
+    Tagalot again." Empty when none is missing."""
+    missing = [s for s in sources if s.token_env is not None and token(s) is None]
+    return "\n".join(
+        f"{s.name} needs a token: set the {s.token_env} environment variable to yours, then "
+        "start Tagalot again. Until then it isn't used."
+        for s in missing
+    )
 
 
 def _unfetched(status: int | None) -> bool:
