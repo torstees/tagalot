@@ -159,6 +159,19 @@ def test_keep_configuration_chooses_what_identifies_an_item(
         assert session.environment() == {"TAGALOT_TEST_FILMS_TOKEN": "s3cret", "OTHER_KEY": "x"}
         dialog.env_list.setCurrentRow(0)  # OTHER_KEY, by name
         dialog.env_remove.click()
+        warned: list[str] = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a: warned.append(a[2]))
+        asked: list[str] = []
+
+        def value(name: str) -> str:
+            asked.append(name)
+            return "x"
+
+        dialog.ask_env_name = lambda: "1 bad"  # type: ignore[method-assign]
+        dialog.ask_env_value = value  # type: ignore[method-assign]
+        dialog.env_add.click()
+        assert asked == []  # a bad name is said before its value is asked for
+        assert "can't name an environment variable" in warned[0]
         assert session.environment() == {"TAGALOT_TEST_FILMS_TOKEN": "s3cret"}
         qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
         dialog.close()

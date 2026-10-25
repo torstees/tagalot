@@ -76,7 +76,7 @@ from tagalot.core.root_admin import (
 )
 from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
-from tagalot.core.settings import save_settings
+from tagalot.core.settings import ENV_NAME, save_settings
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
@@ -722,8 +722,17 @@ class KeepConfigWindow(QWidget):
 
     def add_env(self) -> None:
         name = self.ask_env_name()
-        if name is not None:
-            self._save_env(name)
+        if name is None:
+            return
+        if not ENV_NAME.fullmatch(name):  # said before asking for its value
+            QMessageBox.warning(
+                self,
+                "Environment",
+                f"{name!r} can't name an environment variable: use letters, digits, and _, "
+                "not starting with a digit.",
+            )
+            return
+        self._save_env(name)
 
     def remove_env(self) -> None:
         name = self._env_name()
