@@ -8,11 +8,19 @@ simply resets the model.
 
 A tag's own icon that is a picture (#507) is drawn beside its name, after its color's
 swatch; an animated GIF plays (a :class:`QMovie` per animated icon, few in a tree).
+
+**Tag groups** (#535): with groups chosen (:meth:`TagTreeModel.set_groups`), each group is a
+heading row, its name, with its tags under it (lifted to the top level, their sub-tags
+under them), so a tag in two groups shown is listed twice. While filtering, matches outside
+the groups shown follow under an **Other tags** heading, in place in the tree. Rows are
+nodes of their own (an index's internal id is its node), each naming its tag, or none for a
+heading.
 """
 
 import base64
 import html
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -30,7 +38,17 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QMovie, QPainter, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QIcon,
+    QImage,
+    QMovie,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
+from PySide6.QtWidgets import QApplication
 
 from tagalot.core.tags import PATH_SEPARATOR, PictureData, TagTree, description_excerpt, search_key
 from tagalot.ui.dnd import TAG_MIME, tags_mime
@@ -85,6 +103,25 @@ def tag_tooltip(tree: TagTree, tag_id: int) -> str:
 
 AnyIndex = QModelIndex | QPersistentModelIndex
 
+OTHER_TAGS = "Other tags"
+"""The heading over matches outside the groups shown, while filtering (#535)."""
+OTHER_KEY = "other"
+
+
+@dataclass(frozen=True)
+class _Node:
+    """One row: a tag (``tag_id``), or a heading (``tag_id`` ``None``) with its text."""
+
+    tag_id: int | None
+    parent: int
+    """The parent row's node, 0 at the top level."""
+    heading: str = ""
+    key: str = ""
+    """A heading's key: ``"group:<id>"``, or :data:`OTHER_KEY`."""
+
+
+_ROOT = _Node(None, 0)
+
 
 class TagTreeModel(QAbstractItemModel):
     """One column: tag names in tree order. Each index's internal id is its tag id.
@@ -102,12 +139,19 @@ class TagTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self.tree: TagTree | None = None
         self.filter_text = ""
+        self.groups: tuple[int, ...] | None = None
+        """The tag groups shown (#535), or ``None`` for every tag."""
         self._visible: frozenset[int] | None = None  # None: every tag
         self._matches: frozenset[int] = frozenset()
         self._alias_hits: dict[int, str] = {}  # matched through an alias, not the name
         self._description_hits: set[int] = set()  # matched only through the description
-        self._children: dict[int | None, tuple[int, ...]] = {}
+        self._nodes: list[_Node] = [_ROOT]
+        self._children: dict[int, tuple[int, ...]] = {}
+        """Each node's rows' nodes; 0, the top level."""
         self._row: dict[int, int] = {}
+        """Each node's row under its parent."""
+        self._tag_nodes: dict[int, list[int]] = {}
+        """Each shown tag's rows, first in tree order first."""
         self._swatches: dict[str, QPixmap | None] = {}
         self._decorations: dict[int, QPixmap | None] = {}
         """Each tag's swatch and icon picture, drawn together, while the tree has icon
@@ -135,6 +179,20 @@ class TagTreeModel(QAbstractItemModel):
         self.filter_text = text
         self._rebuild()
 
+    def set_groups(self, groups: Iterable[int] | None) -> None:
+        """Show only these tag groups, each as a heading over its tags (#535), or every tag
+        (``None``). Groups the tree hasn't are left out; none left shows every tag."""
+        self.groups = None if groups is None else tuple(groups)
+        self._rebuild()
+
+    def shown_groups(self) -> tuple[int, ...] | None:
+        """The groups shown that the tree has, or ``None`` for every tag."""
+        if self.groups is None or self.tree is None:
+            return None
+        known = {g.id for g in self.tree.groups()}
+        shown = tuple(g for g in self.groups if g in known)
+        return shown or None
+
     @property
     def filtering(self) -> bool:
         return bool(search_key(self.filter_text))
@@ -144,24 +202,48 @@ class TagTreeModel(QAbstractItemModel):
         return self._matches
 
     def visible_count(self) -> int:
-        return len(self._row)
+        """How many tag rows are shown (a tag listed twice counts twice; headings don't)."""
+        return sum(len(nodes) for nodes in self._tag_nodes.values())
 
     def index_of(self, tag_id: int) -> QModelIndex:
-        """The index of a shown tag, or an invalid index."""
-        row = self._row.get(tag_id)
-        return QModelIndex() if row is None else self.createIndex(row, 0, tag_id)
+        """The index of a shown tag (its first row), or an invalid index."""
+        nodes = self._tag_nodes.get(tag_id)
+        return self._index(nodes[0]) if nodes else QModelIndex()
+
+    def indexes_of(self, tag_id: int) -> list[QModelIndex]:
+        """Every row of a shown tag (it can be under two group headings)."""
+        return [self._index(n) for n in self._tag_nodes.get(tag_id, ())]
+
+    def _index(self, node: int) -> QModelIndex:
+        return self.createIndex(self._row[node], 0, node)
+
+    def _node(self, index: AnyIndex) -> int:
+        return int(index.internalId()) if index.isValid() else 0
 
     def tag_id(self, index: AnyIndex) -> int | None:
-        return int(index.internalId()) if index.isValid() else None
+        """The tag of a row; ``None`` for a heading or an invalid index."""
+        node = self._node(index)
+        return self._nodes[node].tag_id if 0 < node < len(self._nodes) else None
+
+    def heading_key(self, index: AnyIndex) -> str | None:
+        """A heading's key (``"group:<id>"`` or ``"other"``); ``None`` for a tag (#535)."""
+        node = self._node(index)
+        if 0 < node < len(self._nodes) and self._nodes[node].tag_id is None:
+            return self._nodes[node].key
+        return None
+
+    def headings(self) -> list[QModelIndex]:
+        """The heading rows, in order."""
+        return [self._index(n) for n in self._children.get(0, ()) if self._nodes[n].key]
 
     def first_match(self) -> QModelIndex:
         """The first matching tag in tree order (for the keyboard), or an invalid index."""
-        for tag_id in self._walk(None):
-            if tag_id in self._matches:
-                return self.index_of(tag_id)
+        for node in self._walk(0):
+            if self._nodes[node].tag_id in self._matches:
+                return self._index(node)
         return QModelIndex()
 
-    def _walk(self, parent: int | None) -> list[int]:
+    def _walk(self, parent: int) -> list[int]:
         order = []
         for child in self._children.get(parent, ()):
             order.append(child)
@@ -178,7 +260,7 @@ class TagTreeModel(QAbstractItemModel):
     def _rebuild(self) -> None:
         self.beginResetModel()
         tree = self.tree
-        self._children, self._row = {}, {}
+        self._nodes, self._children, self._row, self._tag_nodes = [_ROOT], {}, {}, {}
         self._decorations = {}
         self._play(tree)
         if tree is None:
@@ -204,37 +286,85 @@ class TagTreeModel(QAbstractItemModel):
             if hidden:
                 shown = set(self._visible if self._visible is not None else tree) - hidden
                 self._visible = tree.with_ancestors(shown)
-            self._collect(tree, None)
+            groups = self.shown_groups()
+            if groups is None:
+                self._place(0, self._subtrees(tree, tree.children(None), 0, self._visible))
+            else:
+                self._grouped(tree, groups)
         self.endResetModel()
 
-    def _collect(self, tree: TagTree, parent: int | None) -> None:
-        kids = tuple(
-            t for t in tree.children(parent) if self._visible is None or t in self._visible
-        )
-        self._children[parent] = kids
-        for row, tag_id in enumerate(kids):
-            self._row[tag_id] = row
-            self._collect(tree, tag_id)
+    def _grouped(self, tree: TagTree, groups: tuple[int, ...]) -> None:
+        """Each group shown as a heading over its tags; while filtering, matches outside
+        them under **Other tags** (#535)."""
+        visible = self._visible
+        headings: list[int] = []
+        inside: set[int] = set()
+        for group in tree.groups():
+            if group.id not in groups:
+                continue
+            inside |= tree.expand(group.tags)
+            tops = [t for t in tree.group_tops(group.id) if visible is None or t in visible]
+            if not tops and self.filtering:
+                continue  # nothing in it matches
+            heading = self._add(_Node(None, 0, group.name, f"group:{group.id}"))
+            self._place(heading, self._subtrees(tree, tops, heading, visible))
+            headings.append(heading)
+        if self.filtering:
+            other = {m for m in self._matches if m not in inside}
+            if visible is not None:
+                other &= visible
+            if other:
+                around = tree.with_ancestors(other)
+                heading = self._add(_Node(None, 0, OTHER_TAGS, OTHER_KEY))
+                self._place(heading, self._subtrees(tree, tree.children(None), heading, around))
+                headings.append(heading)
+        self._place(0, headings)
+
+    def _add(self, node: _Node) -> int:
+        self._nodes.append(node)
+        number = len(self._nodes) - 1
+        if node.tag_id is not None:
+            self._tag_nodes.setdefault(node.tag_id, []).append(number)
+        return number
+
+    def _subtrees(
+        self, tree: TagTree, tags: Iterable[int], parent: int, shown: frozenset[int] | None
+    ) -> list[int]:
+        """Rows for ``tags`` under ``parent``, with their sub-tags in ``shown`` (``None``:
+        every one)."""
+        rows = []
+        for tag_id in tags:
+            if shown is not None and tag_id not in shown:
+                continue
+            node = self._add(_Node(tag_id, parent))
+            self._place(node, self._subtrees(tree, tree.children(tag_id), node, shown))
+            rows.append(node)
+        return rows
+
+    def _place(self, parent: int, rows: list[int]) -> None:
+        self._children[parent] = tuple(rows)
+        for row, node in enumerate(rows):
+            self._row[node] = row
 
     # --- QAbstractItemModel ---
 
     def index(self, row: int, column: int, parent: AnyIndex = QModelIndex()) -> QModelIndex:  # noqa: B008
-        kids = self._children.get(self.tag_id(parent), ())
+        kids = self._children.get(self._node(parent), ())
         if not 0 <= column < self.columnCount() or not 0 <= row < len(kids):
             return QModelIndex()
         return self.createIndex(row, column, kids[row])
 
     def parent(self, index: AnyIndex = QModelIndex()) -> QModelIndex:  # type: ignore[override]  # noqa: B008
-        tag_id = self.tag_id(index)
-        if tag_id is None or self.tree is None:
+        node = self._node(index)
+        if not 0 < node < len(self._nodes):
             return QModelIndex()
-        parent_id = self.tree.node(tag_id).parent_id
-        return QModelIndex() if parent_id is None else self.index_of(parent_id)
+        parent = self._nodes[node].parent
+        return QModelIndex() if parent == 0 else self._index(parent)
 
     def rowCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
         if parent.column() > 0:
             return 0
-        return len(self._children.get(self.tag_id(parent), ()))
+        return len(self._children.get(self._node(parent), ()))
 
     def columnCount(self, parent: AnyIndex = QModelIndex()) -> int:  # noqa: B008
         return 1
@@ -245,8 +375,10 @@ class TagTreeModel(QAbstractItemModel):
     def data(self, index: AnyIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
         tag_id = self.tag_id(index)
         tree = self.tree
-        if tag_id is None or tree is None:
+        if tree is None:
             return None
+        if tag_id is None:
+            return self._heading_data(index, role)
         node = tree.node(tag_id)
         if role == Qt.ItemDataRole.DisplayRole:
             name = f"{node.icon} {node.name}" if node.icon else node.name  # its own (#398)
@@ -288,6 +420,27 @@ class TagTreeModel(QAbstractItemModel):
             return QIcon(pixmap) if pixmap is not None else None  # a new one each time
         if role == Qt.ItemDataRole.DecorationRole and node.color:
             return self._swatch(node.color)
+        return None
+
+    def _heading_data(self, index: AnyIndex, role: int) -> Any:
+        """A heading's text, drawn small and dim in capitals, like a section's (#535)."""
+        node = self._node(index)
+        if not 0 < node < len(self._nodes):
+            return None
+        heading = self._nodes[node]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return heading.heading
+        if role == Qt.ItemDataRole.FontRole:
+            font = QFont()
+            font.setCapitalization(QFont.Capitalization.AllUppercase)
+            font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
+            return font
+        if role == Qt.ItemDataRole.ForegroundRole:
+            return QApplication.palette().color(QPalette.ColorRole.PlaceholderText)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if heading.key == OTHER_KEY:
+                return "Tags that match, outside the groups shown"
+            return f"The tag group “{heading.heading}” (Groups ▾ chooses which show)"
         return None
 
     def _decoration(self, tree: TagTree, tag_id: int) -> QPixmap | None:
@@ -344,13 +497,14 @@ class TagTreeModel(QAbstractItemModel):
             return
         self._frames[tag_id] = playing[1].currentImage()
         self._decorations.pop(tag_id, None)
-        index = self.index_of(tag_id)
-        if index.isValid():
+        for index in self.indexes_of(tag_id):
             self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
 
     def flags(self, index: AnyIndex) -> Qt.ItemFlag:
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
+        if self.tag_id(index) is None:
+            return Qt.ItemFlag.ItemIsEnabled  # a heading: not selected, dragged, or ticked
         flags = (
             Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled
         )
@@ -421,9 +575,10 @@ class TagTreeModel(QAbstractItemModel):
         return False  # the summary changes when the tagging is done
 
     def _all_rows_changed(self) -> None:
-        for tag_id in self._row:
-            index = self.index_of(tag_id)
-            self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
+        for nodes in self._tag_nodes.values():
+            for node in nodes:
+                index = self._index(node)
+                self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
 
     # --- dragging tags onto items (DESIGN.md §12) ---
 

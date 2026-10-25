@@ -1096,16 +1096,21 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
 # --- tag groups (#534) ---
 
 
-def add_group(conn: Connection, name: str) -> int:
-    """Create a tag group, after the others; its name must be free (ignoring case)."""
+def add_group(conn: Connection, name: str, tag_ids: Iterable[int] = ()) -> int:
+    """Create a tag group, after the others, holding ``tag_ids``; its name must be free
+    (ignoring case)."""
     tree = TagTree.load(conn)
     name = _group_name(tree, name)
     order = max((g.sort_order for g in tree.groups()), default=-1) + 1
-    return int(
+    group_id = int(
         conn.execute(
             insert(TagGroup).values(name=name, sort_order=order).returning(TagGroup.id)
         ).scalar_one()
     )
+    tags = sorted({t for t in tag_ids if t in tree})
+    if tags:
+        conn.execute(insert(TagGroupMember), [{"group_id": group_id, "tag_id": t} for t in tags])
+    return group_id
 
 
 def rename_group(conn: Connection, group_id: int, name: str) -> None:

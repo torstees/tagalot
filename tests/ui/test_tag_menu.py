@@ -75,6 +75,7 @@ def test_the_menu_for_one_tag(window: MainWindow) -> None:
         "Hide items with 'Iceland'",
         "Add 'Iceland' to the selected items",
         "Remove 'Iceland' from the selected items",
+        "Groups",  # put it in a tag group (#535)
         "Expand all",  # the whole tree (#490)
         "Collapse all",
     ]
