@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 23
+API_VERSION = 24
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -51,7 +51,8 @@ see-through folders (:attr:`ResourceInfo.folder`, :attr:`ResourceInfo.folder_pat
 online services (:meth:`IngestContext.online_picture`); version 22 added files inside
 archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`); version 23
 added services' tokens and finding items by title (:class:`OnlineSource`'s
-``token_env`` and ``titles``, :class:`OnlineRequest`)."""
+``token_env`` and ``titles``, :class:`OnlineRequest`); version 24 added placing an
+online picture in a thumbnail chain (:class:`OnlineImage`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1214,6 +1215,17 @@ def _primary_of_kind(entity: EntityRef, ctx: ThumbnailContext, kind: Kind) -> li
     return [r for r in ctx.resources(entity, primary) if kind_of(r) is kind]
 
 
+class OnlineImage(ThumbnailProvider):
+    """The item's picture from an online service (:meth:`IngestContext.online_picture`),
+    at this place in the chain (API version 24): ``[RoleImage("poster"), OnlineImage(),
+    RoleImage("screenshot")]`` shows a looked-up poster ahead of the item's screenshots.
+    Without it, an online picture comes last of the real pictures, after the chain's and
+    the gallery's first. It isn't a file, so it offers no candidates: the core draws it."""
+
+    def __repr__(self) -> str:
+        return "OnlineImage()"
+
+
 class Icon(ThumbnailProvider):
     """A generic icon; ends the chain. ``name`` is a :class:`Kind` value (``"audio"``,
     ``"image"``…), ``"file"``, or ``"entity"``; unknown names show the generic icon."""
@@ -1750,6 +1762,7 @@ __all__ = [
     "ImageFile",
     "IngestContext",
     "Kind",
+    "OnlineImage",
     "OnlineRequest",
     "OnlineResponse",
     "OnlineSource",

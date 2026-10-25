@@ -778,3 +778,7 @@ def _keep_picture(
         .where(OnlinePicture.entity_id == entity_id, OnlinePicture.url == url)
         .values(status=status, data=data, fetched_at=utcnow())
     )
+    if data is not None:
+        # Forget the file it showed, so the chain is run again: a theme can place the
+        # online picture ahead of its own files (OnlineImage, #487).
+        conn.execute(update(Entity).where(Entity.id == entity_id).values(thumb_resource_id=None))

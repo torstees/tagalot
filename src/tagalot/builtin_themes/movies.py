@@ -88,6 +88,7 @@ from tagalot.themes.api import (
     Icon,
     IngestContext,
     Kind,
+    OnlineImage,
     OnlineRequest,
     OnlineResponse,
     OnlineSource,
@@ -476,7 +477,9 @@ class MoviesTheme(Theme):
 
     id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
     # 6: folder images; 5: pictures; 4: notes
-    api_version = 23  # TMDb (#487): tokens and titles (21: online pictures; 20: see-through
+    api_version = (
+        24  # TMDb (#487): OnlineImage; 23: tokens and titles (21: online pictures; 20: see-through
+    )
     # folders; 18: folders; 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
     # keeps read every file once.
@@ -536,11 +539,17 @@ class MoviesTheme(Theme):
     ]
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
-        """A movie shows its poster, else its first screenshot, else its folder's picture (a
-        loose home video beside ``folder.jpg``, #479); a collection its poster, else one of its
-        movies'; a person their photo, else a title card."""
+        """A movie shows its poster, else TMDb's (#487), else its first screenshot, else its
+        folder's picture (a loose home video beside ``folder.jpg``, #479); a collection its
+        poster, else one of its movies'; a person their photo, else a title card."""
         if entity_type is Movie:
-            return [RoleImage("poster"), RoleImage("screenshot"), FolderImage(), Icon("video")]
+            return [
+                RoleImage("poster"),
+                OnlineImage(),  # TMDb's poster, ahead of screenshots (#487)
+                RoleImage("screenshot"),
+                FolderImage(),
+                Icon("video"),
+            ]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
         if entity_type is Folder:  # its folder picture, else one of the first things in it

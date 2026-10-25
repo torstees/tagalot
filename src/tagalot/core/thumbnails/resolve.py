@@ -53,6 +53,7 @@ from tagalot.themes.api import (
 from tagalot.themes.api import (
     EntityRef,
     Icon,
+    OnlineImage,
     ResourceInfo,
     Theme,
     ThumbnailProvider,
@@ -331,6 +332,11 @@ class _Resolution:
                 online = self._online(entity)  # then one from a service (#483)
                 if online is not None:
                     return online, None, None, None
+            if isinstance(provider, OnlineImage):  # placed by the theme (#487)
+                online = self._online(entity)
+                if online is not None:
+                    return online, None, None, None
+                continue
             if isinstance(provider, Icon):
                 return None, provider.name, None, None
             if isinstance(provider, TitleCard):

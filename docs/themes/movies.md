@@ -19,7 +19,7 @@ With a TMDb key, a movies keep can look movies up in [TMDb](https://www.themovie
 
 - **How a movie is found:** by its **TMDb ID**, else its **IMDb ID** (from its `.nfo`, or typed in). A movie with neither is found by its title (and year) only if the keep's **Find items by** allows it; by default it isn't sent. A title only counts when TMDb has a movie of that very title, or with it after a colon (*The Lord of the Rings: The Fellowship of the Ring*), and the same year.
 - **Details:** the plot, genres, director, length, and rating fill in what the files don't say; an `.nfo`'s values, a note's, and yours always win. Without an `.nfo`, TMDb's title and year replace what the file name suggested (`The.Matrix.1999.1080p` becomes *The Matrix*).
-- **Poster:** for a movie with no poster of its own, shown when it has no picture at all.
+- **Poster:** for a movie with no poster of its own. It shows ahead of the movie's screenshots and its folder's picture, but a poster file of your own (`poster.jpg`, `Heat (1995)-poster.jpg`…) always wins.
 - **Cast:** a movie with no cast (no `.nfo` cast, nobody added by hand) gets TMDb's top 10 billed. People in a movie's cast with no photo of their own get TMDb's.
 
 Everything fetched is kept in the keep, never put in your folders.

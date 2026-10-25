@@ -245,6 +245,9 @@ def test_titles_are_sent_only_when_the_keep_allows(session: KeepSession, tmdb: F
     session.look_up([matrix])
     assert tmdb.urls == []  # IDs only, by default; The Matrix has none
 
+    shown = session.thumbnails.resolve(matrix)
+    assert shown.resource_id is not None  # one of its screenshots, remembered
+
     session.set_online_find_by("title-year")
     session.look_up([matrix])
     assert tmdb.urls[:2] == [MATRIX_SEARCH, MATRIX]
@@ -258,6 +261,10 @@ def test_titles_are_sent_only_when_the_keep_allows(session: KeepSession, tmdb: F
         matrix: f"{IMAGES}/w500/matrix.jpg",
         keanu: f"{IMAGES}/w185/keanu.jpg",
     }
+
+    # TMDb's poster beats its screenshots (OnlineImage), though one was remembered.
+    shown = session.thumbnails.resolve(matrix)
+    assert (shown.thumbnail is not None, shown.resource_id) == (True, None)
 
     # Applied again from what was kept: nothing fetched, nothing changes.
     tmdb.urls.clear()
