@@ -275,6 +275,33 @@ class TagAlias(Base):
     alias: Mapped[str] = mapped_column(primary_key=True)
 
 
+class TagGroup(Base):
+    """A named group of tags (#534, DESIGN.md §7 *Tag groups*), so the Tags panel can show
+    only the tags a kind of tagging needs. Names are unique, ignoring case (core format
+    29)."""
+
+    __tablename__ = "tag_group"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+
+Index("uq_tag_group_name", func.lower(TagGroup.name), unique=True)
+
+
+class TagGroupMember(Base):
+    """A tag in a group (#534); its sub-tags come along with it, never stored."""
+
+    __tablename__ = "tag_group_member"
+    __table_args__ = (Index(None, "tag_id"),)
+
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("tag_group.id", ondelete=CASCADE), primary_key=True
+    )
+    tag_id: Mapped[int] = mapped_column(ForeignKey("tag.id", ondelete=CASCADE), primary_key=True)
+
+
 class EntityTag(Base):
     """A tag applied directly to an entity. Parent tags are never stored implicitly."""
 

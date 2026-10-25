@@ -69,12 +69,14 @@ Genre:                        # the full form: properties, and sub-tags under "t
       aliases: [SF, Sci-Fi]
       color: "#4a7bd0"
       description: Rockets and robots
+      groups: [Reading]
 Mood: [Calm, Tense]           # a short list of sub-tags
 Read:                         # just the name
 ```
 
 - A short list holds names only. A sub-tag with its own sub-tags or properties goes in the full form, under `tags:`.
 - `applies_to` names kinds of item as the theme does (`Book`, `Books`, either works).
+- `groups` names the tag groups the tag is in. Importing puts it in them (making a group the keep hasn't) and never takes it out of others.
 - Export always writes the full form.
 
 **Importing** shows what will change before it changes anything: the new tags, the tags it updates and how, and any problems (with their line in the file).

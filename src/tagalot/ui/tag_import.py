@@ -52,6 +52,8 @@ def summary_text(plan: ImportPlan) -> str:
         parts.append(f"{len(plan.updated):,} updated")
     if plan.deleted:
         parts.append(f"{len(plan.deleted):,} deleted")
+    if plan.new_groups:
+        parts.append(_count(len(plan.new_groups), "new group"))
     if plan.problems:
         parts.append(_count(len(plan.problems), "problem"))
     if not plan.changes:
@@ -86,6 +88,7 @@ def report_text(plan: ImportPlan) -> str:
         ("New tags", list(plan.new)),
         ("Updated", [f"{u.path}: {', '.join(u.changes)}" for u in plan.updated]),
         ("Deleted, since no item uses them", list(plan.deleted)),
+        ("New groups", list(plan.new_groups)),
         ("Kept, since items use them", list(plan.kept)),
         ("Items not found in this keep", list(plan.not_found)),
     ]

@@ -5,13 +5,15 @@ The file is nested like the tree. A tag is written as a plain name with nothing 
 (``Read:``), as a short list of sub-tag names (``Mood: [Calm, Tense]``), or in the full
 form: a mapping of ``icon`` (an emoji, or a picture file beside the file, #507), ``color``,
 ``description``, ``picture`` (#506), ``aliases``, ``applies_to`` (kinds of item,
-by the theme's names), and ``tags`` (its sub-tags, in any of the three forms). Export
-always writes the full form, leaving out empty properties.
+by the theme's names), ``groups`` (the tag groups it is in, by name, #534), and ``tags``
+(its sub-tags, in any of the three forms). Export always writes the full form, leaving out
+empty properties.
 
 Import matches tags by path, ignoring case and accents (a name also matches an existing
 tag's alias), creates the missing ones, and merges the file's properties into existing
-tags: an icon, color, description, or ``applies_to`` replaces the tag's, aliases are added, and
-anything the file leaves out stays. Optionally it deletes the tags the file doesn't name
+tags: an icon, color, description, or ``applies_to`` replaces the tag's, aliases are added, it
+joins the groups it lists (made when there is none by that name), and anything the file
+leaves out stays. Optionally it deletes the tags the file doesn't name
 that no item uses. :func:`plan_import` says what would happen; :func:`import_tags` does it
 (through :meth:`~tagalot.core.tag_service.TagService.import_tags`, as one undoable step).
 
@@ -43,6 +45,8 @@ from tagalot.core.models import (
     ResourceStatus,
     Tag,
     TagAlias,
+    TagGroup,
+    TagGroupMember,
 )
 from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.tag_pictures import (
@@ -71,7 +75,16 @@ from tagalot.core.tags import (
 )
 from tagalot.core.theme_schema import ThemeSchema
 
-PROPERTIES = ("icon", "color", "description", "picture", "aliases", "applies_to", "tags")
+PROPERTIES = (
+    "icon",
+    "color",
+    "description",
+    "picture",
+    "aliases",
+    "applies_to",
+    "groups",
+    "tags",
+)
 """The keys of a tag written in the full form."""
 MAX_PICTURE_FILE = 20 * 1024 * 1024
 """The biggest picture file an import reads (#506)."""
@@ -121,6 +134,8 @@ class ImportPlan:
     """Uses taken off items because a tag's ``applies_to`` no longer allows them."""
     unreadable: bool = False
     """The file isn't YAML (or not text): nothing can be imported."""
+    new_groups: tuple[str, ...] = ()
+    """Tag groups the file names that the keep hasn't, made by the import (#534)."""
     items: int = 0
     """Items the file lists that were found in this keep (#396)."""
     not_found: tuple[str, ...] = ()
@@ -293,6 +308,8 @@ def export_tags(
             data["aliases"] = _Flow(sorted(aliases, key=name_key))
         if (types := parse_types(node.types)) is not None:
             data["applies_to"] = _Flow(sorted(labels.get(t, t) for t in types))
+        if groups := tree.groups_of(tag_id):
+            data["groups"] = _Flow([tree.group(g).name for g in groups])
         if children := tree.children(tag_id):
             data["tags"] = {tree.node(c).name: tag(c) for c in children}
         return data or None
@@ -343,6 +360,8 @@ class _Parsed:
     description: str | None = None
     aliases: tuple[str, ...] = ()
     types: frozenset[str] | None = None
+    groups: tuple[str, ...] = ()
+    """The names of the tag groups it is in (#534)."""
     children: list["_Parsed"] = field(default_factory=list)
     picture: bytes | None = None
     """The picture file's bytes, as read (#506)."""
@@ -590,6 +609,8 @@ class _Reader:
             self.picture(tag, value, line)
         elif prop == "aliases":
             self.aliases(tag, value, line)
+        elif prop == "groups":
+            self.groups(tag, value, line)
         else:
             self.applies_to(tag, value, line)
 
@@ -629,6 +650,18 @@ class _Reader:
             if alias is not None and name_key(alias) != name_key(tag.name):
                 aliases.setdefault(name_key(alias), alias)
         tag.aliases = tuple(aliases.values())
+
+    def groups(self, tag: _Parsed, value: Any, line: int | None) -> None:
+        items = _scalars(value)
+        if items is None:
+            self.problem(line, f"{tag.name!r}: write its groups as a list of names.")
+            return
+        groups: dict[str, str] = {}
+        for item in items:
+            name = self.name(item, line)
+            if name is not None:
+                groups.setdefault(name_key(name), name)
+        tag.groups = tuple(groups.values())
 
     def applies_to(self, tag: _Parsed, value: Any, line: int | None) -> None:
         items = _scalars(value)
@@ -692,6 +725,8 @@ class _Planned:
     """The picture to give the tag (#506): the file's, when it isn't the tag's already."""
     icon_picture: PictureData | None = None
     """The picture to give the tag as its icon (#507), likewise."""
+    new_groups: tuple[str, ...] = ()
+    """The groups the file puts it in that it isn't in yet (#534)."""
 
 
 def _match(tree: TagTree, parent_id: int | None, name: str) -> tuple[int | None, bool]:
@@ -721,6 +756,8 @@ class _Planner:
         self.retyped: dict[int, frozenset[str]] = {}
         self.new_paths: set[tuple[str, ...]] = set()
         """The new tags' paths, each name by :func:`search_key`: an item's tag can name one."""
+        self.new_groups: dict[str, str] = {}
+        """Groups the keep hasn't, by :func:`name_key`, with the file's spelling (#534)."""
 
     def walk(
         self,
@@ -756,6 +793,15 @@ class _Planner:
             rename = tag.name if node and by_name and tag.name != node.name else None
             here = (*path, node.name if node else tag.name)
             new_aliases = tag.aliases
+            in_groups = (
+                {name_key(tree.group(g).name) for g in tree.groups_of(tag_id)}
+                if (tag_id is not None)
+                else set()
+            )
+            new_groups = tuple(g for g in tag.groups if name_key(g) not in in_groups)
+            for group in new_groups:
+                if tree.find_group(group) is None:
+                    self.new_groups.setdefault(name_key(group), group)
             if node is None or tag_id is None:
                 self.new.append(PATH_SEPARATOR.join(here))
                 self.new_paths.add(tuple(search_key(n) for n in here))
@@ -780,6 +826,8 @@ class _Planner:
                         changes.append("picture")
                 if new_aliases:
                     changes.append("aliases")
+                if new_groups:
+                    changes.append("groups")
                 if types is not None and types != parse_types(node.types):
                     changes.append("applies to")
                     self.retyped[tag_id] = types
@@ -802,7 +850,9 @@ class _Planner:
                 prepare_icon,
             )
             planned.append(
-                _Planned(tag, tag_id, types, children, new_aliases, rename, picture, icon)
+                _Planned(
+                    tag, tag_id, types, children, new_aliases, rename, picture, icon, new_groups
+                )
             )
         return planned
 
@@ -985,6 +1035,7 @@ def _prepare(
         not_found=tuple(missing),
         tags_added=added,
         tags_removed=removed_tags,
+        new_groups=tuple(sorted(planner.new_groups.values(), key=name_key)),
     )
     return _Prepared(plan, planned, doomed, tuple(found))
 
@@ -1029,6 +1080,23 @@ def import_tags(
             next_order[parent_id] = max((tree.node(c).sort_order for c in existing), default=-1) + 1
         next_order[parent_id] += 1
         return next_order[parent_id] - 1
+
+    groups = {name_key(g.name): g.id for g in tree.groups()}
+    group_order = [max((g.sort_order for g in tree.groups()), default=-1)]
+
+    def group_id(name: str) -> int:
+        """The group named ``name``, made after the others if the keep hasn't one (#534)."""
+        key = name_key(name)
+        if key not in groups:
+            group_order[0] += 1
+            groups[key] = int(
+                conn.execute(
+                    insert(TagGroup)
+                    .values(name=" ".join(name.split()), sort_order=group_order[0])
+                    .returning(TagGroup.id)
+                ).scalar_one()
+            )
+        return groups[key]
 
     def apply(items: Iterable[_Planned], parent_id: int | None) -> None:
         for item in items:
@@ -1077,6 +1145,12 @@ def import_tags(
             if item.new_aliases:
                 conn.execute(
                     insert(TagAlias), [{"tag_id": tag_id, "alias": a} for a in item.new_aliases]
+                )
+            for group in item.new_groups:
+                conn.execute(
+                    insert(TagGroupMember)
+                    .prefix_with("OR IGNORE")
+                    .values(group_id=group_id(group), tag_id=tag_id)
                 )
             if item.picture is not None:
                 set_tag_picture(conn, tag_id, item.picture)

@@ -49,6 +49,8 @@ from tagalot.core.models import (
     FileTagRemoval,
     Tag,
     TagAlias,
+    TagGroup,
+    TagGroupMember,
 )
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
@@ -64,11 +66,16 @@ from tagalot.core.tags import (
     TagTree,
     TagTreeCache,
     add_alias,
+    add_group,
     add_tag,
     add_tag_path,
+    add_to_group,
+    delete_group,
     delete_tag,
     merge_tags,
     remove_alias,
+    remove_from_group,
+    rename_group,
     rename_tag,
     reparent_tag,
     set_tag_color,
@@ -99,6 +106,10 @@ TagRow = tuple[int, int | None, str, str | None, int, str | None, str | None, st
 """``(id, parent_id, name, color, sort_order, description, types, icon)``."""
 EntityTagRow = tuple[int, int, datetime]
 """``(entity_id, tag_id, added_at)``."""
+GroupRow = tuple[int, str, int]
+"""``(id, name, sort_order)`` of a tag group (#534)."""
+Groups = tuple[frozenset[GroupRow], frozenset[tuple[int, int]]]
+"""The tag groups and their ``(group, tag)`` members, as a step saw them."""
 
 
 @dataclass(frozen=True)
@@ -125,6 +136,10 @@ class TagChange:
     for every step."""
     pictures_after: tuple[tuple[PictureKey, PictureData | None], ...] = ()
     """The same afterwards (``None``: none)."""
+    groups_before: Groups | None = None
+    """The tag groups and their members before (#534); ``None`` in a tagging step, which
+    leaves them alone."""
+    groups_after: Groups | None = None
 
 
 LinkDelta = tuple[
@@ -276,6 +291,49 @@ class TagService:
             lambda tree: f"Change the description of {_name(tree, tag_id)!r}",
             lambda tree: (),
             lambda conn: set_tag_description(conn, tag_id, description),
+        )
+
+    # --- tag groups (#534) ---
+
+    def add_group(self, name: str) -> int:
+        """Create a tag group; one undoable step."""
+        return self._record(
+            lambda tree: f"Add group {' '.join(name.split())!r}",
+            lambda tree: (),
+            lambda conn: add_group(conn, name),
+        )
+
+    def rename_group(self, group_id: int, name: str) -> None:
+        self._record(
+            lambda tree: f"Rename group {_group(tree, group_id)!r} to {' '.join(name.split())!r}",
+            lambda tree: (),
+            lambda conn: rename_group(conn, group_id, name),
+        )
+
+    def delete_group(self, group_id: int) -> None:
+        """Delete a tag group (never its tags); one undoable step."""
+        self._record(
+            lambda tree: f"Delete group {_group(tree, group_id)!r}",
+            lambda tree: (),
+            lambda conn: delete_group(conn, group_id),
+        )
+
+    def add_to_group(self, group_id: int, tag_ids: Iterable[int]) -> int:
+        """Put tags in a group; one undoable step. Returns how many were added."""
+        tags = frozenset(tag_ids)
+        return self._record(
+            lambda tree: f"Add {_names(tree, tags)} to group {_group(tree, group_id)!r}",
+            lambda tree: (),
+            lambda conn: add_to_group(conn, group_id, tags),
+        )
+
+    def remove_from_group(self, group_id: int, tag_ids: Iterable[int]) -> int:
+        """Take tags out of a group; one undoable step. Returns how many were taken out."""
+        tags = frozenset(tag_ids)
+        return self._record(
+            lambda tree: f"Take {_names(tree, tags)} out of group {_group(tree, group_id)!r}",
+            lambda tree: (),
+            lambda conn: remove_from_group(conn, group_id, tags),
         )
 
     def import_tags(
@@ -545,6 +603,7 @@ class TagService:
             links_before = _links(conn, tag_ids)
             removals_before = _removals(conn, tag_ids)
             pictures_before = _pictures(conn)
+            groups_before = _groups(conn)
             result = op(conn)
             apply_file_tags(conn)  # a rename, alias, or type change changes what matches
             tags_after, aliases_after = _tag_tables(conn)
@@ -571,6 +630,8 @@ class TagService:
                 removals_dropped=removals_before - removals_after,
                 pictures_before=tuple((t, pictures_before.get(t)) for t in changed),
                 pictures_after=tuple((t, pictures_after.get(t)) for t in changed),
+                groups_before=groups_before,
+                groups_after=_groups(conn),
             )
             return result, change
 
@@ -614,6 +675,13 @@ def _name(tree: TagTree, tag_id: int) -> str:
     return tree.node(tag_id).name if tag_id in tree else f"#{tag_id}"
 
 
+def _group(tree: TagTree, group_id: int) -> str:
+    try:
+        return tree.group(group_id).name
+    except KeyError:
+        return f"#{group_id}"
+
+
 def _items(count: int) -> str:
     return "1 item" if count == 1 else f"{count:,} items"
 
@@ -642,6 +710,30 @@ def _tag_tables(conn: Connection) -> tuple[frozenset[TagRow], frozenset[tuple[in
     )
     aliases = conn.execute(select(TagAlias.tag_id, TagAlias.alias))
     return frozenset(tuple(r) for r in tags), frozenset(tuple(r) for r in aliases)  # type: ignore[misc]
+
+
+def _groups(conn: Connection) -> Groups:
+    """Every tag group and member now (#534): few and small, like the tag tables."""
+    groups = conn.execute(select(TagGroup.id, TagGroup.name, TagGroup.sort_order))
+    members = conn.execute(select(TagGroupMember.group_id, TagGroupMember.tag_id))
+    return (
+        frozenset((i, n, o) for i, n, o in groups),
+        frozenset((g, t) for g, t in members),
+    )
+
+
+def _restore_groups(conn: Connection, groups: Groups, tag_ids: Iterable[int]) -> None:
+    """Put the tag groups and their members back as they were (members of tags that are
+    there)."""
+    rows, members = groups
+    conn.execute(delete(TagGroupMember))
+    conn.execute(delete(TagGroup))
+    if rows:
+        conn.execute(insert(TagGroup), [{"id": i, "name": n, "sort_order": o} for i, n, o in rows])
+    tags = set(tag_ids)
+    kept = [{"group_id": g, "tag_id": t} for g, t in members if t in tags]
+    if kept:
+        conn.execute(insert(TagGroupMember), kept)
 
 
 def _links(conn: Connection, tag_ids: frozenset[int]) -> frozenset[EntityTagRow]:
@@ -694,6 +786,9 @@ def _restore(conn: Connection, change: TagChange, *, forward: bool) -> None:
     conn.execute(delete(TagAlias))
     if aliases:
         conn.execute(insert(TagAlias), [{"tag_id": t, "alias": a} for t, a in aliases])
+    groups = change.groups_after if forward else change.groups_before
+    if groups is not None and change.groups_before != change.groups_after:
+        _restore_groups(conn, groups, wanted)
 
     if unlink:
         pairs = [(e, t) for e, t, _ in unlink]

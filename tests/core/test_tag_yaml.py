@@ -555,3 +555,43 @@ def test_a_file_of_items_only(env: Env) -> None:
         assert (plan.new, plan.items, plan.tags_added) == ((), 1, 1)
     plan = env.plan("items: [Read, Later]\n")  # a tag named "items", with sub-tags
     assert plan.new == (p("items"), p("items", "Read"), p("items", "Later"))
+
+
+# --- tag groups (#534) ---
+
+
+def test_groups_are_exported_and_imported(env: Env) -> None:
+    trips = env.tags.add_group("Trips")
+    env.tags.add_to_group(trips, [8, 5])
+    exported = env.export()
+    assert "    Calm:\n      groups: [Trips]\n" in exported
+    assert (
+        "    Ísland:\n      description: |-\n        Summer 2019.\n        Two weeks.\n"
+        "      groups: [Trips]\n" in exported
+    )
+    assert env.plan(exported, delete_unused=True) == ImportPlan()  # a round trip
+
+    text = (
+        "Mood:\n  tags:\n    Calm:\n      groups: [trips, Reading, Reading]\n"
+        "Read:\n  groups: [Reading]\nPlaces:\n  tags:\n    Norway:\n      groups: [Trips]\n"
+        "Genre:\n  groups: Trips\n"
+    )
+    plan = env.plan(text)
+    assert plan.new_groups == ("Reading",)
+    assert plan.new == (p("Places", "Norway"),)
+    assert [(u.path, u.changes) for u in plan.updated] == [
+        (p("Mood", "Calm"), ("groups",)),
+        ("Read", ("groups",)),
+        ("Genre", ("groups",)),  # one group, written without a list
+    ]
+    assert plan.problems == ()
+    env.tags.import_tags(text, "tags.yaml")
+    tree = env.tree()
+    groups = {g.name: {tree.node(t).name for t in g.tags} for g in tree.groups()}
+    assert groups == {
+        "Trips": {"Calm", "Ísland", "Norway", "Genre"},
+        "Reading": {"Calm", "Read"},
+    }
+    env.tags.undo()
+    tree = env.tree()
+    assert [(g.name, len(g.tags)) for g in tree.groups()] == [("Trips", 2)]
