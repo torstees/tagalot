@@ -23,6 +23,8 @@ from tagalot.core.models import (
     FileTagRemoval,
     Tag,
     TagAlias,
+    TagGroup,
+    TagGroupMember,
     TagIconPicture,
     TagPicture,
     utcnow,
@@ -62,6 +64,16 @@ class TagNode:
     """The item types it may be applied to, as stored (see :func:`parse_types`)."""
     icon: str | None = None
     """Its own icon, if it has one (see :meth:`TagTree.icon` for the one it shows)."""
+
+
+@dataclass(frozen=True)
+class GroupNode:
+    """A tag group as stored (#534): its tags, each bringing its sub-tags along."""
+
+    id: int
+    name: str
+    sort_order: int
+    tags: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -142,8 +154,13 @@ class TagTree:
         aliases: Mapping[int, Iterable[str]],
         pictures: Mapping[int, PictureData] | None = None,
         icon_pictures: Mapping[int, PictureData] | None = None,
+        groups: Iterable[GroupNode] = (),
     ) -> None:
         self._nodes: dict[int, TagNode] = {n.id: n for n in nodes}
+        self._groups: dict[int, GroupNode] = {
+            g.id: replace(g, tags=frozenset(t for t in g.tags if t in self._nodes))
+            for g in sorted(groups, key=lambda g: (g.sort_order, name_key(g.name), g.id))
+        }
         self._pictures: dict[int, PictureData] = {
             tag_id: p for tag_id, p in (pictures or {}).items() if tag_id in self._nodes
         }
@@ -196,7 +213,43 @@ class TagTree:
             )
         )
         icon_pictures = {r.tag_id: PictureData(r.data, r.width, r.height) for r in rows}
-        return cls(nodes, aliases, pictures, icon_pictures)
+        members: dict[int, set[int]] = {}
+        for group_id, tag_id in conn.execute(
+            select(TagGroupMember.group_id, TagGroupMember.tag_id)
+        ):
+            members.setdefault(group_id, set()).add(tag_id)
+        groups = [
+            GroupNode(r.id, r.name, r.sort_order, frozenset(members.get(r.id, ())))
+            for r in conn.execute(select(TagGroup.id, TagGroup.name, TagGroup.sort_order))
+        ]
+        return cls(nodes, aliases, pictures, icon_pictures, groups)
+
+    def groups(self) -> tuple[GroupNode, ...]:
+        """The tag groups (#534), in display order (``sort_order``, then name)."""
+        return tuple(self._groups.values())
+
+    def group(self, group_id: int) -> GroupNode:
+        """The group with this id; ``KeyError`` if there is none."""
+        return self._groups[group_id]
+
+    def find_group(self, name: str) -> int | None:
+        """The group named ``name`` (ignoring case), if any."""
+        key = name_key(name)
+        return next((g.id for g in self._groups.values() if name_key(g.name) == key), None)
+
+    def groups_of(self, tag_id: int) -> tuple[int, ...]:
+        """The groups ``tag_id`` itself is in (not those it is in through an ancestor)."""
+        return tuple(g.id for g in self._groups.values() if tag_id in g.tags)
+
+    def group_tops(self, group_id: int) -> tuple[int, ...]:
+        """The group's tags that aren't under another of its tags, in tree order: the tags
+        the Tags panel lists under the group's heading, each with its sub-tags."""
+        tags = self._groups[group_id].tags
+        tops = [t for t in tags if not any(a in tags for a in self.ancestors(t))]
+        return tuple(sorted(tops, key=self._tree_order))
+
+    def _tree_order(self, tag_id: int) -> tuple[tuple[int, str, int], ...]:
+        return tuple(_display_order(self._nodes[t]) for t in (*self.ancestors(tag_id), tag_id))
 
     def picture(self, tag_id: int) -> PictureData | None:
         """The tag's picture (#506), if it has one."""
@@ -1031,7 +1084,85 @@ def _merge(conn: Connection, tree: TagTree, source_id: int, target_id: int) -> N
         conn.execute(  # as its description: the source's picture, if the target has none
             update(TagPicture).where(TagPicture.tag_id == source_id).values(tag_id=target_id)
         )
+    grouped = select(TagGroupMember.group_id, literal(target_id)).where(
+        TagGroupMember.tag_id == source_id
+    )
+    conn.execute(  # the target joins the source's groups (#534)
+        insert(TagGroupMember).from_select(["group_id", "tag_id"], grouped).prefix_with("OR IGNORE")
+    )
     conn.execute(delete(Tag).where(Tag.id == source_id))  # its entity_tag rows cascade
+
+
+# --- tag groups (#534) ---
+
+
+def add_group(conn: Connection, name: str) -> int:
+    """Create a tag group, after the others; its name must be free (ignoring case)."""
+    tree = TagTree.load(conn)
+    name = _group_name(tree, name)
+    order = max((g.sort_order for g in tree.groups()), default=-1) + 1
+    return int(
+        conn.execute(
+            insert(TagGroup).values(name=name, sort_order=order).returning(TagGroup.id)
+        ).scalar_one()
+    )
+
+
+def rename_group(conn: Connection, group_id: int, name: str) -> None:
+    """Rename a tag group."""
+    tree = TagTree.load(conn)
+    _existing_group(tree, group_id)
+    name = _group_name(tree, name, allow=group_id)
+    conn.execute(update(TagGroup).where(TagGroup.id == group_id).values(name=name))
+
+
+def delete_group(conn: Connection, group_id: int) -> None:
+    """Delete a tag group; its tags stay."""
+    _existing_group(TagTree.load(conn), group_id)
+    conn.execute(delete(TagGroup).where(TagGroup.id == group_id))  # members cascade
+
+
+def add_to_group(conn: Connection, group_id: int, tag_ids: Iterable[int]) -> int:
+    """Put tags in a group; returns how many weren't in it already."""
+    tree = TagTree.load(conn)
+    group = _existing_group(tree, group_id)
+    new = sorted({t for t in tag_ids if t in tree} - group.tags)
+    if new:
+        conn.execute(insert(TagGroupMember), [{"group_id": group_id, "tag_id": t} for t in new])
+    return len(new)
+
+
+def remove_from_group(conn: Connection, group_id: int, tag_ids: Iterable[int]) -> int:
+    """Take tags out of a group (their sub-tags go with them unless in it themselves);
+    returns how many were in it."""
+    group = _existing_group(TagTree.load(conn), group_id)
+    gone = sorted(set(tag_ids) & group.tags)
+    if gone:
+        conn.execute(
+            delete(TagGroupMember).where(
+                TagGroupMember.group_id == group_id, TagGroupMember.tag_id.in_(gone)
+            )
+        )
+    return len(gone)
+
+
+def _group_name(tree: TagTree, name: str, allow: int | None = None) -> str:
+    name = " ".join(name.split())
+    if not name:
+        raise TagError("A group needs a name.")
+    if len(name) > MAX_NAME_LENGTH:
+        raise TagError(f"A group's name can be at most {MAX_NAME_LENGTH} characters.")
+    clash = tree.find_group(name)
+    if clash is not None and clash != allow:
+        raise TagError(f"There is already a group named {tree.group(clash).name!r}.")
+    return name
+
+
+def _existing_group(tree: TagTree, group_id: int) -> GroupNode:
+    try:
+        return tree.group(group_id)
+    except KeyError:
+        raise TagError("That group no longer exists.") from None
 
 
 def _existing(tree: TagTree, tag_id: int) -> TagNode:

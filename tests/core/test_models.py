@@ -65,6 +65,8 @@ CORE_TABLES = {
     "tag_icon_picture",
     "archive_read",
     "archive_member_choice",
+    "tag_group",
+    "tag_group_member",
     "schema_version",
 }
 FTS_TABLES = {

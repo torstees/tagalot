@@ -294,6 +294,12 @@ def _v27_skipped_index(conn: Connection) -> None:
     index.create(conn, checkfirst=True)
 
 
+def _v28_tag_groups(conn: Connection) -> None:
+    """Format 29: tag groups (#534)."""
+    Base.metadata.tables["tag_group"].create(conn, checkfirst=True)
+    Base.metadata.tables["tag_group_member"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -322,6 +328,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     25: _v25_tag_icon_pictures,
     26: _v26_archive_members,
     27: _v27_skipped_index,
+    28: _v28_tag_groups,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 
