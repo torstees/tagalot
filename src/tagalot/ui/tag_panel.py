@@ -17,13 +17,26 @@ ticked, each as a heading over its tags; while filtering, matches outside them f
 **Other tags**. Right-click a tag → **Groups ▸** puts it in a group or takes it out, or
 makes a new group with it. Which groups show is the user's (the window keeps it in
 ``ui_state.json``).
+
+**Only their tags** (#541): the checked box button beside the filter box shows only the tags
+the selected items have, with their parents, so how they're tagged shows at a glance; with
+groups shown, their tags outside the groups follow under **Other tags**, greyed.
 """
 
 import html
 from collections.abc import Iterable
 
 import shiboken6
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, Qt, QThreadPool, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QModelIndex,
+    QObject,
+    QPoint,
+    QPointF,
+    Qt,
+    QThreadPool,
+    Signal,
+)
 from PySide6.QtGui import QIcon, QKeyEvent, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -134,6 +147,15 @@ class TagPanel(QWidget):
         self.collapse_button.setToolTip("Collapse all tags")
         self.collapse_button.clicked.connect(self.collapse_all)
 
+        self.applied_button = QToolButton()
+        self.applied_button.setCheckable(True)
+        self.applied_button.setAutoRaise(True)
+        self.applied_button.setIcon(checked_icon())
+        self.applied_button.setToolTip(
+            "Show only the tags the selected items have (click again for every tag)"
+        )
+        self.applied_button.toggled.connect(self.set_applied_only)
+
         self.groups_button = QToolButton()
         self.groups_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.groups_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -147,6 +169,7 @@ class TagPanel(QWidget):
         top = QHBoxLayout()
         top.setSpacing(2)
         top.addWidget(self.filter_edit, 1)
+        top.addWidget(self.applied_button)
         top.addWidget(self.groups_button)
         top.addWidget(self.expand_button)
         top.addWidget(self.collapse_button)
@@ -235,7 +258,7 @@ class TagPanel(QWidget):
         if tree is None:
             return
         self._expanded = set(_all_ids(tree))
-        if not self.model.filtering:
+        if not self.model.narrowing:
             self._restoring = True
             try:
                 self.view.expandAll()
@@ -247,7 +270,7 @@ class TagPanel(QWidget):
         headings stay open, so their tags show."""
         self._expanded = set()
         self._closed_headings = set()
-        if not self.model.filtering:
+        if not self.model.narrowing:
             self._restoring = True
             try:
                 self.view.collapseAll()
@@ -255,6 +278,19 @@ class TagPanel(QWidget):
                     self.view.expand(heading)
             finally:
                 self._restoring = False
+
+    # --- only the selected items' tags (#541) ---
+
+    def set_applied_only(self, on: bool) -> None:
+        """Show only the tags the selected items have, or every tag."""
+        if self.applied_button.isChecked() != on:
+            self.applied_button.setChecked(on)  # comes back here through toggled
+            return
+        current = self.current_tag()
+        self.model.set_applied_only(on)
+        self._after_reset()
+        if current is not None:
+            self.select_tag(current)
 
     # --- tag groups (#535) ---
 
@@ -359,7 +395,7 @@ class TagPanel(QWidget):
         user's own folds."""
         self._restoring = True
         try:
-            if self.model.filtering:
+            if self.model.narrowing:
                 self.view.expandAll()
             else:
                 for tag_id in self._expanded:
@@ -373,7 +409,7 @@ class TagPanel(QWidget):
         self._show_message()
 
     def _folded(self, index: object, expanded: bool) -> None:
-        if self._restoring or self.model.filtering:
+        if self._restoring or self.model.narrowing:
             return  # folds made while filtering don't replace the user's own
         tag_id = self.model.tag_id(index)  # type: ignore[arg-type]
         if tag_id is None:
@@ -396,6 +432,12 @@ class TagPanel(QWidget):
             text = "No tags yet."
         elif self.model.filtering and not self.model.matches():
             text = f"No tags match “{self.filter_edit.text().strip()}”."
+        elif self.model.applied_only and not self.model.selected_count:
+            text = "Select items to see the tags they have."
+        elif self.model.applied_only and not self.model.applied():
+            text = "The selected items have no tags yet."
+        elif self.model.applied_only and not self.model.rowCount():
+            text = "The selected items have no tags that match."
         elif not self.model.rowCount():
             text = "No tags in the groups shown. Right-click a tag → Groups to add some."
         else:
@@ -601,6 +643,24 @@ class TagPanel(QWidget):
             if first.isValid():
                 self.view.setCurrentIndex(first)
         self.view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+def checked_icon(size: int = 16) -> QIcon:
+    """A small drawn box with a tick in it, in the palette's text color: **Only their
+    tags** (#541), like :func:`fold_icon`."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QApplication.palette().color(QPalette.ColorRole.WindowText)
+    painter.setPen(color)
+    painter.drawRect(2, 2, 11, 11)
+    pen = painter.pen()
+    pen.setWidthF(1.8)
+    painter.setPen(pen)
+    painter.drawPolyline([QPointF(4.5, 7.5), QPointF(7, 10.5), QPointF(11.5, 4.5)])
+    painter.end()
+    return QIcon(pixmap)
 
 
 GROUP_NAME_CHARS = 16
