@@ -345,6 +345,10 @@ class Movie(Entity):
     rating: float | None = field("Rating", search="range", card=True, rating=10)
     """Out of 10, as ``.nfo`` files score; it shows as five stars (#419)."""
     plot: str | None = field("Plot", search="text")
+    imdb_id: str | None = field("IMDb ID", search="text")
+    """``tt0113277``, from the .nfo (#486); editable, so a movie can be looked up by it."""
+    tmdb_id: str | None = field("TMDb ID", search="text")
+    """``949``, from the .nfo (#486)."""
     quality: str | None = field("Quality", card=True, search="choice", editable=False)
     """``4K``, ``1440p``, ``1080p``, ``720p``, or ``SD``, from the best version's picture."""
     resolution: str | None = field("Resolution", editable=False)
@@ -447,7 +451,8 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 6  # 6: folder images; 5: pictures; 4: notes
+    id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
+    # 6: folder images; 5: pictures; 4: notes
     api_version = 20  # see-through folders (18: folders; 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
     # keeps read every file once.
@@ -688,7 +693,8 @@ class MoviesTheme(Theme):
             ctx.warn(resource, f"Couldn't read it: {details['error']}")
             return
         nfo: dict[str, Any] = details["nfo"]
-        values = {name: nfo.get(name) for name in ("genre", "director", "rating", "plot")}
+        given = ("genre", "director", "rating", "plot", "imdb_id", "tmdb_id")
+        values = {name: nfo.get(name) for name in given}
         for name in ("year", "runtime"):  # else what the file name or the videos say
             if nfo.get(name):
                 values[name] = nfo[name]
@@ -925,8 +931,9 @@ def actor_ref(name: str, ctx: IngestContext) -> EntityRef:
 
 def read_nfo(path: str) -> dict[str, Any]:
     """What a Kodi movie .nfo says: ``title``, ``year``, ``plot``, ``genre``, ``director``,
-    ``runtime`` (seconds), ``rating``, ``set``, and ``actors`` (names, in order). Missing
-    values are ``None``. Text after the XML (Kodi allows a scraper URL there) is ignored."""
+    ``runtime`` (seconds), ``rating``, ``set``, ``actors`` (names, in order), ``imdb_id``,
+    and ``tmdb_id`` (#486). Missing values are ``None``. Text after the XML (Kodi allows a
+    scraper URL there) is ignored."""
     with open(path, "rb") as f:
         data = f.read(NFO_LIMIT)
     end = data.rfind(b"</movie>")
@@ -967,6 +974,7 @@ def read_nfo(path: str) -> dict[str, Any]:
         name = (actor.findtext("name") or "").strip()
         if name:
             actors.append(name)
+    imdb_id, tmdb_id = _ids(root)
     return {
         "title": text("title"),
         "year": year,
@@ -978,7 +986,36 @@ def read_nfo(path: str) -> dict[str, Any]:
         "rating": rating,
         "set": collection,
         "actors": actors,
+        "imdb_id": imdb_id,
+        "tmdb_id": tmdb_id,
     }
+
+
+IMDB_ID = re.compile(r"tt\d{7,}")
+TMDB_ID = re.compile(r"\d{1,9}")
+
+
+def _ids(root: ElementTree.Element) -> tuple[str | None, str | None]:
+    """The IMDb and TMDb IDs an .nfo gives (#486): ``<uniqueid type="imdb|tmdb">`` (Kodi
+    17+), else ``<imdbid>`` and ``<tmdbid>``, else ``<id>`` (an IMDb ID by its form, ``tt``
+    and digits; digits alone, TMDb's, which Kodi's default scraper writes). Anything not in
+    an ID's form is left out."""
+    imdb: str | None = None
+    tmdb: str | None = None
+    for unique in root.findall("uniqueid"):
+        kind = (unique.get("type") or "").strip().lower()
+        value = (unique.text or "").strip().lower()
+        if kind == "imdb" and imdb is None and IMDB_ID.fullmatch(value):
+            imdb = value
+        elif kind == "tmdb" and tmdb is None and TMDB_ID.fullmatch(value):
+            tmdb = value.lstrip("0") or None
+    for tag in ("imdbid", "tmdbid", "id"):
+        value = (root.findtext(tag) or "").strip().lower()
+        if tag != "tmdbid" and imdb is None and IMDB_ID.fullmatch(value):
+            imdb = value
+        elif tag != "imdbid" and tmdb is None and TMDB_ID.fullmatch(value):
+            tmdb = value.lstrip("0") or None
+    return imdb, tmdb
 
 
 def _int(text: str | None) -> int | None:

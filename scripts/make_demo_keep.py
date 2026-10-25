@@ -696,6 +696,8 @@ MOVIE_NFOS = {
   <director>Christopher Nolan</director>
   <runtime>148</runtime>
   <rating>8.8</rating>
+  <uniqueid type="imdb">tt1375666</uniqueid>
+  <uniqueid type="tmdb" default="true">27205</uniqueid>
   <actor><name>Leonardo DiCaprio</name><role>Cobb</role><order>0</order></actor>
   <actor><name>Elliot Page</name><role>Ariadne</role><order>1</order></actor>
   <actor><name>Tom Hardy</name><role>Eames</role><order>2</order></actor>
@@ -707,6 +709,7 @@ MOVIE_NFOS = {
   <director>Michael Mann</director>
   <runtime>170</runtime>
   <set><name>Michael Mann Crime</name></set>
+  <imdbid>tt0113277</imdbid>
   <actor><name>Al Pacino</name></actor>
   <actor><name>Robert De Niro</name></actor>
 </movie>
@@ -718,11 +721,13 @@ MOVIE_NFOS = {
   <director>Ridley Scott</director>
   <runtime>117</runtime>
   <set><name>Alien Collection</name></set>
+  <id>348</id>
   <actor><name>Sigourney Weaver</name></actor>
 </movie>
 """,
 }
-"""Kodi .nfo files for the movies demo: details, a cast, and sets."""
+"""Kodi .nfo files for the movies demo: details, a cast, sets, and IDs in each of the
+ways .nfo files give them (#486)."""
 
 MOVIE_TAGS = {
     ("Genre",): [],
