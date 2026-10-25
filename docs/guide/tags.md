@@ -15,6 +15,7 @@ On the right of the window (**View → Tags** shows or hides it).
 - **New tags:** when what you typed matches no tag, **Create tag '…'** (or Enter) makes it, and puts it on the selected items. Type a path to make several levels at once: `Places > Norway` (or `Places › Norway`) makes `Norway` under `Places`, and `Places` too if it's new. A `/` isn't a separator, so `AC/DC` stays one tag.
 - **Drag and drop:** drag tags onto an item to tag it, or onto a selected item to tag the whole selection. The items a drop would tag are outlined while you drag.
 - **Right-click a tag** for **Show only items with '…'** or **Hide items with '…'** (adding it to the current search), or to add it to or remove it from the selection.
+- **Only their tags:** the ☑ button beside the box shows only the tags the selected items have (with their parents), so you can see at a glance how they're tagged. With [tag groups](#tag-groups) showing, their other tags follow under **Other tags**, greyed. Click it again for every tag.
 - **Expand all and collapse all:** every tag starts expanded. The two small buttons beside the box (⊞ and ⊟) open or close the whole tree; they're also at the end of the right-click menu.
 
 A tag can be limited to some kinds of item (see *What a tag applies to*, below); the panel hides tags that can't go on anything selected, and tagging skips items of other kinds, saying so.

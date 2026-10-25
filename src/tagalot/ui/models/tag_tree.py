@@ -15,6 +15,10 @@ under them), so a tag in two groups shown is listed twice. While filtering, matc
 the groups shown follow under an **Other tags** heading, in place in the tree. Rows are
 nodes of their own (an index's internal id is its node), each naming its tag, or none for a
 heading.
+
+**Only their tags** (#541, :meth:`TagTreeModel.set_applied_only`): only the tags the selected
+items have (all or some of them), with their parents for context; with groups shown, those
+outside the groups follow under **Other tags**, greyed.
 """
 
 import base64
@@ -118,6 +122,8 @@ class _Node:
     heading: str = ""
     key: str = ""
     """A heading's key: ``"group:<id>"``, or :data:`OTHER_KEY`."""
+    dim: bool = False
+    """Drawn greyed: a selected item's tag outside the groups shown (#541)."""
 
 
 _ROOT = _Node(None, 0)
@@ -141,6 +147,8 @@ class TagTreeModel(QAbstractItemModel):
         self.filter_text = ""
         self.groups: tuple[int, ...] | None = None
         """The tag groups shown (#535), or ``None`` for every tag."""
+        self.applied_only = False
+        """Show only the tags the selected items have (#541)."""
         self._visible: frozenset[int] | None = None  # None: every tag
         self._matches: frozenset[int] = frozenset()
         self._alias_hits: dict[int, str] = {}  # matched through an alias, not the name
@@ -193,9 +201,25 @@ class TagTreeModel(QAbstractItemModel):
         shown = tuple(g for g in self.groups if g in known)
         return shown or None
 
+    def set_applied_only(self, on: bool) -> None:
+        """Show only the tags the selected items have (all or some of them), with their
+        parents (#541), or every tag."""
+        self.applied_only = on
+        self._rebuild()
+
     @property
     def filtering(self) -> bool:
         return bool(search_key(self.filter_text))
+
+    @property
+    def narrowing(self) -> bool:
+        """Only some tags show: filtering, or only the selected items' tags (#541)."""
+        return self.filtering or self.applied_only
+
+    def applied(self) -> frozenset[int]:
+        """The tags the selected items have, all or some of them."""
+        tree = self.tree
+        return frozenset(t for t, n in self._tag_counts.items() if n and tree and t in tree)
 
     def matches(self) -> frozenset[int]:
         """The tags the filter matched (empty when not filtering)."""
@@ -282,6 +306,8 @@ class TagTreeModel(QAbstractItemModel):
             else:
                 self._visible, self._matches = None, frozenset()
                 self._alias_hits, self._description_hits = {}, set()
+            if self.applied_only:
+                self._visible = tree.with_ancestors(self._targets())
             hidden = self._out_of_scope(tree)
             if hidden:
                 shown = set(self._visible if self._visible is not None else tree) - hidden
@@ -293,9 +319,18 @@ class TagTreeModel(QAbstractItemModel):
                 self._grouped(tree, groups)
         self.endResetModel()
 
+    def _targets(self) -> frozenset[int]:
+        """The tags narrowing picks (shown with their parents): the matches, the selected
+        items' tags (#541), or both."""
+        if self.applied_only:
+            applied = self.applied()
+            return applied & self._matches if self.filtering else applied
+        return self._matches
+
     def _grouped(self, tree: TagTree, groups: tuple[int, ...]) -> None:
-        """Each group shown as a heading over its tags; while filtering, matches outside
-        them under **Other tags** (#535)."""
+        """Each group shown as a heading over its tags; while narrowing (filtering, or only
+        the selected items' tags), the rest under **Other tags** (#535, #541): greyed when
+        they are the selected items' tags."""
         visible = self._visible
         headings: list[int] = []
         inside: set[int] = set()
@@ -304,19 +339,22 @@ class TagTreeModel(QAbstractItemModel):
                 continue
             inside |= tree.expand(group.tags)
             tops = [t for t in tree.group_tops(group.id) if visible is None or t in visible]
-            if not tops and self.filtering:
+            if not tops and self.narrowing:
                 continue  # nothing in it matches
             heading = self._add(_Node(None, 0, group.name, f"group:{group.id}"))
             self._place(heading, self._subtrees(tree, tops, heading, visible))
             headings.append(heading)
-        if self.filtering:
-            other = {m for m in self._matches if m not in inside}
+        if self.narrowing:
+            other = {m for m in self._targets() if m not in inside}
             if visible is not None:
                 other &= visible
             if other:
                 around = tree.with_ancestors(other)
                 heading = self._add(_Node(None, 0, OTHER_TAGS, OTHER_KEY))
-                self._place(heading, self._subtrees(tree, tree.children(None), heading, around))
+                rows = self._subtrees(
+                    tree, tree.children(None), heading, around, dim=self.applied_only
+                )
+                self._place(heading, rows)
                 headings.append(heading)
         self._place(0, headings)
 
@@ -328,18 +366,29 @@ class TagTreeModel(QAbstractItemModel):
         return number
 
     def _subtrees(
-        self, tree: TagTree, tags: Iterable[int], parent: int, shown: frozenset[int] | None
+        self,
+        tree: TagTree,
+        tags: Iterable[int],
+        parent: int,
+        shown: frozenset[int] | None,
+        *,
+        dim: bool = False,
     ) -> list[int]:
         """Rows for ``tags`` under ``parent``, with their sub-tags in ``shown`` (``None``:
-        every one)."""
+        every one), greyed with ``dim``."""
         rows = []
         for tag_id in tags:
             if shown is not None and tag_id not in shown:
                 continue
-            node = self._add(_Node(tag_id, parent))
-            self._place(node, self._subtrees(tree, tree.children(tag_id), node, shown))
+            node = self._add(_Node(tag_id, parent, dim=dim))
+            self._place(node, self._subtrees(tree, tree.children(tag_id), node, shown, dim=dim))
             rows.append(node)
         return rows
+
+    def is_dim(self, index: AnyIndex) -> bool:
+        """The row is greyed: a selected item's tag outside the groups shown (#541)."""
+        node = self._node(index)
+        return 0 < node < len(self._nodes) and self._nodes[node].dim
 
     def _place(self, parent: int, rows: list[int]) -> None:
         self._children[parent] = tuple(rows)
@@ -405,6 +454,8 @@ class TagTreeModel(QAbstractItemModel):
                 if from_files:
                     tooltip += f"\nFrom the files of {from_files} (their keywords)"
             return tooltip
+        if role == Qt.ItemDataRole.ForegroundRole and self.is_dim(index):
+            return QApplication.palette().color(QPalette.ColorRole.PlaceholderText)
         if role == Qt.ItemDataRole.FontRole:
             bold = tag_id in self._matches
             italic = self.from_files_only(tag_id)
@@ -530,7 +581,7 @@ class TagTreeModel(QAbstractItemModel):
         self._selected_types = frozenset(types) if selected_count else frozenset()
         self._file_counts = dict(file_counts or {}) if selected_count else {}
         after = self._out_of_scope(self.tree) if self.tree is not None else frozenset()
-        if after != before:
+        if after != before or self.applied_only:  # only their tags: which show changes (#541)
             self._rebuild()
             return True
         self._all_rows_changed()
