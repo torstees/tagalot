@@ -7,6 +7,7 @@ problem is logged.
 
 import logging
 import os
+import re
 import string
 import tomllib
 import uuid
@@ -26,6 +27,8 @@ SETTINGS_TOML = "settings.toml"
 MAX_RECENT_KEEPS = 10
 COMMAND_PLACEHOLDERS = frozenset({"path", "dir", "name"})
 """Placeholders allowed in handler command templates (DESIGN.md §11)."""
+ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+"""What a keep's environment variable may be named (#544)."""
 
 
 def default_settings_path() -> Path:
@@ -71,6 +74,10 @@ class Settings:
     file_manager: str = ""
     """``[file_manager] command``: the command template Show in file manager runs (#457,
     DESIGN.md §11), with ``{path}``, ``{dir}``, ``{name}``; ``""``, the system's."""
+    keep_env: dict[uuid.UUID, dict[str, str]] = field(default_factory=dict)
+    """``[environment."<keep id>"]``: each keep's environment variables for this user
+    (#544), such as an online service's token, used ahead of the real environment. Kept
+    here, never in the keep folder, so a shared keep doesn't share them."""
 
     def add_recent_keep(self, keep_dir: Path) -> None:
         """Move ``keep_dir`` to the front of the recent list, dropping duplicates and extras."""
@@ -96,6 +103,27 @@ class Settings:
                 del self.root_overrides[keep_id]
         else:
             overrides[root_id] = path
+
+    def environment(self, keep_id: uuid.UUID) -> dict[str, str]:
+        """A copy of the keep's environment variables (#544)."""
+        return dict(self.keep_env.get(keep_id, {}))
+
+    def set_env(self, keep_id: uuid.UUID, name: str, value: str | None) -> None:
+        """Set one of the keep's environment variables, or remove it with ``None`` or an
+        empty value. ``ValueError`` for a name that can't be a variable's."""
+        name = name.strip()
+        if not ENV_NAME.fullmatch(name):
+            raise ValueError(
+                f"{name!r} can't name an environment variable: use letters, digits, and _, "
+                "not starting with a digit"
+            )
+        env = self.keep_env.setdefault(keep_id, {})
+        if value is None or not value.strip():
+            env.pop(name, None)
+            if not env:
+                del self.keep_env[keep_id]
+        else:
+            env[name] = value.strip()
 
     def set_handler(self, ext: str, command: str, role: str | None = None) -> HandlerOverride:
         """Open files with ``ext`` (in ``role``, if given) with ``command``, replacing the rule
@@ -193,6 +221,16 @@ def dump_settings(settings: Settings) -> str:
         lines += ["", "[notes]", f"ignore_keys = {toml_list(settings.note_ignore_keys)}"]
     if settings.file_manager:
         lines += ["", "[file_manager]", f"command = {toml_str(settings.file_manager)}"]
+    for keep_id, env in settings.keep_env.items():
+        if not env:
+            continue
+        lines += [
+            "",
+            "# A keep's environment variables (API keys): yours alone, set in Keep",
+            "# configuration (Keep tab).",
+            f"[environment.{toml_key(str(keep_id))}]",
+        ]
+        lines += [f"{toml_key(name)} = {toml_str(value)}" for name, value in env.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -233,6 +271,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         "handlers",
         "notes",
         "file_manager",
+        "environment",
     }
     for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
@@ -309,6 +348,31 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         settings.file_manager = command.strip()
     else:
         logger.warning("%s: [file_manager] command must be a string; ignoring it", path)
+
+    environments = data.get("environment", {})
+    if not isinstance(environments, dict):
+        logger.warning("%s: environment must be a table; ignoring it", path)
+        environments = {}
+    for raw_keep_id, env in environments.items():
+        try:
+            keep_id = uuid.UUID(raw_keep_id)
+        except ValueError:
+            logger.warning(
+                "%s: environment key %r is not a keep id; ignoring it", path, raw_keep_id
+            )
+            continue
+        if not isinstance(env, dict):
+            logger.warning("%s: [environment.%s] must be a table; ignoring it", path, raw_keep_id)
+            continue
+        for name, value in env.items():
+            try:
+                if not isinstance(value, str):
+                    raise ValueError("its value must be text")
+                settings.set_env(keep_id, name, value)
+            except ValueError as e:  # never log the value: it may be a key
+                logger.warning(
+                    "%s: [environment.%s] %s: %s; ignoring it", path, raw_keep_id, name, e
+                )
     return settings
 
 

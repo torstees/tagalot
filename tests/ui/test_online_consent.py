@@ -132,9 +132,34 @@ def test_keep_configuration_chooses_what_identifies_an_item(
         assert dialog.find_by.currentData() == "title-year"
         assert not dialog.tokens.isHidden()
         assert dialog.tokens.text() == (
-            "Films DB needs a token: set the TAGALOT_TEST_FILMS_TOKEN environment variable "
-            "to yours, then start Tagalot again. Until then it isn't used."
+            "Films DB needs a token: set TAGALOT_TEST_FILMS_TOKEN to yours under "
+            "Environment, below. Until then it isn't used."
         )
         assert dialog.online_sends.text().startswith("Tagalot would send film IDs to Film Posters.")
+        # #544: set it for the keep, in the user's settings
+        rows = [dialog.env_list.item(i).text() for i in range(dialog.env_list.count())]
+        assert rows == ["TAGALOT_TEST_FILMS_TOKEN: not set (Films DB needs it)"]
+        assert not dialog.env_remove.isEnabled()
+        dialog.env_list.setCurrentRow(0)
+        dialog.ask_env_value = lambda name: "s3cret"  # type: ignore[method-assign]
+        dialog.env_set.click()
+        assert session.environment() == {"TAGALOT_TEST_FILMS_TOKEN": "s3cret"}
+        assert dialog.env_list.item(0).text() == "TAGALOT_TEST_FILMS_TOKEN = " + "•" * 8
+        dialog.env_show.setChecked(True)
+        assert dialog.env_list.item(0).text() == "TAGALOT_TEST_FILMS_TOKEN = s3cret"
+        assert dialog.tokens.isHidden()
+        assert dialog.online_sends.text().startswith(
+            "Tagalot would send film IDs, or titles with their years, to Films DB"
+        )
+        qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
+        assert "s3cret" not in session.keep.toml_path.read_text(encoding="utf-8")
+        dialog.ask_env_name = lambda: "OTHER_KEY"  # type: ignore[method-assign]
+        dialog.ask_env_value = lambda name: "x"  # type: ignore[method-assign]
+        dialog.env_add.click()
+        assert session.environment() == {"TAGALOT_TEST_FILMS_TOKEN": "s3cret", "OTHER_KEY": "x"}
+        dialog.env_list.setCurrentRow(0)  # OTHER_KEY, by name
+        dialog.env_remove.click()
+        assert session.environment() == {"TAGALOT_TEST_FILMS_TOKEN": "s3cret"}
+        qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
         dialog.close()
         window.close()

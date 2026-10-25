@@ -21,7 +21,7 @@ What Tagalot writes elsewhere: the keep's folder (its databases, thumbnails, bac
 | Research | arXiv (`export.arxiv.org`) | arXiv IDs |
 | Books | Open Library (`openlibrary.org`) | ISBNs |
 
-Only those identifiers, in the addresses requested, are sent: no file names, titles, tags, or anything else about your files, unless you let a keep find items by their titles (**Find items by**, for services that can). There's no account, no telemetry, and no update check. A service that needs a token gets the one you set in an environment variable; Tagalot never saves it. Answers are kept in the keep. See [Online details](../guide/online-details.md).
+Only those identifiers, in the addresses requested, are sent: no file names, titles, tags, or anything else about your files, unless you let a keep find items by their titles (**Find items by**, for services that can). There's no account, no telemetry, and no update check. A service that needs a token gets the one you set for the keep (kept in your own settings on this computer, never in the keep or the log) or in an environment variable. Answers are kept in the keep. See [Online details](../guide/online-details.md).
 
 Other things that open the web do so in your browser, when you click them: a book's or paper's link, **Open DOI page**.
 

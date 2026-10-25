@@ -362,8 +362,9 @@ class KeepSession:
             return closing.is_set() or stopped()
 
         theme = self.theme()
+        env = self.environment()
         fetcher = fetcher or Fetcher(
-            self.allowed_online_sources(), opener=self.online_opener, stopped=stop
+            self.allowed_online_sources(), opener=self.online_opener, stopped=stop, env=env
         )
         report = look_up(
             self.writer,
@@ -373,6 +374,7 @@ class KeepSession:
             entity_ids,
             refresh=refresh,
             find_by=self.keep.config.online_find_by,
+            env=env,
             fetcher=fetcher,
             progress=progress,
             stopped=stop,
@@ -513,6 +515,7 @@ class KeepSession:
                 entity_ids,
                 refresh=refresh,
                 find_by=self.keep.config.online_find_by,
+                env=self.environment(),
             )
 
     def run_action(self, method: str, entity_ids: Iterable[int]) -> ActionResult:
@@ -855,7 +858,12 @@ class KeepSession:
     def online_sources(self) -> list[OnlineSource]:
         """The theme's services that can be used: those needing a token only while it is
         set (#485). The consent question names these."""
-        return usable(self.theme.online_sources)
+        return usable(self.theme.online_sources, self.environment())
+
+    def environment(self) -> dict[str, str]:
+        """This keep's environment variables for this user (#544, ``settings.toml``),
+        used ahead of the real environment."""
+        return self.settings.environment(self.keep.config.id)
 
     def allowed_online_sources(self) -> list[OnlineSource]:
         """The theme's services this keep may look things up in (#483)."""
