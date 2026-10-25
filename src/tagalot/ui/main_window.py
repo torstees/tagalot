@@ -701,6 +701,14 @@ class MainWindow(QMainWindow):
             details.alias_added.connect(self._add_tag_alias)
             details.alias_removed.connect(self._remove_tag_alias)
             details.types_requested.connect(self.change_tag_types)
+            details.group_toggled.connect(lambda t, g, on: self._set_in_group(g, [t], on))
+            manager.group_new_requested.connect(
+                lambda name, tags: self.tag_actions.new_group(
+                    name, tags, self.tag_names(tags) if tags else ""
+                )
+            )
+            manager.group_rename_requested.connect(self.tag_actions.rename_group)
+            manager.group_delete_requested.connect(self.tag_actions.delete_group)
             manager.undo_requested.connect(self.tag_actions.undo)
             manager.redo_requested.connect(self.tag_actions.redo)
             manager.export_requested.connect(self.export_tag_file)

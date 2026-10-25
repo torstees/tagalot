@@ -195,8 +195,30 @@ class TagActions(QObject):
         shown = " ".join(name.split())
         self._run(
             lambda: self.session.tags.add_group(name, tags) + 1,  # truthy: something changed
-            lambda _: f"Made the group {shown!r} with {names}.",
+            lambda _: (
+                f"Made the group {shown!r} with {names}." if tags else f"Made the group {shown!r}."
+            ),
         )
+
+    def rename_group(self, group_id: int, name: str, old: str) -> None:
+        new = " ".join(name.split())
+
+        def work() -> bool:
+            if new == old:
+                return False
+            self.session.tags.rename_group(group_id, name)
+            return True
+
+        self._run(work, lambda changed: f"Renamed the group {old!r} to {new!r}." if changed else "")
+
+    def delete_group(self, group_id: int, name: str) -> None:
+        """Delete a tag group; its tags stay. One undo step."""
+
+        def work() -> bool:
+            self.session.tags.delete_group(group_id)
+            return True
+
+        self._run(work, lambda _: f"Deleted the group {name!r}; its tags stay.")
 
     def set_in_group(
         self, group_id: int, tag_ids: Iterable[int], inside: bool, names: str, group: str
