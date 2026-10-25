@@ -13,6 +13,17 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **Folder:** a folder with pictures or archives in it, or below it, holds what's there: movies, pictures, archives, and the folders inside. Tag `Home Movies/Alice`, and her videos and photos all count as tagged (see [Folders](#folders)).
 - **Picture** and **Archive:** every other picture, and every zip, 7z, or rar archive, is an item of its own that you can tag and search, such as the family pictures beside your home videos (see [Pictures](#pictures)).
 
+## Details from TMDb
+
+With a TMDb key, a movies keep can look movies up in [TMDb](https://www.themoviedb.org) (see [Online details](../guide/online-details.md)). Get a free API Read Access Token from your TMDb account's API settings, then in **Keep → Configure keep… → Keep** tab, under **Environment**, select `TAGALOT_TMDB_TOKEN` and click **Set…**. Tagalot then asks once whether to look things up.
+
+- **How a movie is found:** by its **TMDb ID**, else its **IMDb ID** (from its `.nfo`, or typed in). A movie with neither is found by its title (and year) only if the keep's **Find items by** allows it; by default it isn't sent. A title only counts when TMDb has a movie of that very title, or with it after a colon (*The Lord of the Rings: The Fellowship of the Ring*), and the same year.
+- **Details:** the plot, genres, director, length, and rating fill in what the files don't say; an `.nfo`'s values, a note's, and yours always win. Without an `.nfo`, TMDb's title and year replace what the file name suggested (`The.Matrix.1999.1080p` becomes *The Matrix*).
+- **Poster:** for a movie with no poster of its own, shown when it has no picture at all.
+- **Cast:** a movie with no cast (no `.nfo` cast, nobody added by hand) gets TMDb's top 10 billed. People in a movie's cast with no photo of their own get TMDb's.
+
+Everything fetched is kept in the keep, never put in your folders.
+
 ## Notes
 
 A [note](../guide/notes.md) inside a movie's own folder (`Inception (2010)/Inception (2010).md`, or `index.md`, or `README.md`) describes the movie: fields an `.nfo` doesn't give (the `.nfo` wins when it does), `tags`, anything else as Extra fields, and a description shown on its page. A loose video's folder isn't the movie's, so its notes are left alone. A collection's folder note describes the collection.

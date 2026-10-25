@@ -1285,7 +1285,8 @@ class OnlineSource:
 
     ``token_env`` names the environment variable holding the service's token, for a service
     that needs one (``"TAGALOT_TMDB_TOKEN"``, API version 23): Tagalot reads it when looking
-    up and sends it as ``Authorization: Bearer``, never storing it. While it isn't set, the
+    up, from the keep's environment (set by the user in the Keep tab) or the system's, and
+    sends it as ``Authorization: Bearer`` to that service only. While it isn't set, the
     service isn't used or asked about. ``titles`` says the theme may find items on the
     service by title (:class:`OnlineRequest`'s ``by``), when the keep allows it (API version
     23); the consent question then says titles may be sent too.
