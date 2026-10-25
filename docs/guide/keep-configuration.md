@@ -31,7 +31,7 @@ The folders the keep watches, each with its state (online, offline, not watched,
 - **Assets folder:** the assets folder of every watched folder that doesn't name its own (see Folders above). Covers are looked for there at the next scan; notes' pictures and links at once.
 - **See-through folders:** folder names, one per line, such as `! Posters`. A folder with one of these names is never an item, but nothing in it is ignored: its files count as its parent folder's. A poster in `Heat (1995)/! Posters` is Heat's poster, and pictures in `3rd Birthday/! Posters` are among the `3rd Birthday` Folder's. Names match exactly, ignoring case. They're saved when you leave the box, and the next scan reads the keep's files again. If the change would remove Folders you've tagged, Tagalot asks first, since their tags go with them.
 - **Theme options:** the theme's settings for this keep, each with **Default**. They apply at the next scan, which reads the affected files again. The built-in ones: 2D assets' **Artist folder level** and books' **Source folder level** (see each [theme](../themes/README.md)).
-- **Online details** (themes that look things up): **Look up details online**, and what it would send. See [Online details](online-details.md).
+- **Online details** (themes that look things up): **Look up details online**, **Find items by** (IDs only, or titles too, for services that can find items by title), what it would send, and which services wait for a token. See [Online details](online-details.md).
 - **Search inside documents** (themes with documents): **Off**, **Words**, or **Substrings**, what's stored, and **Clear contents text…**. See [Searching inside documents](search-inside-documents.md).
 
 ## Notes

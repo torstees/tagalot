@@ -8,7 +8,9 @@ from tagalot.themes.api import OnlineSource
 ALLOW, NEVER, REFUSE = "allow", "never", "refuse"
 
 
-def ask_online_consent(parent: QWidget | None, sources: list[OnlineSource]) -> str | None:
+def ask_online_consent(
+    parent: QWidget | None, sources: list[OnlineSource], find_by: str = "ids"
+) -> str | None:
     """Ask whether this keep may look details up online, naming each service and what it
     is sent: ``"allow"``, ``"never"``, or ``None`` for **Not now** (nothing is sent, and the
     question comes back next time)."""
@@ -17,7 +19,8 @@ def ask_online_consent(parent: QWidget | None, sources: list[OnlineSource]) -> s
     box.setWindowTitle("Look up details online?")
     box.setText("Look up details online?")
     box.setInformativeText(
-        f"{consent_text(sources)}\n\nYou can change this later in Keep configuration (Keep tab)."
+        f"{consent_text(sources, find_by)}\n\n"
+        "You can change this later in Keep configuration (Keep tab)."
     )
     allow = box.addButton("Allow for this keep", QMessageBox.ButtonRole.AcceptRole)
     later = box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
@@ -33,7 +36,9 @@ def ask_online_consent(parent: QWidget | None, sources: list[OnlineSource]) -> s
     return None
 
 
-def ask_new_online_services(parent: QWidget | None, sources: list[OnlineSource]) -> str | None:
+def ask_new_online_services(
+    parent: QWidget | None, sources: list[OnlineSource], find_by: str = "ids"
+) -> str | None:
     """Ask whether a keep that allows lookups may also use services added since (#483),
     naming each and what it is sent: ``"allow"``, ``"refuse"`` (don't use them; the others
     go on), or ``None`` for **Not now** (asked again when the keep is opened again)."""
@@ -44,7 +49,7 @@ def ask_new_online_services(parent: QWidget | None, sources: list[OnlineSource])
     box.setText(title)
     box.setInformativeText(
         "This keep looks details up online, and Tagalot can now also use "
-        f"{_names(sources)}. {consent_text(sources)}\n\n"
+        f"{_names(sources)}. {consent_text(sources, find_by)}\n\n"
         "Nothing is sent to it until you allow it. You can change this later in Keep "
         "configuration (Keep tab)."
     )

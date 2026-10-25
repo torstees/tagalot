@@ -12,6 +12,22 @@ Nothing is looked up until the first time a lookup would send something. Then Ta
 
 Change your answer in **Keep → Configure keep… → Keep** tab: **Look up details online**. The answer is saved in the keep's `keep.toml`.
 
+## Services that need a token
+
+Some services need a token of your own (a free key from the service). Tagalot reads it from an environment variable when it looks things up, and never saves it: not in the keep, your settings, or the log. Until the variable is set, that service isn't used or mentioned when Tagalot asks, and the Keep tab says which variable to set. Set it (on Windows: **Edit environment variables for your account**), then start Tagalot again; a keep that looks things up then asks once about the service.
+
+## What may identify an item
+
+Some services can find an item that has no ID by its title, such as a home video. Each keep chooses what may be sent, in **Keep → Configure keep… → Keep** tab: **Find items by** (shown for themes that can search by title):
+
+- **IDs only** (the default): only identifiers are sent; items without one aren't looked up.
+- **IDs, or a title with its year:** an item without an ID is found by its title and year.
+- **IDs, or any title:** by its title alone when it has no year.
+
+The question Tagalot asks says what would be sent with your choice. When a title finds the item, its ID is kept, and from then on it's looked up by that.
+
+## A new service
+
 When a newer Tagalot can use a service your keep hasn't been asked about (a covers service, say), it asks once more, about that service only: **Allow**, **Not now** (asked again the next time you open the keep), or **Don't use it**. Nothing is sent to it until you allow it, and the services you already allowed carry on either way.
 
 ## When

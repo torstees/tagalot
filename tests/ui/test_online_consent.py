@@ -1,15 +1,21 @@
 """Asking once per keep whether to look details up online, and the Keep configuration
 toggle (#339)."""
 
+from pathlib import Path
+
 import pytest
+from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
-from tagalot.core.keep import load_keep_config
+from tagalot.core.keep import ThemeRef, create_keep, load_keep_config
 from tagalot.core.session import KeepSession
+from tagalot.core.settings import Settings
 from tagalot.themes.api import OnlineSource
+from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.online import ALLOW, NEVER, ask_online_consent
+from tagalot.ui.workers import ScanController
 from tests.ui.test_music_views import session, window
 
 pytestmark = pytest.mark.gui
@@ -61,3 +67,74 @@ def test_keep_configuration_turns_lookups_on_and_off(
     qtbot.waitUntil(lambda: session.keep.config.online_lookups == "never", timeout=5000)
     assert load_keep_config(session.keep.toml_path).online_lookups == "never"
     qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
+
+
+TITLES_THEME = """
+from tagalot.themes.api import Entity, OnlineSource, Theme, field
+
+
+class Film(Entity):
+    film_id: str | None = field("Film ID")
+
+
+class Films(Theme):
+    id, name, version, api_version = "films_find_by", "Films", 1, 23
+    entities = [Film]
+    online_sources = [
+        OnlineSource(
+            "Films DB",
+            "api.films.test",
+            "film IDs",
+            token_env="TAGALOT_TEST_FILMS_TOKEN",
+            titles=True,
+        ),
+        OnlineSource("Film Posters", "posters.films.test", "film IDs"),
+    ]
+"""
+
+
+def test_keep_configuration_chooses_what_identifies_an_item(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TAGALOT_TEST_FILMS_TOKEN", "token")
+    themes = tmp_path / "themes"
+    themes.mkdir()
+    (themes / "films_find_by.py").write_text(TITLES_THEME, encoding="utf-8")
+    keep = create_keep(tmp_path / "k", "K", ThemeRef("films_find_by", 1))
+    with KeepSession.open(keep.dir, Settings(theme_dirs=[themes])) as session:
+        window = MainWindow(session, scans=ScanController(QThreadPool()))
+        qtbot.addWidget(window)
+        dialog = window.configure_keep()
+        assert not dialog.find_by_row.isHidden()  # a service finds items by title
+        assert dialog.tokens.isHidden()  # its token is set
+        assert [dialog.find_by.itemText(i) for i in range(dialog.find_by.count())] == [
+            "IDs only",
+            "IDs, or a title with its year",
+            "IDs, or any title",
+        ]
+        assert dialog.find_by.currentData() == "ids"
+        assert dialog.online_sends.text().startswith(
+            "Tagalot would send film IDs to Films DB and film IDs to Film Posters."
+        )
+        dialog.find_by.setCurrentIndex(1)
+        qtbot.waitUntil(lambda: session.keep.config.online_find_by == "title-year", timeout=5000)
+        assert dialog.online_sends.text().startswith(
+            "Tagalot would send film IDs, or titles with their years, to Films DB and film IDs "
+            "to Film Posters."
+        )
+        assert load_keep_config(session.keep.toml_path).online_find_by == "title-year"
+        qtbot.waitUntil(lambda: dialog.busy == 0, timeout=5000)
+        dialog.close()
+
+        monkeypatch.delenv("TAGALOT_TEST_FILMS_TOKEN")
+        dialog = KeepConfigWindow(session)  # as when Tagalot starts again
+        qtbot.addWidget(dialog)
+        assert dialog.find_by.currentData() == "title-year"
+        assert not dialog.tokens.isHidden()
+        assert dialog.tokens.text() == (
+            "Films DB needs a token: set the TAGALOT_TEST_FILMS_TOKEN environment variable "
+            "to yours, then start Tagalot again. Until then it isn't used."
+        )
+        assert dialog.online_sends.text().startswith("Tagalot would send film IDs to Film Posters.")
+        dialog.close()
+        window.close()

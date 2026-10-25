@@ -265,6 +265,14 @@ def validate_theme(theme: type[Theme]) -> list[str]:
         problems.append("online_sources names a host twice")
     if sources and getattr(theme, "api_version", API_VERSION) < 5:
         problems.append("a theme with online_sources must set api_version = 5 (or later)")
+    elif (
+        any(getattr(o, "token_env", None) or getattr(o, "titles", False) for o in sources)
+        and getattr(theme, "api_version", API_VERSION) < 23
+    ):
+        problems.append(
+            "a theme with an online source's token_env or titles must set api_version = 23 "
+            "(or later)"
+        )
     for entity in entities:
         if getattr(entity, "full_text", False):
             if not any(getattr(r, "primary", False) for r in entity.roles):

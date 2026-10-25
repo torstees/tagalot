@@ -150,7 +150,10 @@ class OnlineLookups(QObject):
 
     def ask(self) -> str | None:
         """The once-per-keep question (tests replace it)."""
-        return ask_online_consent(self.window, list(self.session.theme.online_sources))
+        return ask_online_consent(self.window, self.session.online_sources(), self._find_by())
+
+    def _find_by(self) -> str:
+        return self.session.keep.config.online_find_by
 
     def _ask_new(self, new: list[OnlineSource], request: Request) -> None:
         """Lookups are allowed, and the theme uses services added since: ask about those
@@ -183,7 +186,7 @@ class OnlineLookups(QObject):
     def ask_new(self, sources: list[OnlineSource]) -> str | None:
         """The question about services added since lookups were allowed: ``"allow"``,
         ``"refuse"``, or ``None`` (tests replace it)."""
-        answer = ask_new_online_services(self.window, sources)
+        answer = ask_new_online_services(self.window, sources, self._find_by())
         assert answer in (ALLOW, REFUSE, None)
         return answer
 
@@ -193,7 +196,7 @@ class OnlineLookups(QObject):
             self.window,
             "Look up online",
             "Online lookups are off for this keep. Turn them on?\n\n"
-            f"{consent_text(self.session.theme.online_sources)}",
+            f"{consent_text(self.session.online_sources(), self._find_by())}",
         )
         return answer == QMessageBox.StandardButton.Yes
 

@@ -56,6 +56,7 @@ from tagalot.core.keep_settings import (
     with_markdown_assets,
     with_name,
     with_note_ignore_keys,
+    with_online_find_by,
     with_online_lookups,
     with_online_services,
     with_option,
@@ -79,6 +80,7 @@ from tagalot.core.online import (
     look_up,
     to_fetch,
     urlopen_reply,
+    usable,
 )
 from tagalot.core.online import Progress as OnlineProgress
 from tagalot.core.picture_problems import (
@@ -370,6 +372,7 @@ class KeepSession:
             theme,
             entity_ids,
             refresh=refresh,
+            find_by=self.keep.config.online_find_by,
             fetcher=fetcher,
             progress=progress,
             stopped=stop,
@@ -503,7 +506,14 @@ class KeepSession:
     def to_fetch(self, entity_ids: Iterable[int], *, refresh: bool = False) -> int:
         """How many of these items a lookup would fetch something for. Runs in a worker."""
         with self.reader.connect() as conn:
-            return to_fetch(conn, self.schema, self.theme(), entity_ids, refresh=refresh)
+            return to_fetch(
+                conn,
+                self.schema,
+                self.theme(),
+                entity_ids,
+                refresh=refresh,
+                find_by=self.keep.config.online_find_by,
+            )
 
     def run_action(self, method: str, entity_ids: Iterable[int]) -> ActionResult:
         """Run a theme action on these entities in the DB writer; one undo step if it
@@ -834,22 +844,32 @@ class KeepSession:
         """Allow (``"allow"``, every service the theme uses) or refuse (``"never"``)
         online lookups for this keep, or forget the answer (``None``: ask again). Runs in a
         worker."""
-        hosts = [s.host for s in self.theme.online_sources]
+        hosts = [s.host for s in self.online_sources()]
         self.save_config(with_online_lookups(self.keep.config, answer, hosts))
+
+    def set_online_find_by(self, find_by: str) -> None:
+        """Let items be identified to services by ``find_by`` (#485): ``"ids"``,
+        ``"title-year"``, or ``"title"``. Runs in a worker."""
+        self.save_config(with_online_find_by(self.keep.config, find_by))
+
+    def online_sources(self) -> list[OnlineSource]:
+        """The theme's services that can be used: those needing a token only while it is
+        set (#485). The consent question names these."""
+        return usable(self.theme.online_sources)
 
     def allowed_online_sources(self) -> list[OnlineSource]:
         """The theme's services this keep may look things up in (#483)."""
         allowed = allowed_hosts(self.keep.config)
-        return [s for s in self.theme.online_sources if s.host in allowed]
+        return [s for s in self.online_sources() if s.host in allowed]
 
     def new_online_sources(self) -> list[OnlineSource]:
         """The theme's services a keep that allows lookups hasn't been asked about: added
-        since the user allowed the others (#483)."""
+        since the user allowed the others (#483), or whose token was set since (#485)."""
         config = self.keep.config
         if config.online_lookups != "allow":
             return []
         answered = allowed_hosts(config) | set(config.online_refused)
-        return [s for s in self.theme.online_sources if s.host not in answered]
+        return [s for s in self.online_sources() if s.host not in answered]
 
     def answer_online_sources(self, sources: Iterable[OnlineSource], allow: bool) -> None:
         """Allow, or don't use, these services, besides those already answered. Runs in a

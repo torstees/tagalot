@@ -112,7 +112,7 @@ A **role** is what a file is to an item, declared on the type: `roles = [role("a
 ```python
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 2
-    api_version = 22             # the theme API it needs
+    api_version = 23             # the theme API it needs
     extensions = frozenset({".mp3", ".flac", ".jpg"})   # empty: every file
     dirs = True                                     # folders become resources too
     entities = [Artist, Album, Song]
@@ -302,6 +302,23 @@ class BooksTheme(Theme):
 `online_requests` runs in a worker for many items, so it only builds addresses (never goes online). `online_details` runs in the DB writer, like `ingest`, once every address has an answer; check `answer.ok` (a service answers 404 for an identifier it doesn't know). Values it sets are marked as looked up, never replace the user's edits, and are replaced when the item's files are read again; fill in empty fields, as here, so a file's own details win. `interval=3` on an `OnlineSource` spaces its requests further apart, for services that ask for it.
 
 To show a picture the service has (a cover, a photo), name it in `online_details` with `ctx.online_picture(entity, url)` (`api_version = 21`). Its host must be one of your `online_sources` too, so the user is asked about it; a covers service on its own host is a source of its own (`OnlineSource("Open Library Covers", "covers.openlibrary.org", "ISBNs")`). Tagalot fetches it after the details, keeps it in the keep, and shows it only when the item has no picture of its own. The service should answer 404 when it has none (Open Library's covers need `?default=false` for that). A keep that already allows your other services is asked once about a service you add.
+
+A service that needs a token names the environment variable holding it: `OnlineSource("TMDb", "api.themoviedb.org", "TMDb and IMDb IDs", token_env="TAGALOT_TMDB_TOKEN")` (`api_version = 23`). Tagalot sends it as `Authorization: Bearer` and never stores it; while the variable isn't set, the service isn't used or asked about, and the Keep tab tells the user what to set.
+
+To find items that have no ID, by their title, declare the service with `titles=True` and give the search as an `OnlineRequest`, with how it finds the item. Each keep chooses what may identify its items (IDs only, by default), and Tagalot drops the addresses it doesn't allow, so give every way you have:
+
+```python
+    def online_requests(self, entity_type, item):
+        if tmdb := item.fields.get("tmdb_id"):
+            return [f"https://api.themoviedb.org/3/movie/{tmdb}"]
+        query = urllib.parse.quote(item.title)
+        search = f"https://api.themoviedb.org/3/search/movie?query={query}"
+        if year := item.fields.get("year"):
+            return [OnlineRequest(f"{search}&year={year}", by="title-year")]
+        return [OnlineRequest(search, by="title")]
+```
+
+When a search finds the item, set its ID in `online_details` (`ctx.update(entity, tmdb_id=...)`); Tagalot then looks it up by that ID in the same run.
 
 ## Near-duplicates
 
