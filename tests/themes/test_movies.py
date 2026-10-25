@@ -319,6 +319,8 @@ INCEPTION_NFO = """<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
     <rating name="themoviedb" max="10" default="true"><value>8.8</value></rating>
   </ratings>
   <set><name>Dream Heists</name></set>
+  <uniqueid type="imdb">tt1375666</uniqueid>
+  <uniqueid type="tmdb" default="true">27205</uniqueid>
   <actor><name>Elliot Page</name><role>Ariadne</role><order>2</order></actor>
   <actor><name>Leonardo DiCaprio</name><role>Cobb</role><order>0</order></actor>
   <actor><name>Tom Hardy</name><role>Eames</role><order>3</order></actor>
@@ -341,6 +343,8 @@ def test_reading_an_nfo(tmp_path: Path) -> None:
         "rating": 8.8,  # the default rating
         "set": "Dream Heists",
         "actors": ["Leonardo DiCaprio", "Elliot Page", "Tom Hardy"],  # by order
+        "imdb_id": "tt1375666",
+        "tmdb_id": "27205",
     }
     path.write_text("<movie><premiered>1995-12-15</premiered><set>Mann</set></movie>")
     found = read_nfo(str(path))
@@ -353,6 +357,33 @@ def test_reading_an_nfo(tmp_path: Path) -> None:
     path.write_text("<tvshow><title>Lost</title></tvshow>")
     with pytest.raises(ValueError, match="not a movie"):
         read_nfo(str(path))
+
+
+@pytest.mark.parametrize(
+    ("ids", "expected"),
+    [
+        (
+            '<uniqueid type="imdb">tt1375666</uniqueid>'
+            '<uniqueid type="tmdb" default="true">27205</uniqueid>',
+            ("tt1375666", "27205"),
+        ),
+        ('<uniqueid type="IMDB">TT1375666</uniqueid>', ("tt1375666", None)),  # any case
+        ("<imdbid>tt1375666</imdbid><tmdbid>27205</tmdbid>", ("tt1375666", "27205")),
+        ("<id>tt1375666</id>", ("tt1375666", None)),  # an IMDb ID by its form
+        ("<id>27205</id>", (None, "27205")),  # digits: TMDb's, as Kodi's scraper writes
+        (  # Kodi 17+'s uniqueids win over the older tags
+            '<uniqueid type="tmdb">27205</uniqueid><tmdbid>1</tmdbid><id>tt0000001</id>',
+            ("tt0000001", "27205"),
+        ),
+        ('<uniqueid type="imdb">not an id</uniqueid><tmdbid>abc</tmdbid>', (None, None)),
+        ('<uniqueid type="tvdb">81189</uniqueid>', (None, None)),
+    ],
+)
+def test_an_nfos_ids(tmp_path: Path, ids: str, expected: tuple[str | None, str | None]) -> None:
+    path = tmp_path / "movie.nfo"
+    path.write_text(f"<movie><title>Inception</title>{ids}</movie>", encoding="utf-8")
+    found = read_nfo(str(path))
+    assert (found["imdb_id"], found["tmdb_id"]) == expected
 
 
 def _cast(env: Env, title: str) -> list[str]:
@@ -391,6 +422,7 @@ def test_nfo_files_give_details_cast_and_sets(env: Env) -> None:
         8880.0,
         8.8,
     )
+    assert (row.imdb_id, row.tmdb_id) == ("tt1375666", "27205")  # #486
     assert env.roles("Inception")["nfo"] == ["Inception (2010)/movie.nfo"]
     assert _cast(env, "Inception") == ["Elliot Page", "Leonardo DiCaprio", "Tom Hardy"]
     with env.reader.connect() as conn:  # its genres are file keywords too (#295)
@@ -527,7 +559,8 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 6  # 2: video details; 3: genres; 4: notes; 5: pictures
+    assert MoviesTheme.version == 7  # 2: video details; 3: genres; 4: notes; 5: pictures
+    # 6: folder images; 7: IDs from .nfo files (#486)
 
 
 def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:
