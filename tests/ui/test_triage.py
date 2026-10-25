@@ -68,6 +68,7 @@ def test_the_three_lists(qtbot: QtBot, window: MainWindow) -> None:
         "Unmatched keywords (10)",  # songs whose genres match no tag (#295)
         "Markdown (0)",  # the notes folder (#382), front matter (#438)
         "Pictures (0)",  # pictures not found or that can't be drawn (#426)
+        "New in archives (0)",  # archives with new files to review (#520)
         "Skipped (0)",  # files scans leave out, by rule (#527)
     ]
     assert page.skipped_stack.currentWidget() is page.skipped_empty

@@ -4,7 +4,8 @@ Cards in a grid, each number a link:
 
 - **Items:** how many of each type; a type opens Search all narrowed to it.
 - **Untagged:** how many items have no tag of their own (Triage's list), as a share with a
-  bar; it opens Triage.
+  bar; it opens Triage. Under it, how many archives have new files to review (Triage's New
+  in archives, #520), when any do.
 - **Folders:** each root's state and last scan; a folder opens Keep configuration on it.
 - **Recently added:** the newest items' thumbnails; double-click opens a page.
 - **Most used tags** and **Least used tags** (unused ones first): a tag opens a search
@@ -53,7 +54,8 @@ class DashboardPage(QWidget):
     """See the module docstring. Signals ask the window to go somewhere."""
 
     open_type = Signal(str)
-    open_triage = Signal()
+    open_triage = Signal(str)
+    """Open Triage on a tab: ``untagged`` or ``new`` (New in archives)."""
     configure_root = Signal(str)
     open_entity = Signal(int)
     search_tag = Signal(int)
@@ -175,12 +177,23 @@ class DashboardPage(QWidget):
         ]
         self.items.setText("<br>".join(rows) + f"<br><b>{data.total:,} in all</b>")
         share = round(data.untagged_share * 100)
-        self.untagged.setText(
+        text = (
             f"{data.untagged:,} of {data.total:,} items ({share}%) have no tag of their own."
-            '<br><a href="triage:">Tag them in Triage →</a>'
+            '<br><a href="triage:untagged">Tag them in Triage →</a>'
             if data.untagged
             else "Every item has a tag."
         )
+        if data.new_in_archives:
+            archives = (
+                "1 archive has"
+                if data.new_in_archives == 1
+                else f"{data.new_in_archives:,} archives have"
+            )
+            text += (
+                f'<br><br>{archives} new files to review: <a href="triage:new">'
+                "New in archives →</a>"
+            )
+        self.untagged.setText(text)
         self.untagged_bar.setRange(0, max(data.total, 1))
         self.untagged_bar.setValue(data.untagged)
         self.folders.setText(self._folders(data) or "No folders yet.")
@@ -261,7 +274,7 @@ class DashboardPage(QWidget):
         if kind == "type":
             self.open_type.emit(value)
         elif kind == "triage":
-            self.open_triage.emit()
+            self.open_triage.emit(value or "untagged")
         elif kind == "root":
             self.configure_root.emit(value)
         elif kind == "tag":

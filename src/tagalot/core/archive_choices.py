@@ -109,8 +109,9 @@ def save_choices(
 ) -> int:
     """The dialog's OK: read ``shown`` and not ``hidden`` (paths inside the archive). An
     archive read whole stays whole, leaving out the hidden ones; any other is read member
-    by member from now on, a member that was undecided and is still hidden staying
-    undecided (for Triage, #520). Hidden members are skipped now. Returns how many are
+    by member from now on. Every member listed is decided: a new one (undecided, which the
+    dialog marks new and starts hidden, #520) left hidden is recorded hidden, so the archive
+    leaves Triage's New in archives. Hidden members are skipped now. Returns how many are
     hidden."""
     archive_id = current.archive_id
     if current.mode is ArchiveMode.ALL:
@@ -122,8 +123,7 @@ def save_choices(
     else:
         set_archive_mode(conn, archive_id, ArchiveMode.CHOSEN)
         choices: dict[str, bool | None] = dict.fromkeys(shown, True)
-        for path in hidden:
-            choices[path] = None if current.choices.get(path, False) is None else False
+        choices.update(dict.fromkeys(hidden, False))
         conn.execute(
             delete(ArchiveMemberChoice).where(ArchiveMemberChoice.archive_id == archive_id)
         )

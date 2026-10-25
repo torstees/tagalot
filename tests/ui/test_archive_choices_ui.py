@@ -2,6 +2,7 @@
 commands, Hide inside its archive, a folder's archives, and Keep configuration's box."""
 
 import importlib.util
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QMenu
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
+from tagalot.core.archive_members import member_choices
 from tagalot.core.detail import FileRow
 from tagalot.core.models import Entity, EntityResource, Resource
 from tagalot.core.search import SearchHit
@@ -28,12 +30,15 @@ from tagalot.ui.archive_actions import (
 )
 from tagalot.ui.archive_dialog import HIDE as HIDE_COLUMN
 from tagalot.ui.archive_dialog import NAME, ChooseInsideDialog
+from tagalot.ui.dashboard import DashboardPage
 from tagalot.ui.dedupe_view import DedupePage
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
+from tagalot.ui.triage import NEW_TAB, TriagePage
 from tagalot.ui.workers import ScanController
+from tests.core.media_files import png_bytes
 from tests.ui.test_contents_search import SCRIPT
 
 pytestmark = pytest.mark.gui
@@ -328,3 +333,90 @@ def test_show_all_hide_all_and_thumbnails(qtbot: QtBot, window: MainWindow) -> N
     state = load_ui_state(_session(window).keep.ui_state_path)
     assert state["archive_thumbnails"] is True
     assert state["archive_thumbnail_size"] == 192
+
+
+def _add_to_pack(window: MainWindow, name: str, color: str) -> None:
+    """Add a picture to the demo's UI pack.zip (a copy in the test's folder)."""
+    with _session(window).reader.connect() as conn:
+        root_id = conn.scalar(select(Resource.root_id).where(Resource.relpath == PACK))
+    assert root_id is not None
+    path = Path(_session(window).root_path(root_id)) / PACK
+    with zipfile.ZipFile(path, "a") as zf:
+        zf.writestr(f"UI pack/{name}", png_bytes((60, 30), color))
+
+
+def _rescan(qtbot: QtBot, window: MainWindow) -> None:
+    with _session(window).reader.connect() as conn:
+        root_id = conn.scalar(select(Resource.root_id).where(Resource.relpath == PACK))
+    assert root_id is not None
+    _scan_after(qtbot, window, lambda: window._scan_roots([root_id]))
+
+
+def test_new_in_archives(qtbot: QtBot, window: MainWindow) -> None:
+    """Triage's New in archives (#520): new files in an archive read file by file wait
+    for review; Review… marks them new and starts them hidden; Hide all new."""
+    dialog = _dialog(qtbot, window)  # read it file by file: everything but button 1
+    dialog._clicked(_row(dialog, "button 1.png").siblingAtColumn(HIDE_COLUMN))
+    _scan_after(qtbot, window, dialog.accept)
+    qtbot.waitUntil(lambda: len(_read(window)) == 3, timeout=10_000)
+
+    _add_to_pack(window, "badge.png", "green")
+    _rescan(qtbot, window)
+    assert f"{PACK}/UI pack/badge.png" not in _read(window)  # not read until chosen
+
+    window.navigation.select(NavTarget("triage", label="Triage"))
+    page = window.stack.currentWidget()
+    assert isinstance(page, TriagePage)
+    page.refresh()
+    qtbot.waitUntil(lambda: page.tabs.tabText(NEW_TAB) == "New in archives (1)", timeout=10_000)
+    (listed,) = page.new_archives.archives
+    assert listed.relpath == PACK
+    assert listed.summary == "1 new: .png"
+
+    # Review…: the new file is marked new and starts hidden; OK decides it.
+    page.new_table.selectRow(0)
+    page.review()
+    qtbot.waitUntil(lambda: window.archives.dialog is not None, timeout=5000)
+    review = window.archives.dialog
+    assert review is not None
+    qtbot.waitUntil(lambda: bool(review.files), timeout=5000)
+    assert review.new == {"UI pack/badge.png"}
+    badge = review.model.itemFromIndex(_row(review, "badge.png"))
+    assert badge.text() == "badge.png  (new)"
+    assert badge.font().bold()
+    assert "UI pack/badge.png" in review.hidden()
+    assert "1 is new" in review.summary.text()
+    _scan_after(qtbot, window, review.accept)
+    qtbot.waitUntil(lambda: page.tabs.tabText(NEW_TAB) == "New in archives (0)", timeout=10_000)
+    assert f"{PACK}/UI pack/badge.png" not in _read(window)
+
+    # Another new file: Hide all new, without opening the dialog.
+    _add_to_pack(window, "banner.png", "blue")
+    _rescan(qtbot, window)
+    page.refresh()
+    qtbot.waitUntil(lambda: page.tabs.tabText(NEW_TAB) == "New in archives (1)", timeout=10_000)
+    dashboard = _dashboard_text(qtbot, window)
+    assert "1 archive has new files to review" in dashboard
+    window.navigation.select(NavTarget("triage", label="Triage"))
+    page.new_table.selectRow(0)
+    with qtbot.waitSignal(window.archives.changed, timeout=5000) as said:
+        page.hide_new()
+    assert said.args[0].startswith("Hid 1 new file inside UI pack.zip.")
+    qtbot.waitUntil(lambda: page.tabs.tabText(NEW_TAB) == "New in archives (0)", timeout=10_000)
+    with _session(window).reader.connect() as conn:
+        assert member_choices(conn, _id(window, PACK))["UI pack/banner.png"] is False
+
+
+def _dashboard_text(qtbot: QtBot, window: MainWindow) -> str:
+    window.navigation.select(NavTarget("dashboard", label="Dashboard"))
+    page = window.stack.currentWidget()
+    assert isinstance(page, DashboardPage)
+    page.refresh()
+    qtbot.waitUntil(
+        lambda: page.data is not None and page.data.new_in_archives == 1, timeout=10_000
+    )
+    page._clicked("triage:new")
+    triage = window.stack.currentWidget()
+    assert isinstance(triage, TriagePage)
+    assert triage.tabs.currentIndex() == NEW_TAB  # the link opens the tab
+    return page.untagged.text()

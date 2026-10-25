@@ -52,6 +52,15 @@ Items whose pictures are missing or broken:
 
 Each is a step you can undo. Tick **Show ignored** to see ignored rows (greyed, saying how), and **Stop ignoring** to list one again. Placeholders such as `cover: None`, `null`, `N/A`, or `-` already mean "no cover", so they're never listed.
 
+## New in archives
+
+Archives you chose to read file by file (with **Choose what to read inside…**, see [Reading inside archives](keeps-and-folders.md#reading-inside-archives)) that have gained files since: a newer version of a font pack with new fonts, say. Tagalot doesn't read new files in them until you decide. Each archive is listed with how many files are new and of which kinds ("3 new: .otf, .ttf"), the most recently changed first.
+
+- **Review…** (or a double-click) opens Choose what to read inside… on the archive. Its new files are in bold, marked **(new)**, and start hidden: show the ones you want, then **Read these**. The rest are recorded as hidden, and the archive leaves the list.
+- **Hide all new** hides the selected archives' new files without opening anything. Choose what to read inside… shows them again.
+
+Archives read whole (a folder's **Read inside archives** pattern, or **Read everything inside**) aren't listed: their new files are simply read. The dashboard's Untagged card says when archives have new files, with a link here.
+
 ## Skipped
 
 Files scans leave out, grouped by the rule that leaves them out, with how many files each rule skips and how many items it hides. An item whose files are all skipped is hidden from lists and searches until one of its files is read again; its tags are kept.

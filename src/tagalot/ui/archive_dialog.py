@@ -12,6 +12,10 @@ The archive's listing is read in a worker. Files the keep's theme doesn't read a
 listed (the dialog says which kinds were left out), nor are folders' own entries, archives
 inside the archive, and hidden files, as scans leave them out (#391).
 
+Members new since the archive was last chosen for, member by member (undecided, listed in
+Triage's New in archives, #520), are marked **new**, in bold, and start hidden: OK reads
+nothing new unless it's shown, and records the rest hidden.
+
 The dialog only gathers the choice: :meth:`ChooseInsideDialog.shown` and
 :meth:`ChooseInsideDialog.hidden` are read on OK, and saved by the window's
 :class:`~tagalot.ui.archive_actions.ArchiveActions`.
@@ -66,6 +70,9 @@ PATH = Qt.ItemDataRole.UserRole + 1
 THUMB_SIZE = 96
 """How big a file's thumbnail is drawn in the grid unless the user picks another size, in
 pixels."""
+NEW_MARK = "(new)"
+"""After a new file's name (#520)."""
+NEW_TIP = "New since you last chose what to read inside: hidden unless you show it"
 HIDDEN_OPACITY = 0.3
 """How faint a hidden file's thumbnail is."""
 THUMB_BATCH = 24
@@ -153,6 +160,8 @@ class ChooseInsideDialog(QDialog):
         self.left_out: list[str] = []
         """Files the theme doesn't read here, not listed."""
         self._hidden: set[str] = set()
+        self.new: set[str] = set()
+        """Files new since the archive was last chosen for (undecided, #520)."""
         self.error: str | None = None
         self._tip: dict[str, str] = {}
         """A tile's tooltip's first line, by path: the path and size."""
@@ -294,6 +303,7 @@ class ChooseInsideDialog(QDialog):
             else:
                 self.left_out.append(entry.name)
         self._hidden = self.current.hidden() & set(self.files)
+        self.new = {p for p, r in self.current.choices.items() if r is None} & set(self.files)
         self._build()
         note = left_out_message(self.left_out)
         self.title.setText(f"Reading inside <b>{self.current.name}</b>")
@@ -332,19 +342,27 @@ class ChooseInsideDialog(QDialog):
 
         for path in sorted(self.files, key=lambda p: (p.count("/") == 0, p.casefold())):
             parent, _, name = path.rpartition("/")
-            item = QStandardItem(name)
+            new = path in self.new
+            text = f"{name}  {NEW_MARK}" if new else name
+            item = QStandardItem(text)
             item.setData(path, PATH)
-            item.setToolTip(path)
+            item.setToolTip(f"{path}\n{NEW_TIP}" if new else path)
             size = format_bytes(self.files[path].size)
             folder(parent).appendRow(self._row(item, size))
-            tile = QStandardItem(self._placeholder(), name)
+            tile = QStandardItem(self._placeholder(), text)
             tile.setData(path, PATH)
             tile.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
             self.grid_model.appendRow(tile)
-            self._tip[path] = f"{path} ({size})"
+            self._tip[path] = f"{path} ({size})" + (f"\n{NEW_TIP}" if new else "")
+            if new:
+                for cell in (item, tile):
+                    font = cell.font()
+                    font.setBold(True)
+                    cell.setFont(font)
         for path, item in folders.items():
             count = sum(1 for p in self.files if p.startswith(path + "/"))
-            item.setText(f"{item.text()}  ({count:,})")
+            fresh = sum(1 for p in self.new if p.startswith(path + "/"))
+            item.setText(f"{item.text()}  ({count:,}" + (f", {fresh:,} new)" if fresh else ")"))
             item.setToolTip(f"{path}: {count:,} file{'' if count == 1 else 's'}")
         self.tree.expandToDepth(0)
         self._restyle()
@@ -531,8 +549,16 @@ class ChooseInsideDialog(QDialog):
         shown, total = len(self.files) - len(self._hidden), len(self.files)
         if total:
             note = left_out_message(self.left_out)
+            new = len(self.new)
+            fresh = (
+                f" {new:,} {'is' if new == 1 else 'are'} new, marked {NEW_MARK}: hidden "
+                "unless you show them."
+                if new
+                else ""
+            )
             self.summary.setText(
                 f"{shown:,} of {total:,} file{'' if total == 1 else 's'} will be read."
+                + fresh
                 + (f" {note}." if note else "")
             )
 

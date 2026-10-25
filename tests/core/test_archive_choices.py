@@ -16,9 +16,10 @@ from tagalot.core.archive_choices import (
     save_choices,
     stop_reading,
 )
-from tagalot.core.archive_members import member_choices
+from tagalot.core.archive_members import member_choices, set_archive_mode
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.models import ArchiveMode
+from tagalot.core.new_in_archives import count_new_in_archives, hide_new, new_in_archives
 from tagalot.core.skip_reasons import MEMBER_HIDDEN, ThemeScope, skip_reasons
 from tests.core.test_archive_members import ALL, PACK, T0, Env, env
 
@@ -116,12 +117,16 @@ def test_the_dialog_reads_an_archive_member_by_member(env: Env) -> None:
     env.scan(when=T0 + timedelta(hours=1))
     assert env.shown() == {REGULAR}
 
-    # A member added later waits, undecided; still hidden in the dialog, it stays so.
+    # A member added later waits, undecided, in Triage's New in archives (#520); the
+    # dialog starts it hidden, and OK decides it.
     _add_member(env, "fonts/Italic.ttf", b"italic font")
     env.scan(when=T0 + timedelta(hours=2))
     assert env.shown() == {REGULAR}
     with env.reader.connect() as conn:
         assert member_choices(conn, env.resource(PACK))["fonts/Italic.ttf"] is None
+        assert [(n.relpath, n.paths) for n in new_in_archives(conn)] == [
+            (PACK, ("fonts/Italic.ttf",))
+        ]
     current = _choices(env)
     assert "fonts/Italic.ttf" in current.hidden()
     env.run(
@@ -138,8 +143,10 @@ def test_the_dialog_reads_an_archive_member_by_member(env: Env) -> None:
         "fonts/Regular.ttf": True,
         "readme.md": True,
         "fonts/Bold.ttf": False,
-        "fonts/Italic.ttf": None,  # still for Triage (#520)
+        "fonts/Italic.ttf": False,  # decided: hidden
     }
+    with env.reader.connect() as conn:
+        assert new_in_archives(conn) == []
     env.scan(when=T0 + timedelta(hours=3))
     assert env.shown() == {REGULAR, README}
 
@@ -201,3 +208,55 @@ def test_reading_a_folders_archives(tmp_path: Path) -> None:
     whole, everything = read_folder_archives(config, keep.dir, "r", "")
     assert (everything, whole.roots[0].archives) == ("**", ["**"])
     assert config.roots[0].archives == []  # unchanged
+
+
+def test_new_in_archives_and_hiding_all_new(env: Env) -> None:
+    """Triage's New in archives (#520): archives read member by member with members not
+    decided on, their kinds, Hide all new, and archives read whole not listed."""
+    env.scan()
+    env.run(
+        lambda conn: save_choices(
+            conn, _choices(env), ["fonts/Regular.ttf"], ["fonts/Bold.ttf", "readme.md"]
+        )
+    )
+    env.scan(when=T0 + timedelta(hours=1))
+    with env.reader.connect() as conn:
+        assert new_in_archives(conn) == []  # every member was decided
+    _add_member(env, "fonts/Italic.ttf", b"italic")
+    _add_member(env, "fonts/Light.otf", b"light")
+    _add_member(env, "fonts/Thin.ttf", b"thin")
+    env.scan(when=T0 + timedelta(hours=2))
+    with env.reader.connect() as conn:
+        (listed,) = new_in_archives(conn)
+        assert count_new_in_archives(conn) == 1
+    assert listed.name == "pack.zip"
+    assert listed.summary == "3 new: .otf, .ttf"
+    with env.reader.connect() as conn:
+        # Members never read aren't files of the keep yet, so Skipped doesn't list them.
+        assert skip_reasons(conn, [_root(env)], ThemeScope(None)).rules == []
+    assert REGULAR in env.shown()
+    assert f"{PACK}/fonts/Italic.ttf" not in env.shown()  # not read until shown
+
+    # Stop reading inside: no longer listed; reading it member by member again lists it.
+    env.run(lambda conn: stop_reading(conn, _choices(env)))
+    with env.reader.connect() as conn:
+        assert count_new_in_archives(conn) == 0
+    env.run(lambda conn: set_archive_mode(conn, env.resource(PACK), ArchiveMode.CHOSEN))
+    with env.reader.connect() as conn:
+        assert count_new_in_archives(conn) == 1
+
+    # Hide all new: recorded hidden, still not read, and the archive leaves the list.
+    assert env.run(lambda conn: hide_new(conn, [listed.archive_id])) == 3
+    with env.reader.connect() as conn:
+        assert new_in_archives(conn) == []
+        assert member_choices(conn, env.resource(PACK))["fonts/Light.otf"] is False
+    env.scan(when=T0 + timedelta(hours=3))
+    assert f"{PACK}/fonts/Italic.ttf" not in env.shown()
+
+    # Read whole, new members are simply read, never listed.
+    env.run(lambda conn: read_everything(conn, _choices(env)))
+    _add_member(env, "fonts/Black.ttf", b"black")
+    env.scan(when=T0 + timedelta(hours=4))
+    assert f"{PACK}/fonts/Black.ttf" in env.shown()
+    with env.reader.connect() as conn:
+        assert new_in_archives(conn) == []
