@@ -9,7 +9,7 @@ re-runs its search after a scan.
 """
 
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 
 import shiboken6
@@ -19,6 +19,7 @@ from PySide6.QtCore import (
     QPoint,
     Qt,
     QThreadPool,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QFont
@@ -78,10 +79,12 @@ from tagalot.ui.result_grid import CardLines, ResultGrid, grid_icon
 from tagalot.ui.result_table import (
     COLUMN_WIDTH,
     DEFAULT_HIDDEN,
+    arranged_keys,
     count_text,
     hidden_keys,
     list_columns,
     make_result_table,
+    merged_order,
     set_column_widths,
 )
 from tagalot.ui.result_tree import ResultTree, ResultTreeModel
@@ -158,6 +161,11 @@ class SearchPage(QWidget):
     """The column keys now hidden, after the user showed or hid one (to remember it)."""
     shown_columns_changed = Signal(list)
     """The column keys the user showed (of those hidden by default), to remember it."""
+    column_order_changed = Signal(object)
+    """The column keys in the order the user moved them to, or ``None`` after Reset (#417;
+    to remember it)."""
+    column_widths_changed = Signal(object)
+    """The widths the user gave columns, by key, or ``None`` after Reset (#417)."""
     selection_changed = Signal()
     counted = Signal(int)
     """How many items the search found, once counted (a contents tab's label, #456)."""
@@ -202,6 +210,8 @@ class SearchPage(QWidget):
         grouped: bool = False,
         hidden_columns: Iterable[str] | None = None,
         shown_columns: Iterable[str] = (),
+        column_order: Sequence[str] = (),
+        column_widths: Mapping[str, int] | None = None,
         layout_mode: str = "list",
         card_lines: Sequence[str] | None = None,
         thumbnails: ThumbnailLoader | None = None,
@@ -225,6 +235,16 @@ class SearchPage(QWidget):
         self.hidden_columns = set(DEFAULT_HIDDEN if hidden_columns is None else hidden_columns)
         self.shown_columns = set(shown_columns)
         """Columns hidden by default (fields not on cards) that the user showed (#314)."""
+        self.column_order = list(column_order)
+        """The order the user moved the columns to, by key (#417): empty for the theme's."""
+        self.column_widths = dict(column_widths or {})
+        """The widths the user gave columns, by key (#417)."""
+        self._widths_timer = QTimer(self)
+        self._widths_timer.setSingleShot(True)
+        self._widths_timer.setInterval(400)  # once a drag ends, not at every pixel
+        self._widths_timer.timeout.connect(
+            lambda: self.column_widths_changed.emit(dict(self.column_widths))
+        )
         self._sort = spec.sort
         self._pool = pool
         cached = session.tag_cache.peek()
@@ -313,6 +333,9 @@ class SearchPage(QWidget):
 
         self.table.tags_dropped.connect(self._tags_dropped_on_list)
         self.table.column_toggled.connect(self._column_toggled)
+        self.table.resettable = True
+        self.table.reset_requested.connect(self.reset_columns)
+        self.table.column_resized.connect(self._column_resized)
         self.table.selectionModel().selectionChanged.connect(self.selection_changed)
         self.model.modelReset.connect(self.selection_changed)
 
@@ -340,8 +363,8 @@ class SearchPage(QWidget):
         tree_header.sortIndicatorChanged.connect(self._sort_clicked)
         self._moving = False
         table_header = self.table.horizontalHeader()
-        table_header.sectionMoved.connect(lambda: self._same_order(table_header, tree_header))
-        tree_header.sectionMoved.connect(lambda: self._same_order(tree_header, table_header))
+        table_header.sectionMoved.connect(lambda: self._section_moved(table_header, tree_header))
+        tree_header.sectionMoved.connect(lambda: self._section_moved(tree_header, table_header))
         tree_header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         tree_header.customContextMenuRequested.connect(
             lambda point: self.column_menu().exec(self.tree.header().mapToGlobal(point))
@@ -714,6 +737,8 @@ class SearchPage(QWidget):
         if columns != self.model.columns:
             self.model.set_search(spec, columns)
             set_column_widths(self.table, columns)
+            self.table.columns = list(columns)
+            self.table.restore_widths(self.column_widths)
         elif spec != self.model.spec:
             self.model.set_search(spec)
         else:
@@ -722,6 +747,7 @@ class SearchPage(QWidget):
         self.tree.set_columns_hidden(
             [c.key for c in columns], hidden_keys(columns, self.hidden_columns, self.shown_columns)
         )
+        self._arrange_columns()
         self._tree_column_widths()
         self.results.setCurrentWidget(self._layout_widget())
         self._show_layout_buttons()
@@ -786,6 +812,53 @@ class SearchPage(QWidget):
         title = next((i for i, c in enumerate(self.model.columns) if c.key == "title"), 0)
         self.tree.setColumnWidth(title, max(self.tree.columnWidth(title), 260))
         self._same_order(header, self.tree.header())
+
+    def _arrange_columns(self) -> None:
+        """Put the list's columns in the order the user moved them to (#417), or the theme's;
+        the tree follows (:meth:`_tree_column_widths`)."""
+        header = self.table.horizontalHeader()
+        keys = [c.key for c in self.table.columns]
+        if header.count() != len(keys):
+            return
+        self._moving = True  # not the user's move: nothing to remember
+        try:
+            for visual, key in enumerate(arranged_keys(keys, self.column_order)):
+                logical = keys.index(key)
+                if header.visualIndex(logical) != visual:
+                    header.moveSection(header.visualIndex(logical), visual)
+        finally:
+            self._moving = False
+
+    def _section_moved(self, source: QHeaderView, target: QHeaderView) -> None:
+        """The user moved a column in the list or the tree: move it in the other, and
+        remember the order (#417)."""
+        if self._moving:
+            return
+        self._same_order(source, target)
+        header = self.table.horizontalHeader()
+        keys = [c.key for c in self.table.columns]
+        if header.count() != len(keys):
+            return
+        current = [keys[header.logicalIndex(visual)] for visual in range(header.count())]
+        self.column_order = merged_order(current, self.column_order)
+        self.column_order_changed.emit(list(self.column_order))
+
+    def _column_resized(self, key: str, width: int) -> None:
+        self.column_widths[key] = width
+        self._widths_timer.start()
+
+    def reset_columns(self) -> None:
+        """Reset column order and widths: the theme's order, and the first widths (#417).
+        Which columns are shown stays."""
+        self.column_order, self.column_widths = [], {}
+        self._widths_timer.stop()
+        self.column_order_changed.emit(None)
+        self.column_widths_changed.emit(None)
+        columns = self.table.columns
+        set_column_widths(self.table, columns)
+        self.table.set_columns(columns, self.hidden_columns, self.shown_columns)
+        self._arrange_columns()
+        self._tree_column_widths()
 
     def _same_order(self, source: QHeaderView, target: QHeaderView) -> None:
         """Put ``target``'s columns in ``source``'s order: a column moved in the list moves

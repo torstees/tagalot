@@ -737,6 +737,8 @@ class MainWindow(QMainWindow):
             hidden = sorted(DEFAULT_HIDDEN - {KEYWORDS})  # the keywords are the point
 
         shown = self._ui_state.get("shown_columns", {}).get(state_key)
+        order = self._ui_state.get("column_order", {}).get(state_key)
+        widths = self._ui_state.get("column_widths", {}).get(state_key)
         layout = self._ui_state.get("layouts", {}).get(state_key, layout)
         card_lines = self._ui_state.get("card_lines", {}).get(state_key)
         toggles = self._ui_state.get("toggles", {}).get(state_key)
@@ -748,6 +750,14 @@ class MainWindow(QMainWindow):
             grouped=grouped,
             hidden_columns=hidden,
             shown_columns=shown if isinstance(shown, list) else (),
+            column_order=[k for k in order if isinstance(k, str)]
+            if isinstance(order, list)
+            else (),
+            column_widths={
+                k: w for k, w in widths.items() if isinstance(w, int) and not isinstance(w, bool)
+            }
+            if isinstance(widths, dict)
+            else None,
             layout_mode=layout,
             card_lines=card_lines if isinstance(card_lines, list) else None,
             thumbnails=self.thumbnails,
@@ -789,6 +799,12 @@ class MainWindow(QMainWindow):
         )
         search.shown_columns_changed.connect(
             lambda keys: self._save_view_state("shown_columns", state_key, keys)
+        )
+        search.column_order_changed.connect(
+            lambda keys: self._save_view_state("column_order", state_key, keys)
+        )
+        search.column_widths_changed.connect(
+            lambda widths: self._save_view_state("column_widths", state_key, widths)
         )
         return search
 

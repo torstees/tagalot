@@ -14,7 +14,7 @@ from pytestqt.qtbot import QtBot
 
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
-from tagalot.core.ui_state import load_ui_state
+from tagalot.core.ui_state import load_ui_state, save_ui_state
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.models.results import ResultColumn
 from tagalot.ui.navigation import NavTarget
@@ -23,9 +23,11 @@ from tagalot.ui.result_table import (
     TITLE_MAX_WIDTH,
     TITLE_MIN_WIDTH,
     ResultTable,
+    arranged_keys,
     hidden_keys,
     list_columns,
     make_result_table,
+    merged_order,
     set_column_widths,
 )
 from tagalot.ui.search_view import SearchPage
@@ -222,3 +224,107 @@ def test_a_moved_column_stays_when_the_search_runs_again(
     )
     assert table.visualIndex(series) < table.visualIndex(authors)
     assert page.tree.header().visualIndex(series) < page.tree.header().visualIndex(authors)
+
+
+ARRANGED = {
+    "nothing remembered: the theme's": (["a", "b", "c"], [], ["a", "b", "c"]),
+    "moved": (["a", "b", "c"], ["a", "c", "b"], ["a", "c", "b"]),
+    "a new column after its theme neighbour": (
+        ["a", "b", "c", "d"],
+        ["c", "a"],
+        ["c", "d", "a", "b"],
+    ),
+    "a new first column first": (["z", "a", "b"], ["b", "a"], ["z", "b", "a"]),
+    "a gone column skipped": (["a", "b"], ["b", "gone", "a"], ["b", "a"]),
+}
+
+
+@pytest.mark.parametrize("case", ARRANGED.values(), ids=ARRANGED.keys())
+def test_arranged_keys(case: tuple[list[str], list[str], list[str]]) -> None:
+    keys, remembered, expected = case
+    assert arranged_keys(keys, remembered) == expected
+
+
+def test_merged_order_keeps_other_scopes_columns() -> None:
+    """Search all's Books list doesn't drop the order of the Comics list's own columns."""
+    assert merged_order(["b", "a"], []) == ["b", "a"]
+    assert merged_order(["b", "a"], ["a", "issue", "b"]) == ["b", "a", "issue"]
+    assert merged_order(["b", "a"], ["issue", "a", "b"]) == ["issue", "b", "a"]
+
+
+def _order(page: SearchPage) -> list[str]:
+    header = page.table.horizontalHeader()
+    shown = [i for i in range(header.count()) if not header.isSectionHidden(i)]
+    return [page.table.columns[i].label for i in sorted(shown, key=header.visualIndex)]
+
+
+def _reset(page: SearchPage) -> None:
+    menu = {a.text(): a for a in page.column_menu().actions()}
+    menu["Reset column order and widths"].trigger()
+
+
+THEME_ORDER = ["Title", "Author", "Series", "Rating", "Description"]
+
+
+def test_a_views_column_order_is_remembered(qtbot: QtBot, session: KeepSession) -> None:
+    """Moving a column is remembered per view (#417), and Reset puts the theme's order
+    back."""
+    page = _books(qtbot, session)
+    assert _order(page) == THEME_ORDER
+    header = page.table.horizontalHeader()
+    keys = [c.key for c in page.table.columns]
+    header.moveSection(header.visualIndex(keys.index("series")), 1)  # as a drag does
+    moved = ["Title", "Series", "Author", "Rating", "Description"]
+    assert _order(page) == moved
+    remembered = load_ui_state(session.keep.ui_state_path)["column_order"]["view:Books"]
+    assert remembered[:2] == ["title", "series"]
+    assert sorted(remembered) == sorted(keys)  # hidden columns keep their places too
+
+    again = _books(qtbot, session)  # a new window for the keep puts them back
+    assert _order(again) == moved
+    tree = again.tree.header()
+    series, authors = keys.index("series"), keys.index("authors")
+    assert tree.visualIndex(series) < tree.visualIndex(authors)  # the tree too
+
+    _reset(again)
+    assert _order(again) == THEME_ORDER
+    assert tree.visualIndex(authors) < tree.visualIndex(series)
+    assert "view:Books" not in load_ui_state(session.keep.ui_state_path)["column_order"]
+
+
+def test_a_remembered_order_takes_new_and_gone_columns(qtbot: QtBot, session: KeepSession) -> None:
+    """A column the order doesn't name (a field the theme added) goes after its theme
+    neighbour; one that's gone is skipped."""
+    save_ui_state(
+        session.keep.ui_state_path,
+        {"column_order": {"view:Books": ["title", "rating", "gone", "authors"]}},
+    )
+    page = _books(qtbot, session)
+    assert _order(page) == ["Title", "Rating", "Description", "Author", "Series"]
+
+
+def test_a_views_column_widths_are_remembered(qtbot: QtBot, session: KeepSession) -> None:
+    page = _books(qtbot, session)
+    authors = [c.key for c in page.table.columns].index("authors")
+    page.table.horizontalHeader().resizeSection(authors, 250)  # as dragging its edge does
+    qtbot.waitUntil(
+        lambda: (
+            load_ui_state(session.keep.ui_state_path).get("column_widths")
+            == {"view:Books": {"authors": 250}}
+        ),
+        timeout=3000,
+    )
+
+    again = _books(qtbot, session)
+    header = again.table.horizontalHeader()
+    assert header.sectionSize(authors) == 250
+    assert again.tree.header().sectionSize(authors) == 250
+    _reset(again)
+    assert header.sectionSize(authors) == COLUMN_WIDTH
+    assert "view:Books" not in load_ui_state(session.keep.ui_state_path)["column_widths"]
+
+
+def test_search_all_sections_offer_no_reset(qtbot: QtBot) -> None:
+    """Search all's sections show a type's first items: their order isn't remembered."""
+    table = _table(qtbot, 900)
+    assert "Reset column order and widths" not in [a.text() for a in table.column_menu().actions()]
