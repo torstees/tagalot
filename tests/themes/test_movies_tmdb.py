@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from tagalot.builtin_themes.movies import (
     TMDB,
@@ -20,7 +20,14 @@ from tagalot.builtin_themes.movies import (
     tmdb_values,
 )
 from tagalot.core.ingest import IngestSession
-from tagalot.core.models import Entity, FieldProvenance, FieldSource, OnlinePicture
+from tagalot.core.models import (
+    CachedResponse,
+    Entity,
+    FieldProvenance,
+    FieldSource,
+    OnlinePicture,
+    utcnow,
+)
 from tagalot.core.online import Reply
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
@@ -313,3 +320,41 @@ def test_without_a_token_tmdb_isnt_used(
     monkeypatch.delenv("TAGALOT_TMDB_TOKEN")
     session.look_up([_entity(session, "Heat")])
     assert tmdb.urls == []
+
+
+def _kept(session: KeepSession) -> dict[str, int]:
+    with session.reader.connect() as conn:
+        return dict(conn.execute(select(CachedResponse.url, CachedResponse.status)).all())
+
+
+def test_a_refused_token_isnt_kept_and_says_so(session: KeepSession, tmdb: FakeTmdb) -> None:
+    """A token TMDb refuses (401) isn't an answer: nothing is kept, the Activity panel says
+    which token to check, and once it's right the movie is looked up as usual."""
+    heat = _entity(session, "Heat")
+    good = tmdb.answers[HEAT_FIND]
+    tmdb.answers[HEAT_FIND] = Reply(401, b'{"status_code": 7, "status_message": "Invalid API key"}')
+    report = session.look_up([heat])
+    assert any("refused the token in TAGALOT_TMDB_TOKEN" in p for p in report.problems)
+    assert report.skipped == 1
+    assert HEAT_FIND not in _kept(session)
+
+    tmdb.answers[HEAT_FIND] = good  # the token, set right
+    session.look_up([heat])
+    assert _fields(session, heat)["tmdb_id"] == "949"
+
+
+def test_a_refusal_kept_before_is_asked_again(session: KeepSession, tmdb: FakeTmdb) -> None:
+    """Builds before this kept a 401 like an unknown ID, so the movie was never asked about
+    again."""
+    heat = _entity(session, "Heat")
+    session.writer.run(
+        lambda conn: conn.execute(
+            insert(CachedResponse).values(
+                url=HEAT_FIND, status=401, body='{"status_code": 7}', fetched_at=utcnow()
+            )
+        )
+    )
+    session.look_up([heat])
+    assert tmdb.urls[0] == HEAT_FIND
+    assert _kept(session)[HEAT_FIND] == 200
+    assert _fields(session, heat)["plot"] == "What it's about."
