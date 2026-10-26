@@ -13,13 +13,15 @@ from PySide6.QtCore import QEvent, QThreadPool, QUrl
 from PySide6.QtGui import QAction, QFocusEvent, QImage, QTextDocument
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 from pytestqt.qtbot import QtBot
+from sqlalchemy import select
 
 from tagalot.core.handlers import OPEN, FileToOpen
 from tagalot.core.keep import load_keep_config
+from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.ui import field_editor
-from tagalot.ui.detail_view import IGNORE_KEY, DetailPage
+from tagalot.ui.detail_view import ALIAS_KEY, IGNORE_KEY, DetailPage
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.main_window import MainWindow
@@ -244,12 +246,16 @@ def test_the_notes_extra_fields(qtbot: QtBot, window: MainWindow, session: KeepS
 # --- ignored keys (#381) ---
 
 
-def _ignore_action(page: DetailPage, name: str) -> QAction:
+def _menu_action(page: DetailPage, name: str, text: str) -> QAction:
     remove = page.details.findChild(QToolButton, f"remove_{name}")
     assert isinstance(remove, QToolButton), name
     menu = remove.menu()
     assert menu is not None
-    return next(a for a in menu.actions() if a.text() == IGNORE_KEY)
+    return next(a for a in menu.actions() if a.text() == text)
+
+
+def _ignore_action(page: DetailPage, name: str) -> QAction:
+    return _menu_action(page, name, IGNORE_KEY)
 
 
 def test_ignoring_a_key_in_every_note(
@@ -313,4 +319,71 @@ def test_the_keys_in_keep_configuration(
     )
     assert _extra(page, "mood") is None
     assert _extra(page, "homepage") is None
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+
+
+# --- your own key aliases (#411) ---
+
+
+def _website(session: KeepSession, entity_id: int) -> object:
+    with session.reader.connect() as conn:
+        type_id = conn.scalar(select(Entity.type).where(Entity.id == entity_id))
+        table = session.schema.by_type_id(str(type_id)).table
+        return conn.scalar(select(table.c.website).where(table.c.id == entity_id))
+
+
+def test_reading_a_key_as_a_field(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = _page(qtbot, window, session)
+    offered: list[tuple[str, list[str]]] = []
+
+    def choose(self: DetailPage, name: str, labels: list[str]) -> str | None:
+        offered.append((name, labels))
+        return None if len(offered) == 1 else "Website"
+
+    monkeypatch.setattr(DetailPage, "choose_alias_field", choose)
+    _menu_action(page, "homepage", ALIAS_KEY).trigger()  # cancelled: nothing changes
+    assert offered[0][0] == "homepage"
+    assert "Website" in offered[0][1]
+    assert session.keep.config.note_key_aliases == {}
+
+    _menu_action(page, "homepage", ALIAS_KEY).trigger()
+    qtbot.waitUntil(lambda: "next scan" in window.statusBar().currentMessage(), timeout=5000)
+    assert load_keep_config(session.keep.toml_path).note_key_aliases == {"homepage": "website"}
+    assert _extra(page, "homepage") is not None  # not until the next scan
+
+    session.scan_all()  # the note is read again: homepage fills Website
+    page.refresh()
+    assert _website(session, page.requested_id) == "https://aurora.example"
+    qtbot.waitUntil(lambda: _extra(page, "homepage") is None, timeout=5000)
+    assert _extra(page, "mood") is not None
+
+
+def test_the_aliases_in_keep_configuration(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, tmp_path: Path
+) -> None:
+    config = window.configure_keep()
+    config.settings_path = tmp_path / "settings.toml"
+    config.keep_key_aliases.setPlainText("homepage")
+    QApplication.sendEvent(config.keep_key_aliases, QFocusEvent(QEvent.Type.FocusOut))
+    assert "as key = field" in config.aliases_error.text()
+    assert load_keep_config(session.keep.toml_path).note_key_aliases == {}
+
+    config.keep_key_aliases.setPlainText("homepage = Website\n\nmood=Folder")
+    with qtbot.waitSignal(config.changed, timeout=5000) as saved:
+        QApplication.sendEvent(config.keep_key_aliases, QFocusEvent(QEvent.Type.FocusOut))
+    assert "next scan" in saved.args[0]
+    assert config.aliases_error.text() == ""
+    assert load_keep_config(session.keep.toml_path).note_key_aliases == {
+        "homepage": "Website",
+        "mood": "Folder",
+    }
+
+    config.user_key_aliases.setPlainText("blurb = Description")
+    with qtbot.waitSignal(config.changed, timeout=5000):
+        QApplication.sendEvent(config.user_key_aliases, QFocusEvent(QEvent.Type.FocusOut))
+    assert load_settings(config.settings_path).note_key_aliases == {"blurb": "Description"}
+    config.reload()
+    assert config.keep_key_aliases.toPlainText() == "homepage = Website\nmood = Folder"
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)

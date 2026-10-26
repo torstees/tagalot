@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMenu,
@@ -100,6 +101,7 @@ FROM_FILE_TIP = (
     "it yours; remove it and scans leave it off (Undo puts it back)"
 )
 IGNORE_KEY = "Ignore this key in every note…"
+ALIAS_KEY = "Read this key as a field…"
 
 
 @dataclass
@@ -173,6 +175,9 @@ class DetailPage(QWidget):
     ``None``): entity id, name, value, whether it is new."""
     note_key_ignore_requested = Signal(str)
     """Ignore this front-matter key in every note of the keep (#381); the user agreed."""
+    note_key_alias_requested = Signal(str, str, str)
+    """Read this front-matter key as a field (#411): the key, the field's name, and its
+    label."""
     note_edited = Signal(int, str)
     """The user typed the item's note (#383): entity id, the Markdown (empty: removed)."""
     save_note_requested = Signal(int)
@@ -1035,6 +1040,13 @@ class DetailPage(QWidget):
                 ignore = menu.addAction(IGNORE_KEY)
                 ignore.setToolTip(f"Leave {name!r} out of every note and file in this keep")
                 ignore.triggered.connect(lambda _c=False, name=name: self.ignore_note_key(name))
+                as_field = menu.addAction(ALIAS_KEY)
+                as_field.setToolTip(
+                    f"Read {name!r} as one of this type's fields in every note and file"
+                )
+                as_field.triggered.connect(
+                    lambda _c=False, name=name: self.alias_note_key(name, detail.type)
+                )
                 remove.setMenu(menu)
             row.addWidget(editor)
             row.addWidget(remove)
@@ -1060,6 +1072,28 @@ class DetailPage(QWidget):
         """Ignore ``name`` in every note of the keep, if the user agrees."""
         if self.confirm_ignore_key(name):
             self.note_key_ignore_requested.emit(name)
+
+    def alias_note_key(self, name: str, type_id: str) -> None:
+        """Ask which of the type's fields ``name`` fills, then ask for the alias (#411)."""
+        fields = self.session.schema.by_type_id(type_id).fields
+        labels = {str(f.spec.label or f.name): f.name for f in fields}
+        chosen = self.choose_alias_field(name, list(labels))
+        if chosen is not None and chosen in labels:
+            self.note_key_alias_requested.emit(name, labels[chosen], chosen)
+
+    def choose_alias_field(self, name: str, labels: list[str]) -> str | None:
+        """The field label the user chose for ``name``, or ``None``."""
+        label, ok = QInputDialog.getItem(
+            self,
+            "Read this key as a field",
+            f"In this keep's notes and Markdown files, read {name!r} as:\n\n"
+            "From the next scan (F5); a file's own key for the field wins. Keep "
+            "configuration \u2192 Notes lists the keys read as fields.",
+            labels,
+            0,
+            False,
+        )
+        return label if ok else None
 
     def confirm_ignore_key(self, name: str) -> bool:
         answer = QMessageBox.question(

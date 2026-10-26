@@ -7,7 +7,7 @@ thumbnail size override, and theme option values for the keep or one root.
 """
 
 import copy
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -23,7 +23,7 @@ from tagalot.core.keep import (
     clean_names,
     validate_keep_config,
 )
-from tagalot.core.note_keys import NoteKeyError, check_key
+from tagalot.core.note_keys import NoteKeyError, check_alias, check_key
 from tagalot.themes.api import Theme, ThemeOption
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 
@@ -197,3 +197,19 @@ def _set(options: dict[str, Any], name: str, value: Any) -> None:
         options.pop(name, None)
     else:
         options[name] = value
+
+
+def with_note_key_aliases(config: KeepConfig, aliases: Mapping[str, str]) -> KeepConfig:
+    """``config`` with these front-matter key aliases (``[notes.key_aliases]``, #411): key ->
+    a field's name or label, each key once (case aside, the last winning), in order; keys
+    Tagalot reads itself are refused."""
+    listed: dict[str, str] = {}
+    for key, field_name in aliases.items():
+        try:
+            key, field_name = check_alias(key, field_name)
+        except NoteKeyError as e:
+            raise KeepError(str(e)) from None
+        for known in [k for k in listed if k.casefold() == key.casefold()]:
+            del listed[known]
+        listed[key] = field_name
+    return replace(config, note_key_aliases=listed, roots=copy.deepcopy(config.roots))

@@ -38,6 +38,7 @@ from typing import Any
 import tomli_w
 from sqlalchemy import Connection, select
 
+from tagalot.core.extra_keys import aliased_fields, applied_aliases, field_keys, loose_key
 from tagalot.core.keywords import keyword_index, keyword_key
 from tagalot.core.models import (
     Entity,
@@ -309,6 +310,31 @@ def default_front_matter(
     return wanted
 
 
+def aliased_keys(
+    entity_type: type,
+    wanted: Mapping[str, Any],
+    edited: frozenset[str],
+    current: Mapping[str, Any],
+    aliases: Mapping[str, str],
+) -> dict[str, Any]:
+    """``wanted`` with each edited field the file holds under one of the user's aliased keys
+    (#411), and not under its own name or label, moved to that key: the file keeps the key
+    it uses, as it does for a theme's own alternatives (``synopsis``)."""
+    infos = entity_fields(entity_type)
+    own, aliased = field_keys(infos), aliased_fields(infos, aliases)
+    held = {own[k].name for c in current if (k := loose_key(str(c))) in own}
+    result = dict(wanted)
+    for key in current:
+        info = aliased.get(loose_key(str(key)))
+        if info is None or info.name not in edited or info.name in held:
+            continue
+        for name in list(result):
+            if own.get(loose_key(name)) is info:
+                result[str(key)] = result.pop(name)
+                break
+    return result
+
+
 def _maps_keys(theme: Theme) -> bool:
     """The theme says which keys its fields are written under."""
     return type(theme).front_matter is not Theme.front_matter
@@ -321,15 +347,19 @@ def field_changes(
     edited: frozenset[str],
     current: Mapping[str, Any],
     note: bool = False,
+    aliases: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The keys for the fields the user edited (the theme's, or, in a note or for a theme
-    without its own, :func:`default_front_matter`), less those already as written."""
+    without its own, :func:`default_front_matter`), less those already as written. A field
+    the file holds under one of the user's ``aliases`` (#411) is written under that key."""
     if not edited:
         wanted: Mapping[str, Any] = {}
     elif note or not _maps_keys(theme):
         wanted = default_front_matter(entity_type, record, edited, current)
     else:
         wanted = theme.front_matter(entity_type, record, edited, current)
+    if aliases:
+        wanted = aliased_keys(entity_type, wanted, edited, current, aliases)
     changes: dict[str, Any] = {}
     for key, value in wanted.items():
         name = key_in(current, key)
@@ -408,6 +438,7 @@ def plan_write_back(
     from tagalot.core.ingest import IngestSession
 
     theme = schema.theme()
+    aliases = applied_aliases(conn)
     types = {t.type_id: t.entity for t in schema.entities.values()}
     allowed = set(writable)
     plan = WritePlan()
@@ -473,7 +504,9 @@ def plan_write_back(
                 plan.files.append(_problem(write, "its folder has no path on this computer"))
             else:
                 plan.files.append(
-                    _plan_file(write, theme, entity_type, record, edited, item_tags, removed, tree)
+                    _plan_file(
+                        write, theme, entity_type, record, edited, item_tags, removed, tree, aliases
+                    )
                 )
     return plan
 
@@ -572,6 +605,7 @@ def _plan_file(
     item_tags: set[int],
     removed: set[int],
     tree: TagTree,
+    aliases: Mapping[str, str] | None = None,
 ) -> FileWrite:
     try:
         stat = os.stat(write.path)
@@ -591,7 +625,7 @@ def _plan_file(
         current = read_block(found.style, before)
         note = write.note is not None
         changes: dict[str, Any] = {
-            **field_changes(theme, entity_type, record, edited, current, note)
+            **field_changes(theme, entity_type, record, edited, current, note, aliases)
         }
         changes.update(tag_changes(current, item_tags, removed, tree))
         new = edit_front_matter(text, changes)

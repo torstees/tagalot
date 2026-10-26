@@ -17,7 +17,6 @@
   cleared, and the item's files are read again so they can fill it.
 """
 
-import datetime
 import logging
 import posixpath
 import re
@@ -29,7 +28,18 @@ from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
-from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, EXTRA, RESERVED_PREFIX, as_text
+from tagalot.core.extra_keys import (
+    DEFAULT_IGNORED_KEYS,
+    EXTRA,
+    PICTURE_KEYS,
+    RESERVED_PREFIX,
+    aliased_fields,
+    applied_aliases,
+    as_text,
+    convert,
+    field_keys,
+    loose_key,
+)
 from tagalot.core.ingest import TITLE, IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -115,23 +125,19 @@ class NoteValues:
     """The picture it names, as written (``cover``, else ``image``; #439)."""
 
 
-PICTURE_KEYS = ("cover", "image")
-"""A note's keys naming its item's picture, the first given winning: never fields."""
-
-
-def _key(text: str) -> str:
-    return re.sub(r"[\s_\-]+", "", text).casefold()
-
-
 def map_note(
-    note: NoteText, fields: Sequence[FieldInfo], ignored: Collection[str] = ()
+    note: NoteText,
+    fields: Sequence[FieldInfo],
+    ignored: Collection[str] = (),
+    aliases: Mapping[str, str] | None = None,
 ) -> NoteValues:
     """What ``note`` gives an item with these fields; ``ignored`` keys (and the built-in
-    ones) are left out."""
-    by_key: dict[str, FieldInfo] = {}
-    for info in fields:
-        by_key.setdefault(_key(info.name), info)
-        by_key.setdefault(_key(info.spec.label), info)
+    ones) are left out. A key the user's ``aliases`` (#411; key -> a field's name or label)
+    name fills that field, unless the note gives the field under its own name or label: then
+    it stays an Extra field."""
+    by_key = field_keys(fields)
+    aliased = aliased_fields(fields, aliases or {})
+    later: list[tuple[str, FieldInfo, Any]] = []
     skip = DEFAULT_IGNORED_KEYS | {k.casefold() for k in ignored}
     found = NoteValues(body=note.body)
     for raw_key, value in note.front.items():
@@ -153,72 +159,25 @@ def map_note(
             found.title = as_text(value)
         elif folded in ("tags", "keywords"):
             found.keywords += split_keywords(value)
-        elif (target := by_key.get(_key(key))) is not None:
+        elif (target := by_key.get(loose_key(key))) is not None:
             try:
                 found.fields[target.name] = convert(value, target.type)
             except ValueError as e:
                 found.problems.append(f"{key}: {e}")
+        elif (target := aliased.get(loose_key(key))) is not None:
+            later.append((key, target, value))
         elif (text := as_text(value)) is not None:
             found.extra[key] = text
-    return found
-
-
-def convert(value: Any, kind: type) -> Any:
-    """``value`` as a field of type ``kind``; ``ValueError`` when it isn't one."""
-    if kind is str:
-        text = as_text(value)
-        if text is None:
-            raise ValueError("isn't text")
-        return text
-    if kind is bool:
-        if isinstance(value, bool):
-            return value
-        words = {"true": True, "yes": True, "false": False, "no": False}
-        if isinstance(value, str) and value.strip().casefold() in words:
-            return words[value.strip().casefold()]
-        raise ValueError("isn't yes or no")
-    if isinstance(value, bool):
-        raise ValueError(f"isn't a {_names[kind]}")
-    if kind is int:
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float) and value.is_integer():
-            return int(value)
-        if isinstance(value, str) and re.fullmatch(r"\s*-?[\d,]+\s*", value):
-            return int(value.replace(",", ""))
-        raise ValueError("isn't a whole number")
-    if kind is float:
-        if isinstance(value, int | float):
-            return float(value)
-        try:
-            return float(str(value).replace(",", ""))
-        except ValueError:
-            raise ValueError("isn't a number") from None
-    if kind is datetime.datetime:
-        when = value
-        if isinstance(value, str):
+    for key, target, value in later:  # after the fields' own keys, which win
+        if target.name not in found.fields:
             try:
-                when = datetime.datetime.fromisoformat(value.strip())
-            except ValueError:
-                raise ValueError("isn't a date and time") from None
-        elif isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
-            when = datetime.datetime(value.year, value.month, value.day)
-        if not isinstance(when, datetime.datetime):
-            raise ValueError("isn't a date and time")
-        return (when if when.tzinfo else when.astimezone()).astimezone(datetime.UTC)
-    if kind is datetime.date:
-        if isinstance(value, datetime.datetime):
-            return value.date()
-        if isinstance(value, datetime.date):
-            return value
-        try:
-            return datetime.date.fromisoformat(str(value).strip())
-        except ValueError:
-            raise ValueError("isn't a date (YYYY-MM-DD)") from None
-    raise ValueError(f"can't be read as {kind.__name__}")
-
-
-_names = {int: "whole number", float: "number", datetime.date: "date", datetime.datetime: "date"}
+                found.fields[target.name] = convert(value, target.type)
+                continue
+            except ValueError as e:
+                found.problems.append(f"{key}: {e}")
+        if (text := as_text(value)) is not None:
+            found.extra[key] = text
+    return found
 
 
 def body_without_title(body: str, title: str | None) -> str:
@@ -608,6 +567,7 @@ def apply_notes(
     (``note_ignored_key``, ``core.note_keys``), else the built-in ones."""
     ctx = IngestSession(conn, schema)
     ignored = set(conn.scalars(select(NoteIgnoredKey.key))) or DEFAULT_IGNORED_KEYS
+    aliases = applied_aliases(conn)
     reread: list[int] = []
     warnings: list[IngestWarning] = []
     for change in changes:
@@ -615,7 +575,7 @@ def apply_notes(
         values = None
         if change.text is not None:
             fields = schema.by_type_id(site.entity.type).fields
-            values = map_note(change.text, fields, ignored)
+            values = map_note(change.text, fields, ignored, aliases)
             relpath = change.file.relpath if change.file else None
             warnings += [
                 IngestWarning(root_id, relpath, f"A note's value was left out: {problem}")

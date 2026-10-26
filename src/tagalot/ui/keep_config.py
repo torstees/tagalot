@@ -60,7 +60,7 @@ from tagalot.core.keep_settings import (
     with_name,
     with_option,
 )
-from tagalot.core.note_keys import NoteKeyError, check_key
+from tagalot.core.note_keys import NoteKeyError, alias_lines, check_key, parse_alias_lines
 from tagalot.core.online import consent_text, needed_env, tokens_text
 from tagalot.core.root_admin import (
     RemovalCounts,
@@ -540,8 +540,49 @@ class KeepConfigWindow(QWidget):
         layout = QVBoxLayout(tab)
         layout.addWidget(folder_group)
         layout.addWidget(group)
+        layout.addWidget(self._aliases_group())
         layout.addStretch(1)
         return tab
+
+    def _aliases_group(self) -> QGroupBox:
+        """Your own key aliases (#411): keys read as fields, per keep and per user."""
+        about = QLabel(
+            "Keys a theme doesn't know become Extra fields. List a key here, then = and the "
+            "field it fills, by its name or label (synopsis = Description), to read it as that "
+            "field in notes and Markdown files. A file's own key for the field wins. Changes "
+            "apply at the next scan (F5)."
+        )
+        about.setWordWrap(True)
+        self.keep_key_aliases = QPlainTextEdit()
+        self.keep_key_aliases.setObjectName("keep_key_aliases")
+        self.keep_key_aliases.setPlaceholderText("synopsis = Description")
+        self.keep_key_aliases.setToolTip(
+            "Saved in this keep (keep.toml), so they go where the keep goes; they win over "
+            "yours for the same key. Read this key as a field\u2026 on an item's Extra field "
+            "adds one. Saved when you leave the box."
+        )
+        self.user_key_aliases = QPlainTextEdit()
+        self.user_key_aliases.setObjectName("user_key_aliases")
+        self.user_key_aliases.setToolTip(
+            "Saved for you on this computer (settings.toml): every keep you open reads them. "
+            "Saved when you leave the box."
+        )
+        for box in (self.keep_key_aliases, self.user_key_aliases):
+            box.setMaximumHeight(80)
+            box.installEventFilter(self)
+        self.aliases_error = QLabel()
+        self.aliases_error.setObjectName("aliases_error")
+        self.aliases_error.setStyleSheet("color: #c0392b;")
+        self.aliases_error.setWordWrap(True)
+        form = QFormLayout()
+        form.addRow("In this keep:", self.keep_key_aliases)
+        form.addRow("In all your keeps:", self.user_key_aliases)
+        group = QGroupBox("Keys to read as fields")
+        column = QVBoxLayout(group)
+        column.addWidget(about)
+        column.addLayout(form)
+        column.addWidget(self.aliases_error)
+        return group
 
     # --- showing ---
 
@@ -835,6 +876,13 @@ class KeepConfigWindow(QWidget):
         for box, keys in lists:
             if not box.hasFocus():
                 box.setPlainText("\n".join(keys))
+        alias_lists = (
+            (self.keep_key_aliases, self.session.keep.config.note_key_aliases),
+            (self.user_key_aliases, self.session.settings.note_key_aliases),
+        )
+        for box, aliases in alias_lists:
+            if not box.hasFocus():
+                box.setPlainText(alias_lines(aliases))
 
     def _show_root_options(self, root: RootConfig) -> None:
         _clear_form(self.root_options_form)
@@ -1098,6 +1146,10 @@ class KeepConfigWindow(QWidget):
                 self.set_keep_ignore_keys(self.keep_ignore_keys.toPlainText().splitlines())
             elif watched is self.user_ignore_keys:
                 self.set_user_ignore_keys(self.user_ignore_keys.toPlainText().splitlines())
+            elif watched is self.keep_key_aliases:
+                self.set_keep_key_aliases(self.keep_key_aliases.toPlainText().splitlines())
+            elif watched is self.user_key_aliases:
+                self.set_user_key_aliases(self.user_key_aliases.toPlainText().splitlines())
             elif watched is self.see_through:
                 self.set_see_through(self.see_through.toPlainText().splitlines())
         return super().eventFilter(watched, event)
@@ -1252,6 +1304,41 @@ class KeepConfigWindow(QWidget):
             return None
         self.notes_error.clear()
         return keys
+
+    def _key_aliases(self, lines: list[str]) -> dict[str, str] | None:
+        """The aliases typed (``key = field`` a line), or ``None`` (saying why) if one
+        can't be read."""
+        try:
+            aliases = parse_alias_lines(lines)
+        except NoteKeyError as e:
+            self.aliases_error.setText(str(e))
+            return None
+        self.aliases_error.clear()
+        return aliases
+
+    def set_keep_key_aliases(self, lines: list[str]) -> None:
+        """Save the keys this keep reads as fields (``keep.toml``, #411)."""
+        aliases = self._key_aliases(lines)
+        session = self.session
+        if aliases is None or aliases == session.keep.config.note_key_aliases:
+            return
+        self._run(
+            lambda: session.set_note_key_aliases(aliases),
+            "Saved the keys this keep reads as fields; they apply at the next scan (F5).",
+        )
+
+    def set_user_key_aliases(self, lines: list[str]) -> None:
+        """Save the keys every keep reads as fields (``settings.toml``, #411)."""
+        aliases = self._key_aliases(lines)
+        settings, settings_path = self.session.settings, self.settings_path
+        if aliases is None or aliases == settings.note_key_aliases:
+            return
+        settings.note_key_aliases = aliases
+        self._run(
+            lambda: save_settings(settings, settings_path),
+            "Saved the keys all your keeps read as fields; they apply at each keep's next "
+            "scan (F5).",
+        )
 
     def set_keep_ignore_keys(self, lines: list[str]) -> None:
         """Save the keys this keep ignores in notes (``keep.toml``)."""
