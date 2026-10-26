@@ -150,11 +150,18 @@ def _py7zr() -> str:
 
 
 def _rarfile() -> str:
+    """rarfile, and the tool it unpacks with (#452): a warning when it's only bsdtar."""
     import rarfile
 
-    tool = rarfile.tool_setup(sevenzip=True, sevenzip2=True, unrar=True, unar=True, bsdtar=True)
-    del tool
-    return f"rarfile {rarfile.__version__} (with an unrar tool)"
+    from tagalot.core.rar_tools import current_rar_tool
+
+    tool = current_rar_tool()
+    if tool is None:
+        raise RuntimeError("no unrar, 7-Zip, unar, or bsdtar found: install WinRAR or 7-Zip")
+    text = f"rarfile {rarfile.__version__}, with {tool.name} ({tool.command})"
+    if tool.weak:
+        text += "; bsdtar can't unpack many RAR files: install WinRAR or 7-Zip"
+    return text
 
 
 READERS: list[tuple[str, Callable[[], str], bool]] = [

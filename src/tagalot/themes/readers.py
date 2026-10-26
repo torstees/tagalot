@@ -245,7 +245,9 @@ def epub_cover(path: str) -> bytes | None:
 def _comic_info_bytes(path: str) -> bytes | None:
     """The bytes of a comic archive's ``ComicInfo.xml`` (any folder, any case), or ``None``.
     The archive is recognized by content (a ``.cbr`` that is really a zip still works); RAR
-    needs an external tool, as for thumbnails (DESIGN.md §10 "Archives")."""
+    needs an external tool, as for thumbnails (DESIGN.md §10 "Archives"): without one, a
+    compressed ``ComicInfo.xml`` raises :class:`NoRarTool`, so the file is reported rather
+    than read as having none (#452)."""
     # The core's reader, imported here: the core imports this package's api.
     from tagalot.core.thumbnails.archive import SOLID_READ_BUDGET, NoRarTool, open_archive
 
@@ -260,8 +262,11 @@ def _comic_info_bytes(path: str) -> bytes | None:
                 return None  # too deep in a solid archive to be worth unpacking
             try:
                 return archive.read(member, MAX_XML)
-            except NoRarTool:
-                return None
+            except NoRarTool as e:
+                raise NoRarTool(
+                    "its ComicInfo.xml needs unrar or 7-Zip to be read: install one, then use "
+                    "Re-read from file"
+                ) from e
     return None
 
 
