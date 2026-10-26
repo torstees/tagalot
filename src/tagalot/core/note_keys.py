@@ -12,16 +12,25 @@ case; ``tagalot-…`` keys are Tagalot's own and can't be ignored.
 - **From an item's page** (:func:`ignore_note_key`): ignoring a key at once removes the
   Extra fields that notes and files gave under it, in every item (one undo step,
   :func:`restore_note_key`); fields the user added or edited stay.
+- **Your own key aliases** (#411, :func:`key_aliases`): keys read as a field rather than
+  as Extra fields, the user's and the keep's (the keep's winning); remembered as applied
+  (``note_key_alias``, :func:`sync_aliases`) so a change reads notes and files again.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import fts
-from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, EXTRA, RESERVED_PREFIX
+from tagalot.core.extra_keys import (
+    DEFAULT_IGNORED_KEYS,
+    EXTRA,
+    NOT_ALIASED,
+    RESERVED_PREFIX,
+    applied_aliases,
+)
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.models import (
     Entity,
@@ -29,6 +38,7 @@ from tagalot.core.models import (
     FieldProvenance,
     FieldSource,
     NoteIgnoredKey,
+    NoteKeyAlias,
     Resource,
     utcnow,
 )
@@ -72,15 +82,104 @@ def sync_ignored(conn: Connection, keys: frozenset[str]) -> bool:
     applied = set(conn.scalars(select(NoteIgnoredKey.key)))
     if applied == keys:
         return False
+    _read_again(conn)
+    conn.execute(delete(NoteIgnoredKey))
+    if keys:
+        conn.execute(sqlite_insert(NoteIgnoredKey), [{"key": k} for k in sorted(keys)])
+    return True
+
+
+def _read_again(conn: Connection) -> None:
+    """Mark every note file and every Markdown file a theme reads to be read again."""
     conn.execute(update(EntityNote).where(EntityNote.resource_id.is_not(None)).values(size=None))
     conn.execute(
         update(Resource)
         .where(Resource.ext.in_(NOTE_EXTENSIONS), Resource.ingested_at.is_not(None))
         .values(ingested_at=None)
     )
-    conn.execute(delete(NoteIgnoredKey))
-    if keys:
-        conn.execute(sqlite_insert(NoteIgnoredKey), [{"key": k} for k in sorted(keys)])
+
+
+# --- the user's key aliases (#411) ---
+
+
+def check_alias(key: str, field: str) -> tuple[str, str]:
+    """An alias as it is listed (both stripped), or :class:`NoteKeyError`: the key can't be
+    one Tagalot reads itself (``title``, ``tags``, ``cover``, ``tagalot-…``)."""
+    key, field = key.strip(), field.strip()
+    if not key:
+        raise NoteKeyError("Type the key to read as a field")
+    if not field:
+        raise NoteKeyError(f"Name the field {key!r} fills")
+    folded = key.casefold()
+    if folded.startswith(RESERVED_PREFIX):
+        raise NoteKeyError(f"Keys starting with {RESERVED_PREFIX!r} are Tagalot's own")
+    if folded in NOT_ALIASED:
+        raise NoteKeyError(f"Tagalot reads {key!r} itself")
+    return key, field
+
+
+def key_aliases(*lists: Mapping[str, str]) -> dict[str, str]:
+    """The aliases to read with, by case-folded key: those of ``lists`` (the user's, then
+    the keep's), a later list's winning for the same key."""
+    found: dict[str, str] = {}
+    for aliases in lists:
+        for key, field in aliases.items():
+            try:
+                key, field = check_alias(key, field)
+            except NoteKeyError:
+                continue
+            found[key.casefold()] = field
+    return found
+
+
+def parse_alias_lines(lines: Iterable[str]) -> dict[str, str]:
+    """Aliases as typed in Keep configuration, ``key = field`` a line (blank lines skipped;
+    a key given again, case aside, takes its last field), or :class:`NoteKeyError`."""
+    aliases: dict[str, str] = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        key, equals, field = line.partition("=")
+        if not equals:
+            raise NoteKeyError(f"Write {line.strip()!r} as key = field (synopsis = Description)")
+        key, field = check_alias(key, field)
+        aliases = with_alias(aliases, key, field)
+    return aliases
+
+
+def alias_lines(aliases: Mapping[str, str]) -> str:
+    """Aliases as Keep configuration shows them, ``key = field`` a line."""
+    return "\n".join(f"{key} = {field}" for key, field in aliases.items())
+
+
+def with_alias(aliases: Mapping[str, str], key: str, field: str | None) -> dict[str, str]:
+    """``aliases`` with ``key`` reading as ``field`` (at the end, unless listed; in its
+    place, if so), or without it (``None``), case aside."""
+    folded = key.strip().casefold()
+    listed = {k: v for k, v in aliases.items() if k.strip().casefold() != folded or field}
+    if field is None:
+        return listed
+    for k in listed:
+        if k.strip().casefold() == folded:
+            listed[k] = field.strip()
+            return listed
+    return {**listed, key.strip(): field.strip()}
+
+
+def sync_aliases(conn: Connection, aliases: Mapping[str, str]) -> bool:
+    """Remember ``aliases`` (from :func:`key_aliases`) as the ones notes and Markdown files
+    are read with; when they differ from the last ones, mark every note and Markdown file to
+    be read again (a key now aliased fills its field, one no longer aliased is an Extra
+    field again). Returns whether they differed."""
+    if applied_aliases(conn) == dict(aliases):
+        return False
+    _read_again(conn)
+    conn.execute(delete(NoteKeyAlias))
+    if aliases:
+        conn.execute(
+            sqlite_insert(NoteKeyAlias),
+            [{"key": k, "field": v} for k, v in sorted(aliases.items())],
+        )
     return True
 
 

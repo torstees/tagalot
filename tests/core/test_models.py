@@ -54,6 +54,7 @@ CORE_TABLES = {
     "entity_note",
     "note_key_removal",
     "note_ignored_key",
+    "note_key_alias",
     "notes_folder_note",
     "file_not_found",
     "picture_failure",

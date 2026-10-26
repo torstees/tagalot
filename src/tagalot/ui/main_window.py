@@ -844,6 +844,7 @@ class MainWindow(QMainWindow):
         detail.field_edited.connect(self.tag_actions.edit_field)
         detail.extra_edited.connect(self.tag_actions.edit_extra)
         detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
+        detail.note_key_alias_requested.connect(self.alias_note_key)
         detail.note_edited.connect(self.tag_actions.edit_note)
         detail.save_note_requested.connect(self.save_as_note)
         detail.reread_requested.connect(self.reread)
@@ -2077,6 +2078,27 @@ class MainWindow(QMainWindow):
                 self.keep_config.reload()
 
         run_in_pool(job, on_done=done, on_error=lambda e: self.statusBar().showMessage(str(e)))
+
+    def alias_note_key(self, key: str, field_name: str, label: str) -> None:
+        """Read ``key`` as the field ``field_name`` (shown as ``label``) in this keep's
+        notes and Markdown files (#411): listed in keep.toml (in a worker), it applies
+        at the next scan."""
+        session = self.session
+        assert session is not None
+
+        def done(_: object) -> None:
+            self.statusBar().showMessage(
+                f"{key!r} will be read as {label} from the next scan (F5). "
+                "Keep configuration \u2192 Notes lists the keys read as fields."
+            )
+            if self.keep_config is not None:
+                self.keep_config.reload()
+
+        run_in_pool(
+            lambda: session.alias_note_key(key, field_name),
+            on_done=done,
+            on_error=lambda e: self.statusBar().showMessage(str(e)),
+        )
 
     def _save_hidden_columns(self, state_key: str, keys: list[str]) -> None:
         assert self.session is not None

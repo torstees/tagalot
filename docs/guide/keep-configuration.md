@@ -46,3 +46,5 @@ The folders the keep watches, each with its state (online, offline, not watched,
 **New notes go** in a folder for each kind of item (`Actors/Keanu Reeves.md`), or all in the notes folder, typed by `tagalot-type`.
 
 **Keys to ignore in notes:** front-matter keys that never become Extra fields, one per line. **In this keep** is saved with the keep; **In all your keeps** is saved for you on this computer; **Always** lists the built-in ones. Each list is saved when you leave its box and applies at the next scan. See [Notes](notes.md#keys-to-ignore).
+
+**Keys to read as fields:** front-matter keys read as one of the item's fields rather than as Extra fields, one `key = field` a line (`synopsis = Description`), naming the field by its name or label. **In this keep** is saved with the keep and wins over **In all your keeps** for the same key. Saved when you leave the box; applies at the next scan. See [Notes](notes.md#keys-to-read-as-fields).

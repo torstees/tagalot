@@ -300,6 +300,11 @@ def _v28_tag_groups(conn: Connection) -> None:
     Base.metadata.tables["tag_group_member"].create(conn, checkfirst=True)
 
 
+def _v29_note_key_aliases(conn: Connection) -> None:
+    """Format 30: the key aliases notes and Markdown files were last read with (#411)."""
+    Base.metadata.tables["note_key_alias"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -329,6 +334,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     26: _v26_archive_members,
     27: _v27_skipped_index,
     28: _v28_tag_groups,
+    29: _v29_note_key_aliases,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

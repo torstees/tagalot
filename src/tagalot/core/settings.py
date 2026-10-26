@@ -71,6 +71,9 @@ class Settings:
     note_ignore_keys: list[str] = field(default_factory=list)
     """``[notes] ignore_keys``: front-matter keys notes never make Extra fields, in every
     keep (DESIGN.md §9 *Notes*)."""
+    note_key_aliases: dict[str, str] = field(default_factory=dict)
+    """``[notes.key_aliases]``: front-matter keys read as fields in every keep (#411), key ->
+    the field's name or label; a keep's own alias for the same key wins."""
     file_manager: str = ""
     """``[file_manager] command``: the command template Show in file manager runs (#457,
     DESIGN.md §11), with ``{path}``, ``{dir}``, ``{name}``; ``""``, the system's."""
@@ -219,6 +222,9 @@ def dump_settings(settings: Settings) -> str:
         lines.append(f"command = {toml_str(handler.command)}")
     if settings.note_ignore_keys:
         lines += ["", "[notes]", f"ignore_keys = {toml_list(settings.note_ignore_keys)}"]
+    if settings.note_key_aliases:
+        lines += ["", "[notes.key_aliases]"]
+        lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in settings.note_key_aliases.items()]
     if settings.file_manager:
         lines += ["", "[file_manager]", f"command = {toml_str(settings.file_manager)}"]
     for keep_id, env in settings.keep_env.items():
@@ -334,10 +340,17 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
     if not isinstance(notes, dict):
         logger.warning("%s: notes must be a table; ignoring it", path)
         notes = {}
-    for key in sorted(set(notes) - {"ignore_keys"}):
+    for key in sorted(set(notes) - {"ignore_keys", "key_aliases"}):
         logger.warning("%s: ignoring unknown key %r in [notes]", path, key)
     keys = _string_list(path, notes, "ignore_keys")
     settings.note_ignore_keys = [k.strip() for k in keys if k.strip()]
+    aliases = notes.get("key_aliases", {})
+    if isinstance(aliases, dict) and all(isinstance(v, str) for v in aliases.values()):
+        settings.note_key_aliases = {
+            k.strip(): v.strip() for k, v in aliases.items() if k.strip() and v.strip()
+        }
+    else:
+        logger.warning("%s: [notes.key_aliases] must map keys to field names; ignoring it", path)
 
     manager = data.get("file_manager", {})
     command = manager.get("command", "") if isinstance(manager, dict) else None

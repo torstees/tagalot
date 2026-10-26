@@ -25,7 +25,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 29
+KEEP_FORMAT_VERSION = 30
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -156,6 +156,9 @@ class KeepConfig:
     note_ignore_keys: list[str] = field(default_factory=list)
     """``[notes] ignore_keys``: front-matter keys this keep's notes never make Extra fields
     (§9 *Notes*), with the user's own and the built-in ones."""
+    note_key_aliases: dict[str, str] = field(default_factory=dict)
+    """``[notes.key_aliases]``: front-matter keys this keep reads as fields (#411), key ->
+    the field's name or label, with the user's own."""
     notes_root: str | None = None
     """``[notes] root``: the root holding the keep's notes folder (§9 *The notes folder*);
     ``None``, no notes folder."""
@@ -275,6 +278,9 @@ def dump_keep_config(config: KeepConfig) -> str:
         notes_lines.append(f"ignore_keys = {toml_list(config.note_ignore_keys)}")
     if notes_lines:
         lines += ["", "[notes]", *notes_lines]
+    if config.note_key_aliases:
+        lines += ["", "[notes.key_aliases]"]
+        lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in config.note_key_aliases.items()]
     if config.markdown_assets:
         lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
     if config.see_through:
@@ -384,6 +390,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             raise KeepConfigError(path, '[contents] index must be "words" or "substrings"')
 
     note_ignore_keys: list[str] = []
+    note_key_aliases: dict[str, str] = {}
     notes_root: str | None = None
     notes_path = ""
     notes_writable = False
@@ -391,12 +398,26 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     new_notes = "folders"
     if "notes" in data:
         notes_table = reader.table(data, "notes")
-        known_notes = {"ignore_keys", "root", "path", "writable", "write_back", "new_notes"}
+        known_notes = {
+            "ignore_keys",
+            "key_aliases",
+            "root",
+            "path",
+            "writable",
+            "write_back",
+            "new_notes",
+        }
         reader.warn_unknown(notes_table, known_notes, "[notes]")
         keys = notes_table.get("ignore_keys", [])
         if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
             raise KeepConfigError(path, "[notes] ignore_keys must be a list of strings")
         note_ignore_keys = [k.strip() for k in keys if k.strip()]
+        aliases = notes_table.get("key_aliases", {})
+        if not isinstance(aliases, dict) or not all(isinstance(v, str) for v in aliases.values()):
+            raise KeepConfigError(path, "[notes.key_aliases] must map keys to field names")
+        note_key_aliases = {
+            k.strip(): v.strip() for k, v in aliases.items() if k.strip() and v.strip()
+        }
         if "root" in notes_table:
             notes_root = reader.string(notes_table, "root", "[notes]")
             raw_path = notes_table.get("path", "")
@@ -503,6 +524,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         online_find_by=online_find_by,
         contents_index=contents_index,
         note_ignore_keys=note_ignore_keys,
+        note_key_aliases=note_key_aliases,
         notes_root=notes_root,
         notes_path=notes_path,
         notes_writable=notes_writable,

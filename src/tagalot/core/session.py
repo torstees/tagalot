@@ -56,6 +56,7 @@ from tagalot.core.keep_settings import (
     with_markdown_assets,
     with_name,
     with_note_ignore_keys,
+    with_note_key_aliases,
     with_online_find_by,
     with_online_lookups,
     with_online_services,
@@ -69,7 +70,15 @@ from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceStatus, Root
 from tagalot.core.not_duplicates import Entry, set_not_duplicate
-from tagalot.core.note_keys import NoteKeyChange, check_key, ignored_keys, with_key
+from tagalot.core.note_keys import (
+    NoteKeyChange,
+    check_alias,
+    check_key,
+    ignored_keys,
+    key_aliases,
+    with_alias,
+    with_key,
+)
 from tagalot.core.notes_folder import notes_folder_files
 from tagalot.core.online import (
     Fetcher,
@@ -283,6 +292,7 @@ class KeepSession:
                     markdown_assets=config.markdown_assets,
                     progress=progress,
                     note_ignore_keys=self.note_ignore_keys,
+                    note_key_aliases=self.note_key_aliases,
                     notes_folder=config.notes_path if root.id == config.notes_root else None,
                     see_through=self.see_through,
                 )
@@ -558,6 +568,25 @@ class KeepSession:
         """The front-matter keys notes leave out, case-folded: the built-in ones, the
         user's (``settings.toml``), and the keep's (``keep.toml``)."""
         return ignored_keys(self.settings.note_ignore_keys, self.keep.config.note_ignore_keys)
+
+    @property
+    def note_key_aliases(self) -> dict[str, str]:
+        """The front-matter keys read as fields (#411), by case-folded key: the user's
+        (``settings.toml``), then the keep's (``keep.toml``), which win."""
+        return key_aliases(self.settings.note_key_aliases, self.keep.config.note_key_aliases)
+
+    def set_note_key_aliases(self, aliases: Mapping[str, str]) -> None:
+        """Set the keep's key aliases; they apply at the next scan, which reads the notes
+        and Markdown files again. Runs in a worker."""
+        self.save_config(with_note_key_aliases(self.keep.config, aliases))
+
+    def alias_note_key(self, key: str, field_name: str) -> None:
+        """Read ``key`` as the field ``field_name`` (its name or label) in this keep's notes
+        and Markdown files (#411): listed in ``keep.toml``, it applies at the next scan.
+        Runs in a worker."""
+        key, field_name = check_alias(key, field_name)
+        aliases = with_alias(self.keep.config.note_key_aliases, key, field_name)
+        self.set_note_key_aliases(aliases)
 
     def set_markdown_assets(self, assets: str) -> None:
         """Set the keep's default assets folder (#418); it applies to pictures and links on

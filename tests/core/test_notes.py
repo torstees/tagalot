@@ -15,7 +15,7 @@ from sqlalchemy import Engine, delete, insert, select, text, update
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.detail import load_detail
 from tagalot.core.entity_state import restore_states, snapshot_entities
-from tagalot.core.extra_keys import as_text
+from tagalot.core.extra_keys import as_text, convert
 from tagalot.core.fields import edit_extra, restore_extra
 from tagalot.core.handlers import resource_to_open
 from tagalot.core.ingest import IngestSession
@@ -32,7 +32,6 @@ from tagalot.core.models import (
 from tagalot.core.notes import (
     NoteText,
     body_without_title,
-    convert,
     map_note,
     note_rank,
     read_notes,

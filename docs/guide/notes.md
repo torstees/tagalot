@@ -140,3 +140,12 @@ Some keys are housekeeping for your Markdown editor, not details of the item. Ke
 - **In all your keeps:** saved for you on this computer (in `settings.toml`).
 
 Edit the last two in [Keep configuration → Notes](keep-configuration.md#notes), one key per line; case doesn't matter. A change applies at the next scan (**F5**), which reads the notes (and Markdown files' front matter) again: a key you stop ignoring comes back as an Extra field. Keys starting with `tagalot-` are Tagalot's own and can't be ignored.
+
+## Keys to read as fields
+
+A key Tagalot doesn't know becomes an Extra field. When it's really one of the item's fields under another name (your notes say `synopsis`, the field is **Description**), read it as that field instead:
+
+- **From an item's page:** the arrow beside the Extra field's × → **Read this key as a field…**, then choose the field. It's saved with the keep and applies at the next scan (**F5**).
+- **In [Keep configuration → Notes](keep-configuration.md#notes):** **Keys to read as fields**, one `key = field` a line (`synopsis = Description`), naming the field by its name or label. **In this keep** is saved with the keep; **In all your keeps** for you on this computer, and the keep's wins for the same key.
+
+It applies to notes and to Markdown files' own front matter, for every kind of item that has the field (for others the key stays an Extra field). A file's own key for the field wins: with both `description` and `synopsis`, `synopsis` stays an Extra field. Keys Tagalot reads itself (`title`, `tags`, `keywords`, `aliases`, `cover`, `image`, `tagalot-…`) can't be read as other fields. [Write to file…](write-to-file.md) writes an edited field back under the key the file uses.

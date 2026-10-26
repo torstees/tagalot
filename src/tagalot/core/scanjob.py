@@ -56,7 +56,7 @@ from tagalot.core.markdown_check import (
     record_markdown_problems,
 )
 from tagalot.core.models import ArchiveMode, Resource, ResourceKind, ResourceStatus, Root
-from tagalot.core.note_keys import sync_ignored
+from tagalot.core.note_keys import sync_aliases, sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
@@ -146,6 +146,7 @@ def scan_root(
     markdown_assets: str = "",
     progress: Progress | None = None,
     note_ignore_keys: frozenset[str] | None = None,
+    note_key_aliases: Mapping[str, str] | None = None,
     notes_folder: str | None = None,
     see_through: frozenset[str] = frozenset(),
 ) -> ScanReport:
@@ -165,7 +166,8 @@ def scan_root(
 
     ``note_ignore_keys`` are the front-matter keys notes leave out (``core.note_keys``); when
     they differ from those the notes were last applied with, every note is read again.
-    ``None`` keeps those.
+    ``None`` keeps those. ``note_key_aliases`` are the user's key aliases (#411), the same
+    way.
 
     ``notes_folder`` is the keep's notes folder when it is in this root (``""``: the whole
     root): only its Markdown files are recorded, and none of it reaches the theme.
@@ -269,6 +271,7 @@ def scan_root(
             say,
             options.values,
             note_ignore_keys=note_ignore_keys,
+            note_key_aliases=note_key_aliases,
             notes_folder=notes_folder,
             see_through=see_through,
         )
@@ -436,6 +439,7 @@ def _ingest_pending(
     *,
     reread_notes: bool = True,
     note_ignore_keys: frozenset[str] | None = None,
+    note_key_aliases: Mapping[str, str] | None = None,
     notes_folder: str | None = None,
     see_through: frozenset[str] = frozenset(),
 ) -> None:
@@ -450,6 +454,8 @@ def _ingest_pending(
     if reread_notes and note_ignore_keys is not None:
         # Before the files: other ignored keys read Markdown files again too (#410).
         writer.run(partial(sync_ignored, keys=note_ignore_keys))
+    if reread_notes and note_key_aliases is not None:
+        writer.run(partial(sync_aliases, aliases=note_key_aliases))
     with reader.connect() as conn:
         rows = conn.execute(
             select(

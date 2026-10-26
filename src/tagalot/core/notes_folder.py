@@ -26,7 +26,7 @@ from sqlalchemy import Connection, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
-from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, as_text
+from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS, applied_aliases, as_text
 from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -301,6 +301,7 @@ def apply_folder_notes(
         )
     ctx = IngestSession(conn, schema)
     ignored = set(conn.scalars(select(NoteIgnoredKey.key))) or DEFAULT_IGNORED_KEYS
+    aliases = applied_aliases(conn)
     types = (
         dict(conn.execute(select(Entity.id, Entity.type)).all()) if plan.give or plan.take else {}
     )
@@ -316,7 +317,7 @@ def apply_folder_notes(
         file, values = None, None
         if given is not None:
             file, text = given
-            values = map_note(text, schema.by_type_id(type_id).fields, ignored)
+            values = map_note(text, schema.by_type_id(type_id).fields, ignored, aliases)
             warnings += [
                 IngestWarning(plan.root_id, file.relpath, f"A note's value was left out: {p}")
                 for p in values.problems

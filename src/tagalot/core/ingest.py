@@ -19,7 +19,15 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
 from tagalot.core.assets import assets_folders, in_assets
-from tagalot.core.extra_keys import EXTRA, extra_values
+from tagalot.core.extra_keys import (
+    EXTRA,
+    aliased_fields,
+    applied_aliases,
+    convert,
+    extra_values,
+    loose_key,
+    skipped,
+)
 from tagalot.core.keywords import apply_file_tags, set_keywords
 from tagalot.core.models import (
     LAST_POSITION,
@@ -179,6 +187,8 @@ class IngestSession:
         """Each theme table's insert, built once."""
         self._ignored: frozenset[str] | None = None
         """Keys never made Extra fields (the lists notes are applied with), looked up once."""
+        self._aliases: dict[str, str] | None = None
+        """The user's key aliases (#411), as notes are applied with them, looked up once."""
 
     # --- entities ---
 
@@ -715,8 +725,9 @@ class IngestSession:
         are (``core/extra_keys.py``), marked as from the file. They replace what the item's
         file gave before; a key the user removed or edited is left alone, and a key the
         item's note also gives is the file's (the note's comes back when the file stops
-        giving it)."""
-        self._table_of(entity)
+        giving it). A key the user's aliases name (#411) fills its field instead, as the
+        theme's values do, unless the theme gave that field a value from the file."""
+        entity_table = self._table_of(entity)
         if self._gone(entity):
             return
         row = self.conn.execute(select(Entity.extra).where(Entity.id == entity.id)).one_or_none()
@@ -724,6 +735,10 @@ class IngestSession:
             raise IngestError(f"entity {entity.id} no longer exists")
         if self._ignored is None:
             self._ignored = frozenset(self.conn.scalars(select(NoteIgnoredKey.key)))
+        if self._aliases is None:
+            self._aliases = applied_aliases(self.conn)
+        if self._aliases:
+            values = self._fill_aliased(entity.id, entity_table, values)
         given = extra_values(values, self._ignored)
         before = dict(row.extra or {})
         extras = dict(before)
@@ -775,6 +790,33 @@ class IngestSession:
             self._touch(entity.id)
             self.conn.execute(update(Entity).where(Entity.id == entity.id).values(extra=extras))
             self._dirty.add(entity.id)
+
+    def _fill_aliased(
+        self, entity_id: int, entity_table: EntityTable, values: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Set the fields the user's aliased keys among ``values`` name (#411); return the
+        other keys. A key whose field the theme filled from the file, or whose value doesn't
+        convert, stays an Extra field."""
+        aliased = aliased_fields(entity_table.fields, self._aliases or {})
+        written = self._written.get(entity_id, {})
+        rest = dict(values)
+        filled: dict[str, Any] = {}
+        for raw_key, value in values.items():
+            key = str(raw_key).strip()
+            target = aliased.get(loose_key(key))
+            if target is None or skipped(key, self._ignored or ()) or _empty(value):
+                continue
+            if target.name in filled or not _empty(written.get(target.name)):
+                continue  # the file gives the field under its own key
+            try:
+                filled[target.name] = convert(value, target.type)
+            except ValueError:
+                continue
+            del rest[raw_key]
+        if filled:
+            self._apply_extracted(entity_id, entity_table, None, filled)
+            self._dirty.add(entity_id)
+        return rest
 
     def _set_source(self, entity_id: int, name: str, source: FieldSource) -> None:
         row = {"entity_id": entity_id, "field": name, "source": source, "updated_at": utcnow()}
@@ -1043,6 +1085,12 @@ class IngestSession:
 
 
 _UNSET = object()
+
+
+def _empty(value: Any) -> bool:
+    return value is None or value == "" or value == []
+
+
 """Not written this session (``None`` is a value that can be written)."""
 
 

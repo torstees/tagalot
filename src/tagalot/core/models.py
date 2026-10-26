@@ -657,6 +657,18 @@ class NoteIgnoredKey(Base):
     key: Mapped[str] = mapped_column(primary_key=True)
 
 
+class NoteKeyAlias(Base):
+    """The user's front-matter key aliases (#411; the key case-folded, and the field's name
+    or label as written) that the keep's notes and Markdown files were last read with: when
+    the lists in ``settings.toml`` and ``keep.toml`` say otherwise, the next scan reads them
+    again. Reading looks the aliases up here."""
+
+    __tablename__ = "note_key_alias"
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    field: Mapped[str]
+
+
 class NotesFolderNote(Base):
     """A note in the keep's notes folder (§9 *The notes folder*, #382), as last read: what
     it is matched by, and what it matched. Its item's ``entity_note`` holds what it gave.
