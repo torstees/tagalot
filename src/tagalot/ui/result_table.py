@@ -1,6 +1,6 @@
 """The list layout's columns and table setup, shared by search pages and grouped sections."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 from PySide6.QtCore import (
     QEvent,
@@ -126,6 +126,28 @@ def hidden_keys(
     }
 
 
+def arranged_keys(keys: Sequence[str], remembered: Sequence[str]) -> list[str]:
+    """``keys`` (the theme's order) in the order the user ``remembered`` (#417): a key it
+    doesn't name (a field the theme added) goes right after the key the theme puts before
+    it, and a remembered key that's gone is skipped."""
+    order = [k for k in dict.fromkeys(remembered) if k in keys]
+    for i, key in enumerate(keys):
+        if key not in order:
+            order.insert(order.index(keys[i - 1]) + 1 if i else 0, key)
+    return order
+
+
+def merged_order(current: Sequence[str], before: Sequence[str]) -> list[str]:
+    """The order to remember after a move: ``current`` (the columns shown now, in their
+    new order), keeping the keys of ``before`` it lacks (another scope's columns, in Search
+    all) after the key they followed."""
+    order = list(dict.fromkeys(current))
+    for i, key in enumerate(before):
+        if key not in order:
+            order.insert(order.index(before[i - 1]) + 1 if i else 0, key)
+    return order
+
+
 def count_text(total: int) -> str:
     return f"{total:,} item" if total == 1 else f"{total:,} items"
 
@@ -141,6 +163,11 @@ class ResultTable(QTableView):
     tags_dropped = Signal(list, list)
     column_toggled = Signal(str, bool)
     """A column's key and whether the user made it visible (from the header menu)."""
+    column_resized = Signal(str, int)
+    """The user resized a column (not the last shown, which fills the rest): its key and
+    width (#417)."""
+    reset_requested = Signal()
+    """**Reset column order and widths** in the header menu (when :attr:`resettable`)."""
     selection_replaced = Signal()
     """A click or key is about to replace the selection (not Ctrl or Shift): Search all
     clears its other sections then (#469)."""
@@ -158,6 +185,10 @@ class ResultTable(QTableView):
         self.title_fitted = True
         """Whether the title still fits the spare width: until the user resizes it."""
         self._fitting = False
+        """True while the table sizes its own columns: not the user's resizing."""
+        self.resettable = False
+        """Whether the header menu offers Reset column order and widths (a search page's
+        list, not Search all's sections)."""
         header = self.horizontalHeader()
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._header_menu)
@@ -181,9 +212,33 @@ class ResultTable(QTableView):
         default the user hasn't shown (:func:`hidden_keys`)."""
         self.columns = list(columns)
         hide = hidden_keys(self.columns, hidden, shown)
-        for i, column in enumerate(self.columns):
-            self.setColumnHidden(i, column.key in hide)
+        was, self._fitting = self._fitting, True
+        try:
+            for i, column in enumerate(self.columns):
+                self.setColumnHidden(i, column.key in hide)
+        finally:
+            self._fitting = was
         self.fit_title()
+
+    def restore_widths(self, widths: Mapping[str, int]) -> None:
+        """Give columns the widths the user gave them before (#417), by key; a title with
+        one keeps it rather than fitting the spare width."""
+        was, self._fitting = self._fitting, True
+        try:
+            for i, column in enumerate(self.columns):
+                width = widths.get(column.key)
+                if (
+                    not isinstance(width, int)
+                    or width < self.horizontalHeader().minimumSectionSize()
+                ):
+                    continue
+                self.setColumnWidth(i, width)
+                if column.key == "title":
+                    self.title_fitted = False
+                else:
+                    self.start_widths[i] = width
+        finally:
+            self._fitting = was
 
     def _title(self) -> int | None:
         return next((i for i, c in enumerate(self.columns) if c.key == "title"), None)
@@ -200,14 +255,14 @@ class ResultTable(QTableView):
         if not others:
             return  # the title alone: it fills the width as the last column
         spare = self.viewport().width() - sum(self.start_widths.get(i, 0) for i in others)
-        self._fitting = True
+        was, self._fitting = self._fitting, True
         try:
             self.setColumnWidth(title, max(TITLE_MIN_WIDTH, min(TITLE_MAX_WIDTH, spare)))
         finally:
-            self._fitting = False
+            self._fitting = was
 
-    def _section_resized(self, index: int, _old: int, _new: int) -> None:
-        if self._fitting or index != self._title():
+    def _section_resized(self, index: int, _old: int, new: int) -> None:
+        if self._fitting or not new or index >= len(self.columns):
             return
         header = self.horizontalHeader()
         shown = [
@@ -215,7 +270,9 @@ class ResultTable(QTableView):
         ]
         if shown and header.visualIndex(index) == max(shown):
             return  # stretched as the last shown column, not resized by the user
-        self.title_fitted = False
+        if index == self._title():
+            self.title_fitted = False
+        self.column_resized.emit(self.columns[index].key, new)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -232,6 +289,11 @@ class ResultTable(QTableView):
             action.toggled.connect(
                 lambda visible, key=column.key: self.column_toggled.emit(key, visible)
             )
+        if self.resettable:
+            menu.addSeparator()
+            reset = menu.addAction("Reset column order and widths")
+            reset.setToolTip("Put the columns back in the theme's order, at their first widths")
+            reset.triggered.connect(self.reset_requested)
         return menu
 
     def _header_menu(self, point: QPoint) -> None:
@@ -340,6 +402,14 @@ def set_column_widths(table: ResultTable, columns: Sequence[ResultColumn]) -> No
     header = table.horizontalHeader()
     table.start_widths = {}
     table.title_fitted = True
+    was, table._fitting = table._fitting, True
+    try:
+        _start_widths(table, header, columns)
+    finally:
+        table._fitting = was
+
+
+def _start_widths(table: ResultTable, header: QHeaderView, columns: Sequence[ResultColumn]) -> None:
     for i, column in enumerate(columns):
         header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
         if column.key == "title":
