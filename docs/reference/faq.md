@@ -10,7 +10,11 @@ Copy or sync the keep's folder (not while it's open on both). If the files are r
 
 ## RAR archives show only an icon
 
-Listing a RAR needs nothing, but reading an image from it needs a RAR tool on your `PATH`: `unrar`, 7-Zip (`7z`), or `bsdtar`. Install one and the next thumbnails will work. `tagalot --check` says whether one was found.
+Listing a RAR needs nothing, but reading an image from it needs a RAR tool on your `PATH`: `unrar`, 7-Zip (`7z`), or `bsdtar`. Install one and the next thumbnails will work. On Windows, WinRAR and 7-Zip are found in their usual folders (`C:\Program Files\WinRAR`, `C:\Program Files\7-Zip`) even when they aren't on your `PATH`; start Tagalot again after installing one.
+
+`tagalot --check` names the tool found and where it is. If it's only `bsdtar` (which comes with some other programs), many RAR files still can't be read: install WinRAR or 7-Zip.
+
+A comic in a RAR (`.cbr`) read without a tool is named from its file, and the Activity panel says its ComicInfo couldn't be read. Once a tool is installed, select it and use **Re-read from file**.
 
 ## Some files say "Can't read"
 

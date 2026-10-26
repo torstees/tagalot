@@ -26,6 +26,9 @@ def main() -> int:
         from tagalot.theme_tools import run_check_theme
 
         return run_check_theme(sys.argv[1:], _output(sys.argv[1:]))
+    from tagalot.core.rar_tools import configure_rar_tools
+
+    configure_rar_tools()  # WinRAR or 7-Zip off PATH, on Windows (#452)
     if "--check" in sys.argv[1:]:
         from tagalot.selfcheck import run_check
 
