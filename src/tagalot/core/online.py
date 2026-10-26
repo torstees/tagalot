@@ -72,6 +72,9 @@ BATCH = 20
 """Items applied in one write."""
 MAX_REDIRECTS = 5
 """How many redirects one address may take (Open Library's covers take two, #484)."""
+REFUSED = frozenset({401, 403})
+"""Statuses that refuse the request, not the identifier: a token that isn't valid, or no
+token. Such answers are never kept, and the service is given up on for the run (#487)."""
 ROUNDS = 2
 """How many times a run looks up items: those asked for, then those whose details the
 answers set (#484), or that a search by title found the ID of (#485)."""
@@ -290,6 +293,9 @@ class Fetcher:
                     raise UnavailableError(f"{source.name}: {self.down[host]}") from e
                 finally:
                     self._last[host] = self._clock()
+                if reply.status in REFUSED:
+                    self.down[host] = refused_text(source, reply.status)
+                    raise UnavailableError(f"{source.name}: {self.down[host]}")
                 busy = reply.status == 429 or reply.status >= 500
                 if not busy:
                     if len(reply.body) > MAX_BODY:
@@ -406,7 +412,13 @@ def _fill_cached(conn: Connection, lookups: Sequence[Lookup]) -> None:
                 CachedResponse.url.in_(wanted[start : start + 500])
             )
         )
-        found.update({url: OnlineResponse(url, status, body) for url, status, body in rows})
+        found.update(
+            {
+                url: OnlineResponse(url, status, body)
+                for url, status, body in rows
+                if status not in REFUSED  # kept by builds before #487: asked again
+            }
+        )
     for lookup in lookups:
         lookup.cached = {u: found[u] for u in lookup.urls if u in found}
 
@@ -476,6 +488,8 @@ class Applied:
     problems: list[str] = field(default_factory=list)
     updated: set[int] = field(default_factory=set)
     """Items the theme set details on, the looked-up ones included."""
+    pictured: set[int] = field(default_factory=set)
+    """Items the theme named a picture of: a movie's cast as well as the movie (#487)."""
 
 
 def name_pictures(conn: Connection, pictures: Mapping[int, str]) -> None:
@@ -531,6 +545,7 @@ def apply_details(
             report = ctx.flush()
             name_pictures(conn, ctx.pictures)
             applied.updated |= ctx.updated
+            applied.pictured |= set(ctx.pictures)
         except Exception as e:
             savepoint.rollback()
             if not isinstance(e, IngestError):
@@ -595,6 +610,7 @@ def look_up(
     answers: list[tuple[EntityRef, Mapping[str, OnlineResponse]]] = []
     fresh: list[OnlineResponse] = []
     updated: set[int] = set()
+    pictured: set[int] = set()
 
     def write() -> None:
         if not answers:
@@ -604,6 +620,7 @@ def look_up(
         report.items += applied.items
         report.problems += applied.problems
         updated.update(applied.updated)
+        pictured.update(applied.pictured)
         answers.clear()
         fresh.clear()
 
@@ -669,7 +686,10 @@ def look_up(
             progress(done, total)
     write()
     if not stopped():
-        fetch_pictures(writer, reader, looked_up, report, fetcher, refresh=refresh, stopped=stopped)
+        # The items looked up, and those their details named pictures of (a movie's cast,
+        # #487), which have nothing to look up themselves.
+        wanted = list(dict.fromkeys([*looked_up, *sorted(pictured)]))
+        fetch_pictures(writer, reader, wanted, report, fetcher, refresh=refresh, stopped=stopped)
     report.fetched = fetcher.fetched
     return report
 
@@ -754,10 +774,20 @@ def needed_env(sources: Sequence[OnlineSource]) -> list[tuple[str, str]]:
     return [(name, ", ".join(names)) for name, names in found.items()]
 
 
+def refused_text(source: OnlineSource, status: int) -> str:
+    """What to say when a service refuses Tagalot's requests (401 or 403)."""
+    if source.token_env:
+        return (
+            f"refused the token in {source.token_env} (HTTP {status}): check it in Keep "
+            "configuration, Keep tab, Environment"
+        )
+    return f"refused the request (HTTP {status})"
+
+
 def _unfetched(status: int | None) -> bool:
     """A picture still to fetch: never asked for, or only redirected, to a service the keep
     didn't allow then (#484): tried again in later runs."""
-    return status is None or 300 <= status < 400
+    return status is None or 300 <= status < 400 or status in REFUSED
 
 
 def _keep_picture(
@@ -770,3 +800,7 @@ def _keep_picture(
         .where(OnlinePicture.entity_id == entity_id, OnlinePicture.url == url)
         .values(status=status, data=data, fetched_at=utcnow())
     )
+    if data is not None:
+        # Forget the file it showed, so the chain is run again: a theme can place the
+        # online picture ahead of its own files (OnlineImage, #487).
+        conn.execute(update(Entity).where(Entity.id == entity_id).values(thumb_resource_id=None))

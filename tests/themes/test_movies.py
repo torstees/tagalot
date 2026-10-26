@@ -269,6 +269,7 @@ def test_thumbnail_chains() -> None:
     theme = MoviesTheme()
     assert [repr(p) for p in theme.thumbnail_chain(Movie)] == [
         "RoleImage('poster')",
+        "OnlineImage()",
         "RoleImage('screenshot')",
         "FolderImage()",  # a loose video's folder picture (#479)
         "Icon('video')",

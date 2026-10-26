@@ -1,6 +1,6 @@
 # Online details
 
-Some themes can look an item's details up online by an identifier it has: the [Research](../themes/research.md) theme looks papers up by DOI (Crossref) or arXiv ID (arXiv), and the [Books](../themes/books.md) theme looks books up by ISBN (Open Library). Tagalot never goes online for anything else, and never without your say-so.
+Some themes can look an item's details up online by an identifier it has: the [Research](../themes/research.md) theme looks papers up by DOI (Crossref) or arXiv ID (arXiv), the [Books](../themes/books.md) theme looks books up by ISBN (Open Library), and the [Movies](../themes/movies.md#details-from-tmdb) theme looks movies up in TMDb, by TMDb or IMDb ID (with a key of your own). Tagalot never goes online for anything else, and never without your say-so.
 
 ## Asking first
 

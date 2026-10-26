@@ -57,6 +57,12 @@ actors' notes live in the keep's notes folder.
 in ``prepare()``: its length, picture size, video codec, and audio languages. A movie with
 several versions shows its best one's (the most pixels), and the longest runtime; an .nfo's
 runtime wins over the files'.
+
+**TMDb** (#487, DESIGN.md §9 movies *TMDb*): with ``TAGALOT_TMDB_TOKEN`` set and the keep's
+consent, a movie is looked up by its TMDb ID, else its IMDb ID, else (when the keep allows
+titles) by its title and year. TMDb's details fill in what the files don't say, and its title
+and year replace the file name's when there is no .nfo; it names the poster of a movie with
+none, gives a movie with no cast TMDb's top-billed, and names photos of its cast who have none.
 """
 
 import fnmatch
@@ -70,6 +76,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
+from urllib.parse import urlencode, urlsplit
 
 from tagalot.themes.api import (
     FOLDER_IMAGE_NAMES,
@@ -81,6 +88,11 @@ from tagalot.themes.api import (
     Icon,
     IngestContext,
     Kind,
+    OnlineImage,
+    OnlineRequest,
+    OnlineResponse,
+    OnlineSource,
+    Record,
     ResourceInfo,
     RoleImage,
     SearchView,
@@ -142,6 +154,18 @@ SUFFIX = re.compile(
 SCREENSHOT_FOLDERS = frozenset({"screenshots", "screens", "extrafanart", "stills", "backdrops"})
 """Subfolders of a movie's folder whose pictures are its screenshots."""
 ACTORS_FOLDER = ".actors"
+
+TMDB = OnlineSource(
+    "TMDb",
+    "api.themoviedb.org",
+    "IMDb and TMDb IDs",
+    interval=0.25,
+    token_env="TAGALOT_TMDB_TOKEN",
+    titles=True,
+)
+TMDB_IMAGES = OnlineSource("TMDb images", "image.tmdb.org", "poster and photo addresses", 0.25)
+TMDB_API = f"https://{TMDB.host}/3"
+TMDB_IMAGES_URL = f"https://{TMDB_IMAGES.host}/t/p"
 """Kodi's folder of actors' photos (``First_Last.jpg``)."""
 NFO = ".nfo"
 NFO_LIMIT = 1_000_000
@@ -453,12 +477,16 @@ class MoviesTheme(Theme):
 
     id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
     # 6: folder images; 5: pictures; 4: notes
-    api_version = 20  # see-through folders (18: folders; 17: pictures; 16: ratings; …)
+    api_version = (
+        24  # TMDb (#487): OnlineImage; 23: tokens and titles (21: online pictures; 20: see-through
+    )
+    # folders; 18: folders; 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
     # keeps read every file once.
     extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
     dirs = True
     entities = [Person, Collection, Movie, Picture, Archive, Folder]
+    online_sources = [TMDB, TMDB_IMAGES]
     containment = [
         contains(Collection, Movie),
         # A folder's note names the people it is about; they hold it (#449).
@@ -511,11 +539,17 @@ class MoviesTheme(Theme):
     ]
 
     def thumbnail_chain(self, entity_type: type[Entity]) -> Sequence[ThumbnailProvider]:
-        """A movie shows its poster, else its first screenshot, else its folder's picture (a
-        loose home video beside ``folder.jpg``, #479); a collection its poster, else one of its
-        movies'; a person their photo, else a title card."""
+        """A movie shows its poster, else TMDb's (#487), else its first screenshot, else its
+        folder's picture (a loose home video beside ``folder.jpg``, #479); a collection its
+        poster, else one of its movies'; a person their photo, else a title card."""
         if entity_type is Movie:
-            return [RoleImage("poster"), RoleImage("screenshot"), FolderImage(), Icon("video")]
+            return [
+                RoleImage("poster"),
+                OnlineImage(),  # TMDb's poster, ahead of screenshots (#487)
+                RoleImage("screenshot"),
+                FolderImage(),
+                Icon("video"),
+            ]
         if entity_type is Collection:
             return [RoleImage("poster"), ContentsThumbnail(), Icon("dir")]
         if entity_type is Folder:  # its folder picture, else one of the first things in it
@@ -531,6 +565,129 @@ class MoviesTheme(Theme):
             found = ctx.find(Person, ingest_key=f"actor:{normalize(name)}")
             return found[0] if found else actor_ref(name, ctx)  # as named before, kept
         return super().item_named(entity_type, name, ctx)
+
+    # --- online details: TMDb (#487) ---
+
+    def online_requests(
+        self, entity_type: type[Entity], item: Record
+    ) -> Iterable[str | OnlineRequest]:
+        """A movie in TMDb: by its TMDb ID, else its IMDb ID (TMDb finds its own), else a
+        search by its title, with its year when it has one (the keep decides whether titles
+        may be sent; by default they aren't)."""
+        if entity_type is not Movie:
+            return ()
+        tmdb = tmdb_id(item.fields.get("tmdb_id"))
+        if tmdb:
+            return [f"{TMDB_API}/movie/{tmdb}?append_to_response=credits"]
+        imdb = imdb_id(item.fields.get("imdb_id"))
+        if imdb:
+            return [f"{TMDB_API}/find/{imdb}?external_source=imdb_id"]
+        title = item.title.strip()
+        if not normalize(title):
+            return ()
+        year = item.fields.get("year")
+        if year:
+            query = urlencode({"query": title, "year": year})
+            return [OnlineRequest(f"{TMDB_API}/search/movie?{query}", by="title-year")]
+        query = urlencode({"query": title})
+        return [OnlineRequest(f"{TMDB_API}/search/movie?{query}", by="title")]
+
+    def online_details(
+        self, entity: EntityRef, responses: Mapping[str, OnlineResponse], ctx: IngestContext
+    ) -> None:
+        """A find or a search gives the movie its TMDb ID (it is then looked up by it in the
+        same run); the movie's record fills in what its files don't say, names its poster,
+        and gives its cast (when it has none of its own) and their photos."""
+        for url, answer in responses.items():
+            if not answer.ok:
+                continue  # an ID TMDb doesn't know
+            try:
+                data = answer.json()
+                if not isinstance(data, Mapping):
+                    raise ValueError("not a record")
+                path = urlsplit(url).path
+                if path.startswith("/3/find/"):
+                    self._found(entity, data.get("movie_results"), None, ctx)
+                elif path.startswith("/3/search/"):
+                    self._found(entity, data.get("results"), ctx.get(entity), ctx)
+                else:
+                    self._tmdb_movie(entity, data, ctx)
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
+                ctx.warn(None, f"couldn't read {url}: {e}")
+
+    def _found(
+        self, movie: EntityRef, results: Any, searched: Record | None, ctx: IngestContext
+    ) -> None:
+        """The TMDb ID of the movie a find gave, or of the first a search gave with the
+        movie's title (and year, when it has one): never another film's."""
+        for result in results or []:
+            if not isinstance(result, Mapping) or tmdb_id(result.get("id")) is None:
+                continue
+            if searched is not None and not same_movie(searched, result):
+                continue
+            if not ctx.get(movie).fields.get("tmdb_id"):
+                ctx.update(movie, tmdb_id=tmdb_id(result.get("id")))
+            return
+
+    def _tmdb_movie(self, movie: EntityRef, data: Mapping[str, Any], ctx: IngestContext) -> None:
+        """Ranked below the .nfo and notes: fields the files leave empty are filled in, and
+        the title and year replace the file name's guess only when there is no .nfo (a note's
+        and the user's values are never replaced)."""
+        record = ctx.get(movie)
+        found = tmdb_values(data)
+        values = {
+            name: value
+            for name, value in found.items()
+            if name not in ("title", "year")
+            and value not in (None, "")
+            and record.fields.get(name) in (None, "")
+        }
+        title = None
+        if not ctx.linked(movie, "nfo"):
+            title = found["title"] if found["title"] != record.title else None
+            if found["year"] and found["year"] != record.fields.get("year"):
+                values["year"] = found["year"]
+        elif found["year"] and not record.fields.get("year"):
+            values["year"] = found["year"]
+        if title or values:
+            ctx.update(movie, title=title, **values)
+        poster = data.get("poster_path")
+        if isinstance(poster, str) and poster.startswith("/") and not ctx.linked(movie, "poster"):
+            ctx.online_picture(movie, f"{TMDB_IMAGES_URL}/w500{poster}")
+        self._tmdb_cast(movie, data.get("credits"), ctx)
+
+    def _tmdb_cast(self, movie: EntityRef, credits: Any, ctx: IngestContext) -> None:
+        """TMDb's top-billed cast become the movie's when it has no cast of its own (its
+        .nfo's, or people added by hand); then each of its cast TMDb has a photo of, and who
+        has no photo of their own, gets it."""
+        cast = credits.get("cast") if isinstance(credits, Mapping) else None
+        billed = [
+            c
+            for c in cast or []
+            if isinstance(c, Mapping) and isinstance(c.get("name"), str) and normalize(c["name"])
+        ]
+        billed.sort(key=billing)
+        top = [c["name"].strip() for c in billed[:TMDB_CAST]]
+        people = ctx.related("cast", movie)
+        names = {normalize(ctx.get(p).title) for p in people}
+        # None, or only those TMDb gave before (an .nfo's cast is its own, whoever's in it).
+        if not people or (
+            not ctx.linked(movie, "nfo") and names <= {normalize(name) for name in top}
+        ):
+            for name in top:
+                person = actor_ref(name, ctx)
+                ctx.relate("cast", person, movie)
+                if person not in people:
+                    people.append(person)
+        photos: dict[str, str] = {}
+        for c in billed:
+            path = c.get("profile_path")
+            if isinstance(path, str) and path.startswith("/"):
+                photos.setdefault(normalize(c["name"]), path)
+        for person in people:
+            path = photos.get(normalize(ctx.get(person).title))
+            if path and not ctx.linked(person):
+                ctx.online_picture(person, f"{TMDB_IMAGES_URL}/w185{path}")
 
     # --- prepare (a worker): what the folders around each file say ---
 
@@ -1030,6 +1187,88 @@ def _float(text: str | None) -> float | None:
         return float(text) if text else None
     except ValueError:
         return None
+
+
+# --- TMDb (#487) ---
+
+TMDB_CAST = 10
+"""How many of TMDb's top-billed cast a movie with no cast of its own gets."""
+
+
+def tmdb_id(value: Any) -> str | None:
+    """A TMDb movie ID (digits, no leading zeros), or ``None``."""
+    text = str(value if value is not None else "").strip()
+    return (text.lstrip("0") or None) if TMDB_ID.fullmatch(text) else None
+
+
+def imdb_id(value: Any) -> str | None:
+    """An IMDb ID (``tt0113277``), or ``None``."""
+    text = str(value or "").strip().lower()
+    return text if IMDB_ID.fullmatch(text) else None
+
+
+def tmdb_year(value: Any) -> int | None:
+    """The year of a TMDb date (``2010-07-15``)."""
+    found = re.match(r"((?:18|19|20)\d\d)-", str(value or ""))
+    return int(found.group(1)) if found else None
+
+
+def billing(credit: Mapping[str, Any]) -> int:
+    """Where a TMDb cast credit is billed (those without an order last, as listed)."""
+    order = credit.get("order")
+    return order if isinstance(order, int) else 10_000
+
+
+def same_movie(movie: Record, result: Mapping[str, Any]) -> bool:
+    """A search result is the movie: its title (or original title) is the movie's, ignoring
+    case and punctuation, or one side of its colon is ("The Lord of the Rings: The Fellowship
+    of the Ring" for "The Fellowship of the Ring"); and so is its year when the movie has one."""
+    title = normalize(movie.title)
+    names = [
+        normalize(part)
+        for t in (result.get("title"), result.get("original_title"))
+        if isinstance(t, str)
+        for part in (t, *t.split(":"))
+    ]
+    if not title or title not in names:
+        return False
+    year = movie.fields.get("year")
+    return not year or tmdb_year(result.get("release_date")) == year
+
+
+def tmdb_values(data: Mapping[str, Any]) -> dict[str, Any]:
+    """A TMDb movie (``/movie/{id}?append_to_response=credits``) as a movie's details."""
+    genres = [
+        g["name"].strip()
+        for g in data.get("genres") or []
+        if isinstance(g, Mapping) and isinstance(g.get("name"), str) and g["name"].strip()
+    ]
+    credits = data.get("credits")
+    crew = credits.get("crew") if isinstance(credits, Mapping) else None
+    directors = [
+        c["name"].strip()
+        for c in crew or []
+        if isinstance(c, Mapping) and c.get("job") == "Director" and isinstance(c.get("name"), str)
+    ]
+    runtime = data.get("runtime")
+    rating = data.get("vote_average")
+    title = data.get("title")
+    plot = data.get("overview")
+    return {
+        "title": " ".join(title.split()) if isinstance(title, str) and title.strip() else None,
+        "year": tmdb_year(data.get("release_date")),
+        "plot": " ".join(plot.split()) if isinstance(plot, str) and plot.strip() else None,
+        "genre": ", ".join(dict.fromkeys(genres)) or None,
+        "director": ", ".join(dict.fromkeys(directors)) or None,
+        "runtime": float(runtime) * 60
+        if isinstance(runtime, int | float) and runtime > 0
+        else None,
+        "rating": (
+            float(rating)
+            if isinstance(rating, int | float) and rating > 0 and data.get("vote_count")
+            else None
+        ),
+    }
 
 
 VIDEO_FIELDS = ("quality", "resolution", "video_codec", "audio", "pixels")
