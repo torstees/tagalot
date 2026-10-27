@@ -94,14 +94,19 @@ def test_the_note_is_shown_under_the_title(
     text = note.body.toPlainText()
     assert text.startswith("Painted skies and dusk light, since 2009.")  # no title heading
     assert "Paragraph 29" in text
-    # Capped beside the picture; Show more expands it in place, Show less caps it again.
+    # Collapsed, its main text only: the picture is left out (#553).
+    assert note.hidden.pictures == 1
+    assert "\N{OBJECT REPLACEMENT CHARACTER}" not in text
+    # Capped beside the picture; Show more expands it in place, up to half the window,
+    # past which it scrolls; Show less caps it again.
     assert note.more.isVisible()
     assert note.more.text() == "Show more"
     capped = note.body.height()
     assert capped == note.cap
     note.more.click()
     assert note.more.text() == "Show less"
-    assert note.body.height() > capped * 3
+    assert note.body.height() == window.height() // 2
+    assert "\N{OBJECT REPLACEMENT CHARACTER}" in note.body.toPlainText()
     note.more.click()
     assert note.body.height() == capped
 

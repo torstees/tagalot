@@ -76,7 +76,9 @@ Your own edits always win: a name or field you changed by hand is never replaced
 
 ## On the item's page
 
-The note's body shows in the page's header, beside the picture. A long note is cut short at the picture's height: **Show more** shows the rest, and **Show less** cuts it again. Pictures and links in the note are found from the note's folder (`![](studio.png)`, `[prices](Prices/list.txt)`); web links open in your browser. Obsidian's `![[picture.png]]` and `[[links]]` work too.
+The note's body shows in the page's header, beside the picture. At first it shows just the note's text: its paragraphs and lists, with their bold, italics, and links, cut short at the picture's height. **Show more** shows all of it, as Markdown is meant to look: headings, tables, pictures, code, and quotes, up to half the window's height (scroll for the rest). **Show less** goes back. **Show more** is there whenever something is left out, even in a short note with a table; a note that is only a table or pictures says so ("A table and 2 pictures").
+
+Notes are read as [GitHub-flavoured Markdown](https://github.github.com/gfm/): tables, task lists (`- [x]`), ~~strikethrough~~, and bare web addresses work. Footnotes, math, and diagrams don't, and Obsidian's callouts (`> [!note]`) show as quotes. Pictures and links in the note are found from the note's folder (`![](studio.png)`, `[prices](Prices/list.txt)`); web links open in your browser. Obsidian's `![[picture.png]]` and `[[links]]` work too.
 
 A picture or link that isn't beside the note is looked for in an **assets folder**: the note's own `assets` key (`assets: Attachments`, relative to the note, or from the top of its watched folder with a leading `/`; it shows as an Extra field you can change), else the watched folder's or the keep's (Keep configuration, [Folders](keep-configuration.md#folders) and [Keep](keep-configuration.md#keep)). The name is kept as written: `![](art/glow.png)` finds `Attachments/art/glow.png`.
 
