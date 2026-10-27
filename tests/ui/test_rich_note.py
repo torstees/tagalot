@@ -205,13 +205,13 @@ def window(qtbot: QtBot) -> QWidget:
     return window
 
 
-def _note(window: QWidget, text: str) -> NoteView:
+def _note(window: QWidget, text: str, pictures: dict[str, QImage] | None = None) -> NoteView:
     note = NoteView()
     layout = window.layout()
     assert isinstance(layout, QVBoxLayout)
     layout.addWidget(note)
     layout.addStretch(1)
-    note.show_note(text, None, {}, has_file=False, editable=True)
+    note.show_note(text, None, pictures or {}, has_file=False, editable=True)
     note.set_cap(80)
     window.show()
     return note
@@ -243,7 +243,7 @@ def test_expanded_at_most_half_the_window(qtbot: QtBot, window: QWidget) -> None
     assert note.body.height() == note.cap
     note.more.click()
     assert note.body.height() == window.height() // 2
-    assert note.body.verticalScrollBarPolicy().name == "ScrollBarAsNeeded"
+    assert note.body.verticalScrollBarPolicy().name == "ScrollBarAlwaysOn"
     window.resize(600, 1000)
     qtbot.waitUntil(lambda: note.body.height() == 500, timeout=5000)
     note.more.click()
@@ -256,6 +256,21 @@ def test_new_colors_style_the_note_again(qtbot: QtBot, window: QWidget) -> None:
     qtbot.waitUntil(note.body.isVisible, timeout=5000)
     palette = QPalette(note.palette())
     palette.setColor(QPalette.ColorRole.Link, QColor("#ab1234"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#102030"))
     note.setPalette(palette)
     QApplication.sendEvent(note, QEvent(QEvent.Type.PaletteChange))
     assert _char(note.full, "link").foreground().color() == QColor("#ab1234")
+    # The text's color is the note's own, not left to the body (whose style sheet can keep
+    # the old colors when the system switches between light and dark).
+    assert _char(note.full, "A").foreground().color() == QColor("#102030")
+    assert _char(note.short, "A").foreground().color() == QColor("#102030")
+
+
+def test_show_more_and_less_say_the_note_resized(qtbot: QtBot, window: QWidget) -> None:
+    """So the page fits its header again (tests/ui/test_note_header_fit.py)."""
+    note = _note(window, "\n\n".join(f"Paragraph {n}." for n in range(1, 80)))
+    qtbot.waitUntil(note.more.isVisible, timeout=5000)
+    with qtbot.waitSignal(note.resized, timeout=1000):
+        note.more.click()
+    with qtbot.waitSignal(note.resized, timeout=1000):
+        note.more.click()

@@ -175,6 +175,14 @@ def _style(document: QTextDocument, palette: QPalette) -> None:
     link = palette.color(QPalette.ColorRole.Link)
     dimmed = palette.color(QPalette.ColorRole.PlaceholderText)
     cursor = QTextCursor(document)
+    # The text's own color, not left to the widget showing it: a widget with a style
+    # sheet can keep the old colors when the system's change.
+    _merge(
+        document,
+        0,
+        document.characterCount() - 1,
+        foreground=palette.color(QPalette.ColorRole.Text),
+    )
     for block in _blocks(document):
         form = block.blockFormat()
         cursor.setPosition(block.position())

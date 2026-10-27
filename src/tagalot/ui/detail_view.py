@@ -313,6 +313,7 @@ class DetailPage(QWidget):
         self.note_view = NoteView()
         self.note_view.open_note.connect(self.open_note)
         self.note_view.edited.connect(lambda text: self.note_edited.emit(self.entity_id, text))
+        self.note_view.resized.connect(lambda: QTimer.singleShot(0, self._fit_header))
         titles.addWidget(self.note_view)
         titles.addStretch(1)
         self._titles = titles

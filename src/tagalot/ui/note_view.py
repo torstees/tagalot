@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QStyle,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
@@ -82,12 +83,6 @@ class _Body(QTextBrowser):
             return self.pictures.get(text) or self.pictures.get(unquote(text))
         return None
 
-    def content_height(self, document: QTextDocument | None = None) -> int:
-        """How tall ``document`` (the one shown) is at the body's width."""
-        document = document or self.document()
-        document.setTextWidth(self.viewport().width())
-        return int(document.size().height()) + 2
-
 
 class _NoteBox(QPlainTextEdit):
     """The box a note is typed in: Ctrl+Enter saves, Esc cancels, clicking away saves."""
@@ -117,6 +112,9 @@ class NoteView(QWidget):
     open_note = Signal()
     """Open the note's file with its program."""
     edited = Signal(str)
+    resized = Signal()
+    """The note took another height (Show more, Show less, a new note): the page fits
+    its header again."""
     """The user typed a note (empty: removed it)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -207,6 +205,7 @@ class NoteView(QWidget):
         """What the collapsed note leaves out."""
         self._fitted_width = -1
         self._window: QWidget | None = None
+        self._fitting = False
         self.open_file: Callable[[str], None] = _open_local
         """Opens a file a link names (tests stand in for the system)."""
         self.body.viewport().installEventFilter(self)
@@ -324,33 +323,51 @@ class NoteView(QWidget):
         return max(self.cap, int(self.window().height() * EXPANDED_SHARE))
 
     def _fit(self) -> None:
-        width = self.body.viewport().width()
+        """Size the body for the note shown. Heights are measured at the body's whole width
+        (no scroll bar), so whether the scroll bar shows never changes the outcome: it
+        shows only when the note is taller than the limit at that width (#553)."""
+        if self._fitting:
+            return
+        self._fitting = True
+        try:
+            self._fit_now()
+        finally:
+            self._fitting = False
+
+    def _fit_now(self) -> None:
+        width = self.body.width()
         if width != self._fitted_width:
             self._fitted_width = width
-            fit_pictures(self.full, width, self.body.pictures)
+            bar = self.body.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+            fit_pictures(self.full, max(width - bar, 1), self.body.pictures)
         shown = self.full if self.expanded else self.short
         if self.body.document() is not shown:
             self.body.setDocument(shown)
-        short = self.body.content_height(self.short)
+        short = _height_at(self.short, width)
         more = bool(self.hidden) or short > self.cap
         self.more.setVisible(more and self.body.isVisibleTo(self))
         self.more.setText("Show less" if self.expanded else "Show more")
         if self.expanded:
-            full, limit = self.body.content_height(self.full), self.limit()
-            self.body.setVerticalScrollBarPolicy(
-                Qt.ScrollBarPolicy.ScrollBarAsNeeded
-                if full > limit
-                else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-            )
-            self.body.setFixedHeight(min(full, limit))
+            full, limit = _height_at(self.full, width), self.limit()
+            scrolls = full > limit
+            height = limit if scrolls else full
         else:
-            self.body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            scrolls, height = False, min(short, self.cap)
+        self.body.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if scrolls
+            else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        if not self.expanded:
             self.body.verticalScrollBar().setValue(0)
-            self.body.setFixedHeight(min(short, self.cap))
+        if height != self.body.height() or self.body.minimumHeight() != height:
+            self.body.setFixedHeight(height)
+            self.resized.emit()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
-        self._fit()
+        if event.size().width() != event.oldSize().width():
+            self._fit()
 
     def showEvent(self, event: QShowEvent) -> None:
         """Follow the window's height, which sets how tall the expanded note may be."""
@@ -378,6 +395,16 @@ class NoteView(QWidget):
             return
         if self.folder is not None and (path := resolve_link(self.folder, text)) is not None:
             self.open_file(self.links.get(path, path))
+
+
+def _height_at(document: QTextDocument, width: int) -> int:
+    """How tall ``document`` is at ``width``; its own width is left as it was (the body
+    lays out the one it shows)."""
+    before = document.textWidth()
+    document.setTextWidth(width)
+    height = int(document.size().height()) + 2
+    document.setTextWidth(before)
+    return height
 
 
 def _open_local(path: str) -> None:
