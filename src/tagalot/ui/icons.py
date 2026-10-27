@@ -16,6 +16,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
 from tagalot.core.icons import GENERIC, lucide_svg
+from tagalot.ui.selection import selected_text_color
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +98,8 @@ def _color(mode: QIcon.Mode) -> str:
     palette = QApplication.palette()
     if mode == QIcon.Mode.Disabled:
         color = palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
-    elif mode == QIcon.Mode.Selected:
-        color = palette.color(QPalette.ColorRole.HighlightedText)
+    elif mode == QIcon.Mode.Selected:  # whichever reads on the style's selection
+        color = selected_text_color(palette, alternate=False)
     else:
         color = palette.color(QPalette.ColorRole.Text)
     return QColor(color).name()

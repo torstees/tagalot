@@ -57,11 +57,10 @@ def test_icons_are_drawn_in_the_palettes_colors(qapp: QApplication) -> None:
     old = qapp.palette()
     palette = QPalette(old)
     palette.setColor(QPalette.ColorRole.Text, QColor("#123456"))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#fedcba"))
     qapp.setPalette(palette)
     try:
         assert _colors(lucide("film")) == {"#123456"}
-        assert _colors(lucide("film"), QIcon.Mode.Selected) == {"#fedcba"}
+        # Selected: whichever reads on the selection (tests/ui/test_selection.py).
     finally:
         qapp.setPalette(old)
     assert _colors(lucide("film")) == {old.color(QPalette.ColorRole.Text).name()}

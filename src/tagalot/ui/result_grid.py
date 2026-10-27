@@ -68,6 +68,7 @@ from tagalot.ui.models.results import (
     wrapped,
 )
 from tagalot.ui.result_table import OUTLINE_COLOR
+from tagalot.ui.selection import selected_text_color
 from tagalot.ui.thumbnails import ThumbnailLoader
 
 PADDING = 6
@@ -153,8 +154,10 @@ class CardDelegate(QStyledItemDelegate):
         metrics = grid.fontMetrics()
         width = rect.width() - 2 * PADDING
         y = box.bottom() + 4
-        text_role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
-        painter.setPen(palette.color(text_role))
+        ink = palette.color(QPalette.ColorRole.Text)
+        if selected:
+            ink = selected_text_color(palette, grid)  # reads on the selection's fill
+        painter.setPen(ink)
         line = QRect(rect.x() + PADDING, y, width, metrics.height())
         painter.drawText(
             line,
@@ -162,7 +165,7 @@ class CardDelegate(QStyledItemDelegate):
             metrics.elidedText(title, Qt.TextElideMode.ElideRight, width),
         )
         if found is not None:
-            muted = palette.color(text_role if selected else QPalette.ColorRole.PlaceholderText)
+            muted = ink if selected else palette.color(QPalette.ColorRole.PlaceholderText)
             painter.setPen(muted)
             keys = [key for key, _label in grid.card_lines.get(found[0].type, ())]
             if grid.show_match:

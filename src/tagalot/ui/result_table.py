@@ -48,6 +48,7 @@ from tagalot.ui.models.results import (
     TAGS,
     ResultColumn,
 )
+from tagalot.ui.selection import selected_text_color
 
 TITLE_MIN_WIDTH = 200
 TITLE_MAX_WIDTH = 480
@@ -453,11 +454,13 @@ class MatchDelegate(QStyledItemDelegate):
         style = widget.style() if widget is not None else QApplication.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, panel, painter, widget)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
         document = QTextDocument()
         document.setDefaultFont(option.font)
         document.setDocumentMargin(0)
-        color = option.palette.color(role).name()
+        if selected:
+            color = selected_text_color(option.palette, widget).name()
+        else:
+            color = option.palette.color(QPalette.ColorRole.Text).name()
         document.setHtml(f'<span style="color: {color}; white-space: pre;">{rich}</span>')
         rect = option.rect.adjusted(4, 0, -4, 0)
         painter.save()
