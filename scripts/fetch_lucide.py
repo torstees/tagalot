@@ -68,7 +68,9 @@ def main() -> int:
                 missing.append(name)
                 continue
             assert member is not None
-            (TARGET / f"{name}.svg").write_text(_one_line(member.read().decode()), "utf-8")
+            (TARGET / f"{name}.svg").write_text(
+                _one_line(member.read().decode()), encoding="utf-8", newline="\n"
+            )
         license = archive.extractfile("package/LICENSE")
         assert license is not None
         (TARGET / "LICENSE").write_bytes(license.read().replace(b"\r\n", b"\n"))
