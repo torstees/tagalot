@@ -71,6 +71,7 @@ class Artist(Entity):
     """Whoever made the assets in a folder. Its folder's note (``Aurora Studio.md``) can give
     a friendlier name and its ``website`` (#384); no file does."""
 
+    icon = "user"
     title_label = "Name"
     website: str | None = field("Website", search="text", display="url")
     folder: str | None = field("Folder", editable=False)
@@ -105,6 +106,7 @@ class _Asset(Entity):
 class Image(_Asset):
     """A picture: PNG, JPEG, PSD, and the other image formats."""
 
+    icon = "image"
     width: int | None = field("Width", search="range", editable=False)
     height: int | None = field("Height", search="range", editable=False)
     dimensions: str | None = field("Dimensions", card=True, editable=False)
@@ -119,6 +121,7 @@ class Image(_Asset):
 class Font(_Asset):
     """A font file; its thumbnail is a sample of the font."""
 
+    icon = "type"
     family: str | None = field("Family", card=True, search="choice")
     style: str | None = field("Style", card=True, search="choice")
     roles = [role("file", kinds={"font"}, primary=True, thumbnail=True)]
@@ -128,6 +131,7 @@ class Font(_Asset):
 class Archive(_Asset):
     """A zip, 7z, or rar archive; its thumbnail is the best image inside."""
 
+    icon = "archive"
     images: int | None = field("Images inside", card=True, search="range", editable=False)
     roles = [role("file", kinds={"archive"}, primary=True, thumbnail=True)]
     card_lines = ("images",)
@@ -156,6 +160,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class Assets2DTheme(Theme):
     # Version 2 reads a picture hash from images: existing keeps read their files again once.
     id, name, version = "assets2d", "2D assets", 3  # 3: an artist's folder name
+    icon = "shapes"
     extensions = frozenset(
         KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.FONT] | KIND_EXTENSIONS[Kind.ARCHIVE]
     )

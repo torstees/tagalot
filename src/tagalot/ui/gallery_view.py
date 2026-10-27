@@ -40,7 +40,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.thumbnails.image import Thumbnail
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.file_actions import FileOpener
-from tagalot.ui.thumbnails import icon_for
+from tagalot.ui.icons import icon_for
 from tagalot.ui.workers import run_in_pool
 
 GALLERY_THUMBNAIL = 128

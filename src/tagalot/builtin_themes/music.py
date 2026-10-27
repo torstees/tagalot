@@ -78,6 +78,7 @@ VARIOUS = "Various Artists"
 class Artist(Entity):
     """Whoever an album or song is by."""
 
+    icon = "mic-vocal"
     title_label = "Name"
     rating: float | None = field("Rating", search="range", card=True, rating=5)
     """The user's own, out of 5 (#419)."""
@@ -90,6 +91,7 @@ class Artist(Entity):
 class Album(Entity):
     """A folder of songs."""
 
+    icon = "disc"
     artist: str | None = field("Artist", card=True, search="choice", mirrors=Artist)
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="choice")
@@ -114,6 +116,7 @@ class Album(Entity):
 class Song(Entity):
     """A song; its versions (FLAC, MP3…) are its audio files."""
 
+    icon = "music"
     track: int | None = field("Track", card=True, search="range")
     disc: int | None = field("Disc", search="range")
     artist: str | None = field("Artist", card=True, search="choice")
@@ -164,6 +167,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class MusicTheme(Theme):
     id, name, version = "music", "Music", 4  # 4: ratings (#419); 3: genres as file keywords
     # 2: songs record their bitrate; keeps read every file again once to fill it in.
+    icon = "headphones"
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS | KIND_EXTENSIONS[Kind.ARCHIVE])
     dirs = True
     entities = [Artist, Album, Song]

@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 from tagalot.ui.badges import badge_side, paint_badges
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.hover import outline_hover
+from tagalot.ui.icons import icon_for
 from tagalot.ui.models.results import (
     BADGES,
     MATCH,
@@ -67,7 +68,7 @@ from tagalot.ui.models.results import (
     wrapped,
 )
 from tagalot.ui.result_table import OUTLINE_COLOR
-from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
+from tagalot.ui.thumbnails import ThumbnailLoader
 
 PADDING = 6
 """Space around a card's thumbnail and text."""

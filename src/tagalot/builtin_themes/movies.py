@@ -332,6 +332,7 @@ class Person(Entity):
     """Someone in movies and pictures: an actor in a film's cast, or the family in home
     videos (#449). Stored as the type ``Actor`` was, so keeps from before know them."""
 
+    icon = "user"
     type_id = "movies.actor"
     table_name = "movies_actor"
     plural = "People"
@@ -349,6 +350,7 @@ class Person(Entity):
 class Collection(Entity):
     """A folder of movies' folders (a series, a box set)."""
 
+    icon = "list-video"
     contents_sort = (SortBy("year"), SortBy("title"))
 
     roles = [
@@ -360,6 +362,7 @@ class Collection(Entity):
 class Movie(Entity):
     """A movie; its video files are its versions (or parts)."""
 
+    icon = "film"
     year: int | None = field("Year", card=True, search="range")
     genre: str | None = field("Genre", search="text")
     """From the .nfo; several are joined with commas."""
@@ -404,6 +407,7 @@ class Movie(Entity):
 class Picture(Entity):
     """A picture of its own (#446): not a poster, an actor's photo, or Kodi's artwork."""
 
+    icon = "image"
     date: datetime | None = field("Date", card=True, search="range")
     """The oldest of its EXIF dates (taken, digitized) and the file's modified time."""
     dimensions: str | None = field("Dimensions", card=True, editable=False)
@@ -418,6 +422,7 @@ class Picture(Entity):
 class Archive(Entity):
     """A zip, 7z, or rar archive of its own (#446); its thumbnail is its best picture."""
 
+    icon = "archive"
     date: datetime | None = field("Date", card=True, search="range")
     """The oldest of its first files' dates and its own: an archive is often much newer
     than what's in it."""
@@ -433,6 +438,7 @@ class Folder(Entity):
     core makes one for every folder above a Picture or Archive, and it holds what's in it,
     so a tag on it counts for everything inside."""
 
+    icon = "folder"
     folders_for = (Picture, Archive)
     people: str | None = field("People", search="text", mirrors=Person, many=True)
     """Who the folder is about: its note's ``people`` (#449). Each named holds the folder."""
@@ -477,6 +483,7 @@ class MoviesTheme(Theme):
 
     id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
     # 6: folder images; 5: pictures; 4: notes
+    icon = "clapperboard"
     api_version = (
         24  # TMDb (#487): OnlineImage; 23: tokens and titles (21: online pictures; 20: see-through
     )

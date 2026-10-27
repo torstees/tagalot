@@ -13,8 +13,7 @@ from dataclasses import dataclass
 
 import shiboken6
 from PySide6.QtCore import QObject, QThreadPool, Signal
-from PySide6.QtGui import QIcon, QImage
-from PySide6.QtWidgets import QApplication, QStyle
+from PySide6.QtGui import QImage
 
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.ui.title_card import paint_title_card
@@ -171,22 +170,3 @@ class ThumbnailLoader(QObject):
             self._loaded.popitem(last=False)
         self.ready.emit(entity_id)
         self._pump()
-
-
-_ICONS: dict[str, QStyle.StandardPixmap] = {
-    "dir": QStyle.StandardPixmap.SP_DirIcon,
-    "folder": QStyle.StandardPixmap.SP_DirIcon,
-    "audio": QStyle.StandardPixmap.SP_MediaVolume,
-    "video": QStyle.StandardPixmap.SP_MediaPlay,
-    "archive": QStyle.StandardPixmap.SP_DriveHDIcon,
-    "font": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-    "entity": QStyle.StandardPixmap.SP_FileIcon,
-}
-
-
-def icon_for(name: str | None) -> QIcon:
-    """The icon for a thumbnail chain's :class:`~tagalot.themes.api.Icon` name; unknown
-    names get the generic file icon."""
-    pixmap = _ICONS.get(name or "", QStyle.StandardPixmap.SP_FileIcon)
-    style = QApplication.style()
-    return style.standardIcon(pixmap) if style is not None else QIcon()

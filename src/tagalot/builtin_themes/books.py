@@ -138,6 +138,7 @@ class Author(Entity):
     """Someone who wrote or drew works: one per spelling the files give (merge them to
     join a writer's spellings)."""
 
+    icon = "user"
     title_label = "Name"
     sort_name: str | None = field("Sort name", search="text")
     """``Pratchett, Terry``: how the Authors view sorts them."""
@@ -154,6 +155,7 @@ class Author(Entity):
 class Universe(Entity):
     """Series and works sharing a world (Discworld, Cosmere, Marvel)."""
 
+    icon = "earth"
     rating: float | None = field("Rating", search="range", card=True, rating=5)
     """The user's own, out of 5 (#419)."""
     contents_sort = (SortBy("title"),)
@@ -165,6 +167,7 @@ class Universe(Entity):
 class Series(Entity):
     """Works in reading order."""
 
+    icon = "library"
     plural = "Series"
     universe: str | None = field("Universe", search="choice", mirrors=Universe)
     rating: float | None = field("Rating", search="range", card=True, rating=5)
@@ -178,6 +181,7 @@ class Series(Entity):
 class Collection(Entity):
     """An omnibus, anthology, or box set holding works."""
 
+    icon = "library-big"
     contents_sort = (SortBy("series_index"), SortBy("title"))
     # Covers beside its note in the notes folder (#439, §9 *Galleries*).
     roles = [role("covers", kinds={"image", "archive"}, many=True, gallery=True, label="Covers")]
@@ -186,6 +190,7 @@ class Collection(Entity):
 class Book(Entity):
     """A book; its files (an EPUB from one store, another from a second) are its versions."""
 
+    icon = "book"
     authors: str | None = field("Author", card=True, search="choice", mirrors="writers")
     """Its writers' names, as its files give them (the credits list them as people)."""
     series: str | None = field("Series", card=True, search="choice", mirrors=Series)
@@ -231,6 +236,7 @@ class Book(Entity):
 class Comic(Entity):
     """A comic issue or volume; its files are its versions."""
 
+    icon = "book-open"
     series: str | None = field("Series", card=True, search="choice", mirrors=Series)
     number: str | None = field("Number", card=True, search="text")
     """As written: ``12``, ``1.5``, ``Annual 1``."""
@@ -295,6 +301,7 @@ class ContentsThumbnail(ThumbnailProvider):
 class Picture(Entity):
     """A picture of its own (#446): an illustration, a render, a scan."""
 
+    icon = "image"
     date: datetime | None = field("Date", card=True, search="range")
     """The oldest of its EXIF dates (taken, digitized) and the file's modified time."""
     dimensions: str | None = field("Dimensions", card=True, editable=False)
@@ -309,6 +316,7 @@ class Picture(Entity):
 class Archive(Entity):
     """A zip, 7z, or rar archive of its own (#446); its thumbnail is its best picture."""
 
+    icon = "archive"
     date: datetime | None = field("Date", card=True, search="range")
     """The oldest of its first files' dates and its own: an archive is often much newer
     than what's in it."""
@@ -324,6 +332,7 @@ class Folder(Entity):
     core makes one for every folder above a Picture or Archive, and it holds what's in it,
     so a tag on it counts for everything inside."""
 
+    icon = "folder"
     folders_for = (Picture, Archive)
     roles = [role("folder", kinds={"dir"}, primary=True)]
 
@@ -333,6 +342,7 @@ class BooksTheme(Theme):
 
     id, name, version = "books", "Books", 9  # 9: folder images; 8: pictures; 7: ratings;
     # 6: covers not found; 5: extra; 4: assets; 3: synopsis; 2: authors
+    icon = "library"
     # 19: own folder galleries; 18: folders; 17: pictures; 16: ratings;
     # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;

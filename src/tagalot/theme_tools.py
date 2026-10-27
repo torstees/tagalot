@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from importlib import resources
 from pathlib import Path
 
+from tagalot.core.icons import icon_warnings
 from tagalot.core.settings import load_settings
 from tagalot.themes.loader import default_user_themes_dir, load_theme_file, load_themes
 
@@ -69,6 +70,8 @@ def check_theme(path: Path, out: Out = print) -> int:
         theme = loaded.theme
         out(f"ok: {theme.id!r} ({theme.name}, version {theme.version}) from {loaded.source}")
         out(f"   types: {', '.join(e.__name__ for e in theme.entities)}")
+        for warning in icon_warnings(theme):
+            out(f"warning: {warning}")
     for problem in catalog.problems:
         out(f"problem: {problem.message}")
     if not catalog.themes and not catalog.problems:
@@ -112,6 +115,8 @@ def check_theme_named(name: str, folders: Sequence[Path] | None = None, out: Out
         theme = loaded.theme
         out(f"ok: {theme.id!r} ({theme.name}, version {theme.version}), built in")
         out(f"   types: {', '.join(e.__name__ for e in theme.entities)}")
+        for warning in icon_warnings(theme):
+            out(f"warning: {warning}")
         return 0
     if loaded is not None:
         return check_theme(Path(loaded.source), out)

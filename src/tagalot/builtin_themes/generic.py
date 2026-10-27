@@ -31,6 +31,7 @@ class File(Entity):
     """Any file under a root. Its fields come from the file, so only its name can be edited
     by hand (which never renames the file)."""
 
+    icon = "file"
     title_label = "Name"
     double_click = "open_file"
     extension: str = field("Extension", card=True, search="choice", editable=False)
@@ -42,6 +43,7 @@ class File(Entity):
 
 class GenericTheme(Theme):
     id, name, version = "generic", "Files", 1
+    icon = "folder"
     entities = [File]
     views = [
         SearchView("Files", [File], layout="list"),

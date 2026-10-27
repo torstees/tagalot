@@ -29,6 +29,8 @@ a = Analysis(  # noqa: F821
         (str(SRC / "tagalot" / "themes" / "template.py"), "tagalot/themes"),
         # The window icon (ui.app), at each size, the About dialog's tower, and the knight.
         (str(SRC / "tagalot" / "resources" / "tagalot-*.png"), "tagalot/resources"),
+        # Lucide's icons, for types, keeps, and the window (ui.icons), with their license.
+        (str(SRC / "tagalot" / "resources" / "icons"), "tagalot/resources/icons"),
     ],
     excludes=["tkinter"],
     noarchive=False,

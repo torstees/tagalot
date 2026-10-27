@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 24
+API_VERSION = 25
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -52,7 +52,8 @@ online services (:meth:`IngestContext.online_picture`); version 22 added files i
 archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`); version 23
 added services' tokens and finding items by title (:class:`OnlineSource`'s
 ``token_env`` and ``titles``, :class:`OnlineRequest`); version 24 added placing an
-online picture in a thumbnail chain (:class:`OnlineImage`)."""
+online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added icons
+(:attr:`Entity.icon`, :attr:`Theme.icon`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -376,6 +377,12 @@ class Entity:
       everything inside in views with ``inherit_tags``. What the user puts in or takes out
       by hand stays. ``folders_for = (Picture, Archive)``: folders of pictures (DESIGN.md
       §9 *Folder items*).
+    - ``icon``: the type's icon (API version 25): the name of one of the Lucide icons
+      Tagalot includes (``"film"``, THEMES.md lists them), or the path of an SVG file
+      beside the theme's module (``"icons/wand.svg"``), drawn in the text's color. It
+      shows beside the type's searches in the navigation, on its tabs, on its items'
+      pages, and in place of a picture for an item that has none. Default: none (a
+      generic file icon); ``tagalot --check-theme`` warns about an icon it can't find.
     """
 
     label: ClassVar[str | None] = None
@@ -391,6 +398,7 @@ class Entity:
     full_text: ClassVar[bool] = False
     description_field: ClassVar[str | None] = None
     folders_for: ClassVar[Sequence[type["Entity"]]] = ()
+    icon: ClassVar[str | None] = None
 
 
 def entity_label(entity: type[Entity]) -> str:
@@ -1525,6 +1533,10 @@ class Theme:
     file uses for the field, or its name). Only files in folders the user marked writable are
     ever changed, only by that command, and only their front matter; the core does the
     writing. Kept so themes that set it still load (API version 3)."""
+
+    icon: ClassVar[str | None] = None
+    """The icon of keeps that use this theme, in the Open Keep dialog (API version 25): a
+    Lucide icon's name or an SVG beside the theme's module, as :attr:`Entity.icon`."""
 
     online_sources: ClassVar[Sequence[OnlineSource]] = ()
     """The online services this theme looks items up in (DESIGN.md §9 *Online details*;

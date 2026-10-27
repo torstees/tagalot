@@ -15,8 +15,8 @@ from tagalot.core.models import Resource, ResourceStatus
 from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
 from tagalot.ui.gallery_view import READING, GalleryView
+from tagalot.ui.icons import icon_for
 from tagalot.ui.main_window import MainWindow
-from tagalot.ui.thumbnails import icon_for
 from tests.core.media_files import png_bytes
 from tests.ui.test_contents_search import session, window
 

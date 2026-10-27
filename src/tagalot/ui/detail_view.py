@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QFont, QImage, QResizeEvent, QShowEvent
+from PySide6.QtGui import QFont, QIcon, QImage, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -54,6 +54,7 @@ from tagalot.core.assets import assets_folders
 from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
+from tagalot.core.icons import type_icon
 from tagalot.core.ingest import TITLE
 from tagalot.core.item_pictures import USER, is_picture
 from tagalot.core.keep import KeepConfig
@@ -75,12 +76,13 @@ from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
 from tagalot.ui.gallery_view import GalleryView, fitted
 from tagalot.ui.icon_pictures import icon_html
+from tagalot.ui.icons import icon, icon_for, lucide
 from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
 from tagalot.ui.lookups import LOOK_UP_TIP
 from tagalot.ui.models.results import BadgesValue, badges_value
 from tagalot.ui.note_view import NoteView
 from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions
-from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
+from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -276,6 +278,7 @@ class DetailPage(QWidget):
         """What sits below the sections: one embedded search, or tabs of several."""
         self._tabs: QTabWidget | None = None
         self._bottom_label = ""
+        self._bottom_icon = QIcon()
         self._bottom_key = ""
         self._tab_keys: dict[int, str] = {}
         """Each tab's widget (by ``id``) -> what it is, remembered as the last tab used:
@@ -313,6 +316,8 @@ class DetailPage(QWidget):
         self.title_value.box.setFont(font)
         self.type_label = QLabel()
         self.type_label.setStyleSheet("color: palette(placeholder-text);")
+        self.type_icon = QLabel()  # the type's own (#556)
+        self.type_icon.setObjectName("type_icon")
         self.breadcrumbs = QLabel()
         self.breadcrumbs.setTextFormat(Qt.TextFormat.RichText)
         self.breadcrumbs.setWordWrap(True)
@@ -338,7 +343,11 @@ class DetailPage(QWidget):
         titles.addWidget(self.merged_note)
         titles.addWidget(self.breadcrumbs)
         titles.addLayout(title_row)
-        titles.addWidget(self.type_label)
+        type_row = QHBoxLayout()
+        type_row.setContentsMargins(0, 0, 0, 0)
+        type_row.addWidget(self.type_icon)
+        type_row.addWidget(self.type_label, 1)
+        titles.addLayout(type_row)
         self.note_view = NoteView()
         self.note_view.open_note.connect(self.open_note)
         self.note_view.edited.connect(lambda text: self.note_edited.emit(self.entity_id, text))
@@ -517,6 +526,7 @@ class DetailPage(QWidget):
             self.title_value.editable = False
             self.title_value.show_value("This item no longer exists", False)
             self.type_label.setText("")
+            self.type_icon.clear()
             self.thumbnail.clear()
             self.note_view.setVisible(False)
             self.open_note_action.setVisible(False)
@@ -527,6 +537,10 @@ class DetailPage(QWidget):
             self._show_picture_source(detail)
             self.title_value.show_value(detail.title, detail.title_edited)
             self.type_label.setText(detail.type_label)
+            side = self.type_label.fontMetrics().height()
+            self.type_icon.setPixmap(
+                self._type_icon(detail.type).pixmap(side, mode=QIcon.Mode.Disabled)
+            )
             self._add_file_actions(detail)
             self._add_write_back(detail)
             self._add_look_up()
@@ -628,7 +642,7 @@ class DetailPage(QWidget):
             page.kinds_counted.connect(
                 lambda: self._contents_counted(type_id, label, page.shown_total)
             )
-        self._embed(page, label, f"contents:{type_id or detail.type}")
+        self._embed(page, label, f"contents:{type_id or detail.type}", self._type_icon(type_id))
 
     def _contents_counted(self, type_id: str, label: str, shown: int | None) -> None:
         """Show a contents tab's count (``9 of 16`` while kind chips hide some, #513), and
@@ -702,7 +716,7 @@ class DetailPage(QWidget):
                     lambda ids: self.move_requested.emit(self.entity_id, name, ids, 1),
                 )
             self.related[key] = page
-            self._embed(page, section.title, f"related:{key}")
+            self._embed(page, section.title, f"related:{key}", self._type_icon(section.other_type))
         return True
 
     def _orders(self, name: str) -> bool:
@@ -739,12 +753,21 @@ class DetailPage(QWidget):
         super().showEvent(event)
         self._fit_header()
 
-    def _embed(self, page: QWidget, label: str, key: str) -> None:
+    def _type_icon(self, type_id: str | None) -> QIcon:
+        """A type's icon (#556); the generic one for no type, or one not in the theme."""
+        try:
+            entity = self.session.schema.by_type_id(type_id or "").entity
+        except KeyError:
+            return icon(None)
+        return icon(type_icon(self.session.theme, entity))
+
+    def _embed(self, page: QWidget, label: str, key: str, tab_icon: QIcon) -> None:
         """Put an embedded search (or a gallery) below the sections; with more than one, as
-        tabs. ``key`` names it for remembering the last tab used."""
+        tabs, each with ``tab_icon``. ``key`` names it for remembering the last tab used."""
         self._tab_keys[id(page)] = key
         if self._bottom is None:
             self._bottom, self._bottom_label, self._bottom_key = page, label, key
+            self._bottom_icon = tab_icon
             self.splitter.addWidget(page)
             # The header keeps its height; the searches below get the rest (#468).
             self.splitter.setStretchFactor(0, 0)
@@ -756,10 +779,10 @@ class DetailPage(QWidget):
             self._tabs = QTabWidget()
             self._tabs.setObjectName("bottom_tabs")
             self.splitter.replaceWidget(self.splitter.indexOf(first), self._tabs)
-            self._tabs.addTab(first, self._bottom_label)
+            self._tabs.addTab(first, self._bottom_icon, self._bottom_label)
             self._bottom = self._tabs
             self._tabs.currentChanged.connect(self._tab_changed)
-        self._tabs.addTab(page, label)
+        self._tabs.addTab(page, tab_icon, label)
 
     def _show_gallery_tabs(self, galleries: Sequence[DetailSection]) -> None:
         """The galleries as the last tabs below the sections (#456), made again on each
@@ -789,7 +812,7 @@ class DetailPage(QWidget):
                 column.addWidget(area, 1)
                 count = len(section.files)
                 label = f"{section.title} ({count:,})" if count else section.title
-                self._embed(tab, label, f"gallery:{section.title}")
+                self._embed(tab, label, f"gallery:{section.title}", lucide("images"))
                 self._gallery_tabs.append(tab)
                 self._gallery_chips(tab, section, gallery, chips)
             if current is not None:
