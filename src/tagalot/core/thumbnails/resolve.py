@@ -21,6 +21,7 @@ from PIL import Image
 from sqlalchemy import Connection, Engine, Row, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from tagalot.core.icons import type_icon
 from tagalot.core.member_paths import PATH_MARK, member_name
 from tagalot.core.models import (
     Entity,
@@ -129,6 +130,12 @@ class ThumbnailResolver:
         those in its see-through folders."""
         self._theme = theme()
         self._types = {theme.type_id_of(e): e for e in theme.entities}
+        self._type_icons = {
+            type_id: icon
+            for type_id, entity in self._types.items()
+            if (icon := type_icon(theme, entity)) is not None
+        }
+        """Each type's own icon (#556): it shows instead of its chain's ``Icon``."""
         self._chains: dict[str, list[ThumbnailProvider]] = {}
         self._failed: set[str] = set()
         """Cache keys that failed to render this session: the same file isn't retried
@@ -221,6 +228,9 @@ class ThumbnailResolver:
                 chain = list(self._theme.thumbnail_chain(entity)) if entity else []
                 self._chains[type_id] = chain
             return self._chains[type_id]
+
+    def type_icon(self, type_id: str) -> str | None:
+        return self._type_icons.get(type_id)
 
     def entity_type(self, type_id: str) -> type[ThemeEntity] | None:
         return self._types.get(type_id)
@@ -338,7 +348,7 @@ class _Resolution:
                     return online, None, None, None
                 continue
             if isinstance(provider, Icon):
-                return None, provider.name, None, None
+                return None, self.owner.type_icon(entity.type) or provider.name, None, None
             if isinstance(provider, TitleCard):
                 card = self._card(entity, provider)
                 if card is not None:
@@ -362,7 +372,7 @@ class _Resolution:
             online = self._online(entity)
             if online is not None:
                 return online, None, None, None
-        return None, FALLBACK_ICON, None, None
+        return None, self.owner.type_icon(entity.type) or FALLBACK_ICON, None, None
 
     def _online(self, entity: EntityRef) -> Thumbnail | None:
         """The item's picture from an online service (#483): only when it has none of its
@@ -439,6 +449,9 @@ class _Resolution:
         return title_card(title, subtitle, provider.aspect)
 
     def _icon(self, entity: EntityRef) -> str:
+        own = self.owner.type_icon(entity.type)
+        if own is not None:
+            return own
         icons = [p for p in self.owner.chain(entity.type) if isinstance(p, Icon)]
         return icons[0].name if icons else FALLBACK_ICON
 

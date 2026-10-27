@@ -84,7 +84,7 @@ class Song(Entity):
   - `display` shows a number as `"bytes"` (3.0 MB) or `"duration"` (seconds as 3:25), and a text field as `"url"`: on the item's page, a web address (`http`/`https`) is a link that opens in the browser (needs `api_version = 3`).
   - `rating` (`api_version = 16`) makes a `float` field a rating out of `5` (or `10`, for scores out of 10 such as a movie's `.nfo`): `rating: float | None = field("Rating", search="range", rating=5)`. It shows as five stars in half-star steps (3.5 out of 5 is ★★★½☆; out of 10, each point is a half star), and people set it by clicking the stars on the item's page. Store the number on its own scale; `read_rating(value, out_of=5)` reads one as files write it (`4`, `"4.5"`, `"8/10"`, `"★★★½"`) out of 5, to the nearest half, with 0 as unrated. What your `ingest` writes is the starting value: once someone rates an item, scans leave it alone.
   - `mirrors` (`api_version = 15`) says a text field is a copy of a link, so people can edit it: a container type (`series: str | None = field("Series", mirrors=Series)`, with `contains(Series, Book)` declared) or a relationship's name (`field("Author", mirrors="writers")`). Your `ingest` keeps writing both from the files. When someone types a name (several, comma-separated, for `many=True` or a relationship that has many; `;` when names contain commas), Tagalot finds or makes each item with your theme's `item_named(type, name, ctx)` (override it to use the same `upsert` keys your `ingest` does, so an edit and a scan agree on one item), moves the links by hand (your scans keep them), and keeps the field as theirs. A field the item gets through another container (a book's universe through its series, with `contains(Universe, Series)`) isn't editable on the item: it follows the container.
-- **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `description_field` (the text field that describes an item, such as `"description"` or `"abstract"`: Tagalot shows it in the preview strip, in grid cards' tooltips, and as a list column; `api_version = 12`); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys).
+- **Class settings:** `label` and `plural` (how the type is named; "Category" pluralizes itself, but "Series" needs `plural`); `title_label`; `double_click = "open_file"` (double-click plays or opens the file, Ctrl+Enter the page; the default is the page); `card_lines` (fields shown under the title on grid cards); `description_field` (the text field that describes an item, such as `"description"` or `"abstract"`: Tagalot shows it in the preview strip, in grid cards' tooltips, and as a list column; `api_version = 12`); `contents_sort` (for a container, the order of what it holds, as `SortBy` keys); `icon` (the type's icon, see [Icons](#icons); `api_version = 25`).
 - Every item also has a **title** (its name), **tags**, and **extra fields** people add themselves; you don't declare those.
 
 ## Files: roles
@@ -123,11 +123,12 @@ class MusicTheme(Theme):
     dashboard = [...]
     thumbnail_max = 512          # the size thumbnails are made and cached at
     thumbnail_default = 160      # how big grid cards start
+    icon = "headphones"          # its keeps' icon in the Open Keep dialog
 ```
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`, 21 for `ctx.online_picture`, 23 for `token_env`, `titles`, and `OnlineRequest`, 24 for `OnlineImage`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`, 21 for `ctx.online_picture`, 23 for `token_env`, `titles`, and `OnlineRequest`, 24 for `OnlineImage`, 25 for `icon`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -224,6 +225,25 @@ def thumbnail_chain(self, entity_type):
 ```
 
 Providers in the API: `RoleImage(role)`, `ImageFile()` (the primary file, drawn by its kind: an audio file shows its embedded art, an archive its first picture, an EPUB its cover), `FolderImage(names)` (`folder.jpg`, `cover.png`…), `EmbeddedAudioArt()`, `ArchiveFirstImage()`, `ParentThumbnail()`, `OnlineImage()` (the item's picture from an online service, at that place in the chain; `api_version = 24`), `TitleCard(subtitle, aspect)`, and `Icon(kind)`, which ends the chain. `TitleCard` also ends it: an item without a picture shows a card with its title on a soft color picked from it, and the field `subtitle` names under it (`TitleCard("authors")`; `aspect=1` for a square card). Put it last, so a real picture wins; it needs `api_version = 10`. For your own, subclass `ThumbnailProvider` and yield candidate files from `candidates(entity, ctx)`, using the read-only `ThumbnailContext` (`resources`, `parents`, `children`, `folder_files`, `thumbnail_of`).
+
+### Icons
+
+Each type can have an icon (`api_version = 25`), and the theme one for its keeps:
+
+```python
+class Song(Entity):
+    icon = "music"             # one of the Lucide icons below
+
+class Wand(Entity):
+    icon = "icons/wand.svg"    # or an SVG beside your theme's file
+
+class MusicTheme(Theme):
+    icon = "headphones"        # its keeps, in the Open Keep dialog
+```
+
+A type's icon shows beside its searches in the navigation, on its tabs on items' pages, beside its name on an item's page, and in place of a picture for an item without one (instead of the chain's `Icon`). Icons are drawn in the text's color, so they suit light and dark modes: draw your own SVG with `stroke="currentColor"` (or `fill`), on a 24 × 24 `viewBox`, as [Lucide](https://lucide.dev)'s are. An SVG's path is relative to your theme's file (or package folder) and can't leave it. A name Tagalot can't find shows a generic file icon, and `tagalot --check-theme` warns about it.
+
+The Lucide icons Tagalot includes: `anchor`, `aperture`, `apple`, `archive`, `arrow-left`, `arrow-right`, `atom`, `award`, `baby`, `banknote`, `beer`, `bell`, `bike`, `bird`, `book`, `book-open`, `bookmark`, `box`, `boxes`, `brain`, `briefcase`, `brush`, `bug`, `building`, `building-2`, `cake`, `calculator`, `calendar`, `camera`, `car`, `case-sensitive`, `castle`, `cat`, `chart-column`, `chart-pie`, `chef-hat`, `church`, `clapperboard`, `clock`, `cloud`, `code`, `coffee`, `compass`, `contact`, `cooking-pot`, `copy`, `cpu`, `crown`, `database`, `dice-5`, `disc`, `disc-3`, `dog`, `drama`, `drum`, `dumbbell`, `earth`, `eye`, `feather`, `file`, `file-archive`, `file-audio`, `file-code`, `file-image`, `file-text`, `file-video`, `film`, `fish`, `flag`, `flame`, `flask-conical`, `flower`, `folder`, `folder-open`, `gamepad-2`, `gem`, `ghost`, `gift`, `glasses`, `globe`, `graduation-cap`, `guitar`, `hammer`, `hard-drive`, `hash`, `headphones`, `heart`, `history`, `hourglass`, `house`, `image`, `images`, `inbox`, `joystick`, `key-round`, `landmark`, `languages`, `laptop`, `layers`, `layout-dashboard`, `leaf`, `library`, `library-big`, `lightbulb`, `link`, `list-music`, `list-video`, `mail`, `map`, `map-pin`, `medal`, `message-square`, `mic`, `mic-vocal`, `microscope`, `monitor`, `moon`, `mountain`, `music`, `music-2`, `newspaper`, `notebook`, `notebook-pen`, `package`, `paintbrush`, `palette`, `paperclip`, `paw-print`, `pen`, `pen-tool`, `pencil`, `piano`, `pizza`, `plane`, `popcorn`, `puzzle`, `quote`, `rabbit`, `radio`, `receipt`, `refresh-cw`, `rocket`, `ruler`, `scissors`, `scroll`, `scroll-text`, `search`, `server`, `settings`, `shapes`, `shield`, `ship`, `shirt`, `shopping-bag`, `shopping-cart`, `skull`, `smartphone`, `smile`, `sparkles`, `sprout`, `star`, `sticky-note`, `store`, `sun`, `sword`, `swords`, `tag`, `tags`, `terminal`, `thumbs-up`, `ticket`, `train-front`, `tree-pine`, `trophy`, `tv`, `type`, `user`, `user-round`, `users`, `utensils`, `video`, `wallet`, `wand-sparkles`, `watch`, `wine`, `wrench`.
 
 ## Commands: actions
 

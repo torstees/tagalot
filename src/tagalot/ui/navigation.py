@@ -5,13 +5,15 @@ searches), TOOLS (Triage, Dedupe, Tag manager). Clicking a heading folds it; a f
 shows how many items it hides. Few items, so a standard item model is appropriate here.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, Signal
 from PySide6.QtGui import QFont, QMouseEvent, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QStyle, QTreeView, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QTreeView, QWidget
+
+from tagalot.ui.icons import icon, lucide
 
 TargetKind = Literal[
     "dashboard", "search", "view", "saved", "triage", "dedupe", "keywords", "tags", "entity"
@@ -20,6 +22,16 @@ SECTIONS = ("library", "searches", "saved", "tools")
 _TITLES = {"library": "LIBRARY", "searches": "SEARCHES", "saved": "SAVED", "tools": "TOOLS"}
 _SECTION = Qt.ItemDataRole.UserRole + 1
 _TARGET = Qt.ItemDataRole.UserRole + 2
+FIXED_ICONS = {
+    "dashboard": "layout-dashboard",
+    "search": "search",
+    "saved": "bookmark",
+    "triage": "inbox",
+    "dedupe": "copy",
+    "keywords": "key-round",
+    "tags": "tags",
+}
+"""The Lucide icon of each fixed entry (#556); a search view shows its type's."""
 
 
 @dataclass(frozen=True)
@@ -41,7 +53,13 @@ class NavigationPane(QTreeView):
     """Right-click on a saved search: (its target, the global point) (#127)."""
     folded_changed = Signal(list)
 
-    def __init__(self, views: Sequence[str] = (), parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        views: Sequence[str] = (),
+        parent: QWidget | None = None,
+        view_icons: Mapping[str, str | None] | None = None,
+    ) -> None:
+        """``view_icons`` gives each view's icon source (``core/icons.py``): its type's."""
         super().__init__(parent)
         self._model = QStandardItemModel(self)
         self.setModel(self._model)
@@ -52,18 +70,8 @@ class NavigationPane(QTreeView):
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._headings: dict[str, QStandardItem] = {}
-        style = self.style()
-        icons = {
-            "dashboard": QStyle.StandardPixmap.SP_ComputerIcon,
-            "search": QStyle.StandardPixmap.SP_FileDialogContentsView,
-            "view": QStyle.StandardPixmap.SP_FileDialogListView,
-            "saved": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "triage": QStyle.StandardPixmap.SP_MessageBoxWarning,
-            "dedupe": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            "tags": QStyle.StandardPixmap.SP_FileDialogInfoView,
-            "keywords": QStyle.StandardPixmap.SP_FileDialogContentsView,
-        }
-        self._icons = {kind: style.standardIcon(pixmap) for kind, pixmap in icons.items()}
+        self._icons = {kind: lucide(name) for kind, name in FIXED_ICONS.items()}
+        self._view_icons = dict(view_icons or {})
 
         for key in SECTIONS:
             heading = QStandardItem()
@@ -183,7 +191,11 @@ class NavigationPane(QTreeView):
         heading = self._headings[section]
         heading.removeRows(0, heading.rowCount())
         for target in targets:
-            item = QStandardItem(self._icons[target.kind], target.label)
+            if target.kind == "view":
+                item_icon = icon(self._view_icons.get(target.key))
+            else:
+                item_icon = self._icons[target.kind]
+            item = QStandardItem(item_icon, target.label)
             item.setData(target, _TARGET)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             heading.appendRow(item)

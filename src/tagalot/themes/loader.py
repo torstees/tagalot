@@ -189,6 +189,10 @@ def validate_theme(theme: type[Theme]) -> list[str]:
                 f"{names[entity]}: only one role can be primary ({', '.join(primaries)})"
             )
         roles_of[entity] = set(role_names)
+        if not isinstance(getattr(entity, "icon", None), str | None):
+            problems.append(f"{names[entity]}: icon must be a Lucide icon's name or an SVG's path")
+    if not isinstance(getattr(theme, "icon", None), str | None):
+        problems.append("the theme's icon must be a Lucide icon's name or an SVG's path")
 
     for c in getattr(theme, "containment", ()):
         for side in (c.parent, c.child):

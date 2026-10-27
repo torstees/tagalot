@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from tagalot.core.tags import Icon
 from tagalot.ui.icon_pictures import icon_image, paint_icon_picture
+from tagalot.ui.selection import selected_text_color
 
 GAP = 2
 """Space between badges."""
@@ -115,9 +116,12 @@ class BadgeDelegate(QStyledItemDelegate):
         if not icons:
             return
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        role = QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text
+        if selected:
+            color = selected_text_color(option.palette, widget)
+        else:
+            color = option.palette.color(QPalette.ColorRole.Text)
         rect = option.rect.adjusted(4, 1, -4, -1)
         painter.save()
         painter.setFont(option.font)
-        paint_badges(painter, rect, icons, text_color=option.palette.color(role))
+        paint_badges(painter, rect, icons, text_color=color)
         painter.restore()

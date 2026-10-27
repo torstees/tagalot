@@ -126,7 +126,7 @@ def test_thumbnails_for_each_format(
 
 @pytest.mark.parametrize(
     ("title", "icon"),
-    [("empty.zip", "archive"), ("damaged.zip", "archive"), ("fake.ttf", "font")],
+    [("empty.zip", "archive"), ("damaged.zip", "archive"), ("fake.ttf", "type")],  # #556
 )
 def test_files_without_a_picture_show_their_icon(
     scanned: tuple[Env, ScanReport], title: str, icon: str

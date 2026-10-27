@@ -43,7 +43,8 @@ from tagalot.core.dashboard import CardRow, Dashboard, TagUse, load_dashboard
 from tagalot.core.search_spec import FieldFilter
 from tagalot.core.session import KeepSession
 from tagalot.ui.empty_state import EmptyState
-from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
+from tagalot.ui.icons import icon_for
+from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 THUMB = 96

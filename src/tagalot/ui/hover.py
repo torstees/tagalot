@@ -17,8 +17,11 @@ from PySide6.QtWidgets import (
     QProxyStyle,
     QStyle,
     QStyleOption,
+    QStyleOptionViewItem,
     QWidget,
 )
+
+from tagalot.ui.selection import with_selected_text
 
 _ITEM_PRIMITIVES = (
     QStyle.PrimitiveElement.PE_PanelItemViewItem,
@@ -50,6 +53,13 @@ class NoHoverFill(QProxyStyle):
     ) -> None:
         if element == QStyle.ControlElement.CE_ItemViewItem:
             option = _without_hover(option)
+            if isinstance(option, QStyleOptionViewItem) and (
+                option.state & QStyle.StateFlag.State_Selected
+            ):
+                # Text that reads on the selection's fill (Windows 11 fills a
+                # list with alternating rows with the accent, text kept dark).
+                option = QStyleOptionViewItem(option)
+                with_selected_text(option, widget)
         super().drawControl(element, option, painter, widget)
 
 

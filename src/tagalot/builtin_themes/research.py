@@ -115,6 +115,7 @@ class Author(Entity):
     """Someone who wrote papers: one per spelling the files give (merge them to join a
     person's spellings)."""
 
+    icon = "user"
     title_label = "Name"
     sort_name: str | None = field("Sort name", search="text")
     """``Vaswani, Ashish``: how the Authors view sorts them."""
@@ -123,6 +124,7 @@ class Author(Entity):
 class Venue(Entity):
     """A journal, conference, or book series, holding the papers that appeared in it."""
 
+    icon = "landmark"
     contents_sort = (SortBy("year", descending=True), SortBy("title"))
 
 
@@ -130,6 +132,7 @@ class Project(Entity):
     """A reading list the user makes by hand, holding papers (tag it, and its papers
     inherit the tag)."""
 
+    icon = "briefcase"
     made_by_hand = True
     contents_sort = (SortBy("year", descending=True), SortBy("title"))
 
@@ -138,6 +141,7 @@ class Paper(Entity):
     """A paper; its files (a preprint, the published version, a duplicate download) are its
     versions."""
 
+    icon = "file-text"
     authors: str | None = field("Authors", card=True, search="text", editable=False)
     """Its authors' names in order, as its sources give them (the credits list them)."""
     year: int | None = field("Year", card=True, search="range")
@@ -189,6 +193,7 @@ class ResearchTheme(Theme):
     """Papers, their authors in order, and their venues."""
 
     id, name, version = "research", "Research", 2  # 2: ratings out of 5, as stars
+    icon = "graduation-cap"
     api_version = 16  # ratings (12: description_field; 6: full_text)
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's

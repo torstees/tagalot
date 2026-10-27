@@ -200,6 +200,16 @@ def test_without_a_picture_the_chain_ends_in_its_icon(env: Env) -> None:
     assert env.memo(env.entity("01 So What.mp3")) is None
 
 
+def test_a_types_own_icon_shows_instead_of_its_chains(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An item without a picture shows its type's icon (#556), not its chain's kind."""
+    monkeypatch.setattr(Song, "icon", "music")
+    resolver = env.resolver()
+    assert resolver.resolve(env.entity("01 So What.mp3")).icon == "music"
+    assert resolver.resolve(env.entity("Kind of Blue")).icon == "dir"  # no icon of its own
+
+
 def test_an_unknown_entity_gets_the_generic_icon(env: Env) -> None:
     assert env.resolver().resolve(999_999).icon == "entity"
 

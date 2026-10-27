@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QSplitter,
     QStackedWidget,
-    QStyle,
     QTabWidget,
     QToolBar,
     QToolButton,
@@ -47,6 +46,7 @@ from tagalot.core.activity import SCAN, Problem
 from tagalot.core.contents import ContentsResult
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
+from tagalot.core.icons import type_icon
 from tagalot.core.item_pictures import PICTURES
 from tagalot.core.keywords import (
     KeywordInfo,
@@ -110,6 +110,7 @@ from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.folder_picker import choose_open_file, choose_save_file
 from tagalot.ui.icon_pictures import SVG_SUFFIX, read_icon_file
+from tagalot.ui.icons import lucide
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
@@ -209,9 +210,7 @@ class MainWindow(QMainWindow):
         )
 
         # Actions and menus.
-        self.scan_action = QAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "Scan now", self
-        )
+        self.scan_action = QAction(lucide("refresh-cw"), "Scan now", self)
         self.scan_action.setShortcut(QKeySequence(Qt.Key.Key_F5))
         self.scan_action.setToolTip("Scan every root for new, changed, and missing files (F5)")
         self.scan_action.triggered.connect(self.scan_now)
@@ -289,17 +288,13 @@ class MainWindow(QMainWindow):
         self._update_undo_actions()
 
         # Back and forward through the pages shown (DESIGN.md §12).
-        self.back_action = QAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack), "Back", self
-        )
+        self.back_action = QAction(lucide("arrow-left"), "Back", self)
         self.back_action.setShortcuts(
             [QKeySequence(QKeySequence.StandardKey.Back), QKeySequence("Alt+Left")]
         )
         self.back_action.setToolTip("Back to the previous page (Alt+Left)")
         self.back_action.triggered.connect(self.back)
-        self.forward_action = QAction(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowForward), "Forward", self
-        )
+        self.forward_action = QAction(lucide("arrow-right"), "Forward", self)
         self.forward_action.setShortcuts(
             [QKeySequence(QKeySequence.StandardKey.Forward), QKeySequence("Alt+Right")]
         )
@@ -328,8 +323,14 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         # Navigation and the center stack.
-        views = [v.name for v in session.theme.views if isinstance(v, SearchView)]
-        self.navigation = NavigationPane(views)
+        search_views = [v for v in session.theme.views if isinstance(v, SearchView)]
+        self.navigation = NavigationPane(
+            [v.name for v in search_views],
+            view_icons={
+                v.name: type_icon(session.theme, v.types[0]) if v.types else None
+                for v in search_views
+            },
+        )
         self.navigation.setMinimumWidth(NAVIGATION_MIN_WIDTH)  # pages can't squeeze it
         self.navigation.set_folded(self._ui_state.get("nav_folded", []))
         self.navigation.navigate.connect(self.show_target)

@@ -24,8 +24,9 @@ from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from tagalot.core.detail import Preview, load_preview, load_titles
 from tagalot.core.session import KeepSession
+from tagalot.ui.icons import icon_for
 from tagalot.ui.models.results import display_value, wrapped
-from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
+from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 THUMBNAIL = 160

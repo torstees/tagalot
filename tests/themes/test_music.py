@@ -333,8 +333,8 @@ def test_thumbnail_chains(env: Env, tmp_path: Path) -> None:
         assert source("Miles Davis") == cover  # one of its albums'
         assert source("The Box") == intro  # no folder image: its first songs' art
         assert source("Queen") == intro
-        assert source("Take Five") == "audio"  # no art anywhere
-        assert source("Jazz Hits") == "dir"
+        assert source("Take Five") == "music"  # no art anywhere: its type's icon (#556)
+        assert source("Jazz Hits") == "disc"
         assert source("Dave Brubeck") == "card: Dave Brubeck"  # no albums with art
     finally:
         cache.close()
