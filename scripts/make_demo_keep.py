@@ -379,6 +379,15 @@ pack for small games.
 ![Dusk sky](<Backgrounds/dusk sky.png>)
 
 Free for personal projects; see the license in the UI pack.
+
+## Packs
+
+| Pack | Files | Since |
+|------|------:|-------|
+| Backgrounds | 2 | 2009 |
+| UI pack | 1 | 2015 |
+
+> Every sky is painted at dusk, from the studio roof.
 """,
 }
 """Folder notes for the assets demo (DESIGN.md §9 *Notes*)."""

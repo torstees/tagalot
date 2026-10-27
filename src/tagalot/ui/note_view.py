@@ -8,8 +8,11 @@
 └────────┘  Show more · Open note
 ```
 
-The body is rendered Markdown, capped at the room beside the picture; **Show more**
-expands it in place. Its pictures are only those read in a worker
+The body is rendered Markdown (``ui/markdown_doc.py``, #553). Collapsed, it shows only its
+main text (no headings, pictures, tables, or code blocks), capped at the room beside the
+picture; **Show more** shows all of it, styled, up to half the window's height, past
+which it scrolls. **Show more** shows whenever the collapsed note leaves something out.
+Its pictures are only those read in a worker
 (:func:`~tagalot.core.note_markdown.read_pictures`): the document never loads anything
 itself, so the GUI thread never touches a disk or a share. Links open in the browser, or,
 relative to the note's folder (or found in an assets folder by the worker, #418), with the
@@ -23,6 +26,7 @@ note file's note is edited in its own program (**Open note**).
 from collections.abc import Callable
 from urllib.parse import unquote
 
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
 from PySide6.QtGui import (
     QDesktopServices,
@@ -30,6 +34,7 @@ from PySide6.QtGui import (
     QImage,
     QKeyEvent,
     QResizeEvent,
+    QShowEvent,
     QTextCursor,
     QTextDocument,
 )
@@ -46,15 +51,19 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.note_markdown import renderable, resolve_link
 from tagalot.ui import field_editor
+from tagalot.ui.markdown_doc import Hidden, collapsed, fit_pictures, render
 
 MIN_CAP = 60
 """The note is never capped shorter than this, in pixels (about three lines)."""
 EDITOR_LINES = 8
 """The note's box is this many lines tall."""
+EXPANDED_SHARE = 0.5
+"""Expanded, the note is at most this share of the window's height; past it, it scrolls."""
 
 
 class _Body(QTextBrowser):
-    """The rendered body: no frame or scroll bars, as tall as it is allowed to be."""
+    """The rendered body: no frame, as tall as it is allowed to be; it scrolls only when
+    an expanded note is taller than that."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,7 +74,6 @@ class _Body(QTextBrowser):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.viewport().setAutoFillBackground(False)
         self.setStyleSheet("QTextBrowser { background: transparent; }")
-        self.document().setDocumentMargin(0)
 
     def loadResource(self, kind: int, name: QUrl | str) -> object:
         """Only the pictures read for this note; nothing is loaded from disk here."""
@@ -74,8 +82,9 @@ class _Body(QTextBrowser):
             return self.pictures.get(text) or self.pictures.get(unquote(text))
         return None
 
-    def content_height(self) -> int:
-        document = self.document()
+    def content_height(self, document: QTextDocument | None = None) -> int:
+        """How tall ``document`` (the one shown) is at the body's width."""
+        document = document or self.document()
         document.setTextWidth(self.viewport().width())
         return int(document.size().height()) + 2
 
@@ -190,6 +199,14 @@ class NoteView(QWidget):
         """Whether the note is typed here (the item has no note file)."""
         self.cap = MIN_CAP
         self.expanded = False
+        self.full = QTextDocument(self.body)
+        """The note, all of it, styled (shown expanded)."""
+        self.short = QTextDocument(self.body)
+        """Its main text only (shown collapsed)."""
+        self.hidden = Hidden()
+        """What the collapsed note leaves out."""
+        self._fitted_width = -1
+        self._window: QWidget | None = None
         self.open_file: Callable[[str], None] = _open_local
         """Opens a file a link names (tests stand in for the system)."""
         self.body.viewport().installEventFilter(self)
@@ -213,7 +230,7 @@ class NoteView(QWidget):
         self.text = body
         self.editable = editable and not has_file
         self.body.pictures = pictures
-        self.body.setMarkdown(renderable(body))
+        self._render()
         self.open_button.setVisible(has_file)
         if self.editing() and not self.editable:
             self._close_box()
@@ -254,7 +271,7 @@ class NoteView(QWidget):
         self._close_box()
         if typed.strip() != self.text.strip():
             self.text = typed  # shown at once; the page reloads it once saved
-            self.body.setMarkdown(renderable(typed))
+            self._render()
             self._show_parts()
             self.edited.emit(typed)
 
@@ -266,10 +283,32 @@ class NoteView(QWidget):
         self._show_parts()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is self._window and event.type() == QEvent.Type.Resize:
+            if self.expanded:
+                self._fit()
+            return False
         if watched is self.body.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
             self.start_editing()
             return self.editable
         return super().eventFilter(watched, event)
+
+    # --- showing it ---
+
+    def _render(self) -> None:
+        """Make the full and collapsed documents from the note, in the current colors."""
+        old = (self.full, self.short)
+        palette = self.palette()
+        self.full = render(renderable(self.text), palette, self.body)
+        self.short, self.hidden = collapsed(self.full, palette)
+        if not self.hidden:
+            self.short.deleteLater()
+            self.short = self.full
+        self._fitted_width = -1
+        self.body.setDocument(self.full if self.expanded else self.short)
+        for document in old:
+            if document not in (self.full, self.short):
+                document.deleteLater()
+        self._fit()
 
     def set_cap(self, cap: int) -> None:
         """How tall the body may be before **Show more**."""
@@ -280,16 +319,55 @@ class NoteView(QWidget):
         self.expanded = not self.expanded
         self._fit()
 
+    def limit(self) -> int:
+        """The tallest the expanded note may be: half the window, or the cap if more."""
+        return max(self.cap, int(self.window().height() * EXPANDED_SHARE))
+
     def _fit(self) -> None:
-        full = self.body.content_height()
-        longer = full > self.cap
-        self.more.setVisible(longer and self.body.isVisibleTo(self))
+        width = self.body.viewport().width()
+        if width != self._fitted_width:
+            self._fitted_width = width
+            fit_pictures(self.full, width, self.body.pictures)
+        shown = self.full if self.expanded else self.short
+        if self.body.document() is not shown:
+            self.body.setDocument(shown)
+        short = self.body.content_height(self.short)
+        more = bool(self.hidden) or short > self.cap
+        self.more.setVisible(more and self.body.isVisibleTo(self))
         self.more.setText("Show less" if self.expanded else "Show more")
-        self.body.setFixedHeight(full if self.expanded or not longer else self.cap)
+        if self.expanded:
+            full, limit = self.body.content_height(self.full), self.limit()
+            self.body.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                if full > limit
+                else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            self.body.setFixedHeight(min(full, limit))
+        else:
+            self.body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.body.verticalScrollBar().setValue(0)
+            self.body.setFixedHeight(min(short, self.cap))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._fit()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """Follow the window's height, which sets how tall the expanded note may be."""
+        super().showEvent(event)
+        window = self.window()
+        if window is not self._window:
+            if self._window is not None and shiboken6.isValid(self._window):
+                self._window.removeEventFilter(self)
+            self._window = window
+            window.installEventFilter(self)
+        self._fit()
+
+    def changeEvent(self, event: QEvent) -> None:
+        """New colors (the system's light or dark mode): style the note again."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "full"):
+            self._render()
 
     def _follow(self, url: QUrl) -> None:
         """A link in the note: a web address in the browser, a file beside the note with
