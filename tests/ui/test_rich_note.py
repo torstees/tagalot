@@ -23,6 +23,7 @@ from tagalot.ui.markdown_doc import (
     QUOTE_INDENT,
     Hidden,
     collapsed,
+    fit_pictures,
     render,
     shade,
 )
@@ -175,18 +176,21 @@ def test_the_full_note_is_styled_from_the_palette(qtbot: QtBot) -> None:
 
 
 def test_pictures_are_scaled_down_to_the_width(qtbot: QtBot) -> None:
-    """By the layout (a maximum width of 100%): nothing edits the document when the width
-    changes, which crashed the app mid-resize (#553's review)."""
-    image = QTextDocument.ResourceType.ImageResource.value
-    wide = render("![Wide](wide.png)", _palette())
-    wide.addResource(image, "wide.png", QImage(900, 300, QImage.Format.Format_RGB32))
-    small = render("![Small](<a sketch.png>)", _palette())
-    small.addResource(image, "a sketch.png", QImage(20, 10, QImage.Format.Format_RGB32))
-    for width, height in ((300, 100), (600, 200), (1200, 300)):
-        wide.setTextWidth(width)
-        assert round(wide.size().height()) == height
-        small.setTextWidth(width)
-        assert round(small.size().height()) == 10
+    full = render("![Wide](wide.png) ![Small](<a sketch.png>)", _palette())
+    pictures = {
+        "wide.png": QImage(900, 300, QImage.Format.Format_RGB32),
+        "a sketch.png": QImage(20, 10, QImage.Format.Format_RGB32),
+    }
+    fit_pictures(full, 300, pictures)
+    sizes = {}
+    it = full.begin().begin()
+    while not it.atEnd():
+        form = it.fragment().charFormat()
+        if form.isImageFormat():
+            image = form.toImageFormat()
+            sizes[image.name()] = (round(image.width()), round(image.height()))
+        it += 1
+    assert sizes == {"wide.png": (300, 100), "a sketch.png": (20, 10)}
 
 
 # --- the note on the page ---

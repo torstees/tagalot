@@ -14,6 +14,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.ui.detail_view import DetailPage
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.note_view import PICTURES_DELAY
 from tagalot.ui.workers import ScanController
 from tests.ui.test_contents_search import SCRIPT, _open
 
@@ -62,6 +63,10 @@ def _page(qtbot: QtBot, window: MainWindow, session: KeepSession) -> DetailPage:
 
 
 def test_the_expanded_note_settles(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    """Once the pictures are fitted to the new width (``PICTURES_DELAY`` after a resize),
+    nothing moves any more. It kept moving on macOS and Ubuntu: the picture's height
+    followed the width, which showed or hid the page's scroll bar, which changed the
+    width…"""
     note = _page(qtbot, window, session).note_view
     note.more.click()
     resizes = _Resizes()
@@ -70,12 +75,25 @@ def test_the_expanded_note_settles(qtbot: QtBot, window: MainWindow, session: Ke
     for width in range(1000, 1300, 9):
         for height in (700, 900):
             window.resize(width, height)
-            qtbot.wait(20)
+            qtbot.wait(PICTURES_DELAY + 100)
             resizes.count = 0
-            qtbot.wait(80)
+            qtbot.wait(100)
             if resizes.count:
                 unsettled.append((width, height, resizes.count))
     assert unsettled == []
+
+
+def test_dragging_the_width_quickly(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:
+    """A drag, a frame at a time, narrower and wider again: this overflowed Qt's stack
+    (a crash, so the run itself fails) while pictures followed the width as it changed."""
+    note = _page(qtbot, window, session).note_view
+    note.more.click()
+    for low in (900, 650):
+        for width in [*range(1300, low, -4), *range(low, 1300, 4)]:
+            window.resize(width, 900)
+            qtbot.wait(5)
+    qtbot.wait(PICTURES_DELAY + 100)
+    assert note.body.isVisible()
 
 
 def test_show_more_fits_the_header(qtbot: QtBot, window: MainWindow, session: KeepSession) -> None:

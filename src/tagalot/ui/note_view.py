@@ -27,7 +27,7 @@ from collections.abc import Callable
 from urllib.parse import unquote
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QDesktopServices,
     QFocusEvent,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QStyle,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
@@ -51,12 +52,14 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.note_markdown import renderable, resolve_link
 from tagalot.ui import field_editor
-from tagalot.ui.markdown_doc import Hidden, collapsed, render
+from tagalot.ui.markdown_doc import Hidden, collapsed, fit_pictures, render
 
 MIN_CAP = 60
 """The note is never capped shorter than this, in pixels (about three lines)."""
 EDITOR_LINES = 8
 """The note's box is this many lines tall."""
+PICTURES_DELAY = 250
+"""Pictures are fitted to the width this long (ms) after the width last changed."""
 EXPANDED_SHARE = 0.5
 """Expanded, the note is at most this share of the window's height; past it, it scrolls."""
 
@@ -204,6 +207,12 @@ class NoteView(QWidget):
         """What the collapsed note leaves out."""
         self._window: QWidget | None = None
         self._fitting = False
+        self._pictures_width = -1
+        """The width the pictures were last fitted to."""
+        self._pictures_timer = QTimer(self)
+        self._pictures_timer.setSingleShot(True)
+        self._pictures_timer.setInterval(PICTURES_DELAY)
+        self._pictures_timer.timeout.connect(self._fit_pictures)
         self.open_file: Callable[[str], None] = _open_local
         """Opens a file a link names (tests stand in for the system)."""
         self.body.viewport().installEventFilter(self)
@@ -300,6 +309,8 @@ class NoteView(QWidget):
         if not self.hidden:
             self.short.deleteLater()
             self.short = self.full
+        self._pictures_width = -1
+        self._fit_pictures()
         self.body.setDocument(self.full if self.expanded else self.short)
         for document in old:
             if document not in (self.full, self.short):
@@ -331,6 +342,21 @@ class NoteView(QWidget):
         finally:
             self._fitting = False
 
+    def _fit_pictures(self) -> None:
+        """Scale the pictures to the width, when it changed by more than a scroll bar's
+        width. Never while the window is being resized (a timer calls it once that
+        pauses), and not for a scroll bar's coming and going: a picture's height follows
+        the width, which changes the page's scroll bar, which changes the width… that
+        bounced Qt's layout endlessly and overflowed its stack (#553's review)."""
+        width = self.body.width()
+        slack = self.body.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent) + 8
+        if self._pictures_width >= 0 and abs(width - self._pictures_width) <= slack:
+            return
+        self._pictures_width = width
+        fit_pictures(self.full, max(width - slack, 1), self.body.pictures)
+        if self.isVisible():
+            self._fit()
+
     def _fit_now(self) -> None:
         width = self.body.width()
         shown = self.full if self.expanded else self.short
@@ -361,6 +387,7 @@ class NoteView(QWidget):
         super().resizeEvent(event)
         if event.size().width() != event.oldSize().width():
             self._fit()
+            self._pictures_timer.start()
 
     def showEvent(self, event: QShowEvent) -> None:
         """Follow the window's height, which sets how tall the expanded note may be."""

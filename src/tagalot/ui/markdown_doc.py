@@ -10,13 +10,15 @@ bulkier parts (headings, pictures, tables, code blocks, horizontal rules), count
 read as Qt reads it: its pictures and tables are hidden like Markdown's.
 
 Nothing here loads a picture: the document asks its parent (the page's browser), which has
-only those read in a worker. A picture is at most as wide as the text: Qt's layout
-scales it down (a maximum width of 100%), so nothing edits the document when the width
-changes (doing that while the window was being resized crashed the app, in #553's
-review).
+only those read in a worker. :func:`fit_pictures` scales them down to a width; the page
+calls it only once a resize pauses and the width has really changed (#553's review: a
+picture whose height follows the width, as the window is being resized, kept Qt's
+layout bouncing, endlessly, and overflowed its stack).
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from urllib.parse import unquote
 
 from PySide6.QtCore import QObject
 from PySide6.QtGui import (
@@ -24,6 +26,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
+    QImage,
     QPalette,
     QTextBlock,
     QTextBlockFormat,
@@ -33,7 +36,6 @@ from PySide6.QtGui import (
     QTextFormat,
     QTextFrame,
     QTextFrameFormat,
-    QTextLength,
     QTextTable,
 )
 
@@ -140,6 +142,34 @@ def collapsed(document: QTextDocument, palette: QPalette) -> tuple[QTextDocument
     return short, hidden
 
 
+def fit_pictures(document: QTextDocument, width: int, pictures: Mapping[str, QImage]) -> None:
+    """Show each picture of ``pictures`` (by the name written, or that name unquoted) at
+    its own size, or scaled down to ``width``."""
+    cursor = QTextCursor(document)
+    for block in _blocks(document):
+        it = block.begin()
+        while not it.atEnd():
+            fragment = it.fragment()
+            it += 1
+            form = fragment.charFormat()
+            if not form.isImageFormat():
+                continue
+            image = form.toImageFormat()
+            picture = pictures.get(image.name()) or pictures.get(unquote(image.name()))
+            if picture is None or picture.width() <= 0:
+                continue
+            shown = min(picture.width(), max(width, 1))
+            if round(image.width()) == shown:
+                continue
+            image.setWidth(shown)
+            image.setHeight(picture.height() * shown / picture.width())
+            cursor.setPosition(fragment.position())
+            cursor.setPosition(
+                fragment.position() + fragment.length(), QTextCursor.MoveMode.KeepAnchor
+            )
+            cursor.setCharFormat(image)
+
+
 # --- styling ---
 
 
@@ -192,27 +222,6 @@ def _style(document: QTextDocument, palette: QPalette) -> None:
                 )
     for table in _tables(document.rootFrame()):
         _style_table(table, palette)
-    _fit_pictures(document)
-
-
-def _fit_pictures(document: QTextDocument) -> None:
-    """Let each picture be at most as wide as the text (scaled down by the layout)."""
-    whole = QTextLength(QTextLength.Type.PercentageLength, 100)
-    cursor = QTextCursor(document)
-    for block in _blocks(document):
-        it = block.begin()
-        while not it.atEnd():
-            fragment = it.fragment()
-            it += 1
-            if not fragment.charFormat().isImageFormat():
-                continue
-            image = fragment.charFormat().toImageFormat()
-            image.setMaximumWidth(whole)
-            cursor.setPosition(fragment.position())
-            cursor.setPosition(
-                fragment.position() + fragment.length(), QTextCursor.MoveMode.KeepAnchor
-            )
-            cursor.setCharFormat(image)
 
 
 def _merge(
