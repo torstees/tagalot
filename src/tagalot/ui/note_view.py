@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
-    QStyle,
     QTextBrowser,
     QToolButton,
     QVBoxLayout,
@@ -52,7 +51,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.note_markdown import renderable, resolve_link
 from tagalot.ui import field_editor
-from tagalot.ui.markdown_doc import Hidden, collapsed, fit_pictures, render
+from tagalot.ui.markdown_doc import Hidden, collapsed, render
 
 MIN_CAP = 60
 """The note is never capped shorter than this, in pixels (about three lines)."""
@@ -203,7 +202,6 @@ class NoteView(QWidget):
         """Its main text only (shown collapsed)."""
         self.hidden = Hidden()
         """What the collapsed note leaves out."""
-        self._fitted_width = -1
         self._window: QWidget | None = None
         self._fitting = False
         self.open_file: Callable[[str], None] = _open_local
@@ -302,7 +300,6 @@ class NoteView(QWidget):
         if not self.hidden:
             self.short.deleteLater()
             self.short = self.full
-        self._fitted_width = -1
         self.body.setDocument(self.full if self.expanded else self.short)
         for document in old:
             if document not in (self.full, self.short):
@@ -336,10 +333,6 @@ class NoteView(QWidget):
 
     def _fit_now(self) -> None:
         width = self.body.width()
-        if width != self._fitted_width:
-            self._fitted_width = width
-            bar = self.body.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-            fit_pictures(self.full, max(width - bar, 1), self.body.pictures)
         shown = self.full if self.expanded else self.short
         if self.body.document() is not shown:
             self.body.setDocument(shown)

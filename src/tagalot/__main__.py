@@ -1,5 +1,6 @@
 """Entry point for the ``tagalot`` console script and ``python -m tagalot``."""
 
+import faulthandler
 import logging
 import sys
 from collections.abc import Callable
@@ -34,6 +35,9 @@ def main() -> int:
 
         return run_check(_output(sys.argv[1:]))
     logging.basicConfig(level=logging.INFO)
+    if sys.stderr is not None:  # a windowed build has no console to write to
+        # A crash inside Qt prints where Python was, rather than nothing (#553's review).
+        faulthandler.enable()
     logger.info("Tagalot starting")
 
     # Imported here so that importing this module does not load Qt.
