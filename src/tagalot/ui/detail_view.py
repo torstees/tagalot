@@ -21,6 +21,7 @@ are links that open their own pages.
 """
 
 import html
+import logging
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -57,8 +58,10 @@ from tagalot.core.ingest import TITLE
 from tagalot.core.item_pictures import USER, is_picture
 from tagalot.core.keep import KeepConfig
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
+from tagalot.core.markdown_glimpse import glimpse
 from tagalot.core.models import FieldSource, ResourceStatus
 from tagalot.core.note_markdown import find_links, read_pictures, renderable
+from tagalot.core.notes import read_note
 from tagalot.core.roots import local_path
 from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order, type_contents_order
@@ -79,6 +82,8 @@ from tagalot.ui.note_view import NoteView
 from tagalot.ui.search_view import WRITE_BACK_TIP, SearchPage, add_reread_actions
 from tagalot.ui.thumbnails import ThumbnailLoader, icon_for
 from tagalot.ui.workers import run_in_pool
+
+logger = logging.getLogger(__name__)
 
 HEADER_MAX_SHARE = 0.6
 """The most of a page's height the header takes above its tabs at first (#491)."""
@@ -113,16 +118,27 @@ class _Loaded:
     pictures: dict[str, QImage] = field(default_factory=dict)
     links: dict[str, str] = field(default_factory=dict)
     """Where the note's links are, when in an assets folder rather than beside it."""
+    glimpse: str = ""
+    """A glimpse of the item's own Markdown file (#554), shown when it has no note."""
     badges: BadgesValue | None = None
     """The item's tag badges (#398), shown beside its title."""
+
+
+def glimpsed_file(detail: EntityDetail) -> FileRow | None:
+    """The item's own Markdown file, when the page shows a glimpse of it rather than a
+    note (#554): the note, typed or a file, wins."""
+    if detail.note_body.strip() or detail.note_file is not None:
+        return None
+    return detail.markdown_file
 
 
 def note_assets(
     detail: EntityDetail, config: KeepConfig, root_path: Callable[[str], str | None]
 ) -> list[str]:
     """The assets folders (this computer's paths) the item's note's pictures and links are
-    looked for in when not beside it (#418): the item's own, its folder's, the keep's."""
-    file = detail.note_file
+    looked for in when not beside it (#418): the item's own, its folder's, the keep's. For
+    a glimpse of its own Markdown file (#554), that file's."""
+    file = glimpsed_file(detail) or detail.note_file
     base = root_path(file.root_id) if file is not None else None
     if file is None or base is None:
         return []
@@ -133,15 +149,28 @@ def note_assets(
 
 def _read_note(detail: EntityDetail | None, assets: Sequence[str] = ()) -> _Loaded:
     """The note's folder on this computer and its pictures, read here in the worker, and
-    where its links are when they're in one of the ``assets`` folders."""
-    file = detail.note_file if detail is not None else None
-    if detail is None or file is None or file.path is None:
+    where its links are when they're in one of the ``assets`` folders. For an item without
+    a note whose own file is Markdown, a glimpse of that file (#554), read here too; while
+    its folder is offline, nothing."""
+    if detail is None:
+        return _Loaded(detail)
+    glimpsed = glimpsed_file(detail)
+    file = glimpsed or detail.note_file
+    if file is None or file.path is None:
         return _Loaded(detail)
     folder = os.path.dirname(file.path)
     pictures = {}
     links: dict[str, str] = {}
+    text = ""
     if file.status is ResourceStatus.OK:
-        body = renderable(detail.note_body)
+        source = detail.note_body
+        if glimpsed is not None:
+            try:
+                text = glimpse(read_note(file.path).body, detail.title)
+            except (OSError, ValueError) as e:
+                logger.info("Not showing %s on its page: %s", file.path, e)
+            source = text
+        body = renderable(source)
         links = find_links(body, folder, assets)
         for name, data in read_pictures(body, folder, assets).items():
             image = QImage.fromData(data)
@@ -151,7 +180,7 @@ def _read_note(detail: EntityDetail | None, assets: Sequence[str] = ()) -> _Load
                 )
             if not image.isNull():
                 pictures[name] = image
-    return _Loaded(detail, folder, pictures, links)
+    return _Loaded(detail, folder, pictures, links, glimpse=text)
 
 
 def related_key(session: KeepSession, name: str, side: str) -> str:
@@ -866,13 +895,15 @@ class DetailPage(QWidget):
         if detail is None:
             return
         has_file = detail.note_file is not None
+        glimpsed = bool(loaded.glimpse)  # the item's own Markdown file's, without a note
         self.note_view.show_note(
-            detail.note_body,
+            loaded.glimpse if glimpsed else detail.note_body,
             loaded.note_folder,
             loaded.pictures,
-            has_file,
+            has_file or glimpsed,
             editable=True,
             links=loaded.links,
+            glimpse=glimpsed,
         )
         self.open_note_action.setVisible(has_file)
         config = self.session.keep.config
@@ -888,11 +919,15 @@ class DetailPage(QWidget):
         self.note_view.set_cap(HEADER_THUMBNAIL - others - self.note_view.more.sizeHint().height())
 
     def open_note(self) -> None:
-        """Open the item's note file with its program."""
+        """Open the item's note file with its program; or, showing a glimpse of its own
+        Markdown file (#554), that file."""
         detail = self.detail
-        if self.file_opener is None or detail is None or detail.note_file is None:
+        if self.file_opener is None or detail is None:
             return
-        opener, resource_id = self.file_opener, detail.note_file.resource_id
+        file = glimpsed_file(detail) if self.note_view.glimpse else detail.note_file
+        if file is None:
+            return
+        opener, resource_id = self.file_opener, file.resource_id
         opener.lookup(self.entity_id, resource_id, lambda f: opener.act(f, OPEN))
 
     # --- the header's thumbnail ---

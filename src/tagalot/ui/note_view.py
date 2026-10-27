@@ -18,6 +18,10 @@ itself, so the GUI thread never touches a disk or a share. Links open in the bro
 relative to the note's folder (or found in an assets folder by the worker, #418), with the
 file's own program.
 
+An item without a note whose own file is Markdown shows a glimpse of that file instead
+(#554, ``core/markdown_glimpse.py``): its table of contents or its opening, with **Open
+file**; **Add a note** still types a note, which then takes its place.
+
 An item without a note file has a note typed here (#383): **Add a note**, or ✎ (or
 double-clicking the note) opens a box; Ctrl+Enter or clicking away saves, Esc cancels. A
 note file's note is edited in its own program (**Open note**).
@@ -195,6 +199,8 @@ class NoteView(QWidget):
         """Links found in an assets folder: ``{path beside the note: path there}``."""
         self.text = ""
         """The note's Markdown, as shown."""
+        self.glimpse = False
+        """What's shown is a glimpse of the item's own Markdown file, not a note."""
         self.editable = False
         """Whether the note is typed here (the item has no note file)."""
         self.cap = MIN_CAP
@@ -226,18 +232,26 @@ class NoteView(QWidget):
         has_file: bool,
         editable: bool = False,
         links: dict[str, str] | None = None,
+        glimpse: bool = False,
     ) -> None:
         """Show a note's Markdown ``body``; ``folder`` (this computer's path) resolves its
         links (``links``: those found in an assets folder instead), ``pictures`` are its
         pictures by the name written, read in a worker. ``editable``: the note is typed
-        here. A note being typed stays open."""
+        here. ``glimpse``: ``body`` is a glimpse of the item's own Markdown file (#554),
+        opened with **Open file**; a note can still be typed (``editable``). A note being
+        typed stays open."""
         self.folder = folder
         self.links = links or {}
         self.text = body
-        self.editable = editable and not has_file
+        self.glimpse = glimpse
+        self.editable = editable and (glimpse or not has_file)
         self.body.pictures = pictures
         self._render()
         self.open_button.setVisible(has_file)
+        self.open_button.setText("Open file" if glimpse else "Open note")
+        self.open_button.setToolTip(
+            "Open the file in its own program" if glimpse else "Edit the note in its own program"
+        )
         if self.editing() and not self.editable:
             self._close_box()
         self._show_parts()
@@ -246,8 +260,8 @@ class NoteView(QWidget):
         editing = self.editing()
         has_text = bool(self.text.strip())
         self.body.setVisible(has_text and not editing)
-        self.add_button.setVisible(self.editable and not has_text and not editing)
-        self.pencil.setVisible(self.editable and has_text and not editing)
+        self.add_button.setVisible(self.editable and (self.glimpse or not has_text) and not editing)
+        self.pencil.setVisible(self.editable and has_text and not self.glimpse and not editing)
         self.setVisible(has_text or self.editable or self.open_button.isVisibleTo(self))
         self._fit()
 
@@ -260,7 +274,7 @@ class NoteView(QWidget):
     def start_editing(self) -> None:
         if not self.editable:
             return
-        self.box.setPlainText(self.text)
+        self.box.setPlainText("" if self.glimpse else self.text)
         self.box.setVisible(True)
         self.edit_row.setVisible(True)
         self._show_parts()
@@ -275,8 +289,11 @@ class NoteView(QWidget):
             return
         typed = self.box.toPlainText()
         self._close_box()
-        if typed.strip() != self.text.strip():
+        if typed.strip() != ("" if self.glimpse else self.text.strip()):
             self.text = typed  # shown at once; the page reloads it once saved
+            if self.glimpse:  # the typed note takes the file's place
+                self.glimpse = False
+                self.open_button.setVisible(False)
             self._render()
             self._show_parts()
             self.edited.emit(typed)
@@ -293,7 +310,11 @@ class NoteView(QWidget):
             if self.expanded:
                 self._fit()
             return False
-        if watched is self.body.viewport() and event.type() == QEvent.Type.MouseButtonDblClick:
+        if (
+            watched is self.body.viewport()
+            and event.type() == QEvent.Type.MouseButtonDblClick
+            and not self.glimpse  # the file's text isn't the note's
+        ):
             self.start_editing()
             return self.editable
         return super().eventFilter(watched, event)
@@ -408,8 +429,13 @@ class NoteView(QWidget):
 
     def _follow(self, url: QUrl) -> None:
         """A link in the note: a web address in the browser, a file beside the note with
-        its program."""
+        its program; one to a heading of the file (``#chapter-1``, as a table of contents
+        has) opens the file."""
         text = url.toString()
+        if text.startswith("#"):
+            if self.open_button.isVisibleTo(self):
+                self.open_note.emit()
+            return
         if url.scheme() in ("http", "https", "mailto"):
             field_editor.open_web_address(text)  # looked up now, so tests can stand in
             return

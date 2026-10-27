@@ -80,6 +80,15 @@ The note's body shows in the page's header, beside the picture. At first it show
 
 Notes are read as [GitHub-flavoured Markdown](https://github.github.com/gfm/): tables, task lists (`- [x]`), ~~strikethrough~~, and bare web addresses work. Footnotes, math, and diagrams don't, and Obsidian's callouts (`> [!note]`) show as quotes. Pictures and links in the note are found from the note's folder (`![](studio.png)`, `[prices](Prices/list.txt)`); web links open in your browser. Obsidian's `![[picture.png]]` and `[[links]]` work too.
 
+### An item's own Markdown file
+
+An item whose own file is Markdown (a story you're writing, a book's `.md`) and that has no note shows a glimpse of that file in the same place, read each time you open its page:
+
+- **Its table of contents**, if it has one: a list of links to its own headings (`- [Chapter 1](#chapter-1)`), as editors write them, or a `[TOC]` marker (also `[[_TOC_]]`, `{:toc}`, `<!-- toc -->`), shown as an outline of its headings.
+- **Otherwise, its opening:** its first two paragraphs or lists, with any headings and pictures before them.
+
+It's a glimpse, not the whole file: **Open file** (or a link in its table of contents) opens it in its own program. **Add a note** still lets you type a note about the item, which then shows instead. While its folder is offline, nothing shows.
+
 A picture or link that isn't beside the note is looked for in an **assets folder**: the note's own `assets` key (`assets: Attachments`, relative to the note, or from the top of its watched folder with a leading `/`; it shows as an Extra field you can change), else the watched folder's or the keep's (Keep configuration, [Folders](keep-configuration.md#folders) and [Keep](keep-configuration.md#keep)). The name is kept as written: `![](art/glow.png)` finds `Attachments/art/glow.png`.
 
 **Open note** (under the note, and in **More ▾**) opens the note file in your Markdown editor, which is where you change it.

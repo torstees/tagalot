@@ -163,6 +163,9 @@ class EntityDetail:
     """The body of the item's note, as Markdown (§9 *Notes*)."""
     note_file: FileRow | None = None
     """The note's file, if it has one."""
+    markdown_file: FileRow | None = None
+    """Its own Markdown file (its primary role's first, not inside an archive), whose
+    glimpse the page shows when it has no note (#554)."""
     assets: str | None = None
     """Its own assets folder (#418): its ``assets`` field, else its Extra field of that
     name (a note's ``assets`` key), as written."""
@@ -248,6 +251,7 @@ def load_detail(
         note_body=conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
         or "",
         note_file=note_file(conn, entity_id, root_path),
+        markdown_file=markdown_file(conn, entity, entity_id, root_path),
         assets=_assets(conn, table, entity_id, row.extra),
         picture=own_picture(conn, entity_id),
     )
@@ -313,6 +317,59 @@ def note_file(
         archive=row.archive or "",
     )
 
+
+def markdown_file(
+    conn: Connection,
+    entity: type[ThemeEntity],
+    entity_id: int,
+    root_path: Callable[[str], str | None],
+) -> FileRow | None:
+    """The item's own Markdown file (#554): the first ``.md`` or ``.markdown`` file of its
+    primary role, not one inside an archive; ``None`` if it has none."""
+    primary = next((r for r in entity.roles if r.primary), None)
+    if primary is None:
+        return None
+    row = conn.execute(
+        select(
+            Resource.id,
+            Resource.root_id,
+            Root.name,
+            Resource.relpath,
+            Resource.kind,
+            Resource.size,
+            Resource.status,
+            Resource.skipped,
+        )
+        .join(EntityResource, EntityResource.resource_id == Resource.id)
+        .join(Root, Root.id == Resource.root_id)
+        .where(
+            EntityResource.entity_id == entity_id,
+            EntityResource.role == primary.name,
+            Resource.ext.in_(MARKDOWN_EXTENSIONS),
+            Resource.parent_resource_id.is_(None),
+        )
+        .order_by(EntityResource.sort_order, Resource.relpath)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    base = root_path(row.root_id)
+    return FileRow(
+        row.id,
+        row.name,
+        row.relpath,
+        row.kind.value,
+        row.size,
+        row.status,
+        local_path(base, row.relpath) if base is not None else None,
+        primary.name,
+        row.skipped,
+        root_id=row.root_id,
+    )
+
+
+MARKDOWN_EXTENSIONS = (".md", ".markdown")
+"""An item's own file with one of these is Markdown (as notes are)."""
 
 NOTE_ROLE = "note"
 """The role a note's file is shown and opened in; notes aren't linked in a theme role."""

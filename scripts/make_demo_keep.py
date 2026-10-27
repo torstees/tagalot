@@ -984,7 +984,11 @@ BOOK_MARKDOWN = {
         "author: Ada Moss\n"
         "status: second draft\n"
         "---\n"
-        "# Chapter 1\n\nThe tower caught the morning light before anything else did.\n"
+        "## Contents\n\n"  # a table of contents: the page's glimpse of the file (#554)
+        "- [Chapter 1: Morning](#chapter-1-morning)\n"
+        "- [Chapter 2: The Stair](#chapter-2-the-stair)\n\n"
+        "# Chapter 1: Morning\n\nThe tower caught the morning light before anything else did.\n\n"
+        "# Chapter 2: The Stair\n\nNobody had counted the steps.\n"
     ),
     "Royal Road/Mother of Learning 01.md": (
         "---\n"
