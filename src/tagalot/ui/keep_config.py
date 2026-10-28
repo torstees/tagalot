@@ -113,6 +113,7 @@ from tagalot.ui.font_picker import FontChoice, FontPicker
 from tagalot.ui.fonts import PlaceFont, apply_fonts, look_of
 from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icons import icon
+from tagalot.ui.own_fields import OwnFieldsTab
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -354,6 +355,8 @@ class KeepConfigWindow(QWidget):
         self.tabs.addTab(self._thumbnails_tab(), "Thumbnails")
         self.tabs.addTab(self._keep_tab(), "Keep")
         self.tabs.addTab(self._notes_tab(), "Notes")
+        self.fields_tab = OwnFieldsTab(session, self.changed.emit, pool)
+        self.tabs.addTab(self.fields_tab, "Fields")
         self.tabs.addTab(self._appearance_tab(), "Appearance")
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)

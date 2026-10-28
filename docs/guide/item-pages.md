@@ -59,6 +59,8 @@ Point at the picture on the page to see where it comes from ("Its picture, chose
 
 Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** cancels. Numbers, dates (`2024-05-01`), and times are checked as you save, and a value that doesn't fit stays in the box with the reason. Yes/no fields are a checkbox. A **Rating** is five stars: click a star to rate (its left half for half a star), and click the rating it has to clear it. Some fields come from the file and can't be edited (a file's size, an image's width).
 
+**Fields of your own** (added in [Keep configuration](keep-configuration.md#fields)) follow the theme's under Details and edit the same way. Text you type in them is found by the search box.
+
 **A value you edited is yours:** it's marked "• edited", and scans never change it. Every edit is one step you can undo.
 
 **Fields that name other items** (a book's **Series**, **Universe**, **Collections**, and **Author**; a comic's **Writer** and **Artist**; an album's **Artist**) edit the same way, and move the item: type `Witches` as a book's series and it leaves its old series for **Witches** (made if there isn't one). Separate several names with commas (`Cosmere, Favourites`), or with `;` when a name has a comma in it (`Pratchett, Terry; Gaiman, Neil`). Scans keep what you chose, even though the file still says otherwise. A book in a series takes its **Universe** from the series: change it on the series' page, and its books follow.

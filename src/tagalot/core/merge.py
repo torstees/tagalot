@@ -1,8 +1,9 @@
 """Merging items into one (DESIGN.md §13; #120).
 
 The kept item absorbs each other item's tags, files, containment edges, and relationships,
-and the values the user set by hand: its fields and title where edited, and its own extra
-fields. Where the items' hand-set values differ, the user picks one (:class:`Conflict`).
+and the values the user set by hand: its fields and title where edited, its own extra
+fields, and its values of the keep's own fields (#581). Where the items' hand-set values
+differ, the user picks one (:class:`Conflict`).
 Files are never touched.
 
 - **Files** move to the kept item as links the user made (``by_user``), so scans never move
@@ -46,6 +47,8 @@ from tagalot.core.models import (
     UserRelation,
     utcnow,
 )
+from tagalot.core.own_fields import OWN
+from tagalot.core.own_values import raw_values, store_value
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import entity_plural
 
@@ -68,7 +71,8 @@ class Conflict:
     """A value the user set by hand on more than one item, differently."""
 
     key: str
-    """``title``, ``field:<name>``, or ``extra:<name>`` (the key :func:`merge_items` takes)."""
+    """``title``, ``field:<name>``, ``extra:<name>``, or ``own:<name>`` (the key
+    :func:`merge_items` takes)."""
     label: str
     choices: tuple[Choice, ...]
     """One per item with a value of its own, the kept item first."""
@@ -483,6 +487,7 @@ def _hand_values(conn: Connection, table: EntityTable, ids: list[int]) -> dict[s
         .where(Entity.id.in_(ids))
     ).all()
     by_id = {row.id: row for row in rows}
+    own = raw_values(conn, ids)
     for entity_id in ids:  # in order: the kept item first
         row = by_id.get(entity_id)
         if row is None:
@@ -495,7 +500,15 @@ def _hand_values(conn: Connection, table: EntityTable, ids: list[int]) -> dict[s
                 found.setdefault(f"field:{name}", {})[entity_id] = values[table.table.c[name]]
         for name, value in (row.extra or {}).items():
             found.setdefault(f"extra:{name}", {})[entity_id] = value
+        for name, value in own.get(entity_id, {}).items():  # always set by hand
+            found.setdefault(OWN + name, {})[entity_id] = value
     return found
+
+
+def _key_label(key: str) -> str:
+    """An extra field's name as written; an own field's name as words."""
+    name = key.partition(":")[2]
+    return name.replace("_", " ").capitalize() if key.startswith(OWN) else name
 
 
 def _conflicts(
@@ -506,9 +519,7 @@ def _conflicts(
     for key, values in _hand_values(conn, table, [keep_id, *ids]).items():
         if len({_text(v) for v in values.values()}) < 2:
             continue
-        label = (
-            table.entity.title_label if key == "title" else labels.get(key, key.partition(":")[2])
-        )
+        label = table.entity.title_label if key == "title" else labels.get(key, _key_label(key))
         choices = tuple(Choice(i, _text(v)) for i, v in values.items())
         default = keep_id if keep_id in values else choices[0].entity_id
         found.append(Conflict(key, label, choices, default))
@@ -546,6 +557,9 @@ def _write_values(
         if key == "title":
             conn.execute(update(Entity).where(Entity.id == keep_id).values(title=value))
             name = TITLE
+        elif key.startswith(OWN):
+            store_value(conn, keep_id, key.removeprefix(OWN), value)
+            name = key
         elif key.startswith("field:"):
             name = key.partition(":")[2]
             conn.execute(

@@ -52,7 +52,7 @@ from tagalot.core.folder_items import tagged_hidden
 from tagalot.core.fonts import copy_font_file, read_font_files, theme_font_files
 from tagalot.core.google_fonts import GoogleFont, download_font, downloaded
 from tagalot.core.icons import copy_icon_picture, keep_icon, theme_folder, type_icon
-from tagalot.core.ingest import IngestSession
+from tagalot.core.ingest import IngestSession, theme_text_source
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
@@ -100,6 +100,16 @@ from tagalot.core.online import (
     usable,
 )
 from tagalot.core.online import Progress as OnlineProgress
+from tagalot.core.own_fields import (
+    OwnField,
+    OwnFieldError,
+    OwnFields,
+    clash,
+    field_problem,
+    with_field,
+    without_field,
+)
+from tagalot.core.own_values import count_values, remove_field_values
 from tagalot.core.picture_problems import (
     PictureProblem,
     PictureScope,
@@ -147,7 +157,7 @@ from tagalot.core.thumbnails.queue import (
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.triage import dismiss
 from tagalot.core.writer import DbWriter
-from tagalot.themes.api import ColorScheme, OnlineSource, Theme
+from tagalot.themes.api import ColorScheme, OnlineSource, Theme, entity_fields
 from tagalot.themes.loader import ThemeCatalog, load_themes
 
 logger = logging.getLogger(__name__)
@@ -268,6 +278,7 @@ class KeepSession:
         thumbnails.icon_of = session.type_icon  # the keep's choices too (#557)
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
+        session.tags.own_fields = lambda: session.own_fields
         session.colors = resolve_colors(opened.keep.config, theme)
         session.font_files = session._read_font_files(opened.keep.config)
         with reader.connect() as conn:
@@ -617,6 +628,90 @@ class KeepSession:
         """Set the keep's default assets folder (#418); it applies to pictures and links on
         items' pages at once, and to covers at the next scan. Runs in a worker."""
         self.save_config(with_markdown_assets(self.keep.config, assets))
+
+    # --- the keep's own fields (#581, core.own_fields) ---
+
+    @property
+    def own_fields(self) -> OwnFields:
+        """The keep's own fields, by type id and name (``keep.toml``'s ``[fields]``)."""
+        return self.keep.config.fields
+
+    def theme_fields(self, type_id: str) -> list[tuple[str, str]]:
+        """A type's theme fields as ``(name, label)``; none for a type the theme hasn't."""
+        try:
+            entity = self.schema.by_type_id(type_id).entity
+        except KeyError:
+            return []
+        return [(f.name, f.spec.label) for f in entity_fields(entity)]
+
+    def own_field_problem(self, own: OwnField) -> str | None:
+        """Why ``own`` can't be added (or changed to this), or None: a problem of its own,
+        or a clash with its type's theme fields, title, or other own fields."""
+        try:
+            title_label = self.schema.by_type_id(own.type_id).entity.title_label
+        except KeyError:
+            return f"This keep's theme has no type {own.type_id!r}"
+        others = self.own_fields.get(own.type_id, {}).values()
+        return field_problem(own) or clash(own, self.theme_fields(own.type_id), title_label, others)
+
+    def theme_clash(self, own: OwnField) -> str | None:
+        """The theme field an own field is now named or labelled like (a later theme
+        version added it), or None. Both keep their values; Keep configuration notes it."""
+        names = {own.name.casefold(), own.label.casefold()}
+        for name, label in self.theme_fields(own.type_id):
+            if names & {name.casefold(), label.casefold()}:
+                return label
+        return None
+
+    def add_own_field(self, own: OwnField) -> None:
+        """Add one of the keep's own fields (#581). Raises :class:`OwnFieldError` for a
+        field that can't be added. Runs in a worker."""
+        if own.name in self.own_fields.get(own.type_id, {}):
+            raise OwnFieldError(f"There is already a field named {own.name!r}")
+        problem = self.own_field_problem(own)
+        if problem is not None:
+            raise OwnFieldError(problem)
+        self.save_config(replace(self.keep.config, fields=with_field(self.own_fields, own)))
+
+    def change_own_field(self, own: OwnField) -> None:
+        """Change an own field's label, search, display, card, or column (its name and
+        kind stay). Raises :class:`OwnFieldError`. Runs in a worker."""
+        before = self.own_fields.get(own.type_id, {}).get(own.name)
+        if before is None:
+            raise OwnFieldError(f"There is no field named {own.name!r}")
+        if before.kind != own.kind:
+            raise OwnFieldError("A field's kind stays as made")
+        problem = self.own_field_change_problem(own)
+        if problem is not None:
+            raise OwnFieldError(problem)
+        self.save_config(replace(self.keep.config, fields=with_field(self.own_fields, own)))
+
+    def own_field_change_problem(self, own: OwnField) -> str | None:
+        """Why an own field can't be changed to ``own``, or None. A clash with a theme field
+        a later theme version brought stays allowed while its label stays."""
+        problem = field_problem(own)
+        if problem is not None:
+            return problem
+        before = self.own_fields.get(own.type_id, {}).get(own.name)
+        if before is not None and before.label == own.label and self.theme_clash(before):
+            return None
+        return self.own_field_problem(own)
+
+    def count_own_values(self, own: OwnField) -> int:
+        """How many items have a value of an own field (asked before removing it)."""
+        with self.reader.connect() as conn:
+            return count_values(conn, own)
+
+    def remove_own_field(self, own: OwnField) -> int:
+        """Remove an own field: its values become Extra fields named by its label, and
+        its edits leave the undo history. Returns how many items kept a value. Runs in
+        a worker."""
+        source = theme_text_source(self.schema)
+        moved = self.writer.run(lambda conn: remove_field_values(conn, own, source))
+        self.tags.forget_field(own.key)
+        fields = without_field(self.own_fields, own.type_id, own.name)
+        self.save_config(replace(self.keep.config, fields=fields))
+        return moved
 
     # --- icons (#557, core.icons) ---
 

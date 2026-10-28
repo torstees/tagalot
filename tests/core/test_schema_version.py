@@ -249,6 +249,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         conn.exec_driver_sql("DROP TABLE tag_group_member")  # format 29
         conn.exec_driver_sql("DROP TABLE tag_group")
         conn.exec_driver_sql("DROP TABLE note_key_alias")  # format 30
+        conn.exec_driver_sql("DROP TABLE entity_field")  # format 31
         # field_provenance as it was before notes: its CHECK knew three sources, and a row
         conn.exec_driver_sql("DROP TABLE field_provenance")
         conn.exec_driver_sql(
@@ -274,7 +275,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 30)
+    assert (info.value.stored, info.value.current) == (1, 31)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -311,6 +312,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert "ix_resource_skipped" in indexes  # 28 (#526)
         assert {"tag_group", "tag_group_member"} <= set(tables)  # 29 (#534)
         assert "note_key_alias" in tables  # 30 (#411)
+        assert "entity_field" in tables  # 31 (#581)
         with engine.begin() as conn:  # the rebuilt table kept its row and takes notes
             kept = conn.exec_driver_sql("SELECT entity_id, field, source FROM field_provenance")
             assert [tuple(r) for r in kept] == [(1, "title", "user")]
@@ -324,7 +326,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 30
+    assert migrated.config.format_version == 31
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]
 
 
@@ -348,6 +350,7 @@ def test_format_19_keeps_get_the_picture_ignore_table(tmp_path: Path, has_ignore
         conn.exec_driver_sql("DROP TABLE tag_group_member")  # format 29
         conn.exec_driver_sql("DROP TABLE tag_group")
         conn.exec_driver_sql("DROP TABLE note_key_alias")  # format 30
+        conn.exec_driver_sql("DROP TABLE entity_field")  # format 31
         conn.exec_driver_sql("ALTER TABLE entity_note DROP COLUMN picture")
         conn.execute(update(SchemaVersion).values(version=19))
     engine.dispose()
@@ -356,7 +359,7 @@ def test_format_19_keeps_get_the_picture_ignore_table(tmp_path: Path, has_ignore
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
-        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 30
+        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 31
         assert "picture_ignore" in inspect(engine).get_table_names()
     finally:
         engine.dispose()

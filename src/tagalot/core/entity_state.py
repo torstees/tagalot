@@ -4,7 +4,8 @@ A theme action may create, edit, link, contain, relate, and delete entities. To 
 :class:`ChangeRecorder` snapshots every entity the action touches *before its first write*
 (``None`` for one the action creates), and again at the end. :func:`restore_states` puts a
 set of snapshots back exactly: an entity snapshotted as ``None`` is deleted, a deleted one
-is recreated with the same id, and each one's row, theme fields, provenance, file links,
+is recreated with the same id, and each one's row, theme fields, own fields (#581),
+provenance, file links,
 tags, containment edges, and relationships become what they were.
 
 Edges and relationships belong to both ends, so an entity is touched whenever an edge or
@@ -13,7 +14,7 @@ disturbing entities the action never touched.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -34,6 +35,7 @@ from tagalot.core.models import (
     UserOrder,
     UserRelation,
 )
+from tagalot.core.own_values import raw_values, restore_raw
 from tagalot.core.theme_schema import ThemeSchema
 
 
@@ -69,6 +71,8 @@ class EntitySnapshot:
     """Its note (#379): (folder id, file id, size, time, body), or ``None``."""
     note_removals: frozenset[str] = frozenset()
     """Extra fields from its note that the user removed (case-folded keys)."""
+    own: dict[str, Any] = field(default_factory=dict)
+    """Its values of the keep's own fields (#581), by name, as stored."""
 
 
 States = Mapping[int, EntitySnapshot | None]
@@ -93,6 +97,7 @@ def snapshot_entities(
             Entity.created_at,
         ).where(Entity.id.in_(wanted))
     ).all()
+    own = raw_values(conn, wanted)
     for entity_id, type_id, title, key, extra, created in rows:
         found[entity_id] = EntitySnapshot(
             type=type_id,
@@ -160,6 +165,7 @@ def snapshot_entities(
                     select(NoteKeyRemoval.key).where(NoteKeyRemoval.entity_id == entity_id)
                 )
             ),
+            own=own.get(entity_id, {}),
         )
     return found
 
@@ -225,6 +231,7 @@ def restore_states(conn: Connection, schema: ThemeSchema, states: States) -> Non
         _restore_user_orders(conn, present)
         _restore_user_contains(conn, present)
         _restore_notes(conn, present)
+        restore_raw(conn, {i: s.own for i, s in present.items()})
         _restore_edges(conn, present)
     fts.sync_entities(conn, ids, theme_text_source(schema))
 

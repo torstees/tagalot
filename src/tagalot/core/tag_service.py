@@ -24,10 +24,12 @@ from tagalot.core.actions import ActionChange, restore_action
 from tagalot.core.fields import (
     ExtraChange,
     FieldChange,
+    FieldEditError,
     NoteEdit,
     edit_extra,
     edit_field,
     edit_note,
+    edit_own_field,
     restore_extra,
     restore_field,
     restore_note,
@@ -54,6 +56,7 @@ from tagalot.core.models import (
 )
 from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicates
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
+from tagalot.core.own_fields import OWN, OwnField, OwnFields
 from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
@@ -197,6 +200,9 @@ class TagService:
         self.on_note_key: Callable[[str, bool], None] | None = None
         """Adds a key to the keep's ignored note keys (``True``) or takes it off, as undo
         and redo replay ignoring it (the session sets it; ``keep.toml`` isn't the DB's)."""
+        self.own_fields: Callable[[], OwnFields] = dict
+        """The keep's own fields (#581), which :meth:`edit_field` sets as ``own:<name>``
+        (the session sets it from ``keep.toml``)."""
 
     # --- operations ---
 
@@ -445,7 +451,12 @@ class TagService:
             raise RuntimeError("field edits need the keep's schema")
         theme = schema.theme()
 
+        own_fields = self.own_fields()
+
         def edit(conn: Connection) -> FieldChange | ActionChange:
+            if name.startswith(OWN):  # one of the keep's own fields (#581)
+                own = _own_field(conn, own_fields, entity_id, name)
+                return edit_own_field(conn, schema, own, entity_id, value)
             mirrored = _mirrored(conn, schema, entity_id, name)
             if mirrored is not None:
                 return edit_linked_field(conn, schema, theme, entity_id, mirrored, value)
@@ -539,6 +550,12 @@ class TagService:
         self.last_replayed = change
         self._undo.append(change)
         return change.label
+
+    def forget_field(self, key: str) -> None:
+        """Drop the edits of a field from the history (one of the keep's own fields,
+        removed: undoing them would bring back values of a field that isn't there)."""
+        self._undo = [s for s in self._undo if not _edits(s, key)]
+        self._redo = [s for s in self._redo if not _edits(s, key)]
 
     def clear_history(self) -> None:
         self._undo.clear()
@@ -853,6 +870,21 @@ def _tag_values(row: TagRow) -> dict[str, Any]:
         "description": description,
         "types": types,
     }
+
+
+def _edits(step: Step, key: str) -> bool:
+    return isinstance(step, FieldChange) and step.field == key
+
+
+def _own_field(conn: Connection, fields: OwnFields, entity_id: int, key: str) -> OwnField:
+    """The keep's own field ``own:<name>`` of the item's type."""
+    type_id = conn.scalar(select(Entity.type).where(Entity.id == entity_id))
+    if type_id is None:
+        raise FieldEditError("This item no longer exists")
+    own = fields.get(type_id, {}).get(key.removeprefix(OWN))
+    if own is None:
+        raise FieldEditError("That field was removed in Keep configuration")
+    return own
 
 
 def _mirrored(conn: Connection, schema: ThemeSchema, entity_id: int, name: str) -> FieldInfo | None:

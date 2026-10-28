@@ -34,6 +34,8 @@ from tagalot.core.models import (
     ResourceStatus,
     Root,
 )
+from tagalot.core.own_fields import OwnField, OwnFields
+from tagalot.core.own_values import item_values
 from tagalot.core.roots import local_path
 from tagalot.core.skipped_items import skipped_items
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
@@ -97,6 +99,7 @@ class EntityRow:
 @dataclass(frozen=True)
 class FieldRow:
     name: str
+    """A theme field's name, or ``own:<name>`` for one of the keep's own (#581)."""
     label: str
     value: Any
     type: type = str
@@ -203,15 +206,17 @@ def load_detail(
     schema: ThemeSchema,
     entity_id: int,
     root_path: Callable[[str], str | None],
+    own_fields: OwnFields | None = None,
 ) -> EntityDetail | None:
     """The detail page of an entity, or ``None`` if it no longer exists. ``root_path``
-    gives this machine's path for a root id (``None`` if unknown)."""
+    gives this machine's path for a root id (``None`` if unknown). The keep's
+    ``own_fields`` (#581) follow the theme's in Details."""
     row = conn.execute(
         select(Entity.type, Entity.title, Entity.extra).where(Entity.id == entity_id)
     ).first()
     if row is None:
         into = merged_into(conn, [entity_id]).get(entity_id)
-        found = load_detail(conn, schema, into, root_path) if into is not None else None
+        found = load_detail(conn, schema, into, root_path, own_fields) if into is not None else None
         return replace(found, merged_from=entity_id) if found is not None else None
     crumbs, others = breadcrumbs(conn, entity_id)
     extra = tuple(sorted((row.extra or {}).items(), key=lambda item: item[0].casefold()))
@@ -231,6 +236,14 @@ def load_detail(
         loaded = _load_section(conn, schema, entity, entity_id, section, root_path, edited)
         if loaded is not None:
             sections.append(loaded)
+    own = list((own_fields or {}).get(row.type, {}).values())
+    if own:
+        rows = _own_rows(conn, entity_id, own, edited)
+        at = next((i for i, s in enumerate(sections) if s.kind == "fields"), None)
+        if at is None:  # the theme's page has no Details: they make one, first
+            sections.insert(0, DetailSection("fields", "Details", fields=rows))
+        else:
+            sections[at] = replace(sections[at], fields=sections[at].fields + rows)
     tree = TagTree.load(conn)
     keywords = tuple(item_keywords(conn, tree, entity_id))
     named = {k.tag_id for k in keywords if k.tag_id is not None and k.tag_id in tree}
@@ -477,6 +490,25 @@ def _fields(
             )
         )
     return tuple(rows)
+
+
+def _own_rows(
+    conn: Connection, entity_id: int, own: list[OwnField], edited: set[str]
+) -> tuple[FieldRow, ...]:
+    values = item_values(conn, entity_id, own)
+    return tuple(
+        FieldRow(
+            f.key,
+            f.label,
+            values.get(f.name),
+            f.python_type,
+            True,
+            True,
+            f.key in edited,
+            f.shown_as,
+        )
+        for f in own
+    )
 
 
 def role_files(

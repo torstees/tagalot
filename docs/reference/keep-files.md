@@ -63,7 +63,17 @@ titles = "Literata"                         # a font installed on the computer,
 notes = "fonts/Literata.ttf"                # or a file in the keep's fonts folder
 text = "Segoe UI"                           # the rest of the window
 text_size = 110                             # percent of the system's size
+
+[fields."music.album".bought]               # a field of your own, for albums
+label = "Bought"                            # its name on pages
+kind = "date"                              # text, integer, number, date, yes/no, or link
+search = "range"                           # words, range, choice, or none
+# display = "bytes"                        # numbers only: bytes or duration
+card = true                                 # on grid cards
+column = true                               # a column in lists
 ```
+
+A field's name (`bought`) and kind stay as made: its values are stored by them. A field that can't be read is left out, with a warning in the log.
 
 Unknown keys are ignored (with a warning in the log), so an older Tagalot can still open a keep a newer one wrote, as long as its format is one it knows.
 

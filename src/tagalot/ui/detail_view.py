@@ -470,11 +470,12 @@ class DetailPage(QWidget):
         self._generation += 1
         generation, session, entity_id = self._generation, self.session, self.requested_id
         config, roots = session.keep.config, _root_path(session)
+        own_fields = session.own_fields
 
         def job() -> _Loaded:
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
-                detail = load_detail(conn, session.schema, entity_id, roots)
+                detail = load_detail(conn, session.schema, entity_id, roots, own_fields)
                 own = entity_tags(conn, [detail.id]).get(detail.id, []) if detail else []
             assets = note_assets(detail, config, roots) if detail is not None else []
             loaded = _read_note(detail, assets)
