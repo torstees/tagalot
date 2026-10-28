@@ -37,6 +37,7 @@ from PySide6.QtWidgets import QAbstractItemView, QFrame, QTreeView, QWidget
 from tagalot.core.search import SearchHit, child_hits
 from tagalot.core.search_fields import contained_types, contents_order
 from tagalot.core.session import KeepSession
+from tagalot.ui.colors import WARNING, css
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.hover import outline_hover
 from tagalot.ui.models.results import (
@@ -48,7 +49,6 @@ from tagalot.ui.models.results import (
     mark_hidden,
     row_values,
 )
-from tagalot.ui.result_table import OUTLINE_COLOR
 from tagalot.ui.workers import run_in_pool
 
 AnyIndex = QModelIndex | QPersistentModelIndex
@@ -331,7 +331,7 @@ class ResultTree(QTreeView):
         self._outline = QFrame(self.viewport())
         self._outline.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._outline.setObjectName("drop_outline")
-        self._outline.setStyleSheet(f"#drop_outline {{ border: 2px dashed {OUTLINE_COLOR}; }}")
+        self._outline.setStyleSheet(f"#drop_outline {{ border: 2px dashed {css(WARNING)}; }}")
         self._outline.hide()
         self.hover = outline_hover(self)
 

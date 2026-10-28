@@ -14,6 +14,7 @@ from tagalot.core.db import check_sqlite_support
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.resources import icon_files
+from tagalot.ui.appearance import remember_native_style, reset_colors
 from tagalot.ui.empty_state import splash_screen
 from tagalot.ui.gc_guard import collect_on_gui_thread
 from tagalot.ui.launcher import LauncherDialog
@@ -59,6 +60,7 @@ def run(argv: Sequence[str]) -> int:
     app.setDesktopFileName("tagalot")  # Linux: matches the AppImage's tagalot.desktop
     app.setWindowIcon(app_icon())
     collect_on_gui_thread(app)
+    remember_native_style()  # a keep's own colors switch to Fusion and back (#558)
 
     if problem := check_sqlite_support():
         logger.error("Cannot start: %s", problem)
@@ -105,7 +107,10 @@ class TagalotApp:
         self.launcher: LauncherDialog | None = None
 
     def show_launcher(self) -> LauncherDialog:
-        """Show the keep launcher (reusing it if it's already open)."""
+        """Show the keep launcher (reusing it if it's already open). With no keep open, it
+        has the system's colors (#558)."""
+        if not self.windows:
+            reset_colors()
         if self.launcher is None or not self.launcher.isVisible():
             self.launcher = LauncherDialog(self.settings, settings_path=self.settings_path)
             self.launcher.opened.connect(self.show_keep)

@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 
 import shiboken6
 from PySide6.QtCore import QModelIndex, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPixmap
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -26,12 +26,12 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.compare import Comparison, compare_items
 from tagalot.core.session import KeepSession
+from tagalot.ui.colors import DIFFERS, color
 from tagalot.ui.icons import icon_for
 from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
 THUMBNAIL = 96
-DIFFERS = QColor(255, 190, 0, 70)
 """The background of a row whose values differ (see-through: it suits light and dark)."""
 EMPTY = "—"
 """Shown for an item without a value."""
@@ -168,7 +168,7 @@ class ComparePane(QWidget):
                 if not value:
                     cell.setForeground(self.palette().placeholderText())
                 if row.differs:
-                    cell.setBackground(DIFFERS)
+                    cell.setBackground(color(DIFFERS))
                 table.setItem(n, column, cell)
         table.setVisible(True)
         self._enable_merge(found)

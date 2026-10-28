@@ -1,6 +1,6 @@
 # Keep configuration
 
-**Keep → Configure keep…** opens a window of four tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
+**Keep → Configure keep…** opens a window of five tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
 
 ![Keep configuration's Keep tab, for a research keep](../images/screens/keep-configuration.png)
 
@@ -28,7 +28,6 @@ The folders the keep watches, each with its state (online, offline, not watched,
 ## Keep
 
 - **Name** (editable), the keep's folder, its theme (and its version, and whether it's built in), and what kinds of items it holds.
-- **Icon:** the keep's icon in the Open Keep dialog. **Change…** picks another (one of the icons, or an SVG or PNG of your own, copied into the keep folder); **Use the theme's** goes back to the theme's.
 - **Assets folder:** the assets folder of every watched folder that doesn't name its own (see Folders above). Covers are looked for there at the next scan; notes' pictures and links at once.
 - **See-through folders:** folder names, one per line, such as `! Posters`. A folder with one of these names is never an item, but nothing in it is ignored: its files count as its parent folder's. A poster in `Heat (1995)/! Posters` is Heat's poster, and pictures in `3rd Birthday/! Posters` are among the `3rd Birthday` Folder's. Names match exactly, ignoring case. They're saved when you leave the box, and the next scan reads the keep's files again. If the change would remove Folders you've tagged, Tagalot asks first, since their tags go with them.
 - **Theme options:** the theme's settings for this keep, each with **Default**. They apply at the next scan, which reads the affected files again. The built-in ones: 2D assets' **Artist folder level** and books' **Source folder level** (see each [theme](../themes/README.md)).
@@ -49,3 +48,17 @@ The folders the keep watches, each with its state (online, offline, not watched,
 **Keys to ignore in notes:** front-matter keys that never become Extra fields, one per line. **In this keep** is saved with the keep; **In all your keeps** is saved for you on this computer; **Always** lists the built-in ones. Each list is saved when you leave its box and applies at the next scan. See [Notes](notes.md#keys-to-ignore).
 
 **Keys to read as fields:** front-matter keys read as one of the item's fields rather than as Extra fields, one `key = field` a line (`synopsis = Description`), naming the field by its name or label. **In this keep** is saved with the keep and wins over **In all your keeps** for the same key. Saved when you leave the box; applies at the next scan. See [Notes](notes.md#keys-to-read-as-fields).
+
+## Appearance
+
+**Icon:** the keep's icon in the Open Keep dialog. **Change…** picks another (one of the icons, or an SVG or PNG of your own, copied into the keep folder); **Use the theme's** goes back to the theme's.
+
+**Colors:** how the window looks while this keep's window is the active one, so your keeps are easy to tell apart.
+
+- **Follow the system** (the default): your system's light or dark mode.
+- **Light** or **Dark**, whatever the system's mode.
+- **Its own:** five colors of your choosing, starting from the ones shown now: **Background**, **Text**, **Lists and panels**, **Accent** (the selection and links), and **Dimmed text**. Click one to change it. Tagalot works out the rest (borders, alternate rows, disabled text), and warns when text would be hard to read on the background or the lists. Your system's file dialogs and the window's title bar keep the system's look.
+
+Changes show at once. With several keeps open, the colors follow the keep whose window you're in.
+
+![Keep configuration's Appearance tab, with a keep's own colors](../images/screens/appearance.png)

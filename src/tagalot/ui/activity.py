@@ -34,6 +34,7 @@ from tagalot.core.activity import KIND_LABELS, Problem
 from tagalot.core.keep import RootConfig
 from tagalot.core.root_admin import RootStatus
 from tagalot.core.roots import local_path
+from tagalot.ui.colors import ERROR, css
 
 ModelIndex = QModelIndex | QPersistentModelIndex
 
@@ -190,7 +191,7 @@ class ActivityPanel(QDockWidget):
                 state = "online"
             else:
                 why = f": {status.last_error}" if status.last_error else ""
-                state = f'<span style="color:#c0392b">offline{_escape(why)}</span>'
+                state = f'<span style="color:{css(ERROR)}">offline{_escape(why)}</span>'
             parts.append(f"<b>{_escape(root.name)}</b> {state}")
         self.folders.setText("Folders: " + (" · ".join(parts) or "none"))
 

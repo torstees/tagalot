@@ -48,6 +48,14 @@ only (the default), IDs or a title with its year, or IDs or any title."""
 LEGACY_HOSTS = frozenset({"openlibrary.org", "api.crossref.org", "export.arxiv.org"})
 """The services the built-in themes used before each was asked about (#483): a keep that
 allowed lookups then, with no ``[online] allowed``, allowed these."""
+COLOR_MODES = ("system", "light", "dark", "custom")
+"""What ``[appearance] colors`` can say (#558): follow the system's light or dark mode,
+always light, always dark, or the keep's own colors."""
+COLOR_ROLES = ("background", "text", "panels", "accent", "dimmed")
+"""The keep's own colors (``[appearance]``, #558): the window's background, its text,
+lists and panels, the accent (selection and links), and dimmed text. The UI derives the
+rest."""
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 NEW_NOTES = ("folders", "one-folder")
 """Where Save as note… puts a new note: a subfolder per type, or all in the notes folder."""
 
@@ -183,6 +191,11 @@ class KeepConfig:
     icon: str | None = None
     """``[appearance] icon``: the keep's own icon (#557), a Lucide icon's name or a file in
     the keep folder (``icons/…``); None for the theme's (``core/icons.py``)."""
+    colors: str = "system"
+    """``[appearance] colors``: one of :data:`COLOR_MODES` (#558)."""
+    custom_colors: dict[str, str] = field(default_factory=dict)
+    """The keep's own colors by :data:`COLOR_ROLES` name (``"#rrggbb"``), kept while
+    another mode is chosen, so going back to custom finds them."""
     type_icons: dict[str, str] = field(default_factory=dict)
     """``[appearance.icons]``: the user's icons for types, by type id (#557), as
     :attr:`icon`; a type not listed shows the theme's."""
@@ -291,8 +304,18 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
     if config.see_through:
         lines += ["", "[folders]", f"see_through = {toml_list(config.see_through)}"]
+    appearance = []
     if config.icon is not None:
-        lines += ["", "[appearance]", f"icon = {toml_str(config.icon)}"]
+        appearance.append(f"icon = {toml_str(config.icon)}")
+    if config.colors != "system":
+        appearance.append(f"colors = {toml_str(config.colors)}")
+    appearance += [
+        f"{role} = {toml_str(config.custom_colors[role])}"
+        for role in COLOR_ROLES
+        if role in config.custom_colors
+    ]
+    if appearance:
+        lines += ["", "[appearance]", *appearance]
     if config.type_icons:
         lines += ["", "[appearance.icons]"]
         lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in config.type_icons.items()]
@@ -463,9 +486,24 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
 
     icon: str | None = None
     type_icons: dict[str, str] = {}
+    colors = "system"
+    custom_colors: dict[str, str] = {}
     if "appearance" in data:
         appearance = reader.table(data, "appearance")
-        reader.warn_unknown(appearance, {"icon", "icons"}, "[appearance]")
+        reader.warn_unknown(appearance, {"icon", "icons", "colors", *COLOR_ROLES}, "[appearance]")
+        colors = appearance.get("colors", "system")
+        if colors not in COLOR_MODES:
+            raise KeepConfigError(
+                path, '[appearance] colors must be "system", "light", "dark", or "custom"'
+            )
+        for role in COLOR_ROLES:
+            if role in appearance:
+                value = appearance[role]
+                if not isinstance(value, str) or not _HEX_COLOR.fullmatch(value.strip()):
+                    raise KeepConfigError(
+                        path, f'[appearance] {role} must be a color such as "#1f1d1a"'
+                    )
+                custom_colors[role] = value.strip().lower()
         if "icon" in appearance:
             icon = reader.string(appearance, "icon", "[appearance]").strip()
         icons = appearance.get("icons", {})
@@ -560,6 +598,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         see_through=see_through,
         icon=icon,
         type_icons=type_icons,
+        colors=colors,
+        custom_colors=custom_colors,
     )
 
 

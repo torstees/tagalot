@@ -19,15 +19,16 @@ field shows the saved value again. A changed folder or exclude list offers a sca
 
 import html
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QHideEvent, QPalette, QShowEvent
+from PySide6.QtGui import QColor, QHideEvent, QIcon, QPalette, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -56,6 +57,7 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.keep import KeepError, RootConfig, clean_names
 from tagalot.core.keep_settings import (
     MIN_THUMBNAIL_SIZE,
+    with_colors,
     with_markdown_assets,
     with_name,
     with_option,
@@ -80,6 +82,8 @@ from tagalot.core.settings import ENV_NAME, save_settings
 from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
+from tagalot.ui.appearance import apply_keep_colors, hard_to_read, starting_colors
+from tagalot.ui.colors import ERROR, css
 from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icons import icon
@@ -101,6 +105,22 @@ ASSETS_TIP = (
     "from each file's own folder when it starts with ./ (./assets). A file's own assets "
     "front-matter key comes first."
 )
+
+
+COLOR_CHOICES = (
+    ("Follow the system", "system"),
+    ("Light", "light"),
+    ("Dark", "dark"),
+    ("Its own", "custom"),
+)
+"""The Colors choices (#558): label, then ``[appearance] colors``."""
+COLOR_LABELS = {
+    "background": "Background",
+    "text": "Text",
+    "panels": "Lists and panels",
+    "accent": "Accent (selection, links)",
+    "dimmed": "Dimmed text",
+}
 
 
 class KeepConfigWindow(QWidget):
@@ -236,7 +256,7 @@ class KeepConfigWindow(QWidget):
         buttons.addWidget(self.remove_button)
         self.error = QLabel()
         self.error.setObjectName("error")
-        self.error.setStyleSheet("color: #c0392b;")
+        self.error.setStyleSheet(f"color: {css(ERROR)};")
         self.error.setWordWrap(True)
         self.detail = QWidget()
         right = QVBoxLayout(self.detail)
@@ -265,6 +285,7 @@ class KeepConfigWindow(QWidget):
         self.tabs.addTab(self._thumbnails_tab(), "Thumbnails")
         self.tabs.addTab(self._keep_tab(), "Keep")
         self.tabs.addTab(self._notes_tab(), "Notes")
+        self.tabs.addTab(self._appearance_tab(), "Appearance")
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         # Thumbnails are stored as the grids show them: count them again while the
@@ -340,20 +361,6 @@ class KeepConfigWindow(QWidget):
         about.setWordWrap(True)
         form = QFormLayout()
         form.addRow("Name:", self.keep_name)
-        # The keep's icon (#557): its own, else its theme's; the Open Keep dialog shows it.
-        self.keep_icon = QPushButton("Change\u2026")
-        self.keep_icon.setObjectName("keep_icon")
-        self.keep_icon.setToolTip("The keep's icon in the Open Keep dialog")
-        self.keep_icon.clicked.connect(self.change_keep_icon)
-        self.keep_icon_theme = QPushButton("Use the theme's")
-        self.keep_icon_theme.setObjectName("keep_icon_theme")
-        self.keep_icon_theme.clicked.connect(lambda: self.set_keep_icon(IconChoice()))
-        icon_row = QHBoxLayout()
-        icon_row.setContentsMargins(0, 0, 0, 0)
-        icon_row.addWidget(self.keep_icon)
-        icon_row.addWidget(self.keep_icon_theme)
-        icon_row.addStretch(1)
-        form.addRow("Icon:", icon_row)
         form.addRow("Folder:", folder)
         form.addRow("Theme:", theme_label)
         form.addRow("Holds:", types)
@@ -455,6 +462,116 @@ class KeepConfigWindow(QWidget):
         column.addStretch(1)
         return tab
 
+    def _appearance_tab(self) -> QWidget:
+        """The keep's icon and colors (#557, #558)."""
+        form = QFormLayout()
+        # The keep's icon (#557): its own, else its theme's; the Open Keep dialog shows it.
+        self.keep_icon = QPushButton("Change\u2026")
+        self.keep_icon.setObjectName("keep_icon")
+        self.keep_icon.setToolTip("The keep's icon in the Open Keep dialog")
+        self.keep_icon.clicked.connect(self.change_keep_icon)
+        self.keep_icon_theme = QPushButton("Use the theme's")
+        self.keep_icon_theme.setObjectName("keep_icon_theme")
+        self.keep_icon_theme.clicked.connect(lambda: self.set_keep_icon(IconChoice()))
+        icon_row = QHBoxLayout()
+        icon_row.setContentsMargins(0, 0, 0, 0)
+        icon_row.addWidget(self.keep_icon)
+        icon_row.addWidget(self.keep_icon_theme)
+        icon_row.addStretch(1)
+        form.addRow("Icon:", icon_row)
+        self.color_mode = QComboBox()
+        self.color_mode.setObjectName("color_mode")
+        for label, mode in COLOR_CHOICES:
+            self.color_mode.addItem(label, mode)
+        self.color_mode.setToolTip(
+            "The keep's colors, shown while its window is the active one: the system's "
+            "light or dark mode, always light, always dark, or its own."
+        )
+        self.color_mode.currentIndexChanged.connect(self._color_mode_chosen)
+        form.addRow("Colors:", self.color_mode)
+        self.custom_colors = QGroupBox("Its own colors")
+        custom_form = QFormLayout(self.custom_colors)
+        self.color_buttons: dict[str, QPushButton] = {}
+        for role, label in COLOR_LABELS.items():
+            button = QPushButton()
+            button.setObjectName(f"color_{role}")
+            button.clicked.connect(lambda _=False, r=role: self._choose_color(r))
+            self.color_buttons[role] = button
+            custom_form.addRow(f"{label}:", button)
+        self.colors_warning = QLabel()
+        self.colors_warning.setObjectName("colors_warning")
+        self.colors_warning.setWordWrap(True)
+        self.colors_warning.setStyleSheet(f"color: {css(ERROR)};")
+        custom_form.addRow("", self.colors_warning)
+        hint = QLabel(
+            "Tagalot works out the rest (borders, alternate rows, disabled text) from these. "
+            "Your system's file dialogs and the window's title bar keep the system's look."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        custom_form.addRow("", hint)
+        tab = QWidget()
+        column = QVBoxLayout(tab)
+        column.addLayout(form)
+        column.addWidget(self.custom_colors)
+        column.addStretch(1)
+        return tab
+
+    def _show_colors(self) -> None:
+        config = self.session.keep.config
+        blocked = self.color_mode.blockSignals(True)
+        self.color_mode.setCurrentIndex(max(self.color_mode.findData(config.colors), 0))
+        self.color_mode.blockSignals(blocked)
+        custom = config.colors == "custom"
+        self.custom_colors.setVisible(custom)
+        colors = {**starting_colors(), **config.custom_colors}
+        for role, button in self.color_buttons.items():
+            swatch = QPixmap(28, 14)
+            swatch.fill(QColor(colors[role]))
+            button.setIcon(QIcon(swatch))
+            button.setText(colors[role])
+        problems = hard_to_read(colors) if custom else []
+        self.colors_warning.setText(" ".join(problems))
+        self.colors_warning.setVisible(bool(problems))
+
+    def _color_mode_chosen(self) -> None:
+        mode = self.color_mode.currentData()
+        config = self.session.keep.config
+        if mode == config.colors:
+            return
+        custom = config.custom_colors or None
+        if mode == "custom" and not custom:
+            custom = starting_colors()  # start from the colors shown now
+        self.save_colors(mode, custom)
+
+    def _choose_color(self, role: str) -> None:
+        config = self.session.keep.config
+        colors = {**starting_colors(), **config.custom_colors}
+        chosen = self.choose_color(COLOR_LABELS[role], colors[role])
+        if chosen is not None and chosen != colors[role]:
+            self.save_colors("custom", {**colors, role: chosen})
+
+    def choose_color(self, label: str, current: str) -> str | None:
+        """Ask for a color (tests replace this): ``#rrggbb``, or None."""
+        chosen = QColorDialog.getColor(QColor(current), self, label)
+        return chosen.name() if chosen.isValid() else None
+
+    def save_colors(self, mode: str, custom: Mapping[str, str] | None) -> None:
+        """Show the keep's colors at once, and save them in ``keep.toml``."""
+        try:
+            checked = with_colors(self.session.keep.config, mode, custom)
+        except KeepError as e:
+            self._refused(str(e))
+            return
+        apply_keep_colors(checked)  # a preview, before it's saved
+        session = self.session
+        labels = {m: label for label, m in COLOR_CHOICES}
+        self._run(
+            lambda: session.set_colors(checked.colors, checked.custom_colors),
+            f"Colors: {labels[mode].lower()}." if mode != "custom" else "Saved the keep's colors.",
+            then=self._show_colors,
+        )
+
     def _notes_tab(self) -> QWidget:
         about = QLabel(
             "Keys listed here never become Extra fields when Tagalot reads notes. One key "
@@ -483,7 +600,7 @@ class KeepConfigWindow(QWidget):
         built_in.setWordWrap(True)
         self.notes_error = QLabel()
         self.notes_error.setObjectName("notes_error")
-        self.notes_error.setStyleSheet("color: #c0392b;")
+        self.notes_error.setStyleSheet(f"color: {css(ERROR)};")
         self.notes_error.setWordWrap(True)
         form = QFormLayout()
         form.addRow("In this keep:", self.keep_ignore_keys)
@@ -588,7 +705,7 @@ class KeepConfigWindow(QWidget):
             box.installEventFilter(self)
         self.aliases_error = QLabel()
         self.aliases_error.setObjectName("aliases_error")
-        self.aliases_error.setStyleSheet("color: #c0392b;")
+        self.aliases_error.setStyleSheet(f"color: {css(ERROR)};")
         self.aliases_error.setWordWrap(True)
         form = QFormLayout()
         form.addRow("In this keep:", self.keep_key_aliases)
@@ -829,6 +946,7 @@ class KeepConfigWindow(QWidget):
         self.keep_name.setText(config.name)
         self.keep_icon.setIcon(icon(self.session.keep_icon()))
         self.keep_icon_theme.setEnabled(config.icon is not None)
+        self._show_colors()
         self.keep_assets.setText(config.markdown_assets)
         if not self.see_through.hasFocus():
             self.see_through.setPlainText("\n".join(config.see_through))
@@ -1705,7 +1823,7 @@ def describe_status(root: RootConfig, status: RootStatus | None) -> str:
         parts.append(f"last scanned {status.last_scan_at.astimezone():%Y-%m-%d %H:%M}")
     text = " · ".join(parts)
     if status.last_error and root.watched:
-        text += f'<br><span style="color:#c0392b">{html.escape(status.last_error)}</span>'
+        text += f'<br><span style="color:{css(ERROR)}">{html.escape(status.last_error)}</span>'
     return text
 
 

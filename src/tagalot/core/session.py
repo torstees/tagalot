@@ -53,6 +53,7 @@ from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
+    with_colors,
     with_contents_index,
     with_keep_icon,
     with_markdown_assets,
@@ -626,6 +627,11 @@ class KeepSession:
         if picture is not None:
             icon = copy_icon_picture(self.keep.dir, picture)
         self.save_config(with_type_icon(self.keep.config, type_id, icon))
+
+    def set_colors(self, mode: str, custom: Mapping[str, str] | None = None) -> None:
+        """Choose the keep's colors (#558): a mode, and its own colors. Raises ``KeepError``.
+        Runs in a worker."""
+        self.save_config(with_colors(self.keep.config, mode, custom))
 
     def set_keep_icon(self, icon: str | None, picture: Path | None = None) -> None:
         """Choose the keep's icon, as :meth:`set_type_icon`. Runs in a worker."""

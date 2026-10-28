@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.formats import rating_scale
 from tagalot.core.search_spec import ChoiceFilter, FieldFilter, RangeFilter, TextFilter, TextMatch
+from tagalot.ui.colors import ERROR, css
 from tagalot.ui.field_editor import ParseError, editor_text, parse_value
 from tagalot.ui.models.results import display_value
 
@@ -158,7 +159,7 @@ class FieldFilterPopup(QFrame):
         heading.setFont(font)
         layout.addWidget(heading)
         self.error = QLabel()
-        self.error.setStyleSheet("color: #c0392b;")
+        self.error.setStyleSheet(f"color: {css(ERROR)};")
         self.error.hide()
 
         self.values: QListWidget | None = None

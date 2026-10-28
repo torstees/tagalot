@@ -7,6 +7,7 @@ thumbnail size override, and theme option values for the keep or one root.
 """
 
 import copy
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -15,6 +16,8 @@ from typing import Any
 from tagalot.core.assets import clean_setting
 from tagalot.core.icons import IconFileError, check_user_icon
 from tagalot.core.keep import (
+    COLOR_MODES,
+    COLOR_ROLES,
     CONTENTS_INDEXES,
     FIND_BY,
     ONLINE_ANSWERS,
@@ -239,3 +242,24 @@ def _checked_icon(icon: str) -> str:
         return check_user_icon(icon)
     except IconFileError as e:
         raise KeepError(str(e)) from None
+
+
+def with_colors(
+    config: KeepConfig, mode: str, custom: Mapping[str, str] | None = None
+) -> KeepConfig:
+    """``config`` with the keep's colors (#558): a mode of :data:`COLOR_MODES`, and the
+    keep's own colors (``custom``, by :data:`COLOR_ROLES` name; None keeps those it has)."""
+    if mode not in COLOR_MODES:
+        raise KeepError(f"Colors can be system, light, dark, or custom, not {mode!r}.")
+    colors = dict(config.custom_colors if custom is None else custom)
+    unknown = sorted(set(colors) - set(COLOR_ROLES))
+    if unknown:
+        raise KeepError(f"No color named {unknown[0]!r}.")
+    cleaned = {}
+    for role in COLOR_ROLES:
+        if role in colors:
+            value = colors[role].strip().lower()
+            if not re.fullmatch(r"#[0-9a-f]{6}", value):
+                raise KeepError(f"The {role} color must look like #1f1d1a, not {colors[role]!r}.")
+            cleaned[role] = value
+    return replace(config, colors=mode, custom_colors=cleaned, roots=copy.deepcopy(config.roots))

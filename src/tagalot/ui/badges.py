@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, Qt
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 
 from tagalot.core.tags import Icon
 from tagalot.ui.icon_pictures import icon_image, paint_icon_picture
@@ -56,6 +56,7 @@ def paint_badges(
         return 0
     metrics = painter.fontMetrics()
     side = min(badge_side(metrics), rect.height())
+    ink = text_color or QApplication.palette().color(QPalette.ColorRole.Text)
 
     def more_width(n: int) -> int:
         return metrics.horizontalAdvance(f"+{n}") + 6
@@ -76,7 +77,7 @@ def paint_badges(
                 painter.setBrush(backing)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(box, 4, 4)
-                painter.setPen(text_color if text_color is not None else QColor("black"))
+                painter.setPen(ink)
             if isinstance(icon, str):
                 painter.drawText(box, center, icon)
             else:
@@ -89,7 +90,7 @@ def paint_badges(
                 painter.setBrush(backing)
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawRoundedRect(box, 4, 4)
-                painter.setPen(text_color if text_color is not None else QColor("black"))
+                painter.setPen(ink)
             painter.drawText(box, center, f"+{rest}")
     finally:
         painter.restore()
