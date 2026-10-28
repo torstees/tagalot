@@ -44,21 +44,37 @@ def font_path(keep_dir: Path, value: str) -> Path | None:
 
 def read_font_files(keep_dir: Path, fonts: Mapping[str, str]) -> dict[str, bytes | None]:
     """The font files a keep's fonts name, by value: their bytes, or None when the file is
-    gone or can't be read (the place falls back to the system's). Does I/O: call it from a
-    worker."""
+    gone or can't be read (the place falls back to the system's). A file in a family's
+    own folder (``fonts/Literata/…``, a Google Font, #566) brings the folder's other font
+    files too, its bold and italic. Does I/O: call it from a worker."""
     found: dict[str, bytes | None] = {}
     for value in fonts.values():
         path = font_path(keep_dir, value)
         if path is None or value in found:
             continue
-        try:
-            data = path.read_bytes()
-        except OSError as e:
-            logger.warning("Can't read the keep's font %s: %s", path, e)
-            found[value] = None
-            continue
-        found[value] = data if len(data) <= MAX_FONT else None
+        found[value] = _read(path)
+        if path.parent != keep_dir / KEEP_FONTS:
+            for sibling in _family_files(path.parent):
+                key = f"{KEEP_FONTS}/{path.parent.name}/{sibling.name}"
+                if key not in found:
+                    found[key] = _read(sibling)
     return found
+
+
+def _read(path: Path) -> bytes | None:
+    try:
+        data = path.read_bytes()
+    except OSError as e:
+        logger.warning("Can't read the keep's font %s: %s", path, e)
+        return None
+    return data if len(data) <= MAX_FONT else None
+
+
+def _family_files(folder: Path) -> list[Path]:
+    try:
+        return sorted(p for p in folder.iterdir() if p.suffix.lower() in FONT_EXTENSIONS)
+    except OSError:
+        return []
 
 
 def copy_font_file(keep_dir: Path, source: Path) -> str:

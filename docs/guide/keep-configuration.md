@@ -84,6 +84,8 @@ With several keeps open, the colors follow the keep whose window you're in.
 
 Click a place's font to pick one of the fonts installed on this computer, with a preview of your keep's titles, or **From a file…** for a TrueType (`.ttf`) or OpenType (`.otf`) file. A file is copied into the keep folder (`fonts`), so the keep looks the same on another computer. **Use the system's** goes back to the system's font.
 
+The **Google Fonts** tab lists Google's free fonts: search them by name, or narrow them to serif, sans serif, display, handwriting, or monospace. Until a font is downloaded, its preview is in a similar font on your computer. **Download** fetches the font and its license from `raw.githubusercontent.com` (Google Fonts' collection on GitHub) into the keep folder, and uses it; nothing is downloaded until you press it. A font already in the keep shows **Use** instead. If the download fails (offline, say), pick an installed font or one from a file instead.
+
 **Text size** makes the window's text larger or smaller than the system's, as a percent; titles and notes follow it.
 
 A font that isn't installed on this computer, or a file that's gone, shows the system's font instead, with a note under the fonts. Changes show at once, and with several keeps open, the fonts follow the keep whose window you're in.

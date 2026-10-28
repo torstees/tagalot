@@ -31,6 +31,8 @@ a = Analysis(  # noqa: F821
         (str(SRC / "tagalot" / "resources" / "tagalot-*.png"), "tagalot/resources"),
         # Lucide's icons, for types, keeps, and the window (ui.icons), with their license.
         (str(SRC / "tagalot" / "resources" / "icons"), "tagalot/resources/icons"),
+        # The list of Google Fonts the font picker searches (core.google_fonts).
+        (str(SRC / "tagalot" / "resources" / "google_fonts.json"), "tagalot/resources"),
     ],
     excludes=["tkinter"],
     noarchive=False,
