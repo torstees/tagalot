@@ -48,3 +48,7 @@ Papers are documents: when the keep [searches inside documents](../guide/search-
 ## Dashboard and duplicates
 
 Papers by year and top venues. Papers sharing a DOI or arXiv ID, or by the same first author with similar titles, are listed as similar items.
+
+## Fonts
+
+Titles and notes suggest Source Serif 4 (else Georgia), a serif face for reading. Keep configuration's [Appearance](../guide/keep-configuration.md#appearance) tab offers to download a suggested Google Font that isn't on your computer, and you can choose your own instead.

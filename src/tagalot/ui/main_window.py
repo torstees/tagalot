@@ -2763,7 +2763,8 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             preview = self.keep_config.colors_preview() if self.keep_config is not None else None
             apply_colors(*(preview or self.session.colors))  # unsaved changes still show (#572)
-            look, _ = look_of(self.session.keep.config, self.session.font_files)
+            session = self.session
+            look, _ = look_of(session.keep.config, session.font_files, session.theme)
             if apply_fonts(look):  # the keep's fonts too (#565)
                 self._fonts_changed()
 

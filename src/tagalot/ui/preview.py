@@ -95,7 +95,12 @@ class PreviewStrip(QFrame):
         self.thumbnail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title = QLabel(HINT)
-        follow(self.title, lambda: place_font("titles", bold=True))  # #565
+        self._item_title = False
+        # An item's title in the keep's titles font (#565); hints in the text's (#567).
+        follow(
+            self.title,
+            lambda: place_font("titles" if self._item_title else "text", bold=True),
+        )
         self.facts = QLabel()
         self.file = ElidedLabel(mode=Qt.TextElideMode.ElideMiddle)  # a path: keep its name
         self.description = QLabel()
@@ -128,7 +133,7 @@ class PreviewStrip(QFrame):
         """No item, or several, are selected: say so."""
         self._generation += 1
         self.entity_id = self.preview = None
-        self.title.setText(HINT if count == 0 else f"{count:,} items selected")
+        self._set_title(HINT if count == 0 else f"{count:,} items selected", item=False)
         self.facts.clear()
         self.file.set_full_text("")
         self._describe(None)
@@ -184,15 +189,21 @@ class PreviewStrip(QFrame):
 
         run_in_pool(job, on_done=done, pool=self._pool)
 
+    def _set_title(self, text: str, *, item: bool) -> None:
+        if item != self._item_title:
+            self._item_title = item
+            self.title.setFont(place_font("titles" if item else "text", bold=True))
+        self.title.setText(text)
+
     def _show(self, preview: Preview | None) -> None:
         self.preview = preview
         if preview is None:
-            self.title.setText("This item no longer exists")
+            self._set_title("This item no longer exists", item=False)
             self.facts.clear()
             self.file.set_full_text("")
             self._describe(None)
             return
-        self.title.setText(f"{preview.title} · {preview.type_label}")
+        self._set_title(f"{preview.title} · {preview.type_label}", item=True)
         facts = [display_value(f.value, f.display) for f in preview.facts]
         self.facts.setText(" · ".join(f for f in facts if f))
         self.file.set_full_text(preview.file or "")

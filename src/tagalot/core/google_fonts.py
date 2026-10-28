@@ -27,7 +27,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from tagalot.core.fonts import KEEP_FONTS, MAX_FONT
+from tagalot.core.fonts import KEEP_FONTS, MAX_FONT, family_folder
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class GoogleFont:
     def keep_folder(self) -> str:
         """Its folder in the keep's ``fonts/``: its name, without characters a file name
         can't have."""
-        return re.sub(r'[<>:"/\\|?*]', "", self.name).strip() or "font"
+        return family_folder(self.name)
 
     @property
     def value(self) -> str:

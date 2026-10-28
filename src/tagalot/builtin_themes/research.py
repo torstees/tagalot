@@ -194,6 +194,11 @@ class ResearchTheme(Theme):
 
     id, name, version = "research", "Research", 2  # 2: ratings out of 5, as stars
     icon = "graduation-cap"
+    # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
+    fonts = {
+        "titles": ("Source Serif 4", "Georgia", "serif"),
+        "notes": ("Source Serif 4", "Georgia", "serif"),
+    }
     api_version = 16  # ratings (12: description_field; 6: full_text)
     extensions = PAPER_EXTENSIONS | BIBLIOGRAPHY_EXTENSIONS | NOTE_EXTENSIONS
     # Bibliographies meet the PDFs read in the same scan, then notes meet both (a note's

@@ -261,6 +261,21 @@ class BooksTheme(Theme):
 
 Each color is `"#rrggbb"`: the window's background, its text, lists and panels, the accent (the selection and links), and dimmed text; Tagalot works out the rest. An id is lowercase letters, digits, dashes, or underscores, and keeps name the scheme by your theme's id and it (`"books.library"`). A keep keeps the system's colors until its user picks one. `tagalot --check-theme` warns when text would be hard to read (below 4.5:1 on the background or the panels).
 
+### Fonts
+
+A theme can suggest fonts and a text size for its keeps (`api_version = 27`):
+
+```python
+class BooksTheme(Theme):
+    fonts = {
+        "titles": ("Literata", "Merriweather", "Georgia", "serif"),
+        "notes": ("Literata", "Georgia", "serif"),
+    }
+    text_size = 105  # percent of the system's
+```
+
+The places are `titles` (items' pages, grid cards, the navigation's headings, title cards), `notes` (Markdown notes on items' pages), and `text` (the rest of the window). Each is a fallback chain: the first font that's here shows, whether it was downloaded into the keep (a Google Font, from Keep configuration), is a TTF or OTF beside your theme's file (write its path, `"fonts/Wand.ttf"`), or is installed. End a chain with a generic family, `serif`, `sans-serif`, or `monospace`, for the system's font of that kind. Nothing is downloaded by itself: when a Google Font in your chain isn't there, Keep configuration offers to download it. A font the user chooses for the keep always wins. `tagalot --check-theme` warns about places it doesn't know and font files that aren't beside your theme.
+
 ## Commands: actions
 
 An **action** is a method marked with `@action(label, applies_to)`. It appears on the right-click menus of the items it applies to and as a button on their pages:

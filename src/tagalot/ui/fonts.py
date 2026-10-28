@@ -19,8 +19,16 @@ from PySide6.QtCore import QByteArray, QObject, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QWidget
 
-from tagalot.core.fonts import is_font_file
-from tagalot.core.keep import KeepConfig
+from tagalot.core.fonts import (
+    GENERIC_FAMILIES,
+    KEEP_FONTS,
+    SYSTEM_FONT,
+    family_folder,
+    is_font_file,
+    is_theme_font_file,
+)
+from tagalot.core.keep import FONT_PLACES, KeepConfig
+from tagalot.themes.api import Theme
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +42,29 @@ class FontLook:
     notes: str | None = None
     text: str | None = None
     size: int = 100
+
+
+@dataclass(frozen=True)
+class PlaceFont:
+    """A place's font and where it comes from (Keep configuration says so)."""
+
+    family: str | None
+    """The family shown; None for the system's."""
+    origin: str
+    """``"keep"`` (the keep's choice), ``"theme"`` (its suggestion), or ``"system"``."""
+    value: str | None = None
+    """The keep's value, or the theme's entry that shows."""
+    missing: tuple[str, ...] = ()
+    """What was named but isn't here: the keep's value, or the theme's fonts passed over."""
+
+
+_HINTS = {
+    "serif": QFont.StyleHint.Serif,
+    "sans-serif": QFont.StyleHint.SansSerif,
+    "monospace": QFont.StyleHint.Monospace,
+    "cursive": QFont.StyleHint.Cursive,
+    "fantasy": QFont.StyleHint.Fantasy,
+}
 
 
 class _Signals(QObject):
@@ -97,26 +128,72 @@ def family_of(value: str, files: Mapping[str, bytes | None]) -> str | None:
 
 
 def look_of(
-    config: KeepConfig, files: Mapping[str, bytes | None]
-) -> tuple[FontLook, dict[str, str]]:
-    """The fonts a keep's configuration names, and the places whose font isn't there (by
-    place, the value), which show the system's."""
+    config: KeepConfig, files: Mapping[str, bytes | None], theme: type[Theme] | None = None
+) -> tuple[FontLook, dict[str, PlaceFont]]:
+    """The fonts a keep shows, and where each place's comes from: the keep's choice
+    (``[appearance.fonts]``), else the theme's suggestion (#567), else the system's. A
+    font the keep names that isn't there shows the system's."""
     for data in files.values():  # a family's bold and italic too (#566)
         if data is not None:
             register_font(data)
-    families: dict[str, str | None] = {}
-    missing = {}
-    for place, value in config.fonts.items():
-        families[place] = family_of(value, files)
-        if families[place] is None:
-            missing[place] = value
+    folders = _folder_families(files)
+    suggested = getattr(theme, "fonts", {}) if theme is not None else {}
+    places = {}
+    for place in FONT_PLACES:
+        value = config.fonts.get(place)
+        if value == SYSTEM_FONT:
+            places[place] = PlaceFont(None, "keep", value)
+        elif value is not None:
+            family = family_of(value, files)
+            places[place] = PlaceFont(family, "keep", value, () if family else (value,))
+        else:
+            places[place] = _suggested(tuple(suggested.get(place, ())), files, folders)
+    size = config.text_size or getattr(theme, "text_size", None) or 100
     look = FontLook(
-        titles=families.get("titles"),
-        notes=families.get("notes"),
-        text=families.get("text"),
-        size=config.text_size or 100,
+        titles=places["titles"].family,
+        notes=places["notes"].family,
+        text=places["text"].family,
+        size=size,
     )
-    return look, missing
+    return look, places
+
+
+def _folder_families(files: Mapping[str, bytes | None]) -> dict[str, str]:
+    """The families of the keep's downloaded fonts, by their folder's name, case-folded:
+    Qt may name a family otherwise (a variable font's default instance, "Literata 12pt")."""
+    families: dict[str, str] = {}
+    for key, data in sorted(files.items()):
+        parts = key.split("/")
+        if len(parts) == 3 and parts[0] == KEEP_FONTS and data is not None:
+            family = register_font(data)
+            if family and parts[1].casefold() not in families:
+                families[parts[1].casefold()] = family
+    return families
+
+
+def _suggested(
+    chain: tuple[str, ...], files: Mapping[str, bytes | None], folders: Mapping[str, str]
+) -> PlaceFont:
+    """The first font of a theme's chain that's here: a file beside the theme, a family
+    downloaded into the keep, an installed family, or a generic family's font."""
+    skipped: list[str] = []
+    for entry in chain:
+        if entry in GENERIC_FAMILIES:
+            hinted = QFont()
+            hinted.setStyleHint(_HINTS.get(entry, QFont.StyleHint.AnyStyle))
+            return PlaceFont(hinted.defaultFamily(), "theme", entry, tuple(skipped))
+        family: str | None
+        if is_theme_font_file(entry):
+            data = files.get(f"theme:{entry}")
+            family = register_font(data) if data is not None else None
+        else:
+            family = folders.get(family_folder(entry).casefold())
+            if family is None and installed(entry):
+                family = entry
+        if family is not None:
+            return PlaceFont(family, "theme", entry, tuple(skipped))
+        skipped.append(entry)
+    return PlaceFont(None, "theme" if chain else "system", None, tuple(skipped))
 
 
 def apply_fonts(look: FontLook) -> bool:

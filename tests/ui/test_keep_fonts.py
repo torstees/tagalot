@@ -88,9 +88,11 @@ def test_a_keeps_fonts_and_whats_missing(session: KeepSession, family: str) -> N
         {"titles": family, "notes": "No Such Font 12", "text": "fonts/gone.ttf"},
         120,
     )
-    look, missing = look_of(config, {"fonts/gone.ttf": None})
+    look, places = look_of(config, {"fonts/gone.ttf": None})
     assert look == FontLook(titles=family, size=120)
-    assert missing == {"notes": "No Such Font 12", "text": "fonts/gone.ttf"}
+    missing = {p: f.missing for p, f in places.items() if f.missing}
+    assert missing == {"notes": ("No Such Font 12",), "text": ("fonts/gone.ttf",)}
+    assert {f.origin for f in places.values()} == {"keep"}
     file_look, _ = look_of(
         with_fonts(config, {"notes": "fonts/A.ttf"}, None), {"fonts/A.ttf": aileron()}
     )
@@ -162,8 +164,11 @@ def test_choosing_fonts(
 ) -> None:
     config = KeepConfigWindow(session)
     qtbot.addWidget(config)
-    assert config.font_buttons["titles"].text() == "The system's"
-    assert not config.system_font_buttons["titles"].isEnabled()
+    assert config.font_buttons["notes"].text() == "The system's"  # music suggests none
+    assert not config.system_font_buttons["notes"].isEnabled()
+    assert config.theme_font_buttons["notes"].isHidden()
+    assert config.font_buttons["titles"].text().endswith("(the theme's)")
+    assert not config.theme_font_buttons["titles"].isEnabled()  # already the theme's
     assert config.text_size.value() == 100
 
     # A file: copied into the keep folder.
@@ -193,12 +198,16 @@ def test_choosing_fonts(
     qtbot.waitUntil(lambda: session.keep.config.text_size == 110, timeout=5000)
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
 
-    # The system's again.
+    # The system's, over the theme's suggestion; then the theme's again.
     config.system_font_buttons["titles"].click()
-    qtbot.waitUntil(lambda: "titles" not in session.keep.config.fonts, timeout=5000)
+    qtbot.waitUntil(lambda: session.keep.config.fonts.get("titles") == "system", timeout=5000)
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
     assert config.font_buttons["titles"].text() == "The system's"
-    assert _fonts(session) == {"notes": family, "text_size": 110}
+    assert _fonts(session) == {"titles": "system", "notes": family, "text_size": 110}
+    config.theme_font_buttons["titles"].click()
+    qtbot.waitUntil(lambda: "titles" not in session.keep.config.fonts, timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    assert config.font_buttons["titles"].text().endswith("(the theme's)")
 
 
 def test_a_font_thats_not_here(qtbot: QtBot, session: KeepSession) -> None:

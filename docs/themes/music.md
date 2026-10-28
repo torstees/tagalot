@@ -40,3 +40,7 @@ Every genre a song's tags give (several, or one like `Pop/Rock`) is a [file keyw
 ## Dashboard and duplicates
 
 Total running time, the average song, top genres, and top years. Songs with the same artist and title and about the same length are listed as similar items (two songs on one album never are).
+
+## Fonts
+
+Titles suggest Nunito, a rounded face (else Poppins, else Segoe UI). Keep configuration's [Appearance](../guide/keep-configuration.md#appearance) tab offers to download a suggested Google Font that isn't on your computer, and you can choose your own instead.

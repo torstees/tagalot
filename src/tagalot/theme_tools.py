@@ -11,7 +11,8 @@ from importlib import resources
 from pathlib import Path
 
 from tagalot.core.color_schemes import scheme_warnings
-from tagalot.core.icons import icon_warnings
+from tagalot.core.fonts import theme_font_warnings
+from tagalot.core.icons import icon_warnings, theme_folder
 from tagalot.core.settings import load_settings
 from tagalot.themes.loader import default_user_themes_dir, load_theme_file, load_themes
 
@@ -71,7 +72,11 @@ def check_theme(path: Path, out: Out = print) -> int:
         theme = loaded.theme
         out(f"ok: {theme.id!r} ({theme.name}, version {theme.version}) from {loaded.source}")
         out(f"   types: {', '.join(e.__name__ for e in theme.entities)}")
-        for warning in [*icon_warnings(theme), *scheme_warnings(theme)]:
+        for warning in [
+            *icon_warnings(theme),
+            *scheme_warnings(theme),
+            *theme_font_warnings(theme, theme_folder(theme)),
+        ]:
             out(f"warning: {warning}")
     for problem in catalog.problems:
         out(f"problem: {problem.message}")
@@ -116,7 +121,11 @@ def check_theme_named(name: str, folders: Sequence[Path] | None = None, out: Out
         theme = loaded.theme
         out(f"ok: {theme.id!r} ({theme.name}, version {theme.version}), built in")
         out(f"   types: {', '.join(e.__name__ for e in theme.entities)}")
-        for warning in [*icon_warnings(theme), *scheme_warnings(theme)]:
+        for warning in [
+            *icon_warnings(theme),
+            *scheme_warnings(theme),
+            *theme_font_warnings(theme, theme_folder(theme)),
+        ]:
             out(f"warning: {warning}")
         return 0
     if loaded is not None:

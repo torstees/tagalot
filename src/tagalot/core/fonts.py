@@ -9,12 +9,17 @@ and the UI registers them with Qt.
 
 import hashlib
 import logging
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger(__name__)
 
 KEEP_FONTS = "fonts"
+SYSTEM_FONT = "system"
+"""A place's value for the system's font, chosen over the theme's suggestion (#567)."""
+GENERIC_FAMILIES = ("serif", "sans-serif", "monospace", "cursive", "fantasy")
+"""Families that end a theme's chain: the system's font of that kind."""
 """The keep folder's folder for font files the user chose."""
 FONT_EXTENSIONS = (".ttf", ".otf")
 MAX_FONT = 32 * 1024 * 1024
@@ -75,6 +80,83 @@ def _family_files(folder: Path) -> list[Path]:
         return sorted(p for p in folder.iterdir() if p.suffix.lower() in FONT_EXTENSIONS)
     except OSError:
         return []
+
+
+def family_folder(name: str) -> str:
+    """The folder of the keep's ``fonts/`` a family downloaded into the keep goes in (#566):
+    its name, without characters a file name can't have."""
+    return re.sub(r'[<>:"/\\|?*]', "", name).strip() or "font"
+
+
+def is_theme_font_file(entry: str) -> bool:
+    """Whether an entry of a theme's font chain is a file beside the theme's module."""
+    return entry.lower().endswith(FONT_EXTENSIONS)
+
+
+def theme_font_files(
+    keep_dir: Path, fonts: Mapping[str, Sequence[str]], theme_dir: Path | None
+) -> dict[str, bytes | None]:
+    """The font files a theme's suggestions (#567) may show: the keep's downloaded
+    families named in its chains (``fonts/<family>/…``), and files shipped beside the
+    theme's module (``theme:<path>``). Does I/O: call it from a worker."""
+    found: dict[str, bytes | None] = {}
+    for chain in fonts.values():
+        for entry in chain:
+            if entry in GENERIC_FAMILIES:
+                continue
+            if is_theme_font_file(entry):
+                relative = PurePosixPath(entry)
+                if theme_dir is None or ".." in relative.parts or relative.is_absolute():
+                    continue
+                found[f"theme:{entry}"] = _read(theme_dir.joinpath(*relative.parts))
+                continue
+            folder = keep_dir / KEEP_FONTS / family_folder(entry)
+            for path in _family_files(folder):
+                found[f"{KEEP_FONTS}/{folder.name}/{path.name}"] = _read(path)
+    return found
+
+
+def theme_font_problems(theme: object) -> list[str]:
+    """What's wrong with a theme's ``fonts`` and ``text_size`` (the loader refuses the
+    theme)."""
+    problems = []
+    fonts = getattr(theme, "fonts", {})
+    if not isinstance(fonts, Mapping) or not all(
+        isinstance(place, str)
+        and isinstance(chain, (list, tuple))
+        and chain
+        and all(isinstance(e, str) and e.strip() for e in chain)
+        for place, chain in fonts.items()
+    ):
+        problems.append('fonts must map places ("titles", "notes", "text") to tuples of font names')
+    size = getattr(theme, "text_size", None)
+    if size is not None and (
+        isinstance(size, bool) or not isinstance(size, int) or not 50 <= size <= 200
+    ):
+        problems.append("text_size must be a percent from 50 to 200")
+    return problems
+
+
+def theme_font_warnings(theme: object, theme_dir: Path | None) -> list[str]:
+    """Places a theme's ``fonts`` names that Tagalot doesn't know, and font files it names
+    that aren't beside it (``--check-theme`` warns; the theme still loads)."""
+    from tagalot.core.keep import FONT_PLACES
+
+    fonts = getattr(theme, "fonts", {})
+    if not isinstance(fonts, Mapping):
+        return []
+    warnings = []
+    for place, chain in fonts.items():
+        if place not in FONT_PLACES:
+            warnings.append(
+                f"fonts: {place!r} isn't a place for a font (titles, notes, text); it's ignored"
+            )
+        for entry in chain if isinstance(chain, (list, tuple)) else ():
+            if isinstance(entry, str) and is_theme_font_file(entry):
+                path = theme_dir / entry if theme_dir is not None else None
+                if path is None or not path.is_file():
+                    warnings.append(f"fonts: {entry!r} isn't a file beside the theme")
+    return warnings
 
 
 def copy_font_file(keep_dir: Path, source: Path) -> str:

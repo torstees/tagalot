@@ -73,8 +73,10 @@ from tagalot.core.color_schemes import (
 )
 from tagalot.core.contents import ContentsStats
 from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
-from tagalot.core.fonts import is_font_file
+from tagalot.core.fonts import SYSTEM_FONT, is_font_file
 from tagalot.core.formats import format_bytes
+from tagalot.core.google_fonts import HOST as GOOGLE_HOST
+from tagalot.core.google_fonts import GoogleFont, google_fonts
 from tagalot.core.keep import TEXT_SIZES, KeepError, RootConfig, clean_names
 from tagalot.core.keep_settings import (
     MIN_THUMBNAIL_SIZE,
@@ -108,7 +110,7 @@ from tagalot.ui.appearance import apply_colors, starting_colors
 from tagalot.ui.colors import ERROR, css
 from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.font_picker import FontChoice, FontPicker
-from tagalot.ui.fonts import apply_fonts, look_of
+from tagalot.ui.fonts import PlaceFont, apply_fonts, look_of
 from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icons import icon
 from tagalot.ui.workers import run_in_pool
@@ -145,6 +147,24 @@ FONT_LABELS = {
     "text": ("Text", "The rest of the window"),
 }
 """The Fonts group's places (#565): label, then tooltip."""
+
+
+def theme_note(label: str, shown: PlaceFont) -> str:
+    """What the Fonts group says of a theme's suggestions that aren't here."""
+    names = shown.missing
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+    verb = "isn't" if len(names) == 1 else "aren't"
+    instead = shown.family or "the system's font"
+    return f"{label}: the theme's {listed} {verb} on this computer, so {instead} shows."
+
+
+def download_offer(shown: PlaceFont) -> GoogleFont | None:
+    """The first Google Font a theme suggested for a place that isn't here, to download."""
+    known = {f.name.casefold(): f for f in google_fonts().families}
+    for name in shown.missing:
+        if name.casefold() in known:
+            return known[name.casefold()]
+    return None
 
 
 def missing_text(value: str) -> str:
@@ -590,21 +610,35 @@ class KeepConfigWindow(QWidget):
         self._google_here: set[str] = set()
         """The Google Fonts already in the keep folder (#566), found as the picker opens."""
         self.system_font_buttons: dict[str, QPushButton] = {}
+        self.theme_font_buttons: dict[str, QPushButton] = {}
+        self.download_font_buttons: dict[str, QPushButton] = {}
         for place, (label, tip) in FONT_LABELS.items():
             button = QPushButton()
             button.setObjectName(f"font_{place}")
             button.setToolTip(tip)
             button.clicked.connect(lambda _=False, p=place: self.change_font(p))
+            theme = QPushButton("Use the theme's")
+            theme.setObjectName(f"theme_font_{place}")
+            theme.setToolTip("The font the keep's theme suggests (#567)")
+            theme.clicked.connect(lambda _=False, p=place: self.set_font(p, None))
             system = QPushButton("Use the system's")
             system.setObjectName(f"system_font_{place}")
-            system.clicked.connect(lambda _=False, p=place: self.set_font(p, None))
+            system.clicked.connect(lambda _=False, p=place: self.use_system_font(p))
+            download = QPushButton()
+            download.setObjectName(f"download_font_{place}")
+            download.setVisible(False)
+            download.clicked.connect(lambda _=False, p=place: self.download_theme_font(p))
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(button, 1)
+            row.addWidget(download)
+            row.addWidget(theme)
             row.addWidget(system)
             fonts_form.addRow(f"{label}:", row)
             self.font_buttons[place] = button
+            self.theme_font_buttons[place] = theme
             self.system_font_buttons[place] = system
+            self.download_font_buttons[place] = download
         self.text_size = QSpinBox()
         self.text_size.setObjectName("text_size")
         self.text_size.setRange(*TEXT_SIZES)
@@ -632,31 +666,74 @@ class KeepConfigWindow(QWidget):
     # --- fonts (#565) ---
 
     def _show_fonts(self) -> None:
-        config = self.session.keep.config
-        look, missing = look_of(config, self.session.font_files)
+        session = self.session
+        config = session.keep.config
+        suggested = getattr(session.theme, "fonts", {})
+        _, places = look_of(config, session.font_files, session.theme)
+        notes = []
         for place, button in self.font_buttons.items():
-            value = config.fonts.get(place)
-            family = getattr(look, place)
-            if value is None:
+            shown = places[place]
+            label = FONT_LABELS[place][0]
+            if shown.origin == "keep" and shown.value == SYSTEM_FONT:
                 button.setText("The system's")
-            elif family is None:
-                button.setText(f"{value} (not here)")
+            elif shown.origin == "keep" and shown.family is None:
+                button.setText(f"{shown.value} (not here)")
+                notes.append(
+                    f"{label}: {missing_text(str(shown.value))}, so the system's font shows."
+                )
+            elif shown.origin == "theme" and shown.family is not None:
+                button.setText(f"{shown.family} (the theme's)")
+            elif shown.family is not None:
+                button.setText(shown.family)
             else:
-                button.setText(family)
+                button.setText("The system's")
+            if shown.origin == "theme" and shown.missing:
+                notes.append(theme_note(label, shown))
             font = QFont(self.font())
-            if family:
-                font.setFamilies([family])  # shown in itself
+            if shown.family:
+                font.setFamilies([shown.family])  # shown in itself
             button.setFont(font)
-            self.system_font_buttons[place].setEnabled(value is not None)
+            chosen = config.fonts.get(place)
+            self.theme_font_buttons[place].setVisible(place in suggested)
+            self.theme_font_buttons[place].setEnabled(chosen is not None)
+            system_shown = chosen == SYSTEM_FONT or (chosen is None and place not in suggested)
+            self.system_font_buttons[place].setEnabled(not system_shown)
+            offer = download_offer(shown) if shown.origin == "theme" else None
+            self.download_font_buttons[place].setVisible(offer is not None)
+            if offer is not None:
+                self.download_font_buttons[place].setText(f"Download {offer.name}")
+                self.download_font_buttons[place].setToolTip(
+                    f"Download the theme's {offer.name} into the keep folder, from "
+                    f"{GOOGLE_HOST} (Google Fonts' repository on GitHub)"
+                )
         blocked = self.text_size.blockSignals(True)
-        self.text_size.setValue(config.text_size or 100)
+        self.text_size.setValue(config.text_size or self._theme_text_size())
         self.text_size.blockSignals(blocked)
-        notes = [
-            f"{FONT_LABELS[place][0]}: {missing_text(value)}, so the system's font shows."
-            for place, value in missing.items()
-        ]
         self.fonts_note.setText(" ".join(notes))
         self.fonts_note.setVisible(bool(notes))
+
+    def _theme_text_size(self) -> int:
+        """The text size without the keep's own: the theme's suggestion, else 100%."""
+        return getattr(self.session.theme, "text_size", None) or 100
+
+    def download_theme_font(self, place: str) -> None:
+        """Download the Google Font the theme suggests for a place (#567), into the keep."""
+        session = self.session
+        _, places = look_of(session.keep.config, session.font_files, session.theme)
+        offer = download_offer(places[place])
+        if offer is None:
+            return
+        self.download_font_buttons[place].setEnabled(False)
+
+        def done() -> None:
+            self.download_font_buttons[place].setEnabled(True)
+            self._show_fonts()
+
+        self._run(
+            lambda: session.download_google_font(offer),
+            f"Downloaded {offer.name} from {GOOGLE_HOST}.",
+            then=done,
+        )
 
     def change_font(self, place: str) -> None:
         """Pick a font for a place: an installed family, a Google Font downloaded into the
@@ -667,7 +744,7 @@ class KeepConfigWindow(QWidget):
             if not shiboken6.isValid(self):
                 return
             samples, self._google_here = found
-            look, _ = look_of(session.keep.config, session.font_files)
+            look, _ = look_of(session.keep.config, session.font_files, session.theme)
             choice = self.choose_font(place, getattr(look, place), samples)
             if choice is not None:
                 self.set_font(place, choice.value or choice.family, choice.file)
@@ -705,14 +782,23 @@ class KeepConfigWindow(QWidget):
         if file is not None:
             message = f"The {label} font: {file.name}."
         else:
-            message = f"The {label} font: {family or 'the system' + chr(39) + 's'}."
+            named = {None: "the theme's", SYSTEM_FONT: "the system's"}
+            if place not in getattr(session.theme, "fonts", {}):
+                named[None] = "the system's"
+            message = f"The {label} font: {named.get(family, family)}."
         self._run(work, message, then=self._show_fonts)
+
+    def use_system_font(self, place: str) -> None:
+        """The system's font for a place: over the theme's suggestion, when it has one."""
+        suggested = getattr(self.session.theme, "fonts", {})
+        self.set_font(place, SYSTEM_FONT if place in suggested else None)
 
     def _text_size_changed(self, value: int) -> None:
         session = self.session
         fonts = dict(session.keep.config.fonts)
+        size = None if value == self._theme_text_size() else value  # the theme's again
         self._run(
-            lambda: session.set_fonts(fonts, value),
+            lambda: session.set_fonts(fonts, size),
             f"Text size: {value}%.",
             then=self._show_fonts,
         )
@@ -1417,7 +1503,8 @@ class KeepConfigWindow(QWidget):
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
             self._watch_stats()
             apply_colors(*(self.colors_preview() or self.session.colors))  # this keep's (#558)
-            apply_fonts(look_of(self.session.keep.config, self.session.font_files)[0])
+            session = self.session
+            apply_fonts(look_of(session.keep.config, session.font_files, session.theme)[0])
 
     def show_cache_stats(self) -> None:
         """How many thumbnails are stored, read in a worker."""

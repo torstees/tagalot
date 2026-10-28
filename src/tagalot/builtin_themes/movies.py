@@ -484,6 +484,9 @@ class MoviesTheme(Theme):
     id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
     # 6: folder images; 5: pictures; 4: notes
     icon = "clapperboard"
+    # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
+    # Oswald, not Bebas Neue (all capitals), which read poorly in small titles (#567).
+    fonts = {"titles": ("Oswald", "Arial Narrow", "sans-serif")}
     api_version = (
         24  # TMDb (#487): OnlineImage; 23: tokens and titles (21: online pictures; 20: see-through
     )
