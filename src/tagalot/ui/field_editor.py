@@ -41,6 +41,7 @@ from tagalot.core.formats import (
     rating_of,
     rating_scale,
 )
+from tagalot.ui.colors import ERROR, css
 from tagalot.ui.models.results import display_value
 from tagalot.ui.stars import StarRating
 
@@ -291,7 +292,7 @@ class EditableValue(QWidget):
         try:
             value = parse_value(self.box.text(), self.kind)
         except ParseError as e:
-            self.box.setStyleSheet("border: 1px solid #c0392b;")
+            self.box.setStyleSheet(f"border: 1px solid {css(ERROR)};")
             self.box.setToolTip(str(e))
             self.box.setPlaceholderText(str(e))
             return

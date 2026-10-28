@@ -174,7 +174,31 @@ def books(app: QApplication, keep: Path) -> None:
         save(window, "item-page")
         window.tags_dock.raise_()
 
+        # A keep's own colors (#558): the Appearance tab, in a parchment look.
+        config = window.configure_keep()
+        config.resize(820, 560)
+        config.save_colors("custom", PARCHMENT)
+        appearance = next(
+            i for i in range(config.tabs.count()) if config.tabs.tabText(i) == "Appearance"
+        )
+        config.tabs.setCurrentIndex(appearance)
+        settle(app, 2)
+        save(config, "appearance")
+        config.save_colors("system", None)
+        settle(app)
+        config.close()
+
     shoot(app, keep, steps)
+
+
+PARCHMENT = {
+    "background": "#f3ece0",
+    "text": "#2b2722",
+    "panels": "#fffaf2",
+    "accent": "#8a5a2b",
+    "dimmed": "#857a6c",
+}
+"""A books keep's own colors, for the Appearance tab's screenshot."""
 
 
 def movies(app: QApplication, keep: Path) -> None:

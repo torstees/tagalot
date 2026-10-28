@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.badges import BadgeDelegate
+from tagalot.ui.colors import WARNING, css
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.hover import outline_hover
 from tagalot.ui.models.results import (
@@ -57,7 +58,6 @@ TITLE_MAX_WIDTH = 480
 TAGS_WIDTH = 220
 DEFAULT_HIDDEN = frozenset({TAGS, KEYWORDS})
 """Columns hidden until the user shows them (right-click a column header)."""
-OUTLINE_COLOR = "#f0a020"
 """The drop target's dashed outline: amber, distinct from the selection color."""
 COLUMN_WIDTH = 140
 MATCH_WIDTH = 360
@@ -358,7 +358,7 @@ class ResultTable(QTableView):
             frame = QFrame(self.viewport())
             frame.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             frame.setObjectName("drop_outline")
-            frame.setStyleSheet(f"#drop_outline {{ border: 2px dashed {OUTLINE_COLOR}; }}")
+            frame.setStyleSheet(f"#drop_outline {{ border: 2px dashed {css(WARNING)}; }}")
             self._outlines.append(frame)
         width = self.viewport().width()
         for i, frame in enumerate(self._outlines):

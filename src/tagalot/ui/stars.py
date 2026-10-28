@@ -12,15 +12,15 @@ the rating is out of; :class:`EditableValue` turns them into the field's numbers
 import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPalette
+from PySide6.QtGui import QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPalette
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from tagalot.core.formats import STARS
+from tagalot.ui.colors import STAR, color
 
 STAR_SIZE = 18
 """Each star's width and height, in pixels."""
 STAR_GAP = 3
-GOLD = QColor("#f2b01e")
 
 
 def star_path(rect: QRectF) -> QPainterPath:
@@ -89,7 +89,8 @@ class StarRating(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         shown = self._hover if self._hover is not None else self.halves
         outline = self.palette().color(QPalette.ColorRole.PlaceholderText)
-        fill = GOLD if self._hover is None else GOLD.lighter(115)
+        gold = color(STAR, self.palette())  # reads on light and dark colors (#558)
+        fill = gold if self._hover is None else gold.lighter(115)
         for i in range(STARS):
             rect = self.star_rect(i)
             path = star_path(rect)

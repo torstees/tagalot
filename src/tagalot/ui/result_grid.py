@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.ui.badges import badge_side, paint_badges
+from tagalot.ui.colors import WARNING, color
 from tagalot.ui.dnd import dragged_tags
 from tagalot.ui.hover import outline_hover
 from tagalot.ui.icons import icon_for
@@ -67,7 +68,6 @@ from tagalot.ui.models.results import (
     rating_text,
     wrapped,
 )
-from tagalot.ui.result_table import OUTLINE_COLOR
 from tagalot.ui.selection import selected_text_color
 from tagalot.ui.thumbnails import ThumbnailLoader
 
@@ -184,7 +184,7 @@ class CardDelegate(QStyledItemDelegate):
                 )
 
         if index.row() in grid.drop_rows:
-            pen = QPen(QColor(OUTLINE_COLOR), 2, Qt.PenStyle.DashLine)
+            pen = QPen(color(WARNING, palette), 2, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect.adjusted(1, 1, -2, -2))

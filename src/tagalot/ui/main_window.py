@@ -95,6 +95,7 @@ from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write
 from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
+from tagalot.ui.appearance import apply_keep_colors
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.archive_dialog import THUMB_SIZE
 from tagalot.ui.dashboard import DashboardPage
@@ -2547,6 +2548,7 @@ class MainWindow(QMainWindow):
     def _config_changed(self, message: str) -> None:
         """Roots were renamed, moved, or removed: pages show the change."""
         self.statusBar().showMessage(message)
+        self.apply_colors()  # the keep's colors may have changed (#558)
         self._show_folders()
         self._refresh_triage()
         self.thumbnails.clear()
@@ -2743,10 +2745,21 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self.apply_colors()
         # Once the window has its size (#468); a window with no keep has no side panel.
         if not getattr(self, "_side_width_restored", True):
             self._side_width_restored = True
             QTimer.singleShot(0, self._restore_side_width)
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.apply_colors()  # the app's look follows the active keep (#558)
+
+    def apply_colors(self) -> None:
+        """Give the application this keep's colors (#558, ``ui/appearance.py``)."""
+        if self.session is not None:
+            apply_keep_colors(self.session.keep.config)
 
     def _restore_side_width(self) -> None:
         """The side panel's width the user left it at, as far as the window has room, and

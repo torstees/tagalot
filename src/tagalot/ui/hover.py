@@ -7,6 +7,7 @@ thin frame in the selection color over the row (or card) under the mouse instead
 apart from the selection, and from the amber dashed outline of a tag drop.
 """
 
+import shiboken6
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QMouseEvent, QPainter
 from PySide6.QtWidgets import (
@@ -81,15 +82,22 @@ class HoverOutline(QObject):
         self.frame = QFrame(view.viewport())
         self.frame.setObjectName("hover_outline")
         self.frame.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        color = view.palette().color(view.palette().ColorRole.Highlight).name()
-        self.frame.setStyleSheet(
-            f"#hover_outline {{ border: 1px solid {color}; border-radius: 3px; }}"
-        )
+        self._color = ""
+        self._style_frame()
         self.frame.hide()
         self.point: QPoint | None = None
         """Where the mouse is in the viewport, while it's there."""
         view.viewport().setMouseTracking(True)
         view.viewport().installEventFilter(self)
+
+    def _style_frame(self) -> None:
+        """The outline in the selection's color, made again when the colors change (#558)."""
+        color = self.view.palette().color(self.view.palette().ColorRole.Highlight).name()
+        if color != self._color:
+            self._color = color
+            self.frame.setStyleSheet(
+                f"#hover_outline {{ border: 1px solid {color}; border-radius: 3px; }}"
+            )
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         kind = event.type()
@@ -111,6 +119,7 @@ class HoverOutline(QObject):
         if rect is None:
             self.frame.hide()
             return
+        self._style_frame()
         self.frame.setGeometry(rect)
         self.frame.show()
         self.frame.raise_()
@@ -129,9 +138,29 @@ def outline_hover(view: QAbstractItemView) -> HoverOutline:
 
     The view owns its style (a widget doesn't own the style it's given): deleted after the
     view, never while the view could still use it."""
+    _restyle(view)
+    _views.append(view)
+    return HoverOutline(view)
+
+
+_views: list[QAbstractItemView] = []
+"""The views given a :class:`NoHoverFill`, for :func:`restyle_views`."""
+
+
+def _restyle(view: QAbstractItemView) -> None:
     app = QApplication.instance()
     assert isinstance(app, QApplication)
+    old = view.style()
     style = NoHoverFill(app.style().name())
     style.setParent(view)
     view.setStyle(style)
-    return HoverOutline(view)
+    if isinstance(old, NoHoverFill):
+        old.deleteLater()  # once nothing draws with it
+
+
+def restyle_views() -> None:
+    """The application's style changed (a keep's own colors use Fusion, #558): base the
+    results lists' styles on the new one."""
+    _views[:] = [v for v in _views if shiboken6.isValid(v)]
+    for view in _views:
+        _restyle(view)

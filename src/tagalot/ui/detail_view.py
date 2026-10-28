@@ -70,6 +70,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.tags import entity_tags
 from tagalot.themes.api import entity_plural
 from tagalot.ui.archive_actions import ArchiveActions
+from tagalot.ui.colors import ERROR, css, dimmed_css
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
@@ -583,7 +584,8 @@ class DetailPage(QWidget):
         if detail is not None:
             self.details_title.setText(
                 f'<b><a href="open" style="text-decoration: none">{html.escape(detail.title)}'
-                f"</a></b><br><span style='color: gray'>{html.escape(detail.type_label)}</span>"
+                f"</a></b><br><span style='color: {dimmed_css()}'>"
+                f"{html.escape(detail.type_label)}</span>"
             )
             self.details_title.setToolTip("Open its page")
 
@@ -903,7 +905,7 @@ class DetailPage(QWidget):
             text += f" {CRUMB}"
         if detail.other_parents:
             places = "1 other" if detail.other_parents == 1 else f"{detail.other_parents} others"
-            text += f" <span style='color:gray'>(also in {places})</span>"
+            text += f" <span style='color:{dimmed_css()}'>(also in {places})</span>"
         self.breadcrumbs.setText(text)
         self.breadcrumbs.setVisible(bool(crumbs))
 
@@ -1344,7 +1346,8 @@ class DetailPage(QWidget):
         """The related items as links, each with an x to remove it, and Add… (#260)."""
         name = section.relationship
         remove = (
-            f' <a href="x:{{id}}" style="text-decoration: none; color: gray">{CLOSE_MARK}</a>'
+            f' <a href="x:{{id}}" style="text-decoration: none; color: {dimmed_css()}">'
+            f"{CLOSE_MARK}</a>"
             if name
             else ""
         )
@@ -1424,12 +1427,12 @@ def _file_label(file: FileRow) -> QLabel:
     if file.status is ResourceStatus.OFFLINE:
         facts.append("<b>offline</b>")
     elif file.status is ResourceStatus.MISSING:
-        facts.append('<b style="color:#c0392b">missing</b>')
+        facts.append(f'<b style="color:{css(ERROR)}">missing</b>')
     if file.skipped:
         facts.append("<b>skipped by the folder's settings</b>")
     if file.by_user:
         facts.append("linked by you")
-    label = QLabel(f"{text} <span style='color:gray'>· {' · '.join(facts)}</span>")
+    label = QLabel(f"{text} <span style='color:{dimmed_css()}'>· {' · '.join(facts)}</span>")
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setWordWrap(True)  # long paths wrap rather than widen the page

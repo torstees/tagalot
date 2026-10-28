@@ -298,8 +298,8 @@ def test_the_keys_in_keep_configuration(
 ) -> None:
     config = window.configure_keep()
     config.settings_path = tmp_path / "settings.toml"
-    config.tabs.setCurrentIndex(config.tabs.count() - 1)
-    assert config.tabs.tabText(config.tabs.currentIndex()) == "Notes"
+    tabs = [config.tabs.tabText(i) for i in range(config.tabs.count())]
+    config.tabs.setCurrentIndex(tabs.index("Notes"))
 
     config.keep_ignore_keys.setPlainText("Mood\n\nmood\n")
     with qtbot.waitSignal(config.changed, timeout=5000) as saved:

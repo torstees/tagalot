@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.dashboard import CardRow, Dashboard, TagUse, load_dashboard
 from tagalot.core.search_spec import FieldFilter
 from tagalot.core.session import KeepSession
+from tagalot.ui.colors import ERROR, css
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.icons import icon_for
 from tagalot.ui.thumbnails import ThumbnailLoader
@@ -220,7 +221,7 @@ class DashboardPage(QWidget):
             body = _links(self._clicked)
             if card.error is not None:
                 body.setText(
-                    f'<span style="color:#c0392b">Couldn\'t work this out: '
+                    f'<span style="color:{css(ERROR)}">Couldn\'t work this out: '
                     f"{html.escape(card.error)}</span>"
                 )
             else:
@@ -249,7 +250,7 @@ class DashboardPage(QWidget):
             elif status.online:
                 state = f"online, scanned {_ago(status.last_scan_at)}"
             else:
-                state = '<span style="color:#c0392b">offline</span>'
+                state = f'<span style="color:{css(ERROR)}">offline</span>'
             files = f", {status.files:,} files" if status is not None else ""
             rows.append(
                 f'<a href="root:{html.escape(root.id)}">{html.escape(root.name)}</a>: '
