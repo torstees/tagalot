@@ -26,12 +26,14 @@ from PySide6.QtCore import QItemSelectionModel, QThreadPool
 from PySide6.QtWidgets import QApplication, QLabel, QTabWidget, QWidget
 from sqlalchemy import select
 
+from tagalot.core.keep import load_keep_config, save_keep_config
+from tagalot.core.keep_settings import with_colors
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import load_themes
 from tagalot.ui.detail_view import DetailPage
-from tagalot.ui.launcher import NewKeepDialog
+from tagalot.ui.launcher import LauncherDialog, NewKeepDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
@@ -247,6 +249,24 @@ def research(app: QApplication, keep: Path) -> None:
     shoot(app, keep, steps)
 
 
+def open_keep(app: QApplication, keeps: list[Path], base: Path) -> None:
+    """The Open Keep dialog (#559): each keep's icon, the books keep in its own colors and
+    the movies keep always dark."""
+    for keep, colors in ((keeps[2], "custom"), (keeps[3], "dark")):
+        path = keep / "keep.toml"
+        save_keep_config(with_colors(load_keep_config(path), colors, PARCHMENT), path)
+    dialog = LauncherDialog(Settings(recent_keeps=keeps), catalog=load_themes())
+    dialog.resize(620, 330)
+    dialog.show()
+    settle(app, 1)
+    for row in range(dialog.recent.count()):  # not this computer's own folders
+        item = dialog.recent.item(row)
+        item.setText(item.text().replace(str(base), SHOWN_FOLDER))
+    settle(app, 0.5)
+    save(dialog, "open-keep")
+    dialog.close()
+
+
 def launcher(app: QApplication) -> None:
     dialog = NewKeepDialog(load_themes())
     dialog.resize(560, 0)
@@ -268,11 +288,19 @@ def main() -> int:
         base = Path(folder)
         global built_in
         built_in = base
-        music(app, script.make_music_demo(base))
-        assets(app, script.make_assets_demo(base))
-        books(app, script.make_books_demo(base))
-        movies(app, script.make_movies_demo(base))
-        research(app, script.make_research_demo(base))
+        keeps = [
+            script.make_music_demo(base),
+            script.make_assets_demo(base),
+            script.make_books_demo(base),
+            script.make_movies_demo(base),
+            script.make_research_demo(base),
+        ]
+        music(app, keeps[0])
+        assets(app, keeps[1])
+        books(app, keeps[2])
+        movies(app, keeps[3])
+        research(app, keeps[4])
+        open_keep(app, keeps, base)
     launcher(app)
     return 0
 

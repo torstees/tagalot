@@ -8,7 +8,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.icons import PICTURE_EXTENSIONS, keep_icon, resolve_icon
 from tagalot.core.keep import (
     DEFAULT_EXCLUDES,
     KeepConfig,
@@ -41,8 +43,10 @@ from tagalot.core.keep import (
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, save_settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
+from tagalot.ui.appearance import mix, starting_colors
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.folder_picker import choose_folder, start_folder
+from tagalot.ui.icons import icon, lucide, paint_icon
 from tagalot.ui.keep_config import CONTENTS_CHOICES
 from tagalot.ui.opening import open_keep_async
 from tagalot.ui.workers import run_in_pool
@@ -53,6 +57,54 @@ DEFAULT_THEME = "generic"
 """The theme a new keep starts with in the New keep dialog."""
 
 _PATH = Qt.ItemDataRole.UserRole + 1
+BADGE = 28
+"""A recent keep's icon's size, in pixels."""
+GENERIC_KEEP = "box"
+"""The icon of a keep whose theme names none, or that can't be read (#559)."""
+LIGHT = {"background": "#f7f6f3", "text": "#1f1f1f"}
+DARK = {"background": "#262626", "text": "#f0f0f0"}
+"""The badges of keeps that are always light or dark."""
+
+
+def keep_badge(source: str, config: KeepConfig, ratio: float = 1.0) -> QIcon:
+    """A keep's icon as the launcher shows it (#559): plain for a keep following the
+    system's colors; else on a rounded square of its background, drawn in its text color,
+    with a stripe of its accent for a keep with its own colors."""
+    if config.colors == "system":
+        return icon(source)
+    if config.colors == "custom":
+        colors = {**starting_colors(), **config.custom_colors}
+    else:
+        colors = LIGHT if config.colors == "light" else DARK
+    side = round(BADGE * ratio)
+    picture = QPixmap(side, side)
+    picture.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(picture)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    background = QColor(colors["background"])
+    painter.setPen(mix(background, QColor(colors["text"]), 0.25))
+    painter.setBrush(background)
+    radius = side * 0.2
+    painter.drawRoundedRect(QRectF(0.5, 0.5, side - 1, side - 1), radius, radius)
+    if "accent" in colors and config.colors == "custom":
+        stripe = max(2, round(side * 0.14))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(colors["accent"]))
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, side, side), radius, radius)
+        painter.setClipPath(path)
+        painter.drawRect(QRectF(0, side - stripe, side, stripe))
+        painter.setClipping(False)
+    inset = round(side * 0.2)
+    paint_icon(
+        painter,
+        QRect(inset, inset - round(side * 0.04), side - 2 * inset, side - 2 * inset),
+        source,
+        QColor(colors["text"]),
+    )
+    painter.end()
+    picture.setDevicePixelRatio(ratio)
+    return QIcon(picture)
 
 
 @dataclass(frozen=True)
@@ -63,6 +115,9 @@ class RecentKeep:
     config: KeepConfig | None
     """``None`` when the keep can't be read (moved, deleted, drive not connected)."""
     problem: str | None = None
+    icon: str | None = None
+    """The source of the keep's own icon (``[appearance] icon``, #559), found in the
+    worker since a picture is a file in the keep folder; None for the theme's."""
 
 
 def describe_recent(paths: list[Path]) -> list[RecentKeep]:
@@ -70,7 +125,9 @@ def describe_recent(paths: list[Path]) -> list[RecentKeep]:
     result = []
     for path in paths:
         try:
-            result.append(RecentKeep(path, load_keep_config(path / "keep.toml")))
+            config = load_keep_config(path / "keep.toml")
+            own = resolve_icon(config.icon, path, PICTURE_EXTENSIONS) if config.icon else None
+            result.append(RecentKeep(path, config, icon=own))
         except KeepError as e:
             result.append(RecentKeep(path, None, str(e)))
     return result
@@ -100,6 +157,8 @@ class LauncherDialog(QDialog):
         self.catalog = catalog
 
         self.recent = QListWidget()
+        self.recent.setIconSize(QSize(BADGE, BADGE))
+        self._recent: list[RecentKeep] = []
         self.recent.itemDoubleClicked.connect(lambda item: self._open(item.data(_PATH)))
         self.recent.currentItemChanged.connect(lambda *_: self._update_buttons())
         self.recent.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -157,6 +216,9 @@ class LauncherDialog(QDialog):
         run_in_pool(lambda: describe_recent(paths), on_done=self._show_recent)
 
     def _show_recent(self, recent: list[RecentKeep]) -> None:
+        current = self.recent.currentItem()
+        chosen = current.data(_PATH) if current is not None else None
+        self._recent = recent
         self.recent.clear()
         for keep in recent:
             if keep.config is not None:
@@ -164,25 +226,40 @@ class LauncherDialog(QDialog):
                 text = f"{keep.config.name}    {theme} · {keep.path}"
             else:
                 text = f"{keep.path.name}    not found · {keep.path}"
-            item = QListWidgetItem(text)
+            item = QListWidgetItem(self._badge(keep), text)
             item.setData(_PATH, keep.path)
             item.setToolTip(keep.problem or str(keep.path))
             if keep.config is None:
                 item.setForeground(self.palette().placeholderText())
             self.recent.addItem(item)
         if self.recent.count():
-            self.recent.setCurrentRow(0)
+            paths = [self.recent.item(r).data(_PATH) for r in range(self.recent.count())]
+            self.recent.setCurrentRow(paths.index(chosen) if chosen in paths else 0)
         self.recent_stack.setCurrentWidget(self.recent if self.recent.count() else self.no_keeps)
         self._update_buttons()
 
     def _catalog_loaded(self, catalog: ThemeCatalog) -> None:
         self.catalog = catalog
+        if self._recent:
+            self._show_recent(self._recent)  # their themes' names and icons
         count = len(catalog.problems)
         if count:
             files = "file has" if count == 1 else "files have"
             self.problems.setText(f"⚠ {count} theme {files} problems (<a href='#'>details</a>)")
             self.problems.setVisible(True)
         self._update_buttons()
+
+    def _badge(self, keep: RecentKeep) -> QIcon:
+        """The keep's icon (its own, else its theme's, else a generic one), on its colors
+        when they aren't the system's."""
+        config = keep.config
+        if config is None:
+            return lucide(GENERIC_KEEP)
+        source = keep.icon
+        loaded = self.catalog.get(config.theme.id) if self.catalog else None
+        if source is None and loaded is not None:
+            source = keep_icon(loaded.theme)
+        return keep_badge(source or GENERIC_KEEP, config, self.devicePixelRatioF())
 
     def _theme_name(self, theme_id: str) -> str:
         loaded = self.catalog.get(theme_id) if self.catalog else None

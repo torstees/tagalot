@@ -10,7 +10,7 @@ import functools
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRect, QSize, Qt
+from PySide6.QtCore import QByteArray, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QIconEngine, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
@@ -146,6 +146,34 @@ def _file_icon(path: str) -> QIcon:
         logger.warning("Can't read the icon %s: not a picture", path)
         return lucide(GENERIC)
     return QIcon(picture)
+
+
+def paint_icon(painter: QPainter, rect: QRect, source: str | None, color: QColor) -> None:
+    """Paint the icon a source means in ``color`` rather than the palette's (a keep's badge
+    in its own colors, #559). A PNG is painted as it is."""
+    svg = _svg_of(source)
+    if svg is not None:
+        renderer = QSvgRenderer(QByteArray(svg.replace(b"currentColor", color.name().encode())))
+        if renderer.isValid():
+            renderer.render(painter, QRectF(rect))
+            return
+    icon(source).paint(painter, rect)
+
+
+@functools.cache
+def _svg_of(source: str | None) -> bytes | None:
+    """The SVG a source means (the generic icon's for None or a missing file); None for a
+    PNG."""
+    if source is None:
+        return lucide_svg(GENERIC)
+    if source.lower().endswith(".png"):
+        return None
+    if source.lower().endswith(".svg"):
+        try:
+            return Path(source).read_bytes()
+        except OSError:
+            return lucide_svg(GENERIC)
+    return lucide_svg(source) or lucide_svg(GENERIC)
 
 
 def icon_for(name: str | None) -> QIcon:
