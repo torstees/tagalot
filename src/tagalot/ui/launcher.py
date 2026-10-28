@@ -6,12 +6,31 @@ loading themes, creating and opening keeps) runs in a worker.
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import (
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -25,11 +44,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
 
 from tagalot.core.color_schemes import resolve_colors, user_schemes
+from tagalot.core.fonts import downloaded_families, read_font_files
 from tagalot.core.icons import PICTURE_EXTENSIONS, keep_icon, resolve_icon
 from tagalot.core.keep import (
     DEFAULT_EXCLUDES,
@@ -48,9 +71,11 @@ from tagalot.themes.loader import ThemeCatalog, load_themes
 from tagalot.ui.appearance import mix, starting_colors
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.folder_picker import choose_folder, start_folder
+from tagalot.ui.fonts import look_of
 from tagalot.ui.icons import icon, lucide, paint_icon
 from tagalot.ui.keep_config import CONTENTS_CHOICES
 from tagalot.ui.opening import open_keep_async
+from tagalot.ui.selection import selected_text_color
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -59,6 +84,11 @@ DEFAULT_THEME = "generic"
 """The theme a new keep starts with in the New keep dialog."""
 
 _PATH = Qt.ItemDataRole.UserRole + 1
+_NAME = Qt.ItemDataRole.UserRole + 2
+DETAIL_ROLE = Qt.ItemDataRole.UserRole + 3
+_FONT = Qt.ItemDataRole.UserRole + 4
+_GAP = 16
+"""Between a recent keep's name and its theme and path, in pixels."""
 BADGE = 28
 """A recent keep's icon's size, in pixels."""
 GENERIC_KEEP = "box"
@@ -123,6 +153,9 @@ class RecentKeep:
     icon: str | None = None
     """The source of the keep's own icon (``[appearance] icon``, #559), found in the
     worker since a picture is a file in the keep folder; None for the theme's."""
+    font_files: Mapping[str, bytes | None] = field(default_factory=dict)
+    """The keep's font files (#568): those ``[appearance.fonts]`` names and the families
+    downloaded into it, read in the worker, once a run."""
 
 
 def describe_recent(paths: list[Path]) -> list[RecentKeep]:
@@ -134,10 +167,85 @@ def describe_recent(paths: list[Path]) -> list[RecentKeep]:
         try:
             config = load_keep_config(path / "keep.toml")
             own = resolve_icon(config.icon, path, PICTURE_EXTENSIONS) if config.icon else None
-            result.append(RecentKeep(path, config, icon=own))
+            result.append(RecentKeep(path, config, icon=own, font_files=_font_files(path, config)))
         except KeepError as e:
             result.append(RecentKeep(path, None, str(e)))
     return result
+
+
+_fonts_read: dict[Path, dict[str, bytes | None]] = {}
+"""Recent keeps' font files, read once a run (#568)."""
+
+
+def _font_files(path: Path, config: KeepConfig) -> dict[str, bytes | None]:
+    if path not in _fonts_read:
+        _fonts_read[path] = {
+            **downloaded_families(path),
+            **read_font_files(path, config.fonts),
+        }
+    return _fonts_read[path]
+
+
+class _RecentDelegate(QStyledItemDelegate):
+    """A recent keep's row: its badge, its name in the keep's titles font (#568), then
+    its theme and path, dimmed, in the window's."""
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QStyleOptionViewItem,
+        index: QModelIndex | QPersistentModelIndex,
+    ) -> None:
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        name, detail = index.data(_NAME), index.data(DETAIL_ROLE)
+        if not isinstance(name, str):
+            super().paint(painter, option, index)
+            return
+        opt.text = ""
+        widget = opt.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, widget)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        ink = (
+            selected_text_color(opt.palette, widget)
+            if selected
+            else opt.palette.color(QPalette.ColorRole.Text)
+        )
+        if index.data(Qt.ItemDataRole.ForegroundRole) is not None and not selected:
+            ink = opt.palette.color(QPalette.ColorRole.PlaceholderText)
+        font = index.data(_FONT)
+        name_font = QFont(font) if isinstance(font, QFont) else QFont(opt.font)
+        painter.save()
+        painter.setFont(name_font)
+        painter.setPen(ink)
+        metrics = QFontMetrics(name_font)
+        shown = metrics.elidedText(name, Qt.TextElideMode.ElideRight, text_rect.width())
+        align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(text_rect, align, shown)
+        rest = text_rect.adjusted(metrics.horizontalAdvance(shown) + _GAP, 0, 0, 0)
+        if isinstance(detail, str) and rest.width() > 0:
+            painter.setFont(opt.font)
+            if not selected:
+                painter.setPen(opt.palette.color(QPalette.ColorRole.PlaceholderText))
+            painter.drawText(
+                rest,
+                align,
+                QFontMetrics(opt.font).elidedText(
+                    detail, Qt.TextElideMode.ElideMiddle, rest.width()
+                ),
+            )
+        painter.restore()
+
+    def sizeHint(
+        self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
+    ) -> QSize:
+        size = super().sizeHint(option, index)
+        font = index.data(_FONT)
+        if isinstance(font, QFont):
+            size.setHeight(max(size.height(), QFontMetrics(font).height() + 6))
+        return size
 
 
 class LauncherDialog(QDialog):
@@ -165,6 +273,7 @@ class LauncherDialog(QDialog):
 
         self.recent = QListWidget()
         self.recent.setIconSize(QSize(BADGE, BADGE))
+        self.recent.setItemDelegate(_RecentDelegate(self.recent))
         self._recent: list[RecentKeep] = []
         self.recent.itemDoubleClicked.connect(lambda item: self._open(item.data(_PATH)))
         self.recent.currentItemChanged.connect(lambda *_: self._update_buttons())
@@ -235,6 +344,10 @@ class LauncherDialog(QDialog):
                 text = f"{keep.path.name}    not found · {keep.path}"
             item = QListWidgetItem(self._badge(keep), text)
             item.setData(_PATH, keep.path)
+            if keep.config is not None:
+                item.setData(_NAME, keep.config.name)
+                item.setData(DETAIL_ROLE, f"{theme} · {keep.path}")
+                item.setData(_FONT, self._name_font(keep))
             item.setToolTip(keep.problem or str(keep.path))
             if keep.config is None:
                 item.setForeground(self.palette().placeholderText())
@@ -255,6 +368,20 @@ class LauncherDialog(QDialog):
             self.problems.setText(f"⚠ {count} theme {files} problems (<a href='#'>details</a>)")
             self.problems.setVisible(True)
         self._update_buttons()
+
+    def _name_font(self, keep: RecentKeep) -> QFont:
+        """The keep's name in its titles font (#568): its own, else its theme's suggestion
+        (once the themes have loaded), else the window's; a little larger, so it
+        shows."""
+        font = QFont(self.recent.font())
+        font.setPointSizeF(font.pointSizeF() + 2)
+        if keep.config is None:
+            return font
+        loaded = self.catalog.get(keep.config.theme.id) if self.catalog else None
+        look, _ = look_of(keep.config, keep.font_files, loaded.theme if loaded else None)
+        if look.titles:
+            font.setFamilies([look.titles])
+        return font
 
     def _badge(self, keep: RecentKeep) -> QIcon:
         """The keep's icon (its own, else its theme's, else a generic one), on its colors
