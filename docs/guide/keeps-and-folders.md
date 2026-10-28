@@ -75,8 +75,8 @@ A keep may be opened on several computers that reach the same files by different
 
 ## Opening and upgrading
 
-The launcher lists recent keeps (greyed when not found; right-click to remove one from the list, which doesn't touch the keep), each with its icon: its own (Keep configuration → Appearance), else its theme's. A keep with colors of its own shows its icon on its colors, with a stripe of its accent, and one that's always light or dark on a light or dark square, so you can tell your keeps apart before opening one.
+The launcher lists recent keeps (greyed when not found; right-click to remove one from the list, which doesn't touch the keep), each with its icon: its own (Keep configuration → Appearance), else its theme's. A keep with a color scheme shows its icon on the scheme's colors, with a stripe of its accent, and one that's always light or dark on a light or dark square, so you can tell your keeps apart before opening one.
 
-![The Open Keep dialog: each keep's icon, the books keep in its own colors and the movies keep always dark](../images/screens/open-keep.png)
+![The Open Keep dialog: each keep's icon, the books keep in the Parchment scheme and the movies keep always dark](../images/screens/open-keep.png)
 
 A keep made by an older Tagalot is upgraded when you open it, after asking: `keep.db` is backed up first. An older Tagalot can't open a keep a newer one upgraded.

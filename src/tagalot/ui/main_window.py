@@ -95,7 +95,7 @@ from tagalot.core.writeback import FileWrite, WritePlan, WriteResult, plan_write
 from tagalot.themes.api import Kind, SearchView, entity_label
 from tagalot.ui.about import AboutDialog
 from tagalot.ui.activity import ActivityPanel
-from tagalot.ui.appearance import apply_keep_colors
+from tagalot.ui.appearance import apply_colors
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.archive_dialog import THUMB_SIZE
 from tagalot.ui.dashboard import DashboardPage
@@ -2757,9 +2757,10 @@ class MainWindow(QMainWindow):
             self.apply_colors()  # the app's look follows the active keep (#558)
 
     def apply_colors(self) -> None:
-        """Give the application this keep's colors (#558, ``ui/appearance.py``)."""
+        """Give the application this keep's colors (#558, #572, ``ui/appearance.py``)."""
         if self.session is not None:
-            apply_keep_colors(self.session.keep.config)
+            preview = self.keep_config.colors_preview() if self.keep_config is not None else None
+            apply_colors(*(preview or self.session.colors))  # unsaved changes still show (#572)
 
     def _restore_side_width(self) -> None:
         """The side panel's width the user left it at, as far as the window has room, and

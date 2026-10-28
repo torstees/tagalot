@@ -176,10 +176,10 @@ def books(app: QApplication, keep: Path) -> None:
         save(window, "item-page")
         window.tags_dock.raise_()
 
-        # A keep's own colors (#558): the Appearance tab, in a parchment look.
+        # A keep's colors (#558): the Appearance tab, with the Parchment scheme (#572).
         config = window.configure_keep()
-        config.resize(820, 560)
-        config.save_colors("custom", PARCHMENT)
+        config.resize(820, 600)
+        config.save_colors("parchment", None)
         appearance = next(
             i for i in range(config.tabs.count()) if config.tabs.tabText(i) == "Appearance"
         )
@@ -191,16 +191,6 @@ def books(app: QApplication, keep: Path) -> None:
         config.close()
 
     shoot(app, keep, steps)
-
-
-PARCHMENT = {
-    "background": "#f3ece0",
-    "text": "#2b2722",
-    "panels": "#fffaf2",
-    "accent": "#8a5a2b",
-    "dimmed": "#857a6c",
-}
-"""A books keep's own colors, for the Appearance tab's screenshot."""
 
 
 def movies(app: QApplication, keep: Path) -> None:
@@ -250,11 +240,11 @@ def research(app: QApplication, keep: Path) -> None:
 
 
 def open_keep(app: QApplication, keeps: list[Path], base: Path) -> None:
-    """The Open Keep dialog (#559): each keep's icon, the books keep in its own colors and
-    the movies keep always dark."""
-    for keep, colors in ((keeps[2], "custom"), (keeps[3], "dark")):
+    """The Open Keep dialog (#559): each keep's icon, the books keep in the Parchment
+    scheme (#572) and the movies keep always dark."""
+    for keep, colors in ((keeps[2], "parchment"), (keeps[3], "dark")):
         path = keep / "keep.toml"
-        save_keep_config(with_colors(load_keep_config(path), colors, PARCHMENT), path)
+        save_keep_config(with_colors(load_keep_config(path), colors), path)
     dialog = LauncherDialog(Settings(recent_keeps=keeps), catalog=load_themes())
     dialog.resize(620, 330)
     dialog.show()

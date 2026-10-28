@@ -1,6 +1,7 @@
 """A keep's colors in the window (#558, DESIGN.md §12 *Colors*): a whole palette from five
 colors, applied with Fusion while the keep's window is active, chosen in Keep
-configuration's Appearance tab; named colors for errors, warnings, and stars."""
+configuration's Appearance tab as a color scheme, changed, and saved as the user's own
+(#572); named colors for errors, warnings, and stars."""
 
 import importlib.util
 import tomllib
@@ -13,16 +14,11 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QProxyStyle
 from pytestqt.qtbot import QtBot
 
+from tagalot.core.color_schemes import BUILT_IN, hard_to_read, save_user_scheme, scheme_colors
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.ui import colors
-from tagalot.ui.appearance import (
-    apply_colors,
-    custom_palette,
-    hard_to_read,
-    reset_colors,
-    starting_colors,
-)
+from tagalot.ui.appearance import apply_colors, custom_palette, reset_colors
 from tagalot.ui.keep_config import KeepConfigWindow
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.result_table import ResultTable
@@ -39,6 +35,7 @@ OWN = {
     "accent": "#c8963e",
     "dimmed": "#9a9184",
 }
+BUILT_IN_BY_ID = {s.id: s for s in BUILT_IN}
 
 
 @pytest.fixture(autouse=True)
@@ -178,40 +175,187 @@ def test_the_window_shows_its_keeps_colors(
 # --- Keep configuration ---
 
 
-def test_choosing_colors(
-    qtbot: QtBot, qapp: QApplication, session: KeepSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _config(qtbot: QtBot, session: KeepSession) -> KeepConfigWindow:
     config = KeepConfigWindow(session)
     qtbot.addWidget(config)
+    return config
+
+
+def _choose(qtbot: QtBot, config: KeepConfigWindow, scheme: str) -> None:
+    session = config.session
+    config.color_mode.setCurrentIndex(config.color_mode.findData(scheme))
+    qtbot.waitUntil(lambda: session.keep.config.colors == scheme, timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+
+
+def _window_color(qapp: QApplication, role: QPalette.ColorRole = QPalette.ColorRole.Window) -> str:
+    return qapp.palette().color(role).name()
+
+
+def test_the_colors_list(qtbot: QtBot, session: KeepSession) -> None:
+    config = _config(qtbot, session)
     tabs = [config.tabs.tabText(i) for i in range(config.tabs.count())]
     assert tabs[-1] == "Appearance"
-    assert config.color_mode.currentData() == "system"
+    combo = config.color_mode
+    listed = [combo.itemData(i) for i in range(combo.count()) if combo.itemText(i)]
+    assert listed == ["system", "light", "dark", *(s.id for s in BUILT_IN)]
+    assert combo.currentData() == "system"
     assert config.custom_colors.isHidden()
 
-    # Its own: it starts from the colors shown now, and shows at once.
-    shown = starting_colors()
-    config.color_mode.setCurrentIndex(config.color_mode.findData("custom"))
-    assert qapp.style().name().lower() == "fusion"  # before it's saved
-    qtbot.waitUntil(lambda: _toml(session).get("appearance", {}) != {}, timeout=5000)
-    appearance = _toml(session)["appearance"]
-    assert appearance == {"colors": "custom", **shown}
-    qtbot.waitUntil(lambda: not config.custom_colors.isHidden(), timeout=5000)
 
-    # A color of its own, then one that reads poorly.
+def test_choosing_a_scheme(qtbot: QtBot, qapp: QApplication, session: KeepSession) -> None:
+    config = _config(qtbot, session)
+    config.color_mode.setCurrentIndex(config.color_mode.findData("nord"))
+    assert _window_color(qapp) == "#2e3440"  # before it's saved
+    qtbot.waitUntil(lambda: _toml(session).get("appearance") == {"colors": "nord"}, timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    assert not config.custom_colors.isHidden()
+    assert config.color_buttons["background"].text() == "#2e3440"
+    assert config.save_scheme_button.isHidden()  # not the user's own
+    assert config.save_scheme_as_button.isEnabled()
+    _choose(qtbot, config, "dark")
+    assert config.custom_colors.isHidden()
+
+
+def test_editing_then_save_as_and_save(
+    qtbot: QtBot,
+    qapp: QApplication,
+    session: KeepSession,
+    monkeypatch: pytest.MonkeyPatch,
+    private_user_folders: Path,
+) -> None:
+    config = _config(qtbot, session)
+    _choose(qtbot, config, "nord")
+
+    # A change shows at once, and isn't saved.
     monkeypatch.setattr(config, "choose_color", lambda label, current: "#c8963e")
     config.color_buttons["accent"].click()
-    qtbot.waitUntil(lambda: config.color_buttons["accent"].text() == "#c8963e", timeout=5000)
-    assert qapp.palette().color(QPalette.ColorRole.Highlight).name() == "#c8963e"
+    assert _window_color(qapp, QPalette.ColorRole.Highlight) == "#c8963e"
     assert config.color_buttons["accent"].text() == "#c8963e"
-    background = session.keep.config.custom_colors["background"]
-    monkeypatch.setattr(config, "choose_color", lambda label, current: background)
-    config.color_buttons["text"].click()
-    qtbot.waitUntil(lambda: not config.colors_warning.isHidden(), timeout=5000)
-    assert "hard to read" in config.colors_warning.text()
+    assert "Save As" in config.scheme_state.text()
+    assert session.keep.config.colors == "nord"
 
-    # Dark: its own colors are kept for later.
-    config.color_mode.setCurrentIndex(config.color_mode.findData("dark"))
-    qtbot.waitUntil(lambda: config.custom_colors.isHidden(), timeout=5000)
-    assert session.keep.config.colors == "dark"
-    assert session.keep.config.custom_colors["accent"] == "#c8963e"
+    # Save As: a scheme of the user's, which the keep then names.
+    monkeypatch.setattr(config, "ask_scheme_name", lambda suggested: "Warm Nord")
+    config.save_scheme_as_button.click()
+    qtbot.waitUntil(lambda: session.keep.config.colors == "user:warm-nord", timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    saved = tomllib.loads(
+        (private_user_folders / "color_schemes" / "warm-nord.toml").read_text(encoding="utf-8")
+    )
+    assert saved == {
+        "name": "Warm Nord",
+        **scheme_colors(BUILT_IN_BY_ID["nord"]),
+        "accent": "#c8963e",
+    }
+    assert config.color_mode.currentText() == "Warm Nord"
+    assert not config.save_scheme_button.isHidden()
+    assert not config.save_scheme_button.isEnabled()  # nothing changed since
+    assert config.scheme_state.text() == ""
+
+    # Save: the user's own scheme, changed again.
+    monkeypatch.setattr(config, "choose_color", lambda label, current: "#123456")
+    config.color_buttons["panels"].click()
+    assert config.save_scheme_button.isEnabled()
+    config.save_scheme_button.click()
+    qtbot.waitUntil(lambda: not config.save_scheme_button.isEnabled(), timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    expected = {k: v for k, v in saved.items() if k != "name"} | {"panels": "#123456"}
+    assert session.colors == ("custom", expected)
+    assert _window_color(qapp, QPalette.ColorRole.Base) == "#123456"
+
+
+def test_save_as_refuses_a_name_taken(
+    qtbot: QtBot, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    save_user_scheme("Mine", OWN)
+    config = _config(qtbot, session)
+    _choose(qtbot, config, "paper")
+    monkeypatch.setattr(config, "ask_scheme_name", lambda suggested: "mine")
+    config.save_scheme_as_button.click()
+    assert "already have a scheme named 'mine'" in config.colors_warning.text()
+    assert session.keep.config.colors == "paper"
+
+
+def test_unsaved_changes_are_asked_about(
+    qtbot: QtBot, qapp: QApplication, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(qtbot, session)
+    _choose(qtbot, config, "nord")
+    monkeypatch.setattr(config, "choose_color", lambda label, current: "#c8963e")
+    config.color_buttons["accent"].click()
+
+    # Keep them: the list goes back to the scheme being changed.
+    monkeypatch.setattr(config, "discard_changes", lambda: False)
+    config.color_mode.setCurrentIndex(config.color_mode.findData("paper"))
+    assert config.color_mode.currentData() == "nord"
+    assert config.color_buttons["accent"].text() == "#c8963e"
+    assert session.keep.config.colors == "nord"
+
+    # Discard them: the other scheme.
+    monkeypatch.setattr(config, "discard_changes", lambda: True)
+    _choose(qtbot, config, "paper")
+    assert config.color_buttons["accent"].text() == "#2f6fbf"
+
+
+def test_closing_drops_unsaved_changes(
+    qtbot: QtBot, qapp: QApplication, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(qtbot, session)
+    _choose(qtbot, config, "nord")
+    monkeypatch.setattr(config, "choose_color", lambda label, current: "#c8963e")
+    config.color_buttons["accent"].click()
+    assert _window_color(qapp, QPalette.ColorRole.Highlight) == "#c8963e"
+    config.close()  # the keep closing, say: not asked
+    assert _window_color(qapp, QPalette.ColorRole.Highlight) == "#88c0d0"
+    assert session.keep.config.colors == "nord"
+
+
+def test_a_keeps_colors_from_558_until_saved_as_a_scheme(
+    qtbot: QtBot, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session.set_colors("custom", OWN)
+    config = _config(qtbot, session)
+    assert config.color_mode.currentText() == "This keep's colors"
+    assert config.color_buttons["background"].text() == OWN["background"]
+    assert "Save As keeps" in config.scheme_state.text()
+
+    # Another scheme, and back: the keep's colors are offered until the window closes.
+    _choose(qtbot, config, "slate")
+    assert "background" not in _toml(session)["appearance"]  # type: ignore[operator]
+    _choose(qtbot, config, "custom")
+    assert session.keep.config.custom_colors == OWN
+
+    monkeypatch.setattr(config, "ask_scheme_name", lambda suggested: "Old Colors")
+    config.save_scheme_as_button.click()
+    qtbot.waitUntil(lambda: session.keep.config.colors == "user:old-colors", timeout=5000)
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    texts = [config.color_mode.itemText(i) for i in range(config.color_mode.count())]
+    assert "This keep's colors" not in texts
+    assert "Old Colors" in texts
+
+
+def test_a_scheme_thats_gone(qtbot: QtBot, qapp: QApplication, session: KeepSession) -> None:
+    session.set_colors("user:gone")
+    assert session.colors == ("system", {})
+    config = _config(qtbot, session)
+    assert config.color_mode.currentText() == "user:gone (not found: the system's colors)"
     assert config.custom_colors.isHidden()
+
+
+def test_the_keeps_window_keeps_showing_unsaved_changes(
+    qtbot: QtBot, qapp: QApplication, session: KeepSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window = _window(qtbot, session)
+    try:
+        config = window.configure_keep()
+        _choose(qtbot, config, "nord")
+        monkeypatch.setattr(config, "choose_color", lambda label, current: "#c8963e")
+        config.color_buttons["accent"].click()
+        window.apply_colors()  # as when the keep's window becomes active again
+        assert _window_color(qapp, QPalette.ColorRole.Highlight) == "#c8963e"
+        config.close()
+        window.apply_colors()
+        assert _window_color(qapp, QPalette.ColorRole.Highlight) == "#88c0d0"
+    finally:
+        _close(window)

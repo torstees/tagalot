@@ -25,6 +25,7 @@ from tagalot.core.activity import (
     problems_from_report,
     thumbnail_problems,
 )
+from tagalot.core.color_schemes import all_schemes, resolve_colors, save_user_scheme
 from tagalot.core.containers import contain_by_hand, new_container, uncontain_by_hand
 from tagalot.core.contents import (
     FULLTEXT_DB,
@@ -143,7 +144,7 @@ from tagalot.core.thumbnails.queue import (
 from tagalot.core.thumbnails.resolve import ThumbnailResolver
 from tagalot.core.triage import dismiss
 from tagalot.core.writer import DbWriter
-from tagalot.themes.api import OnlineSource, Theme
+from tagalot.themes.api import ColorScheme, OnlineSource, Theme
 from tagalot.themes.loader import ThemeCatalog, load_themes
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,10 @@ class KeepSession:
     _temp: Path | None = field(default=None, init=False, repr=False)
     _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
     _icons: dict[str, str | None] = field(default_factory=dict, init=False, repr=False)
+    colors: tuple[str, dict[str, str]] = field(default=("system", {}), init=False, repr=False)
+    """The look ``keep.toml`` names (#572): ``(mode, colors)`` from
+    :func:`~tagalot.core.color_schemes.resolve_colors`, found at open and when the
+    configuration changes, so the window never reads a scheme's file."""
     """Types' icon sources, found once (a picture's file is looked for) until ``keep.toml``
     changes."""
     problems: ProblemLog = field(default_factory=ProblemLog, init=False)
@@ -257,6 +262,7 @@ class KeepSession:
         thumbnails.icon_of = session.type_icon  # the keep's choices too (#557)
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
+        session.colors = resolve_colors(opened.keep.config, theme)
         with reader.connect() as conn:
             session.has_keywords = any_keywords(conn)
         return session
@@ -569,6 +575,7 @@ class KeepSession:
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
         self._icons = {}  # looked up again (#557)
+        self.colors = resolve_colors(config, self.theme)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
 
     # --- ignored note keys (core.note_keys, #381) ---
@@ -629,9 +636,23 @@ class KeepSession:
         self.save_config(with_type_icon(self.keep.config, type_id, icon))
 
     def set_colors(self, mode: str, custom: Mapping[str, str] | None = None) -> None:
-        """Choose the keep's colors (#558): a mode, and its own colors. Raises ``KeepError``.
-        Runs in a worker."""
+        """Choose the keep's colors: a mode (#558) or a color scheme's id (#572). Raises
+        ``KeepError``. Runs in a worker."""
         self.save_config(with_colors(self.keep.config, mode, custom))
+
+    def color_schemes(self) -> list[ColorScheme]:
+        """The schemes this keep can choose from: built in, its theme's, the user's."""
+        return all_schemes(self.theme)
+
+    def save_color_scheme(
+        self, name: str, colors: Mapping[str, str], scheme_id: str | None = None
+    ) -> ColorScheme:
+        """Save one of the user's schemes (``scheme_id``: **Save**; None: **Save As**, a new
+        one named ``name``), and give the keep its colors. Raises ``ColorSchemeError``
+        and ``KeepError``. Runs in a worker."""
+        scheme = save_user_scheme(name, colors, scheme_id=scheme_id)
+        self.set_colors(scheme.id)
+        return scheme
 
     def set_keep_icon(self, icon: str | None, picture: Path | None = None) -> None:
         """Choose the keep's icon, as :meth:`set_type_icon`. Runs in a worker."""

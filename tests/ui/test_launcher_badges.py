@@ -9,7 +9,8 @@ import pytest
 from PySide6.QtGui import QColor, QIcon
 from pytestqt.qtbot import QtBot
 
-from tagalot.core.keep import KeepConfig, ThemeRef, create_keep, save_keep_config
+from tagalot.core.color_schemes import save_user_scheme
+from tagalot.core.keep import ThemeRef, create_keep, save_keep_config
 from tagalot.core.keep_settings import with_colors
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
@@ -69,23 +70,18 @@ def _colors(badge: QIcon) -> dict[str, QColor]:
 
 def test_a_keep_following_the_system_shows_its_plain_icon(tmp_path: Path) -> None:
     config = create_keep(tmp_path / "A.keep", "A", ThemeRef("music", 1)).config
-    assert keep_badge("headphones", config).cacheKey() == icon("headphones").cacheKey()
+    assert config.colors == "system"
+    assert keep_badge("headphones", "system").cacheKey() == icon("headphones").cacheKey()
 
 
-def test_a_keep_with_its_own_colors(tmp_path: Path) -> None:
-    config: KeepConfig = with_colors(
-        create_keep(tmp_path / "A.keep", "A", ThemeRef("books", 1)).config, "custom", OWN
-    )
-    seen = _colors(keep_badge("library", config))
+def test_a_keep_with_a_color_scheme() -> None:
+    seen = _colors(keep_badge("library", "custom", OWN))
     assert seen["inside"].name() == OWN["background"]
     assert seen["stripe"].name() == OWN["accent"]
 
 
-def test_a_keep_always_dark(tmp_path: Path) -> None:
-    config = with_colors(
-        create_keep(tmp_path / "A.keep", "A", ThemeRef("movies", 1)).config, "dark"
-    )
-    seen = _colors(keep_badge("clapperboard", config))
+def test_a_keep_always_dark() -> None:
+    seen = _colors(keep_badge("clapperboard", "dark"))
     assert seen["inside"].name() == DARK["background"]
     assert seen["stripe"].name() == DARK["background"]  # no accent stripe
 
@@ -112,13 +108,18 @@ def test_the_launchers_icons(qtbot: QtBot, tmp_path: Path, catalog: ThemeCatalog
         _keep(tmp_path, "Radio", "music", icon="radio"),
         _keep(tmp_path, "Own", "books", colors="custom"),
         tmp_path / "Missing.keep",
+        _keep(tmp_path, "Nord", "books", colors="nord"),
+        _keep(tmp_path, "Mine", "books", colors="user:mine"),
     ]
+    save_user_scheme("Mine", {**OWN, "background": "#102030"})
     dialog = _launcher(qtbot, keeps, catalog)
     icons = [dialog.recent.item(row).icon() for row in range(dialog.recent.count())]
     assert icons[0].cacheKey() == lucide("headphones").cacheKey()  # the theme's
     assert icons[1].cacheKey() == lucide("radio").cacheKey()  # its own
     assert _colors(icons[2])["inside"].name() == OWN["background"]  # its colors
     assert icons[3].cacheKey() == lucide(GENERIC_KEEP).cacheKey()  # can't be read
+    assert _colors(icons[4])["inside"].name() == "#2e3440"  # a built-in scheme
+    assert _colors(icons[5])["inside"].name() == "#102030"  # the user's own
 
 
 def test_themes_loaded_later_give_their_icons(qtbot: QtBot, tmp_path: Path) -> None:

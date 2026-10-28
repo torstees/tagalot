@@ -5,6 +5,7 @@ loading themes, creating and opening keeps) runs in a worker.
 """
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.color_schemes import resolve_colors, user_schemes
 from tagalot.core.icons import PICTURE_EXTENSIONS, keep_icon, resolve_icon
 from tagalot.core.keep import (
     DEFAULT_EXCLUDES,
@@ -66,16 +68,19 @@ DARK = {"background": "#262626", "text": "#f0f0f0"}
 """The badges of keeps that are always light or dark."""
 
 
-def keep_badge(source: str, config: KeepConfig, ratio: float = 1.0) -> QIcon:
+def keep_badge(
+    source: str, mode: str, colors: Mapping[str, str] | None = None, ratio: float = 1.0
+) -> QIcon:
     """A keep's icon as the launcher shows it (#559): plain for a keep following the
     system's colors; else on a rounded square of its background, drawn in its text color,
-    with a stripe of its accent for a keep with its own colors."""
-    if config.colors == "system":
+    with a stripe of its accent for a keep with a color scheme (#572). ``mode`` and
+    ``colors`` are the look the keep names (``resolve_colors``)."""
+    if mode == "system":
         return icon(source)
-    if config.colors == "custom":
-        colors = {**starting_colors(), **config.custom_colors}
+    if mode == "custom":
+        colors = {**starting_colors(), **(colors or {})}
     else:
-        colors = LIGHT if config.colors == "light" else DARK
+        colors = LIGHT if mode == "light" else DARK
     side = round(BADGE * ratio)
     picture = QPixmap(side, side)
     picture.fill(Qt.GlobalColor.transparent)
@@ -86,7 +91,7 @@ def keep_badge(source: str, config: KeepConfig, ratio: float = 1.0) -> QIcon:
     painter.setBrush(background)
     radius = side * 0.2
     painter.drawRoundedRect(QRectF(0.5, 0.5, side - 1, side - 1), radius, radius)
-    if "accent" in colors and config.colors == "custom":
+    if "accent" in colors and mode == "custom":
         stripe = max(2, round(side * 0.14))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(colors["accent"]))
@@ -121,7 +126,9 @@ class RecentKeep:
 
 
 def describe_recent(paths: list[Path]) -> list[RecentKeep]:
-    """Read each recent keep's ``keep.toml`` (in a worker: keeps may be on slow drives)."""
+    """Read each recent keep's ``keep.toml`` (in a worker: keeps may be on slow drives),
+    and the user's color schemes their badges may name (#572)."""
+    user_schemes()
     result = []
     for path in paths:
         try:
@@ -259,7 +266,12 @@ class LauncherDialog(QDialog):
         loaded = self.catalog.get(config.theme.id) if self.catalog else None
         if source is None and loaded is not None:
             source = keep_icon(loaded.theme)
-        return keep_badge(source or GENERIC_KEEP, config, self.devicePixelRatioF())
+        theme = loaded.theme if loaded is not None else None
+        if theme is None and "." in config.colors:
+            mode, colors = "system", dict[str, str]()  # the theme's scheme, once the themes load
+        else:
+            mode, colors = resolve_colors(config, theme)
+        return keep_badge(source or GENERIC_KEEP, mode, colors, self.devicePixelRatioF())
 
     def _theme_name(self, theme_id: str) -> str:
         loaded = self.catalog.get(theme_id) if self.catalog else None

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tagalot.core import settings
+from tagalot.core import color_schemes, settings
 from tagalot.themes import loader
 
 # GUI tests must run headless. This runs before pytest-qt creates the QApplication.
@@ -16,10 +16,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 @pytest.fixture(autouse=True)
 def private_user_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point the per-user settings file and themes folder into ``tmp_path``, so no test (or
-    code a test runs, such as ``tagalot.ui.app.run``) reads or writes the real ones."""
+    code a test runs, such as ``tagalot.ui.app.run``) reads or writes the real ones;
+    the user's color schemes too (#572)."""
     user = tmp_path / "user-folders"
     monkeypatch.setattr(settings, "default_settings_path", lambda: user / "settings.toml")
     monkeypatch.setattr(loader, "default_user_themes_dir", lambda: user / "themes")
+    monkeypatch.setattr(color_schemes, "default_schemes_dir", lambda: user / "color_schemes")
     return user
 
 

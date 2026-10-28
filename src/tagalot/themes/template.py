@@ -75,7 +75,7 @@ class TemplateTheme(Theme):
     name = "Template"  # TODO: what people see in the new-keep dialog
     icon = "box"  # its keeps' icon in the Open Keep dialog
     version = 1  # raise it when ingest reads new things: keeps read their files once again
-    api_version = 25  # the theme API this needs; Tagalots with an older one refuse the theme
+    api_version = 26  # the theme API this needs; Tagalots with an older one refuse the theme
     extensions = frozenset()  # TODO: e.g. {".txt", ".md", ".pdf"}; empty = every file
     dirs = True  # folders become resources (needed for Group's folder role)
     entities = [Group, Item]

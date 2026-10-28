@@ -245,6 +245,22 @@ A type's icon shows beside its searches in the navigation, on its tabs on items'
 
 The Lucide icons Tagalot includes: `anchor`, `aperture`, `apple`, `archive`, `arrow-left`, `arrow-right`, `atom`, `award`, `baby`, `banknote`, `beer`, `bell`, `bike`, `bird`, `book`, `book-open`, `bookmark`, `box`, `boxes`, `brain`, `briefcase`, `brush`, `bug`, `building`, `building-2`, `cake`, `calculator`, `calendar`, `camera`, `car`, `case-sensitive`, `castle`, `cat`, `chart-column`, `chart-pie`, `chef-hat`, `church`, `clapperboard`, `clock`, `cloud`, `code`, `coffee`, `compass`, `contact`, `cooking-pot`, `copy`, `cpu`, `crown`, `database`, `dice-5`, `disc`, `disc-3`, `dog`, `drama`, `drum`, `dumbbell`, `earth`, `eye`, `feather`, `file`, `file-archive`, `file-audio`, `file-code`, `file-image`, `file-text`, `file-video`, `film`, `fish`, `flag`, `flame`, `flask-conical`, `flower`, `folder`, `folder-open`, `gamepad-2`, `gem`, `ghost`, `gift`, `glasses`, `globe`, `graduation-cap`, `guitar`, `hammer`, `hard-drive`, `hash`, `headphones`, `heart`, `history`, `hourglass`, `house`, `image`, `images`, `inbox`, `joystick`, `key-round`, `landmark`, `languages`, `laptop`, `layers`, `layout-dashboard`, `leaf`, `library`, `library-big`, `lightbulb`, `link`, `list-music`, `list-video`, `mail`, `map`, `map-pin`, `medal`, `message-square`, `mic`, `mic-vocal`, `microscope`, `monitor`, `moon`, `mountain`, `music`, `music-2`, `newspaper`, `notebook`, `notebook-pen`, `package`, `paintbrush`, `palette`, `paperclip`, `paw-print`, `pen`, `pen-tool`, `pencil`, `piano`, `pizza`, `plane`, `popcorn`, `puzzle`, `quote`, `rabbit`, `radio`, `receipt`, `refresh-cw`, `rocket`, `ruler`, `scissors`, `scroll`, `scroll-text`, `search`, `server`, `settings`, `shapes`, `shield`, `ship`, `shirt`, `shopping-bag`, `shopping-cart`, `skull`, `smartphone`, `smile`, `sparkles`, `sprout`, `star`, `sticky-note`, `store`, `sun`, `sword`, `swords`, `tag`, `tags`, `terminal`, `thumbs-up`, `ticket`, `train-front`, `tree-pine`, `trophy`, `tv`, `type`, `user`, `user-round`, `users`, `utensils`, `video`, `wallet`, `wand-sparkles`, `watch`, `wine`, `wrench`.
 
+### Color schemes
+
+A theme can offer color schemes to its keeps (`api_version = 26`), listed on Keep configuration's Appearance tab beside Tagalot's own and the user's:
+
+```python
+from tagalot.themes.api import ColorScheme
+
+class BooksTheme(Theme):
+    color_schemes = (
+        #           id         name       background text       panels     accent     dimmed
+        ColorScheme("library", "Library", "#f3ece0", "#2b2722", "#fffaf2", "#8a5a2b", "#7a6f61"),
+    )
+```
+
+Each color is `"#rrggbb"`: the window's background, its text, lists and panels, the accent (the selection and links), and dimmed text; Tagalot works out the rest. An id is lowercase letters, digits, dashes, or underscores, and keeps name the scheme by your theme's id and it (`"books.library"`). A keep keeps the system's colors until its user picks one. `tagalot --check-theme` warns when text would be hard to read (below 4.5:1 on the background or the panels).
+
 ## Commands: actions
 
 An **action** is a method marked with `@action(label, applies_to)`. It appears on the right-click menus of the items it applies to and as a button on their pages:

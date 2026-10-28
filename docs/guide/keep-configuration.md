@@ -57,8 +57,21 @@ The folders the keep watches, each with its state (online, offline, not watched,
 
 - **Follow the system** (the default): your system's light or dark mode.
 - **Light** or **Dark**, whatever the system's mode.
-- **Its own:** five colors of your choosing, starting from the ones shown now: **Background**, **Text**, **Lists and panels**, **Accent** (the selection and links), and **Dimmed text**. Click one to change it. Tagalot works out the rest (borders, alternate rows, disabled text), and warns when text would be hard to read on the background or the lists. Your system's file dialogs and the window's title bar keep the system's look.
+- **A color scheme:** Tagalot's (Paper, Parchment, Solarized Light, Slate, Nord, Solarized Dark), any your keep's theme offers, and your own.
 
-Changes show at once. With several keeps open, the colors follow the keep whose window you're in.
+A scheme is five colors: **Background**, **Text**, **Lists and panels**, **Accent** (the selection and links), and **Dimmed text**. Tagalot works out the rest (borders, alternate rows, disabled text). Your system's file dialogs and the window's title bar keep the system's look.
 
-![Keep configuration's Appearance tab, with a keep's own colors](../images/screens/appearance.png)
+**Changing a scheme:** click a color to change it. The change shows at once, but isn't kept until you save it:
+
+- **Save** keeps the changes in the scheme. It's there only for your own schemes.
+- **Save As…** keeps them as a new scheme of your own, with a name you give it, and this keep then uses it. Your schemes are offered in all your keeps.
+
+Choosing another scheme, or closing the window, with changes unsaved asks whether to discard them. Tagalot warns when text would be hard to read on the background or the lists.
+
+Your schemes are files in Tagalot's folder for you (beside your themes): `color_schemes`, one `.toml` file a scheme, with its `name` and its five colors. You can copy them to another computer. A file you edit by hand is read the next time Tagalot starts.
+
+A keep given its own colors by an earlier Tagalot shows them as **This keep's colors**; Save As keeps them as a scheme.
+
+With several keeps open, the colors follow the keep whose window you're in.
+
+![Keep configuration's Appearance tab, with the Parchment scheme](../images/screens/appearance.png)

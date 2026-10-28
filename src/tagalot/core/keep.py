@@ -49,8 +49,10 @@ LEGACY_HOSTS = frozenset({"openlibrary.org", "api.crossref.org", "export.arxiv.o
 """The services the built-in themes used before each was asked about (#483): a keep that
 allowed lookups then, with no ``[online] allowed``, allowed these."""
 COLOR_MODES = ("system", "light", "dark", "custom")
-"""What ``[appearance] colors`` can say (#558): follow the system's light or dark mode,
-always light, always dark, or the keep's own colors."""
+"""The looks that aren't named schemes (#558): follow the system's light or dark mode,
+always light, always dark, or colors written in ``keep.toml`` itself. ``[appearance]
+colors`` may also name a color scheme (#572, ``core/color_schemes.py``)."""
+COLOR_SCHEME_ID = re.compile(r"(?:user:)?[a-z0-9][a-z0-9_-]*|[a-z][a-z0-9_]*\.[a-z0-9][a-z0-9_-]*")
 COLOR_ROLES = ("background", "text", "panels", "accent", "dimmed")
 """The keep's own colors (``[appearance]``, #558): the window's background, its text,
 lists and panels, the accent (selection and links), and dimmed text. The UI derives the
@@ -192,10 +194,11 @@ class KeepConfig:
     """``[appearance] icon``: the keep's own icon (#557), a Lucide icon's name or a file in
     the keep folder (``icons/…``); None for the theme's (``core/icons.py``)."""
     colors: str = "system"
-    """``[appearance] colors``: one of :data:`COLOR_MODES` (#558)."""
+    """``[appearance] colors``: one of :data:`COLOR_MODES` (#558), or a color scheme's
+    id (#572: ``"nord"``, ``"books.library"``, ``"user:my-parchment"``)."""
     custom_colors: dict[str, str] = field(default_factory=dict)
-    """The keep's own colors by :data:`COLOR_ROLES` name (``"#rrggbb"``), kept while
-    another mode is chosen, so going back to custom finds them."""
+    """The colors written in ``keep.toml`` by :data:`COLOR_ROLES` name (``"#rrggbb"``),
+    as #558 saved them; only kept while :attr:`colors` is ``"custom"``."""
     type_icons: dict[str, str] = field(default_factory=dict)
     """``[appearance.icons]``: the user's icons for types, by type id (#557), as
     :attr:`icon`; a type not listed shows the theme's."""
@@ -309,11 +312,12 @@ def dump_keep_config(config: KeepConfig) -> str:
         appearance.append(f"icon = {toml_str(config.icon)}")
     if config.colors != "system":
         appearance.append(f"colors = {toml_str(config.colors)}")
-    appearance += [
-        f"{role} = {toml_str(config.custom_colors[role])}"
-        for role in COLOR_ROLES
-        if role in config.custom_colors
-    ]
+    if config.colors == "custom":
+        appearance += [
+            f"{role} = {toml_str(config.custom_colors[role])}"
+            for role in COLOR_ROLES
+            if role in config.custom_colors
+        ]
     if appearance:
         lines += ["", "[appearance]", *appearance]
     if config.type_icons:
@@ -492,9 +496,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         appearance = reader.table(data, "appearance")
         reader.warn_unknown(appearance, {"icon", "icons", "colors", *COLOR_ROLES}, "[appearance]")
         colors = appearance.get("colors", "system")
-        if colors not in COLOR_MODES:
+        if not isinstance(colors, str) or not (
+            colors in COLOR_MODES or COLOR_SCHEME_ID.fullmatch(colors)
+        ):
             raise KeepConfigError(
-                path, '[appearance] colors must be "system", "light", "dark", or "custom"'
+                path,
+                '[appearance] colors must be "system", "light", "dark", or a color '
+                'scheme\'s id such as "nord" or "user:my-colors"',
             )
         for role in COLOR_ROLES:
             if role in appearance:
@@ -504,6 +512,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
                         path, f'[appearance] {role} must be a color such as "#1f1d1a"'
                     )
                 custom_colors[role] = value.strip().lower()
+        if colors != "custom":
+            custom_colors = {}  # #558 kept them beside another mode; schemes don't
         if "icon" in appearance:
             icon = reader.string(appearance, "icon", "[appearance]").strip()
         icons = appearance.get("icons", {})
