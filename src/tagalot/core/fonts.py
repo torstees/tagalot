@@ -66,6 +66,21 @@ def read_font_files(keep_dir: Path, fonts: Mapping[str, str]) -> dict[str, bytes
     return found
 
 
+def downloaded_families(keep_dir: Path) -> dict[str, bytes | None]:
+    """Every family downloaded into the keep (``fonts/<family>/…``, #566), for the Open
+    Keep dialog, which doesn't know the keep's theme's suggestions until the themes load
+    (#568). Does I/O: call it from a worker."""
+    found: dict[str, bytes | None] = {}
+    try:
+        folders = sorted(p for p in (keep_dir / KEEP_FONTS).iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for folder in folders:
+        for path in _family_files(folder):
+            found[f"{KEEP_FONTS}/{folder.name}/{path.name}"] = _read(path)
+    return found
+
+
 def _read(path: Path) -> bytes | None:
     try:
         data = path.read_bytes()

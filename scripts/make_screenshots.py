@@ -33,7 +33,7 @@ from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import load_themes
 from tagalot.ui.detail_view import DetailPage
-from tagalot.ui.launcher import LauncherDialog, NewKeepDialog
+from tagalot.ui.launcher import DETAIL_ROLE, LauncherDialog, NewKeepDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.search_view import SearchPage
@@ -252,6 +252,9 @@ def open_keep(app: QApplication, keeps: list[Path], base: Path) -> None:
     for row in range(dialog.recent.count()):  # not this computer's own folders
         item = dialog.recent.item(row)
         item.setText(item.text().replace(str(base), SHOWN_FOLDER))
+        detail = item.data(DETAIL_ROLE)  # what the row draws beside the name (#568)
+        if isinstance(detail, str):
+            item.setData(DETAIL_ROLE, detail.replace(str(base), SHOWN_FOLDER))
     settle(app, 0.5)
     save(dialog, "open-keep")
     dialog.close()

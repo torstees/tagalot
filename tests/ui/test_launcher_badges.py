@@ -6,7 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtGui import QColor, QIcon
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QFont, QIcon
 from pytestqt.qtbot import QtBot
 
 from tagalot.core.color_schemes import save_user_scheme
@@ -14,6 +15,7 @@ from tagalot.core.keep import ThemeRef, create_keep, save_keep_config
 from tagalot.core.keep_settings import with_colors
 from tagalot.core.settings import Settings
 from tagalot.themes.loader import ThemeCatalog, load_themes
+from tagalot.ui.fonts import register_font
 from tagalot.ui.icons import icon, lucide
 from tagalot.ui.launcher import (
     BADGE,
@@ -23,6 +25,7 @@ from tagalot.ui.launcher import (
     describe_recent,
     keep_badge,
 )
+from tests.core.test_keep_fonts import aileron
 
 pytestmark = pytest.mark.gui
 
@@ -129,3 +132,42 @@ def test_themes_loaded_later_give_their_icons(qtbot: QtBot, tmp_path: Path) -> N
         timeout=10000,
     )
     assert "Music · " in dialog.recent.item(0).text()  # the theme's name, not its id
+
+
+# --- names in the keep's titles font (#568) ---
+
+
+def _name_font(dialog: LauncherDialog, row: int) -> QFont:
+    font = dialog.recent.item(row).data(Qt.ItemDataRole.UserRole + 4)
+    assert isinstance(font, QFont)
+    return font
+
+
+def test_names_in_the_keeps_titles_font(
+    qtbot: QtBot, tmp_path: Path, catalog: ThemeCatalog
+) -> None:
+    family = register_font(aileron())
+    assert family is not None
+    own = _keep(tmp_path, "Own", "music", fonts={"titles": "fonts/Aileron.ttf"})
+    (own / "fonts").mkdir()
+    (own / "fonts" / "Aileron.ttf").write_bytes(aileron())
+    # A books keep with Literata downloaded: its theme suggests it.
+    books = _keep(tmp_path, "Books", "books")
+    (books / "fonts" / "Literata").mkdir(parents=True)
+    (books / "fonts" / "Literata" / "Literata.ttf").write_bytes(aileron())
+    gone = _keep(tmp_path, "Gone", "music", fonts={"titles": "fonts/gone.ttf"})
+    dialog = _launcher(qtbot, [own, books, gone], catalog)
+    assert _name_font(dialog, 0).family() == family
+    assert _name_font(dialog, 1).family() == family  # the theme's, downloaded
+    assert _name_font(dialog, 2).family() != family  # the window's
+    found = describe_recent([own])[0].font_files
+    assert found["fonts/Aileron.ttf"] == aileron()
+
+
+def test_font_files_are_read_once_a_run(tmp_path: Path) -> None:
+    keep = _keep(tmp_path, "Once", "music", fonts={"titles": "fonts/A.ttf"})
+    (keep / "fonts").mkdir()
+    (keep / "fonts" / "A.ttf").write_bytes(b"first")
+    assert describe_recent([keep])[0].font_files["fonts/A.ttf"] == b"first"
+    (keep / "fonts" / "A.ttf").write_bytes(b"second")
+    assert describe_recent([keep])[0].font_files["fonts/A.ttf"] == b"first"
