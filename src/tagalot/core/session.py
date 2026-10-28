@@ -50,6 +50,7 @@ from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.folder_items import tagged_hidden
 from tagalot.core.fonts import copy_font_file, read_font_files
+from tagalot.core.google_fonts import GoogleFont, download_font, downloaded
 from tagalot.core.icons import copy_icon_picture, keep_icon, type_icon
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
@@ -656,6 +657,18 @@ class KeepSession:
         """Copy a font file into the keep folder for a font; its stored path. Raises
         ``FontFileError``. Runs in a worker."""
         return copy_font_file(self.keep.dir, source)
+
+    def download_google_font(
+        self, font: GoogleFont, progress: Callable[[int, int], None] | None = None
+    ) -> str:
+        """Download a Google Font into the keep folder (#566), only when the user asked;
+        what ``keep.toml`` names it by. Raises ``GoogleFontError``. Runs in a worker and
+        goes online."""
+        return download_font(self.keep.dir, font, progress=progress)
+
+    def google_fonts_here(self) -> set[str]:
+        """The Google Fonts already in the keep folder. Runs in a worker."""
+        return downloaded(self.keep.dir)
 
     def color_schemes(self) -> list[ColorScheme]:
         """The schemes this keep can choose from: built in, its theme's, the user's."""

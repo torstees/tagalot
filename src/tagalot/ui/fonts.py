@@ -101,6 +101,9 @@ def look_of(
 ) -> tuple[FontLook, dict[str, str]]:
     """The fonts a keep's configuration names, and the places whose font isn't there (by
     place, the value), which show the system's."""
+    for data in files.values():  # a family's bold and italic too (#566)
+        if data is not None:
+            register_font(data)
     families: dict[str, str | None] = {}
     missing = {}
     for place, value in config.fonts.items():

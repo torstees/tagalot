@@ -8,11 +8,12 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel
 from pytestqt.qtbot import QtBot
 
+from tagalot.core.google_fonts import GoogleFont, GoogleFontError, Progress
 from tagalot.core.keep_settings import with_fonts
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
@@ -220,3 +221,78 @@ def test_the_picker(qtbot: QtBot, family: str) -> None:
     assert picker.proxy.rowCount() >= 1
     picker.accept()
     assert picker.choice == FontChoice(family=family)
+
+
+# --- Google Fonts (#566) ---
+
+
+def test_finding_a_google_font(qtbot: QtBot) -> None:
+    picker = FontPicker("titles", None, ["Books"], here={"Lato"})
+    qtbot.addWidget(picker)
+    picker.tabs.setCurrentIndex(1)
+    picker.category.setCurrentIndex(picker.category.findData("serif"))
+    picker.select_google("Literata")
+    font = picker.google_font()
+    assert font is not None
+    assert font.name == "Literata"
+    assert all(
+        picker.google_proxy.index(r, 0).data(Qt.ItemDataRole.UserRole + 1).category == "serif"
+        for r in range(picker.google_proxy.rowCount())
+    )
+    assert picker.download_button.text() == "Download"
+    assert "raw.githubusercontent.com" in picker.google_status.text()
+    if not installed("Literata"):
+        assert picker.preview_note.text() == "Shown in a similar font until it's downloaded."
+    picker.category.setCurrentIndex(0)
+    picker.select_google("Lato")
+    assert picker.download_button.text() == "Use"  # already in the keep
+    assert "in this keep" in picker.google_list.currentIndex().data()
+
+
+def test_downloading_a_google_font(qtbot: QtBot) -> None:
+    asked: list[str] = []
+
+    def download(font: GoogleFont, progress: Progress) -> str:
+        asked.append(font.name)
+        progress(1, 3)
+        return font.value
+
+    picker = FontPicker("titles", None, ["Books"], download=download)
+    qtbot.addWidget(picker)
+    picker.tabs.setCurrentIndex(1)
+    picker.select_google("Literata")
+    with qtbot.waitSignal(picker.finished, timeout=5000):
+        picker.download_button.click()
+    assert asked == ["Literata"]
+    assert picker.choice == FontChoice(value="fonts/Literata/Literata.ttf")
+
+
+def test_a_download_that_fails(qtbot: QtBot) -> None:
+    def download(font: GoogleFont, progress: Progress) -> str:
+        raise GoogleFontError("Couldn't reach raw.githubusercontent.com: offline.")
+
+    picker = FontPicker("titles", None, ["Books"], download=download)
+    qtbot.addWidget(picker)
+    picker.tabs.setCurrentIndex(1)
+    picker.select_google("Literata")
+    picker.download_button.click()
+    qtbot.waitUntil(lambda: picker.download_button.isEnabled(), timeout=5000)
+    assert "offline. You can pick an installed font instead" in picker.google_status.text()
+    assert picker.choice is None
+    assert not picker.progress.isVisible()
+
+
+def test_choosing_a_downloaded_font(
+    qtbot: QtBot, session: KeepSession, family: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = session.keep.dir / "fonts" / "Aileron"
+    folder.mkdir(parents=True)
+    (folder / "Aileron-Regular.ttf").write_bytes(aileron())
+    config = KeepConfigWindow(session)
+    qtbot.addWidget(config)
+    value = "fonts/Aileron/Aileron-Regular.ttf"
+    monkeypatch.setattr(config, "choose_font", lambda p, c, s: FontChoice(value=value))
+    config.font_buttons["titles"].click()
+    qtbot.waitUntil(lambda: config.font_buttons["titles"].text() == family, timeout=5000)
+    assert session.keep.config.fonts == {"titles": value}
+    assert session.font_files[value] == aileron()

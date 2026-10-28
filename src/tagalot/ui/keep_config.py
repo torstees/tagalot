@@ -587,6 +587,8 @@ class KeepConfigWindow(QWidget):
         self.fonts_box = QGroupBox("Fonts")
         fonts_form = QFormLayout(self.fonts_box)
         self.font_buttons: dict[str, QPushButton] = {}
+        self._google_here: set[str] = set()
+        """The Google Fonts already in the keep folder (#566), found as the picker opens."""
         self.system_font_buttons: dict[str, QPushButton] = {}
         for place, (label, tip) in FONT_LABELS.items():
             button = QPushButton()
@@ -657,22 +659,35 @@ class KeepConfigWindow(QWidget):
         self.fonts_note.setVisible(bool(notes))
 
     def change_font(self, place: str) -> None:
-        """Pick a font for a place: an installed family, or a file copied into the keep."""
+        """Pick a font for a place: an installed family, a Google Font downloaded into the
+        keep (#566), or a file copied into the keep."""
         session = self.session
 
-        def show(samples: list[str]) -> None:
+        def show(found: tuple[list[str], set[str]]) -> None:
             if not shiboken6.isValid(self):
                 return
+            samples, self._google_here = found
             look, _ = look_of(session.keep.config, session.font_files)
             choice = self.choose_font(place, getattr(look, place), samples)
             if choice is not None:
-                self.set_font(place, choice.family, choice.file)
+                self.set_font(place, choice.value or choice.family, choice.file)
 
-        run_in_pool(lambda: sample_titles(session), on_done=show, pool=self._pool)
+        run_in_pool(
+            lambda: (sample_titles(session), session.google_fonts_here()),
+            on_done=show,
+            pool=self._pool,
+        )
 
     def choose_font(self, place: str, current: str | None, samples: list[str]) -> FontChoice | None:
         """Ask for a font (tests replace this)."""
-        picker = FontPicker(place, current, samples, self)
+        picker = FontPicker(
+            place,
+            current,
+            samples,
+            self,
+            here=self._google_here,
+            download=self.session.download_google_font,
+        )
         return picker.choice if picker.exec() == QDialog.DialogCode.Accepted else None
 
     def set_font(self, place: str, family: str | None, file: Path | None = None) -> None:

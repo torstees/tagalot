@@ -13,7 +13,7 @@ What Tagalot writes elsewhere: the keep's folder (its databases, thumbnails, bac
 
 ## Going online
 
-**Tagalot doesn't go online, except to look up items' details, and only after you allow it for the keep.** The first time a lookup would happen, it asks, naming each service and what it would be sent:
+**Tagalot doesn't go online, except to look up items' details, and only after you allow it for the keep** (and to download a Google Font when you ask, below). The first time a lookup would happen, it asks, naming each service and what it would be sent:
 
 | Theme | Service | Sends |
 |---|---|---|
@@ -22,6 +22,8 @@ What Tagalot writes elsewhere: the keep's folder (its databases, thumbnails, bac
 | Books | Open Library (`openlibrary.org`) | ISBNs |
 
 Only those identifiers, in the addresses requested, are sent: no file names, titles, tags, or anything else about your files, unless you let a keep find items by their titles (**Find items by**, for services that can). There's no account, no telemetry, and no update check. A service that needs a token gets the one you set for the keep (kept in your own settings on this computer, never in the keep or the log) or in an environment variable. Answers are kept in the keep. See [Online details](../guide/online-details.md).
+
+**Google Fonts** are downloaded only when you press **Download** in a font picker (Keep configuration → Appearance), from `raw.githubusercontent.com`, Google Fonts' collection on GitHub. Only the font's files are asked for; nothing about your keep or files is sent. See [Keep configuration](../guide/keep-configuration.md#appearance).
 
 Other things that open the web do so in your browser, when you click them: a book's or paper's link, **Open DOI page**.
 

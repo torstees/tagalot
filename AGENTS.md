@@ -74,6 +74,7 @@ src/tagalot/
   theme_tools.py         # `--new-theme` and `--check-theme` for theme authors
   resources/             # icon and artwork SVGs, the icon's PNGs (scripts/make_icons.py)
     icons/               # the bundled Lucide icons (scripts/fetch_lucide.py)
+    google_fonts.json    # the Google Fonts list the font picker searches (scripts/fetch_google_fonts.py)
   core/                  # no Qt imports allowed here
     keep.py              # open/create keep, keep.toml
     settings.py          # per-user settings.toml (recent keeps, overrides)
@@ -124,6 +125,7 @@ scripts/
   make_demo_keep.py      # scratch/Demo.keep for manual testing
   make_icons.py          # render the icon SVG to PNGs, .ico, .icns, and the docs pictures (just icons)
   fetch_lucide.py        # bundle the Lucide icons Tagalot uses into resources/icons
+  fetch_google_fonts.py  # refresh the bundled Google Fonts list (resources/google_fonts.json)
   make_screenshots.py    # the docs site's screenshots, from the demo keeps (just screenshots)
   profile_scan.py        # time scanning and thumbnails on a real folder or share (just profile)
 tests/
