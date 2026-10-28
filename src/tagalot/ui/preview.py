@@ -19,11 +19,12 @@ load in a worker. Double-click opens the page.
 
 import shiboken6
 from PySide6.QtCore import Qt, QThreadPool, Signal
-from PySide6.QtGui import QFont, QMouseEvent, QPixmap, QResizeEvent
+from PySide6.QtGui import QMouseEvent, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QFrame, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from tagalot.core.detail import Preview, load_preview, load_titles
 from tagalot.core.session import KeepSession
+from tagalot.ui.fonts import follow, place_font
 from tagalot.ui.icons import icon_for
 from tagalot.ui.models.results import display_value, wrapped
 from tagalot.ui.thumbnails import ThumbnailLoader
@@ -94,9 +95,7 @@ class PreviewStrip(QFrame):
         self.thumbnail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title = QLabel(HINT)
-        font = QFont(self.title.font())
-        font.setBold(True)
-        self.title.setFont(font)
+        follow(self.title, lambda: place_font("titles", bold=True))  # #565
         self.facts = QLabel()
         self.file = ElidedLabel(mode=Qt.TextElideMode.ElideMiddle)  # a path: keep its name
         self.description = QLabel()

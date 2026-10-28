@@ -22,7 +22,6 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -71,6 +70,7 @@ from tagalot.ui.file_actions import (
     opens_file,
 )
 from tagalot.ui.filter_bar import FilterBar, Filters
+from tagalot.ui.fonts import follow, place_font
 from tagalot.ui.grouped_results import GroupedResults, TypeGroup, load_groups
 from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
 from tagalot.ui.lookups import LOOK_UP_TIP
@@ -266,10 +266,7 @@ class SearchPage(QWidget):
         self.model.setParent(self)
 
         heading = QLabel(title)
-        font = QFont(heading.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() + 2)
-        heading.setFont(font)
+        follow(heading, lambda: place_font("text", bold=True, larger=2))
         self.status = QLabel("Searching…")
         header_row = QHBoxLayout()
         self.header_row = header_row

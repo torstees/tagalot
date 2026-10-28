@@ -75,3 +75,15 @@ A keep given its own colors by an earlier Tagalot shows them as **This keep's co
 With several keeps open, the colors follow the keep whose window you're in.
 
 ![Keep configuration's Appearance tab, with the Parchment scheme](../images/screens/appearance.png)
+
+**Fonts:** fonts for this keep, in three places:
+
+- **Titles:** items' pages and the preview, grid cards, the navigation's headings, and title cards.
+- **Notes:** notes and glimpses of Markdown files on items' pages.
+- **Text:** the rest of the window.
+
+Click a place's font to pick one of the fonts installed on this computer, with a preview of your keep's titles, or **From a file…** for a TrueType (`.ttf`) or OpenType (`.otf`) file. A file is copied into the keep folder (`fonts`), so the keep looks the same on another computer. **Use the system's** goes back to the system's font.
+
+**Text size** makes the window's text larger or smaller than the system's, as a percent; titles and notes follow it.
+
+A font that isn't installed on this computer, or a file that's gone, shows the system's font instead, with a note under the fonts. Changes show at once, and with several keeps open, the fonts follow the keep whose window you're in.

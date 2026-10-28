@@ -27,6 +27,7 @@ from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
+    QFont,
     QHideEvent,
     QIcon,
     QPalette,
@@ -58,6 +59,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy import select
 
 from tagalot.core.color_schemes import (
     BUILT_IN,
@@ -71,8 +73,9 @@ from tagalot.core.color_schemes import (
 )
 from tagalot.core.contents import ContentsStats
 from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
+from tagalot.core.fonts import is_font_file
 from tagalot.core.formats import format_bytes
-from tagalot.core.keep import KeepError, RootConfig, clean_names
+from tagalot.core.keep import TEXT_SIZES, KeepError, RootConfig, clean_names
 from tagalot.core.keep_settings import (
     MIN_THUMBNAIL_SIZE,
     with_colors,
@@ -80,6 +83,7 @@ from tagalot.core.keep_settings import (
     with_name,
     with_option,
 )
+from tagalot.core.models import Entity
 from tagalot.core.note_keys import NoteKeyError, alias_lines, check_key, parse_alias_lines
 from tagalot.core.online import consent_text, needed_env, tokens_text
 from tagalot.core.root_admin import (
@@ -103,6 +107,8 @@ from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 from tagalot.ui.appearance import apply_colors, starting_colors
 from tagalot.ui.colors import ERROR, css
 from tagalot.ui.folder_picker import choose_folder
+from tagalot.ui.font_picker import FontChoice, FontPicker
+from tagalot.ui.fonts import apply_fonts, look_of
 from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icons import icon
 from tagalot.ui.workers import run_in_pool
@@ -133,6 +139,30 @@ COLOR_CHOICES = (
 """The system's looks at the top of the Colors list (#558): label, then ``[appearance]
 colors``; color schemes follow (#572)."""
 BUILT_IN_IDS = frozenset(s.id for s in BUILT_IN)
+FONT_LABELS = {
+    "titles": ("Titles", "Items' pages, grid cards, the navigation's headings, and title cards"),
+    "notes": ("Notes", "Notes and glimpses of Markdown files on items' pages"),
+    "text": ("Text", "The rest of the window"),
+}
+"""The Fonts group's places (#565): label, then tooltip."""
+
+
+def missing_text(value: str) -> str:
+    """Why a keep's font isn't shown, for the Fonts group's note."""
+    if is_font_file(value):
+        return f"{value} isn't in the keep folder, or isn't a font Tagalot can read"
+    return f"{value} isn't installed on this computer"
+
+
+def sample_titles(session: KeepSession, count: int = 3) -> list[str]:
+    """A few of the keep's items' titles, for previews of its fonts. Runs in a worker."""
+    with session.reader.connect() as conn:
+        titles = conn.scalars(
+            select(Entity.title).where(Entity.title != "").order_by(Entity.id).limit(count)
+        )
+        return [session.keep.config.name, *titles]
+
+
 COLOR_LABELS = {
     "background": "Background",
     "text": "Text",
@@ -553,12 +583,124 @@ class KeepConfigWindow(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
         custom_form.addRow("", hint)
+        # The keep's fonts (#565): titles, notes, and text, and the text's size.
+        self.fonts_box = QGroupBox("Fonts")
+        fonts_form = QFormLayout(self.fonts_box)
+        self.font_buttons: dict[str, QPushButton] = {}
+        self.system_font_buttons: dict[str, QPushButton] = {}
+        for place, (label, tip) in FONT_LABELS.items():
+            button = QPushButton()
+            button.setObjectName(f"font_{place}")
+            button.setToolTip(tip)
+            button.clicked.connect(lambda _=False, p=place: self.change_font(p))
+            system = QPushButton("Use the system's")
+            system.setObjectName(f"system_font_{place}")
+            system.clicked.connect(lambda _=False, p=place: self.set_font(p, None))
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(button, 1)
+            row.addWidget(system)
+            fonts_form.addRow(f"{label}:", row)
+            self.font_buttons[place] = button
+            self.system_font_buttons[place] = system
+        self.text_size = QSpinBox()
+        self.text_size.setObjectName("text_size")
+        self.text_size.setRange(*TEXT_SIZES)
+        self.text_size.setSingleStep(5)
+        self.text_size.setSuffix("%")
+        self.text_size.setKeyboardTracking(False)
+        self.text_size.setToolTip(
+            "The text's size, in percent of the system's; titles and notes follow it"
+        )
+        self.text_size.valueChanged.connect(self._text_size_changed)
+        fonts_form.addRow("Text size:", self.text_size)
+        self.fonts_note = QLabel()
+        self.fonts_note.setObjectName("fonts_note")
+        self.fonts_note.setWordWrap(True)
+        self.fonts_note.setStyleSheet("color: palette(placeholder-text);")
+        fonts_form.addRow("", self.fonts_note)
         tab = QWidget()
         column = QVBoxLayout(tab)
         column.addLayout(form)
         column.addWidget(self.custom_colors)
+        column.addWidget(self.fonts_box)
         column.addStretch(1)
         return tab
+
+    # --- fonts (#565) ---
+
+    def _show_fonts(self) -> None:
+        config = self.session.keep.config
+        look, missing = look_of(config, self.session.font_files)
+        for place, button in self.font_buttons.items():
+            value = config.fonts.get(place)
+            family = getattr(look, place)
+            if value is None:
+                button.setText("The system's")
+            elif family is None:
+                button.setText(f"{value} (not here)")
+            else:
+                button.setText(family)
+            font = QFont(self.font())
+            if family:
+                font.setFamilies([family])  # shown in itself
+            button.setFont(font)
+            self.system_font_buttons[place].setEnabled(value is not None)
+        blocked = self.text_size.blockSignals(True)
+        self.text_size.setValue(config.text_size or 100)
+        self.text_size.blockSignals(blocked)
+        notes = [
+            f"{FONT_LABELS[place][0]}: {missing_text(value)}, so the system's font shows."
+            for place, value in missing.items()
+        ]
+        self.fonts_note.setText(" ".join(notes))
+        self.fonts_note.setVisible(bool(notes))
+
+    def change_font(self, place: str) -> None:
+        """Pick a font for a place: an installed family, or a file copied into the keep."""
+        session = self.session
+
+        def show(samples: list[str]) -> None:
+            if not shiboken6.isValid(self):
+                return
+            look, _ = look_of(session.keep.config, session.font_files)
+            choice = self.choose_font(place, getattr(look, place), samples)
+            if choice is not None:
+                self.set_font(place, choice.family, choice.file)
+
+        run_in_pool(lambda: sample_titles(session), on_done=show, pool=self._pool)
+
+    def choose_font(self, place: str, current: str | None, samples: list[str]) -> FontChoice | None:
+        """Ask for a font (tests replace this)."""
+        picker = FontPicker(place, current, samples, self)
+        return picker.choice if picker.exec() == QDialog.DialogCode.Accepted else None
+
+    def set_font(self, place: str, family: str | None, file: Path | None = None) -> None:
+        """Give a place a family, a font file (copied into the keep folder), or the
+        system's font (both None); saved in ``keep.toml`` and shown at once."""
+        session = self.session
+        fonts: dict[str, str | None] = dict(session.keep.config.fonts)
+        size = session.keep.config.text_size
+
+        def work() -> None:
+            value = session.font_file(file) if file is not None else family
+            session.set_fonts({**fonts, place: value}, size)
+
+        label = FONT_LABELS[place][0].lower()
+        if file is not None:
+            message = f"The {label} font: {file.name}."
+        else:
+            message = f"The {label} font: {family or 'the system' + chr(39) + 's'}."
+        self._run(work, message, then=self._show_fonts)
+
+    def _text_size_changed(self, value: int) -> None:
+        session = self.session
+        fonts = dict(session.keep.config.fonts)
+        self._run(
+            lambda: session.set_fonts(fonts, value),
+            f"Text size: {value}%.",
+            then=self._show_fonts,
+        )
 
     # --- colors (#558) and color schemes (#572) ---
 
@@ -1139,6 +1281,7 @@ class KeepConfigWindow(QWidget):
         self.keep_icon.setIcon(icon(self.session.keep_icon()))
         self.keep_icon_theme.setEnabled(config.icon is not None)
         self._show_colors()
+        self._show_fonts()
         self.keep_assets.setText(config.markdown_assets)
         if not self.see_through.hasFocus():
             self.see_through.setPlainText("\n".join(config.see_through))
@@ -1259,6 +1402,7 @@ class KeepConfigWindow(QWidget):
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
             self._watch_stats()
             apply_colors(*(self.colors_preview() or self.session.colors))  # this keep's (#558)
+            apply_fonts(look_of(self.session.keep.config, self.session.font_files)[0])
 
     def show_cache_stats(self) -> None:
         """How many thumbnails are stored, read in a worker."""

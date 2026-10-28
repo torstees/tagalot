@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from tagalot.core.note_markdown import renderable, resolve_link
 from tagalot.ui import field_editor
+from tagalot.ui.fonts import follow, place_font, signals
 from tagalot.ui.markdown_doc import Hidden, collapsed, fit_pictures, render
 
 MIN_CAP = 60
@@ -128,6 +129,8 @@ class NoteView(QWidget):
         self.setObjectName("note_view")
         self.body = _Body()
         self.body.setObjectName("note_body")
+        follow(self.body, lambda: place_font("notes"))  # the keep's notes font (#565)
+        signals().changed.connect(self._fonts_changed)
         self.body.anchorClicked.connect(self._follow)
         self.more = QToolButton()
         self.more.setObjectName("note_more")
@@ -325,7 +328,7 @@ class NoteView(QWidget):
         """Make the full and collapsed documents from the note, in the current colors."""
         old = (self.full, self.short)
         palette = self.palette()
-        self.full = render(renderable(self.text), palette, self.body)
+        self.full = render(renderable(self.text), palette, self.body, self.body.font())
         self.short, self.hidden = collapsed(self.full, palette)
         if not self.hidden:
             self.short.deleteLater()
@@ -425,6 +428,11 @@ class NoteView(QWidget):
         """New colors (the system's light or dark mode): style the note again."""
         super().changeEvent(event)
         if event.type() == QEvent.Type.PaletteChange and hasattr(self, "full"):
+            self._render()
+
+    def _fonts_changed(self) -> None:
+        """The keep's fonts changed (#565): the note in its notes font."""
+        if hasattr(self, "full"):
             self._render()
 
     def _follow(self, url: QUrl) -> None:

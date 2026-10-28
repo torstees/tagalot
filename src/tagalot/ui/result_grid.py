@@ -32,6 +32,8 @@ from PySide6.QtGui import (
     QDragLeaveEvent,
     QDragMoveEvent,
     QDropEvent,
+    QFont,
+    QFontMetrics,
     QHelpEvent,
     QIcon,
     QPainter,
@@ -54,6 +56,7 @@ from PySide6.QtWidgets import (
 from tagalot.ui.badges import badge_side, paint_badges
 from tagalot.ui.colors import WARNING, color
 from tagalot.ui.dnd import dragged_tags
+from tagalot.ui.fonts import place_font
 from tagalot.ui.hover import outline_hover
 from tagalot.ui.icons import icon_for
 from tagalot.ui.models.results import (
@@ -87,9 +90,15 @@ class CardDelegate(QStyledItemDelegate):
 
     def card_size(self) -> QSize:
         metrics = self.grid.fontMetrics()
-        lines = 1 + self.grid.max_card_lines() + int(self.grid.show_match)
+        lines = self.grid.max_card_lines() + int(self.grid.show_match)
+        title = QFontMetrics(self.title_font()).height()
         side = self.grid.thumbnail_size
-        return QSize(side + 2 * PADDING, side + 2 * PADDING + 4 + lines * metrics.height())
+        height = side + 2 * PADDING + 4 + title + lines * metrics.height()
+        return QSize(side + 2 * PADDING, height)
+
+    def title_font(self) -> QFont:
+        """Cards' titles: the keep's titles font (#565) at the grid's size."""
+        return place_font("titles", base=self.grid.font())
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # type: ignore[override]
         return self.card_size()
@@ -152,17 +161,27 @@ class CardDelegate(QStyledItemDelegate):
             self._badges(painter, box, found[1].get(BADGES), palette)
 
         metrics = grid.fontMetrics()
+        title_font = self.title_font()
+        title_metrics = QFontMetrics(title_font)
         width = rect.width() - 2 * PADDING
         y = box.bottom() + 4
         ink = palette.color(QPalette.ColorRole.Text)
         if selected:
             ink = selected_text_color(palette, grid)  # reads on the selection's fill
         painter.setPen(ink)
-        line = QRect(rect.x() + PADDING, y, width, metrics.height())
+        painter.save()
+        painter.setFont(title_font)
         painter.drawText(
-            line,
+            QRect(rect.x() + PADDING, y, width, title_metrics.height()),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-            metrics.elidedText(title, Qt.TextElideMode.ElideRight, width),
+            title_metrics.elidedText(title, Qt.TextElideMode.ElideRight, width),
+        )
+        painter.restore()
+        line = QRect(
+            rect.x() + PADDING,
+            y + title_metrics.height() - metrics.height(),
+            width,
+            metrics.height(),
         )
         if found is not None:
             muted = ink if selected else palette.color(QPalette.ColorRole.PlaceholderText)

@@ -21,7 +21,9 @@ from tagalot.core.keep import (
     COLOR_SCHEME_ID,
     CONTENTS_INDEXES,
     FIND_BY,
+    FONT_PLACES,
     ONLINE_ANSWERS,
+    TEXT_SIZES,
     KeepConfig,
     KeepError,
     allowed_hosts,
@@ -229,6 +231,30 @@ def with_type_icon(config: KeepConfig, type_id: str, icon: str | None) -> KeepCo
     else:
         icons[type_id] = _checked_icon(icon)
     return replace(config, type_icons=icons, roots=copy.deepcopy(config.roots))
+
+
+def with_fonts(
+    config: KeepConfig, fonts: Mapping[str, str | None], text_size: int | None
+) -> KeepConfig:
+    """``config`` with the keep's fonts (``[appearance.fonts]``, #565): ``fonts`` by
+    :data:`FONT_PLACES` name, a family or ``fonts/…`` (None or empty: the system's), and
+    the text size in percent (None: the system's)."""
+    chosen = {}
+    for place, value in fonts.items():
+        if place not in FONT_PLACES:
+            raise KeepError(f"There's no place for a font called {place!r}.")
+        if value and value.strip():
+            chosen[place] = value.strip()
+    low, high = TEXT_SIZES
+    if text_size is not None and not low <= text_size <= high:
+        raise KeepError(f"The text size must be from {low}% to {high}%.")
+    ordered = {p: chosen[p] for p in FONT_PLACES if p in chosen}
+    return replace(
+        config,
+        fonts=ordered,
+        text_size=None if text_size == 100 else text_size,
+        roots=copy.deepcopy(config.roots),
+    )
 
 
 def with_keep_icon(config: KeepConfig, icon: str | None) -> KeepConfig:

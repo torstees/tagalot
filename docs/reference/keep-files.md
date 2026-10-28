@@ -49,7 +49,7 @@ find_by = "title-year"                      # what may identify an item: "ids" (
 [contents]                                  # searching inside documents
 index = "words"                             # or "substrings"; absent: Off
 
-[appearance]                                # your own icons and colors
+[appearance]                                # your own icons, colors, and fonts
 icon = "radio"                              # the keep's, in the Open Keep dialog
 colors = "user:my-parchment"                # system (default), light, dark, or a color scheme:
                                             # Tagalot's ("nord"), the theme's ("books.library"),
@@ -57,6 +57,12 @@ colors = "user:my-parchment"                # system (default), light, dark, or 
 
 [appearance.icons]                          # kinds of items, by type id
 "music.album" = "icons/vinyl.svg"           # an icon's name, or a picture in the keep's icons folder
+
+[appearance.fonts]                          # your own fonts; a place not listed has the system's
+titles = "Literata"                         # a font installed on the computer,
+notes = "fonts/Literata.ttf"                # or a file in the keep's fonts folder
+text = "Segoe UI"                           # the rest of the window
+text_size = 110                             # percent of the system's size
 ```
 
 Unknown keys are ignored (with a warning in the log), so an older Tagalot can still open a keep a newer one wrote, as long as its format is one it knows.

@@ -74,6 +74,7 @@ from tagalot.ui.colors import ERROR, css, dimmed_css
 from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.field_filters import CLOSE_MARK
 from tagalot.ui.file_actions import FileOpener, add_file_actions, file_kind
+from tagalot.ui.fonts import follow, place_font
 from tagalot.ui.gallery_view import GalleryView, fitted
 from tagalot.ui.icon_pictures import icon_html
 from tagalot.ui.icons import icon, icon_for, lucide
@@ -309,11 +310,9 @@ class DetailPage(QWidget):
             lambda value: self.field_edited.emit(self.entity_id, TITLE, value)
         )
         self.title = self.title_value.label
-        font = QFont(self.title.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() + 5)
-        self.title.setFont(font)
-        self.title_value.box.setFont(font)
+        # In the keep's titles font (#565), following its changes.
+        follow(self.title, lambda: place_font("titles", bold=True, larger=5))
+        follow(self.title_value.box, lambda: place_font("titles", bold=True, larger=5))
         self.type_label = QLabel()
         self.type_label.setStyleSheet("color: palette(placeholder-text);")
         self.type_icon = QLabel()  # the type's own (#556)
@@ -331,9 +330,7 @@ class DetailPage(QWidget):
         # page has room; their tooltip names the tags.
         self.badges = QLabel()
         self.badges.setObjectName("badges")
-        badge_font = QFont(font)
-        badge_font.setBold(False)
-        self.badges.setFont(badge_font)
+        follow(self.badges, lambda: place_font("text", larger=5))
         self.badges.setVisible(False)
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
