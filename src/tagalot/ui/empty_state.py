@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.resources import knight_file
+from tagalot.ui.fonts import follow, place_font
 
 KNIGHT_SIZE = 140
 """The knight on an empty page (drawn from a 256 px picture, sharp on high-DPI screens)."""
@@ -40,6 +41,12 @@ def knight_pixmap(size: int, ratio: float = 1.0) -> QPixmap:
     return scaled
 
 
+def _empty_title_font() -> QFont:
+    font = place_font("text", scale=1.3)
+    font.setWeight(QFont.Weight.DemiBold)
+    return font
+
+
 class EmptyState(QWidget):
     """The knight, a heading, a hint, and buttons, centred. :meth:`show_text` changes the
     words; :meth:`set_compact` drops the knight (for small places)."""
@@ -53,10 +60,7 @@ class EmptyState(QWidget):
         self.title = QLabel()
         self.title.setObjectName("empty_title")
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        font = self.title.font()
-        font.setPointSizeF(font.pointSizeF() * 1.3)
-        font.setWeight(QFont.Weight.DemiBold)
-        self.title.setFont(font)
+        follow(self.title, _empty_title_font)
         self.hint = QLabel()
         self.hint.setObjectName("empty_hint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)

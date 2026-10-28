@@ -178,7 +178,7 @@ def books(app: QApplication, keep: Path) -> None:
 
         # A keep's colors (#558): the Appearance tab, with the Parchment scheme (#572).
         config = window.configure_keep()
-        config.resize(820, 600)
+        config.resize(820, 720)
         config.save_colors("parchment", None)
         appearance = next(
             i for i in range(config.tabs.count()) if config.tabs.tabText(i) == "Appearance"

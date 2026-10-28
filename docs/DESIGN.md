@@ -155,6 +155,7 @@ MyMusic.keep/
   fulltext.db      # SQLite: documents' text, when searching inside them (§8)
   ui_state.json    # view toggles, column widths, saved layout (optional)
   icons/           # pictures chosen as icons (#557, §12 Icons; optional)
+  fonts/           # font files chosen for the keep (#565, §12 Fonts; optional)
 ```
 
 ### keep.toml
@@ -218,6 +219,12 @@ colors = "nord"                            # system (default) | light | dark | a
 
 [appearance.icons]                         # your own icons for types
 "music.album" = "icons/vinyl.svg"          # type id = a Lucide name, or a picture in icons/
+
+[appearance.fonts]                         # optional (#565, §12 Fonts); a place not listed: the system's
+titles = "Literata"                        # an installed family, or a file in fonts/
+notes = "fonts/Literata.ttf"
+text = "Segoe UI"
+text_size = 110                            # percent of the system's (50 to 200)
 ```
 
 ### Rules
@@ -1263,6 +1270,21 @@ Each keep can have its own look, so a books keep is told apart from a music or m
 - **Following a change** (found while building): style sheets naming palette colors (`palette(placeholder-text)`) keep the colors they were set with, so every widget's style sheet is set again after a change; the results lists' proxy style (`NoHoverFill`, #473) is made again on the new style (`hover.restyle_views`), and the hover outline takes the new selection color.
 - **Named colors** (`ui/colors.py`): what the palette has no role for, errors, warnings and drop outlines, a rating's stars, a difference between compared items, each with a light-background and a dark-background variant chosen from the window's color; dimmed rich text uses the palette's placeholder color instead of `gray`. The rendered Markdown (#553) takes its colors from the palette already.
 
+### Fonts (M44, #565; decided in discussion, 2026-10-27)
+
+Each keep can have its own fonts and text size, so a books keep reads like a book.
+
+- **Three places** (`FONT_PLACES`), each with its own font or the system's:
+  - **Titles:** an item's page title, the preview's title, grid cards' titles, the navigation's section headings, and title cards (#415).
+  - **Notes:** rendered Markdown notes and glimpses on items' pages (`ui/note_view.py`; the document's default font, made again when the fonts change).
+  - **Text:** the rest of the window: the application's font.
+- **Text size:** a percent of the system's (50 to 200, `TEXT_SIZES`), applied to the application's font; titles and notes follow it, as they are sized from it.
+- **Fonts from** an installed family (a picker with a filter and a preview of the keep's name and first titles, `ui/font_picker.py`), or **From a file…**: a TTF or OTF copied into the keep folder's `fonts/` (`core/fonts.copy_font_file`, in a worker; up to 32 MB), so the keep looks the same from another computer or a share. As with `icons/`, a file is copied once and never replaced; another with the same name gets a number. Nothing is written under a root.
+- **Saved per keep** in `keep.toml` `[appearance.fonts]` (§4): `titles`, `notes`, `text` (a family, or `fonts/…`), and `text_size` (left out at 100).
+- **A font that isn't there** (a family not installed on this computer, or a file that's gone or Qt can't read) shows the system's font, with a note in Keep configuration; never an error.
+- **Keep configuration → Appearance → Fonts** (decided while building: on the Appearance tab, which M43 added after this was planned for the Keep tab): a button per place showing its font in itself, **Use the system's**, and the text size. Changes apply at once.
+- **The application's, as colors are** (`ui/fonts.py`): the fonts follow the active keep's window, applied with its colors (`MainWindow.apply_colors`); the launcher has the system's. The session reads the keep's font files at open and when `keep.toml` changes (`KeepSession.font_files`); the UI registers them with Qt (`QFontDatabase.addApplicationFontFromData`, once each). Found while building: Qt passes a new application font's family to widgets with a font of their own, but not its size, so widgets sized relative to the text (titles, headings) set their font again on every change (`fonts.follow`), and lists and grids are laid out again with title cards painted again.
+
 ### Navigation model
 
 - **Select** (single click): updates the tagging panel, the Details tab, and an optional preview (thumbnail + key fields).
@@ -1623,6 +1645,7 @@ Each keep can have its own look, so a books keep is told apart from a music or m
 | 2026-10 | RAR tools off PATH on Windows (#452, M39, §10 *Archives*): WinRAR's UnRAR and 7-Zip found in their programs folders when not on PATH; `tagalot --check` names the tool and warns about bsdtar; a `.cbr`'s ComicInfo that needs a missing tool is reported (`NoRarTool`), not read as absent. Not done: trying the next tool when one fails. |
 | 2026-10 | Remembered column order and widths (#417, M40, §12 *List layout*; asked in review of #413): a view's column order (`column_order`, every key it has seen, so Search all keeps each type's) and the widths the user dragged (`column_widths`, by key; not the last shown column, which fills the rest) are kept per view in `ui_state.json`; columns new to the view go after their theme neighbour, gone ones are skipped. **Reset column order and widths** in the header menu forgets both, leaving which columns are shown. Decided while building: Search all's sections, which show a type's first items, keep the theme's order and widths. |
 | 2026-10 | The Open Keep dialog shows each keep's icon and a hint of its colors (#559, M43, §12 *Keep launcher*; decided in discussion, 2026-10-27): its own icon, else its theme's, else a generic one; decided while building: its colors as a badge behind the icon (its background and text, an accent stripe for its own colors; light or dark squares for Light and Dark), the rows shown again when the themes load. |
+| 2026-10 | A keep's fonts (#565, M44, §12 *Fonts*, §4; decided in discussion, 2026-10-27): titles, notes, and text, each an installed family or a TTF/OTF copied into the keep folder's `fonts/` (once, never replaced), and a text size in percent, in `keep.toml` `[appearance.fonts]`; a font that isn't there shows the system's, with a note. Applied app-wide, following the active keep, like its colors. Decided while building: on the Appearance tab rather than the Keep tab; the picker previews the keep's name and first titles; font files up to 32 MB; widgets sized from the text follow changes of size (Qt passes on only the family). |
 | 2026-10 | Color schemes (#572, M43, §12 *Colors*, §4, §9; decided in discussion, 2026-10-28): the Colors list offers Follow the system, Light, Dark, then color schemes: built in, the keep's theme's (`Theme.color_schemes`, theme API version 26), and the user's own (a TOML file each in the per-user data folder's `color_schemes`). `[appearance] colors` names the scheme (`"nord"`, `"books.library"`, `"user:my-parchment"`); the five colors are no longer written in `keep.toml`, though those #558 wrote still show until replaced. Changes preview at once; Save (the user's own only) and Save As keep them; unsaved changes are asked about. One color set a scheme; no default scheme for new keeps. Decided while building: the built-in six; the user's schemes read once and kept; asked about discarding only when the user closes the window. |
 | 2026-10 | A keep's colors (#558, M43, §12 *Colors*, §4; decided in discussion, 2026-10-27): Follow the system, Light, Dark (the native style with `setColorScheme`), or its own five colors (Fusion, with a derived palette and a contrast warning), in `keep.toml` `[appearance]`; named colors for errors, warnings, stars, and differences, with light and dark variants. Decided while building: the look is the application's and follows the active keep's window (several keeps can be open); the Appearance tab holds the icon too; style sheets are set again after a change; the results lists' proxy style follows the new style. |
 | 2026-10 | Your own icons (#557, M43, §12 *Icons*, §4, §8; decided in discussion, 2026-10-27): an icon picker (the bundled Lucide icons, searched by name and Lucide's keywords, or an SVG or PNG from a file, copied into the keep folder's `icons/`); a type's icon from its search's menu, in `keep.toml` `[appearance.icons]`; the keep's in Keep configuration, `[appearance] icon`; a saved search's in its definition (`icon`), one undo step, kept when the search is updated. Decided while building: pictures up to 1 MB, never replaced (a number is added), a missing one shows the standard icon; the keywords are bundled from Lucide (`tags.json`). |

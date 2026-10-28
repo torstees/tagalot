@@ -18,6 +18,7 @@ from PySide6.QtGui import (
 )
 
 from tagalot.core.thumbnails.title_card import Card, Color
+from tagalot.ui.fonts import place_font
 
 MAX_TITLE_LINES = 5
 MAX_SUBTITLE_LINES = 2
@@ -56,7 +57,7 @@ def _paint(
     inner = width - 2 * margin
     room = height - 2 * margin
 
-    sub_font = QFont()
+    sub_font = place_font("titles", base=QFont())  # the keep's titles font (#565)
     sub_font.setPixelSize(max(round(unit * 0.075), 6))
     subtitle = _fit_lines(card.subtitle, sub_font, inner, MAX_SUBTITLE_LINES)
     sub_spacing = QFontMetricsF(sub_font).lineSpacing()
@@ -92,8 +93,7 @@ def _paint(
 def _fit_title(title: str, unit: int, width: float, room: float) -> tuple[QFont, list[str]]:
     """The largest bold font the title fits in whole words at, and its lines; at the
     smallest, words are broken and what doesn't fit is cut with an ellipsis."""
-    font = QFont()
-    font.setBold(True)
+    font = place_font("titles", bold=True, base=QFont())
     smallest = max(round(unit * 0.07), 6)
     for pixels in range(max(round(unit * 0.2), smallest), smallest - 1, -1):
         font.setPixelSize(pixels)

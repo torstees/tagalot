@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDialog,
     QDockWidget,
@@ -110,6 +111,7 @@ from tagalot.ui.details_dock import (
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.folder_picker import choose_open_file, choose_save_file
+from tagalot.ui.fonts import apply_fonts, look_of
 from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icon_pictures import SVG_SUFFIX, read_icon_file
 from tagalot.ui.icons import lucide
@@ -2761,6 +2763,17 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             preview = self.keep_config.colors_preview() if self.keep_config is not None else None
             apply_colors(*(preview or self.session.colors))  # unsaved changes still show (#572)
+            look, _ = look_of(self.session.keep.config, self.session.font_files)
+            if apply_fonts(look):  # the keep's fonts too (#565)
+                self._fonts_changed()
+
+    def _fonts_changed(self) -> None:
+        """The fonts changed (#565): title cards are painted again, and lists and grids
+        laid out again, as their cards' titles may be taller."""
+        self.thumbnails.clear()
+        for view in self.findChildren(QAbstractItemView):
+            view.doItemsLayout()
+            view.viewport().update()
 
     def _restore_side_width(self) -> None:
         """The side panel's width the user left it at, as far as the window has room, and

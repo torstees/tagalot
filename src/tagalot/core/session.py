@@ -49,6 +49,7 @@ from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.folder_items import tagged_hidden
+from tagalot.core.fonts import copy_font_file, read_font_files
 from tagalot.core.icons import copy_icon_picture, keep_icon, type_icon
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
@@ -56,6 +57,7 @@ from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_k
 from tagalot.core.keep_settings import (
     with_colors,
     with_contents_index,
+    with_fonts,
     with_keep_icon,
     with_markdown_assets,
     with_name,
@@ -171,12 +173,15 @@ class KeepSession:
     _temp: Path | None = field(default=None, init=False, repr=False)
     _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
     _icons: dict[str, str | None] = field(default_factory=dict, init=False, repr=False)
+    """Types' icon sources, found once (a picture's file is looked for) until ``keep.toml``
+    changes."""
     colors: tuple[str, dict[str, str]] = field(default=("system", {}), init=False, repr=False)
     """The look ``keep.toml`` names (#572): ``(mode, colors)`` from
     :func:`~tagalot.core.color_schemes.resolve_colors`, found at open and when the
     configuration changes, so the window never reads a scheme's file."""
-    """Types' icon sources, found once (a picture's file is looked for) until ``keep.toml``
-    changes."""
+    font_files: dict[str, bytes | None] = field(default_factory=dict, init=False, repr=False)
+    """The font files ``[appearance.fonts]`` names (#565), read at open and when the
+    configuration changes: bytes by value, None for one that can't be read."""
     problems: ProblemLog = field(default_factory=ProblemLog, init=False)
     verifier: Verifier = field(default_factory=Verifier, init=False)
     """Full-hash checks of duplicate files, kept for the session (core.dedupe)."""
@@ -263,6 +268,7 @@ class KeepSession:
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
         session.colors = resolve_colors(opened.keep.config, theme)
+        session.font_files = read_font_files(opened.keep.dir, opened.keep.config.fonts)
         with reader.connect() as conn:
             session.has_keywords = any_keywords(conn)
         return session
@@ -576,6 +582,7 @@ class KeepSession:
         self.keep = replace(self.keep, config=config)
         self._icons = {}  # looked up again (#557)
         self.colors = resolve_colors(config, self.theme)
+        self.font_files = read_font_files(self.keep.dir, config.fonts)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
 
     # --- ignored note keys (core.note_keys, #381) ---
@@ -639,6 +646,16 @@ class KeepSession:
         """Choose the keep's colors: a mode (#558) or a color scheme's id (#572). Raises
         ``KeepError``. Runs in a worker."""
         self.save_config(with_colors(self.keep.config, mode, custom))
+
+    def set_fonts(self, fonts: Mapping[str, str | None], text_size: int | None) -> None:
+        """Choose the keep's fonts and text size (#565). Raises ``KeepError``. Runs in a
+        worker."""
+        self.save_config(with_fonts(self.keep.config, fonts, text_size))
+
+    def font_file(self, source: Path) -> str:
+        """Copy a font file into the keep folder for a font; its stored path. Raises
+        ``FontFileError``. Runs in a worker."""
+        return copy_font_file(self.keep.dir, source)
 
     def color_schemes(self) -> list[ColorScheme]:
         """The schemes this keep can choose from: built in, its theme's, the user's."""

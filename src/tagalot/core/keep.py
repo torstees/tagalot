@@ -57,6 +57,13 @@ COLOR_ROLES = ("background", "text", "panels", "accent", "dimmed")
 """The keep's own colors (``[appearance]``, #558): the window's background, its text,
 lists and panels, the accent (selection and links), and dimmed text. The UI derives the
 rest."""
+FONT_PLACES = ("titles", "notes", "text")
+"""Where a keep can have its own font (``[appearance.fonts]``, #565): titles (items'
+pages, grid cards, the navigation's headings, title cards), notes (Markdown on items'
+pages), and the rest of the window's text."""
+TEXT_SIZES = (50, 200)
+"""The smallest and largest ``[appearance.fonts] text_size``, in percent of the
+system's."""
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 NEW_NOTES = ("folders", "one-folder")
 """Where Save as note… puts a new note: a subfolder per type, or all in the notes folder."""
@@ -199,6 +206,13 @@ class KeepConfig:
     custom_colors: dict[str, str] = field(default_factory=dict)
     """The colors written in ``keep.toml`` by :data:`COLOR_ROLES` name (``"#rrggbb"``),
     as #558 saved them; only kept while :attr:`colors` is ``"custom"``."""
+    fonts: dict[str, str] = field(default_factory=dict)
+    """``[appearance.fonts]``: the keep's own fonts by :data:`FONT_PLACES` name (#565), an
+    installed family (``"Literata"``) or a file in the keep folder (``"fonts/…"``); a
+    place not listed uses the system's."""
+    text_size: int | None = None
+    """``[appearance.fonts] text_size``: the text's size in percent of the system's
+    (#565), within :data:`TEXT_SIZES`; None for the system's."""
     type_icons: dict[str, str] = field(default_factory=dict)
     """``[appearance.icons]``: the user's icons for types, by type id (#557), as
     :attr:`icon`; a type not listed shows the theme's."""
@@ -323,6 +337,11 @@ def dump_keep_config(config: KeepConfig) -> str:
     if config.type_icons:
         lines += ["", "[appearance.icons]"]
         lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in config.type_icons.items()]
+    if config.fonts or config.text_size is not None:
+        lines += ["", "[appearance.fonts]"]
+        lines += [f"{p} = {toml_str(config.fonts[p])}" for p in FONT_PLACES if p in config.fonts]
+        if config.text_size is not None:
+            lines.append(f"text_size = {config.text_size}")
     for root in config.roots:
         lines += [
             "",
@@ -490,11 +509,15 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
 
     icon: str | None = None
     type_icons: dict[str, str] = {}
+    fonts: dict[str, str] = {}
+    text_size: int | None = None
     colors = "system"
     custom_colors: dict[str, str] = {}
     if "appearance" in data:
         appearance = reader.table(data, "appearance")
-        reader.warn_unknown(appearance, {"icon", "icons", "colors", *COLOR_ROLES}, "[appearance]")
+        reader.warn_unknown(
+            appearance, {"icon", "icons", "fonts", "colors", *COLOR_ROLES}, "[appearance]"
+        )
         colors = appearance.get("colors", "system")
         if not isinstance(colors, str) or not (
             colors in COLOR_MODES or COLOR_SCHEME_ID.fullmatch(colors)
@@ -522,6 +545,26 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         ):
             raise KeepConfigError(path, "[appearance.icons] must map type ids to icons")
         type_icons = {k.strip(): v.strip() for k, v in icons.items() if k.strip()}
+        raw_fonts = appearance.get("fonts", {})
+        if not isinstance(raw_fonts, dict):
+            raise KeepConfigError(path, "[appearance.fonts] must be a table")
+        reader.warn_unknown(raw_fonts, {*FONT_PLACES, "text_size"}, "[appearance.fonts]")
+        for place in FONT_PLACES:
+            if place in raw_fonts:
+                value = raw_fonts[place]
+                if not isinstance(value, str) or not value.strip():
+                    raise KeepConfigError(
+                        path, f"[appearance.fonts] {place} must name a font or a file in fonts/"
+                    )
+                fonts[place] = value.strip()
+        if "text_size" in raw_fonts:
+            size = raw_fonts["text_size"]
+            low, high = TEXT_SIZES
+            if isinstance(size, bool) or not isinstance(size, int) or not low <= size <= high:
+                raise KeepConfigError(
+                    path, f"[appearance.fonts] text_size must be a percent from {low} to {high}"
+                )
+            text_size = size
 
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
@@ -608,6 +651,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         see_through=see_through,
         icon=icon,
         type_icons=type_icons,
+        fonts=fonts,
+        text_size=text_size,
         colors=colors,
         custom_colors=custom_colors,
     )

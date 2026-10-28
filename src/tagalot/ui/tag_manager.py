@@ -36,7 +36,7 @@ from PySide6.QtCore import (
     QThreadPool,
     Signal,
 )
-from PySide6.QtGui import QColor, QFont, QPixmap
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
@@ -63,6 +63,7 @@ from tagalot.core.search_fields import type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree, TagUsage, tag_usage
 from tagalot.ui.dnd import dragged_tags
+from tagalot.ui.fonts import follow, place_font
 from tagalot.ui.icon_pictures import icon_html, icon_image
 from tagalot.ui.models.tag_tree import TagTreeModel
 from tagalot.ui.tag_picker import DeleteDialog, merge_dialog, move_dialog
@@ -227,10 +228,7 @@ class TagDetails(QFrame):
         """Unsaved description text, by tag id."""
 
         self.title = QLabel()
-        font = QFont(self.title.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() + 2)
-        self.title.setFont(font)
+        follow(self.title, lambda: place_font("text", bold=True, larger=2))
         self.path = QLabel()
         self.counts = QLabel()
         self.empty = QLabel("Select a tag to see its details.")
@@ -629,10 +627,7 @@ class TagManagerPage(QWidget):
         self.loaded = False
 
         heading = QLabel("Tag manager")
-        font = QFont(heading.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() + 2)
-        heading.setFont(font)
+        follow(heading, lambda: place_font("text", bold=True, larger=2))
         self.status = QLabel("Loading tags…")
         header_row = QHBoxLayout()
         header_row.addWidget(heading)

@@ -93,10 +93,17 @@ def shade(palette: QPalette, amount: float = 0.08) -> QColor:
     )
 
 
-def render(markdown: str, palette: QPalette, parent: QObject | None = None) -> QTextDocument:
-    """``markdown`` as a document, styled from ``palette``. ``parent`` loads its pictures
-    (a ``QTextBrowser``'s ``loadResource``)."""
+def render(
+    markdown: str,
+    palette: QPalette,
+    parent: QObject | None = None,
+    font: QFont | None = None,
+) -> QTextDocument:
+    """``markdown`` as a document, styled from ``palette``, in ``font`` (the keep's notes
+    font, #565). ``parent`` loads its pictures (a ``QTextBrowser``'s ``loadResource``)."""
     document = QTextDocument(parent)
+    if font is not None:
+        document.setDefaultFont(font)
     document.setDocumentMargin(0)
     document.setMarkdown(markdown)
     _style(document, palette)

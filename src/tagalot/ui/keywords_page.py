@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from tagalot.core.keywords import KeywordInfo, keyword_report
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
+from tagalot.ui.fonts import follow, place_font
 from tagalot.ui.workers import run_in_pool
 
 ModelIndex = QModelIndex | QPersistentModelIndex
@@ -127,10 +128,7 @@ class KeywordsPage(QWidget):
         self._generation = 0
 
         heading = QLabel("File keywords")
-        font = QFont(heading.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() + 2)
-        heading.setFont(font)
+        follow(heading, lambda: place_font("text", bold=True, larger=2))
         self.status = QLabel("Loading…")
         top = QHBoxLayout()
         top.addWidget(heading)

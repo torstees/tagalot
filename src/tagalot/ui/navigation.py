@@ -13,6 +13,7 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, Signa
 from PySide6.QtGui import QFont, QIcon, QMouseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QTreeView, QWidget
 
+from tagalot.ui.fonts import place_font, signals
 from tagalot.ui.icons import icon, lucide
 
 TargetKind = Literal[
@@ -32,6 +33,11 @@ FIXED_ICONS = {
     "tags": "tags",
 }
 """The Lucide icon of each fixed entry (#556); a search view shows its type's."""
+
+
+def _heading_font() -> QFont:
+    """The sections' headings: in the keep's titles font (#565), a point smaller."""
+    return place_font("titles", bold=True, larger=-1)
 
 
 @dataclass(frozen=True)
@@ -80,10 +86,7 @@ class NavigationPane(QTreeView):
             heading = QStandardItem()
             heading.setData(key, _SECTION)
             heading.setFlags(Qt.ItemFlag.ItemIsEnabled)  # not selectable
-            font = QFont(heading.font())
-            font.setBold(True)
-            font.setPointSizeF(max(font.pointSizeF() - 1, 7))
-            heading.setFont(font)
+            heading.setFont(_heading_font())
             self._model.appendRow(heading)
             self._headings[key] = heading
         self._fill(
@@ -91,6 +94,7 @@ class NavigationPane(QTreeView):
             [NavTarget("dashboard", label="Dashboard"), NavTarget("search", label="Search all")],
         )
         self._fill("searches", [NavTarget("view", key=v, label=v) for v in views])
+        signals().changed.connect(self._fonts_changed)
         self._fill(
             "tools",
             [
@@ -111,6 +115,10 @@ class NavigationPane(QTreeView):
         self.expanded.connect(self._fold_state_changed)
         self.collapsed.connect(self._fold_state_changed)
         self.selectionModel().currentChanged.connect(self._current_changed)
+
+    def _fonts_changed(self) -> None:
+        for heading in self._headings.values():
+            heading.setFont(_heading_font())
 
     # --- content ---
 
