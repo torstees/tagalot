@@ -1,5 +1,5 @@
 """A keep's colors in keep.toml (#558, DESIGN.md §12 *Colors*): the system's, light, dark,
-or its own five."""
+a color scheme's id (#572), or five written in keep.toml as #558 saved them."""
 
 from pathlib import Path
 
@@ -44,12 +44,26 @@ def test_round_trip(keep: Keep) -> None:
     assert (loaded.colors, loaded.custom_colors) == ("custom", OWN)
 
 
-def test_its_own_colors_are_kept_while_another_mode_is_chosen(keep: Keep) -> None:
-    config = with_colors(with_colors(keep.config, "custom", OWN), "dark")
-    assert (config.colors, config.custom_colors) == ("dark", OWN)
+def test_a_scheme_drops_the_colors_written_in_keep_toml(keep: Keep) -> None:
+    config = with_colors(with_colors(keep.config, "custom", OWN), "nord")
+    assert (config.colors, config.custom_colors) == ("nord", {})
     save_keep_config(config, keep.toml_path)
-    assert load_keep_config(keep.toml_path).custom_colors == OWN
-    assert with_colors(config, "custom").custom_colors == OWN  # back to them
+    assert "background" not in keep.toml_path.read_text(encoding="utf-8")
+    assert load_keep_config(keep.toml_path).colors == "nord"
+
+
+@pytest.mark.parametrize("scheme", ["nord", "books.library", "user:my-parchment"])
+def test_schemes_are_named_in_keep_toml(keep: Keep, scheme: str) -> None:
+    save_keep_config(with_colors(keep.config, scheme), keep.toml_path)
+    assert load_keep_config(keep.toml_path).colors == scheme
+
+
+def test_colors_558_kept_beside_another_mode_are_dropped(keep: Keep) -> None:
+    text = keep.toml_path.read_text(encoding="utf-8")
+    text += "\n[appearance]\ncolors = 'dark'\nbackground = '#1f1d1a'\n"
+    keep.toml_path.write_text(text, encoding="utf-8")
+    loaded = load_keep_config(keep.toml_path)
+    assert (loaded.colors, loaded.custom_colors) == ("dark", {})
 
 
 def test_colors_are_cleaned(keep: Keep) -> None:
@@ -60,7 +74,7 @@ def test_colors_are_cleaned(keep: Keep) -> None:
 @pytest.mark.parametrize(
     ("mode", "custom", "message"),
     [
-        ("sepia", None, "system, light, dark, or custom"),
+        ("Sepia Tone", None, "no color scheme 'Sepia Tone'"),
         ("custom", {"background": "dark brown"}, "must look like #1f1d1a"),
         ("custom", {"background": "#123"}, "must look like #1f1d1a"),
         ("custom", {"border": "#123456"}, "No color named 'border'"),
@@ -75,7 +89,13 @@ def test_wrong_colors_are_refused(
 
 @pytest.mark.parametrize(
     "table",
-    ["colors = 'sepia'", "background = 'brown'", "accent = 5", "text = '#12345'"],
+    [
+        "colors = 'Sepia Tone'",
+        "colors = 5",
+        "background = 'brown'",
+        "accent = 5",
+        "text = '#12345'",
+    ],
 )
 def test_wrong_colors_in_keep_toml(keep: Keep, table: str) -> None:
     text = keep.toml_path.read_text(encoding="utf-8") + f"\n[appearance]\n{table}\n"

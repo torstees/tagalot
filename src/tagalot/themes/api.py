@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 25
+API_VERSION = 26
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -53,7 +53,8 @@ archives (:attr:`ResourceInfo.archive`, :attr:`ResourceInfo.archive_path`); vers
 added services' tokens and finding items by title (:class:`OnlineSource`'s
 ``token_env`` and ``titles``, :class:`OnlineRequest`); version 24 added placing an
 online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added icons
-(:attr:`Entity.icon`, :attr:`Theme.icon`)."""
+(:attr:`Entity.icon`, :attr:`Theme.icon`); version 26 added color schemes
+(:class:`ColorScheme`, :attr:`Theme.color_schemes`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1487,6 +1488,28 @@ def dashboard_card(title: str, *, description: str = "") -> Callable[[_F], _F]:
     return mark
 
 
+@dataclass(frozen=True)
+class ColorScheme:
+    """A named set of a keep's colors (API version 26), offered on the Appearance tab of
+    the keeps that use the theme (:attr:`Theme.color_schemes`). Each color is
+    ``"#rrggbb"``; Tagalot works out the rest (borders, alternate rows, disabled text).
+
+    - ``id``: lowercase letters, digits, dashes, or underscores, unique in the theme;
+      keeps name it by the theme's id and this (``"books.library"``).
+    - ``name``: as the Colors list shows it.
+    - ``background``: the window's; ``text``: its text; ``panels``: lists and panels;
+      ``accent``: the selection and links; ``dimmed``: dimmed text.
+    """
+
+    id: str
+    name: str
+    background: str
+    text: str
+    panels: str
+    accent: str
+    dimmed: str
+
+
 class Theme:
     """Base for themes. A theme module defines exactly one subclass.
 
@@ -1537,6 +1560,11 @@ class Theme:
     icon: ClassVar[str | None] = None
     """The icon of keeps that use this theme, in the Open Keep dialog (API version 25): a
     Lucide icon's name or an SVG beside the theme's module, as :attr:`Entity.icon`."""
+
+    color_schemes: ClassVar[Sequence[ColorScheme]] = ()
+    """Color schemes offered to keeps that use this theme (API version 26), beside
+    Tagalot's own and the user's. A keep's colors stay the system's until the user
+    chooses one."""
 
     online_sources: ClassVar[Sequence[OnlineSource]] = ()
     """The online services this theme looks items up in (DESIGN.md §9 *Online details*;
@@ -1759,6 +1787,7 @@ __all__ = [
     "ActionSpec",
     "ArchiveFirstImage",
     "CardRows",
+    "ColorScheme",
     "Containment",
     "DashboardCard",
     "DashboardContext",

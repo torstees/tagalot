@@ -18,6 +18,7 @@ from tagalot.core.icons import IconFileError, check_user_icon
 from tagalot.core.keep import (
     COLOR_MODES,
     COLOR_ROLES,
+    COLOR_SCHEME_ID,
     CONTENTS_INDEXES,
     FIND_BY,
     ONLINE_ANSWERS,
@@ -247,10 +248,13 @@ def _checked_icon(icon: str) -> str:
 def with_colors(
     config: KeepConfig, mode: str, custom: Mapping[str, str] | None = None
 ) -> KeepConfig:
-    """``config`` with the keep's colors (#558): a mode of :data:`COLOR_MODES`, and the
-    keep's own colors (``custom``, by :data:`COLOR_ROLES` name; None keeps those it has)."""
-    if mode not in COLOR_MODES:
-        raise KeepError(f"Colors can be system, light, dark, or custom, not {mode!r}.")
+    """``config`` with the keep's colors: a mode of :data:`COLOR_MODES` (#558) or a color
+    scheme's id (#572), and, for ``"custom"``, colors written in ``keep.toml`` (by
+    :data:`COLOR_ROLES` name; None keeps those it has). Other choices drop them."""
+    if mode not in COLOR_MODES and not COLOR_SCHEME_ID.fullmatch(mode):
+        raise KeepError(f"There's no color scheme {mode!r}.")
+    if mode != "custom":
+        custom = {}
     colors = dict(config.custom_colors if custom is None else custom)
     unknown = sorted(set(colors) - set(COLOR_ROLES))
     if unknown:

@@ -51,12 +51,9 @@ index = "words"                             # or "substrings"; absent: Off
 
 [appearance]                                # your own icons and colors
 icon = "radio"                              # the keep's, in the Open Keep dialog
-colors = "custom"                           # system (default), light, dark, or custom
-background = "#1f1d1a"                      # the keep's own colors: background, text,
-text = "#ece6dc"                            # lists and panels, accent, and dimmed text
-panels = "#2a2722"
-accent = "#c8963e"
-dimmed = "#9a9184"
+colors = "user:my-parchment"                # system (default), light, dark, or a color scheme:
+                                            # Tagalot's ("nord"), the theme's ("books.library"),
+                                            # or yours ("user:" and its file's name)
 
 [appearance.icons]                          # kinds of items, by type id
 "music.album" = "icons/vinyl.svg"           # an icon's name, or a picture in the keep's icons folder

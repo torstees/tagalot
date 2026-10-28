@@ -24,7 +24,15 @@ from pathlib import Path
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor, QHideEvent, QIcon, QPalette, QPixmap, QShowEvent
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QHideEvent,
+    QIcon,
+    QPalette,
+    QPixmap,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -51,6 +59,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.color_schemes import (
+    BUILT_IN,
+    CUSTOM,
+    NATIVE,
+    USER,
+    hard_to_read,
+    name_problem,
+    resolve_colors,
+    scheme_colors,
+)
 from tagalot.core.contents import ContentsStats
 from tagalot.core.extra_keys import DEFAULT_IGNORED_KEYS
 from tagalot.core.formats import format_bytes
@@ -80,9 +98,9 @@ from tagalot.core.roots import local_path
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import ENV_NAME, save_settings
 from tagalot.core.thumbnails.cache import CacheStats
-from tagalot.themes.api import ThemeOption, entity_plural
+from tagalot.themes.api import ColorScheme, ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
-from tagalot.ui.appearance import apply_keep_colors, hard_to_read, starting_colors
+from tagalot.ui.appearance import apply_colors, starting_colors
 from tagalot.ui.colors import ERROR, css
 from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.icon_picker import IconChoice, IconPicker
@@ -111,9 +129,10 @@ COLOR_CHOICES = (
     ("Follow the system", "system"),
     ("Light", "light"),
     ("Dark", "dark"),
-    ("Its own", "custom"),
 )
-"""The Colors choices (#558): label, then ``[appearance] colors``."""
+"""The system's looks at the top of the Colors list (#558): label, then ``[appearance]
+colors``; color schemes follow (#572)."""
+BUILT_IN_IDS = frozenset(s.id for s in BUILT_IN)
 COLOR_LABELS = {
     "background": "Background",
     "text": "Text",
@@ -463,7 +482,12 @@ class KeepConfigWindow(QWidget):
         return tab
 
     def _appearance_tab(self) -> QWidget:
-        """The keep's icon and colors (#557, #558)."""
+        """The keep's icon and colors (#557, #558, #572)."""
+        self._edits: dict[str, str] | None = None
+        """The scheme's colors as changed and not yet saved (#572)."""
+        self._legacy: dict[str, str] | None = None
+        """Colors the keep had in ``keep.toml`` (#558), offered until the window closes."""
+        self._schemes: dict[str, ColorScheme] = {}
         form = QFormLayout()
         # The keep's icon (#557): its own, else its theme's; the Open Keep dialog shows it.
         self.keep_icon = QPushButton("Change\u2026")
@@ -481,15 +505,14 @@ class KeepConfigWindow(QWidget):
         form.addRow("Icon:", icon_row)
         self.color_mode = QComboBox()
         self.color_mode.setObjectName("color_mode")
-        for label, mode in COLOR_CHOICES:
-            self.color_mode.addItem(label, mode)
         self.color_mode.setToolTip(
-            "The keep's colors, shown while its window is the active one: the system's "
-            "light or dark mode, always light, always dark, or its own."
+            "The keep's colors, shown while its window is the active one: the system's own "
+            "(following its light or dark mode, or always light or dark), or a color scheme: "
+            "Tagalot's, the theme's, or yours."
         )
-        self.color_mode.currentIndexChanged.connect(self._color_mode_chosen)
+        self.color_mode.currentIndexChanged.connect(self._scheme_chosen)
         form.addRow("Colors:", self.color_mode)
-        self.custom_colors = QGroupBox("Its own colors")
+        self.custom_colors = QGroupBox("The scheme's colors")
         custom_form = QFormLayout(self.custom_colors)
         self.color_buttons: dict[str, QPushButton] = {}
         for role, label in COLOR_LABELS.items():
@@ -503,9 +526,29 @@ class KeepConfigWindow(QWidget):
         self.colors_warning.setWordWrap(True)
         self.colors_warning.setStyleSheet(f"color: {css(ERROR)};")
         custom_form.addRow("", self.colors_warning)
+        self.save_scheme_button = QPushButton("Save")
+        self.save_scheme_button.setObjectName("save_scheme")
+        self.save_scheme_button.setToolTip("Save the changes to this scheme (only your own)")
+        self.save_scheme_button.clicked.connect(self.save_scheme)
+        self.save_scheme_as_button = QPushButton("Save As…")
+        self.save_scheme_as_button.setObjectName("save_scheme_as")
+        self.save_scheme_as_button.setToolTip(
+            "Save these colors as a new scheme of your own, offered in all your keeps"
+        )
+        self.save_scheme_as_button.clicked.connect(self.save_scheme_as)
+        self.scheme_state = QLabel()
+        self.scheme_state.setObjectName("scheme_state")
+        self.scheme_state.setWordWrap(True)
+        scheme_buttons = QHBoxLayout()
+        scheme_buttons.setContentsMargins(0, 0, 0, 0)
+        scheme_buttons.addWidget(self.save_scheme_button)
+        scheme_buttons.addWidget(self.save_scheme_as_button)
+        scheme_buttons.addWidget(self.scheme_state, 1)
+        custom_form.addRow("", scheme_buttons)
         hint = QLabel(
-            "Tagalot works out the rest (borders, alternate rows, disabled text) from these. "
-            "Your system's file dialogs and the window's title bar keep the system's look."
+            "Changes show at once and are kept when you save them. Tagalot works out the rest "
+            "(borders, alternate rows, disabled text) from these. Your system's file dialogs "
+            "and the window's title bar keep the system's look."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
@@ -517,60 +560,209 @@ class KeepConfigWindow(QWidget):
         column.addStretch(1)
         return tab
 
+    # --- colors (#558) and color schemes (#572) ---
+
+    def _fill_schemes(self) -> None:
+        """The Colors list: the system's looks, then Tagalot's schemes, the theme's, the
+        user's, and the keep's own colors from ``keep.toml`` or a scheme it names that's
+        gone."""
+        config = self.session.keep.config
+        schemes = self.session.color_schemes()
+        self._schemes = {s.id: s for s in schemes}
+        combo = self.color_mode
+        blocked = combo.blockSignals(True)
+        combo.clear()
+        for label, mode in COLOR_CHOICES:
+            combo.addItem(label, mode)
+        theme_prefix = f"{self.session.theme.id}."
+        groups = (
+            [s for s in schemes if s.id in BUILT_IN_IDS],
+            [s for s in schemes if s.id.startswith(theme_prefix)],
+            [s for s in schemes if s.id.startswith(USER)],
+        )
+        for group in groups:
+            if group:
+                combo.insertSeparator(combo.count())
+            for scheme in group:
+                combo.addItem(scheme.name, scheme.id)
+                if scheme.id.startswith(USER):
+                    combo.setItemData(combo.count() - 1, "Yours", Qt.ItemDataRole.ToolTipRole)
+        if self._legacy is not None:
+            combo.insertSeparator(combo.count())
+            combo.addItem("This keep's colors", CUSTOM)
+            combo.setItemData(
+                combo.count() - 1,
+                "Colors saved in the keep before schemes; Save As keeps them as a scheme",
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        if config.colors not in self._schemes and config.colors not in (*NATIVE, CUSTOM):
+            combo.insertSeparator(combo.count())
+            combo.addItem(f"{config.colors} (not found: the system's colors)", config.colors)
+        combo.setCurrentIndex(max(combo.findData(config.colors), 0))
+        combo.blockSignals(blocked)
+
     def _show_colors(self) -> None:
         config = self.session.keep.config
-        blocked = self.color_mode.blockSignals(True)
-        self.color_mode.setCurrentIndex(max(self.color_mode.findData(config.colors), 0))
-        self.color_mode.blockSignals(blocked)
-        custom = config.colors == "custom"
-        self.custom_colors.setVisible(custom)
-        colors = {**starting_colors(), **config.custom_colors}
+        if config.colors == CUSTOM:
+            self._legacy = dict(config.custom_colors)
+        self._fill_schemes()
+        scheme_id = self.color_mode.currentData()
+        colors = self._scheme_colors(scheme_id)
+        self.custom_colors.setVisible(colors is not None)
+        shown = self._edits or colors or starting_colors()
         for role, button in self.color_buttons.items():
             swatch = QPixmap(28, 14)
-            swatch.fill(QColor(colors[role]))
+            swatch.fill(QColor(shown[role]))
             button.setIcon(QIcon(swatch))
-            button.setText(colors[role])
-        problems = hard_to_read(colors) if custom else []
+            button.setText(shown[role])
+        problems = hard_to_read(shown) if colors is not None else []
         self.colors_warning.setText(" ".join(problems))
         self.colors_warning.setVisible(bool(problems))
+        own = isinstance(scheme_id, str) and scheme_id.startswith(USER)
+        self.save_scheme_button.setVisible(own)
+        self.save_scheme_button.setEnabled(own and self._edits is not None)
+        self.save_scheme_as_button.setEnabled(colors is not None)
+        if self._edits is not None:
+            state = (
+                "Changed: Save or Save As to keep it." if own else "Changed: Save As to keep it."
+            )
+        elif scheme_id == CUSTOM:
+            state = "Save As keeps these colors as a scheme of yours."
+        else:
+            state = ""
+        self.scheme_state.setText(state)
 
-    def _color_mode_chosen(self) -> None:
-        mode = self.color_mode.currentData()
+    def _scheme_colors(self, scheme_id: object) -> dict[str, str] | None:
+        """A scheme's colors (None for the system's looks and a scheme that's gone)."""
+        if scheme_id == CUSTOM:
+            return {**starting_colors(), **(self._legacy or {})}
+        scheme = self._schemes.get(scheme_id) if isinstance(scheme_id, str) else None
+        return scheme_colors(scheme) if scheme is not None else None
+
+    def _scheme_chosen(self) -> None:
+        scheme_id = self.color_mode.currentData()
         config = self.session.keep.config
-        if mode == config.colors:
+        if scheme_id == config.colors:
             return
-        custom = config.custom_colors or None
-        if mode == "custom" and not custom:
-            custom = starting_colors()  # start from the colors shown now
-        self.save_colors(mode, custom)
+        if self._edits is not None:
+            if not self.discard_changes():
+                blocked = self.color_mode.blockSignals(True)
+                self.color_mode.setCurrentIndex(max(self.color_mode.findData(config.colors), 0))
+                self.color_mode.blockSignals(blocked)
+                return
+            self._edits = None
+        if scheme_id == CUSTOM:
+            self.save_colors(CUSTOM, self._legacy)
+        else:
+            self.save_colors(scheme_id, None)
 
     def _choose_color(self, role: str) -> None:
-        config = self.session.keep.config
-        colors = {**starting_colors(), **config.custom_colors}
+        colors = self._edits or self._scheme_colors(self.color_mode.currentData())
+        if colors is None:
+            return
         chosen = self.choose_color(COLOR_LABELS[role], colors[role])
         if chosen is not None and chosen != colors[role]:
-            self.save_colors("custom", {**colors, role: chosen})
+            self._edits = {**colors, role: chosen}
+            apply_colors(CUSTOM, self._edits)  # a preview, until it's saved
+            self._show_colors()
 
     def choose_color(self, label: str, current: str) -> str | None:
         """Ask for a color (tests replace this): ``#rrggbb``, or None."""
         chosen = QColorDialog.getColor(QColor(current), self, label)
         return chosen.name() if chosen.isValid() else None
 
+    def ask_scheme_name(self, suggested: str) -> str | None:
+        """Ask for a new scheme's name (tests replace this), or None."""
+        name, ok = QInputDialog.getText(self, "Save As", "The new scheme's name:", text=suggested)
+        return name if ok else None
+
+    def discard_changes(self) -> bool:
+        """Whether to drop the scheme's unsaved changes (tests replace this)."""
+        answer = QMessageBox.question(
+            self,
+            "Unsaved colors",
+            "The scheme's colors were changed but not saved. Discard the changes?",
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def save_colors(self, mode: str, custom: Mapping[str, str] | None) -> None:
-        """Show the keep's colors at once, and save them in ``keep.toml``."""
+        """Show the keep's colors at once, and save them in ``keep.toml``: a look of
+        ``COLOR_MODES`` or a scheme's id."""
         try:
             checked = with_colors(self.session.keep.config, mode, custom)
         except KeepError as e:
-            self._refused(str(e))
+            self.colors_warning.setText(str(e))
+            self.colors_warning.setVisible(True)
             return
-        apply_keep_colors(checked)  # a preview, before it's saved
+        apply_colors(*resolve_colors(checked, self.session.theme))  # before it's saved
         session = self.session
         labels = {m: label for label, m in COLOR_CHOICES}
+        name = labels.get(mode) or getattr(self._schemes.get(mode), "name", mode)
         self._run(
             lambda: session.set_colors(checked.colors, checked.custom_colors),
-            f"Colors: {labels[mode].lower()}." if mode != "custom" else "Saved the keep's colors.",
+            f"Colors: {name}." if mode != CUSTOM else "Colors: this keep's own.",
             then=self._show_colors,
         )
+
+    def save_scheme(self) -> None:
+        """Save the changes to the user's own scheme."""
+        scheme = self._schemes.get(self.color_mode.currentData())
+        if scheme is None or not scheme.id.startswith(USER) or self._edits is None:
+            return
+        self._save_scheme(scheme.name, self._edits, scheme.id)
+
+    def save_scheme_as(self) -> None:
+        """Save the colors shown as a new scheme of the user's, and give the keep it."""
+        scheme_id = self.color_mode.currentData()
+        colors = self._edits or self._scheme_colors(scheme_id)
+        if colors is None:
+            return
+        scheme = self._schemes.get(scheme_id)
+        name = self.ask_scheme_name(f"My {scheme.name}" if scheme else "My colors")
+        if name is None:
+            return
+        problem = name_problem(name)
+        if problem is not None:
+            self.colors_warning.setText(problem)
+            self.colors_warning.setVisible(True)
+            return
+        self._save_scheme(name.strip(), colors, None)
+
+    def _save_scheme(self, name: str, colors: Mapping[str, str], scheme_id: str | None) -> None:
+        session = self.session
+
+        def saved() -> None:
+            self._edits = None
+            if session.keep.config.colors != CUSTOM:
+                self._legacy = None  # kept as a scheme now
+            apply_colors(*session.colors)
+            self._show_colors()
+
+        self._run(
+            lambda: session.save_color_scheme(name, colors, scheme_id),
+            f"Saved the color scheme {name}.",
+            then=saved,
+        )
+
+    def colors_preview(self) -> tuple[str, dict[str, str]] | None:
+        """The scheme's unsaved colors being shown, for the keep's windows to keep showing
+        them when they become active; None when there are none."""
+        return (CUSTOM, dict(self._edits)) if self._edits is not None else None
+
+    def drop_color_changes(self) -> None:
+        """Forget the scheme's unsaved changes, and show the keep's saved colors again."""
+        if self._edits is not None:
+            self._edits = None
+            apply_colors(*self.session.colors)
+            self._show_colors()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        # Asked only when the user closes the window; a keep closing drops the changes.
+        if self._edits is not None and event.spontaneous() and not self.discard_changes():
+            event.ignore()
+            return
+        self.drop_color_changes()
+        super().closeEvent(event)
 
     def _notes_tab(self) -> QWidget:
         about = QLabel(
@@ -1066,6 +1258,7 @@ class KeepConfigWindow(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
             self._watch_stats()
+            apply_colors(*(self.colors_preview() or self.session.colors))  # this keep's (#558)
 
     def show_cache_stats(self) -> None:
         """How many thumbnails are stored, read in a worker."""

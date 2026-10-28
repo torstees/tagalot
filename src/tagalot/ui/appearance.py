@@ -1,5 +1,5 @@
 """A keep's colors (#558, DESIGN.md §12 *Colors*): the system's, always light, always dark,
-or its own.
+or a color scheme's (#572, ``core/color_schemes.py``, which finds the colors a keep names).
 
 Light and dark keep Qt's native style and ask it for that scheme (``setColorScheme``). The
 keep's own colors switch to Qt's Fusion style, since the native Windows 11 style ignores much
@@ -18,14 +18,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 from PySide6.QtWidgets import QApplication
 
-from tagalot.core.keep import COLOR_ROLES, KeepConfig
 from tagalot.ui.selection import contrast
 
 logger = logging.getLogger(__name__)
 
 FUSION = "fusion"
-READABLE_TEXT = 4.5
-"""The contrast below which Keep configuration warns that text is hard to read (WCAG AA)."""
 
 _SCHEMES = {
     "system": Qt.ColorScheme.Unknown,
@@ -85,11 +82,6 @@ def _repolish(app: QApplication) -> None:
         if sheet:
             widget.setStyleSheet("")
             widget.setStyleSheet(sheet)
-
-
-def apply_keep_colors(config: KeepConfig) -> bool:
-    """Give the application ``config``'s look (see :func:`apply_colors`)."""
-    return apply_colors(config.colors, config.custom_colors)
 
 
 def reset_colors() -> None:
@@ -178,19 +170,3 @@ def custom_palette(colors: Mapping[str, str], base: QPalette | None = None) -> Q
         QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, mix(accent, background, 0.5)
     )
     return palette
-
-
-def hard_to_read(colors: Mapping[str, str]) -> list[str]:
-    """What reads poorly in a keep's own colors (text against the background and against
-    lists and panels, below :data:`READABLE_TEXT`), as sentences for Keep configuration."""
-    given = {role: QColor(colors[role]) for role in COLOR_ROLES if role in colors}
-    problems = []
-    for ground, label in (("background", "the background"), ("panels", "lists and panels")):
-        if "text" in given and ground in given:
-            ratio = contrast(given["text"], given[ground])
-            if ratio < READABLE_TEXT:
-                problems.append(
-                    f"Text on {label} is hard to read (contrast {ratio:.1f}:1; "
-                    f"{READABLE_TEXT:g}:1 or more reads easily)."
-                )
-    return problems
