@@ -64,3 +64,7 @@ It also brings **covers and authors' photos**, kept in the keep and shown only f
 ## Duplicates
 
 Books with nearly the same title by the same first writer, or where one names no writer, are listed as similar items (unless they're different numbers in a series, or both name writers and share none). After upgrading from Tagalot 0.8.0, a keep's books are read again once, and a book split in two before (an EPUB and a PDF that named their authors differently) is listed there to [merge](../guide/dedupe.md).
+
+## Fonts
+
+Titles suggest Literata (else Merriweather, else Georgia), and notes Literata (else Georgia), a serif face for reading, with the text at 105%. Keep configuration's [Appearance](../guide/keep-configuration.md#appearance) tab offers to download a suggested Google Font that isn't on your computer, and you can choose your own instead.

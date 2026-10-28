@@ -60,8 +60,10 @@ def test_round_trip(keep: Keep) -> None:
     assert loaded.text_size == 110
 
 
-def test_the_systems_size_isnt_written(keep: Keep) -> None:
-    assert with_fonts(keep.config, {}, 100).text_size is None
+def test_sizes_and_empty_places(keep: Keep) -> None:
+    # 100 is kept: it's the keep's own over a theme's suggestion (#567).
+    assert with_fonts(keep.config, {}, 100).text_size == 100
+    assert with_fonts(keep.config, {}, None).text_size is None
     assert with_fonts(keep.config, {"titles": ""}, None).fonts == {}
 
 

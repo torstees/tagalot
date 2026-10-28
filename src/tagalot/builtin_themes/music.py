@@ -168,6 +168,8 @@ class MusicTheme(Theme):
     id, name, version = "music", "Music", 4  # 4: ratings (#419); 3: genres as file keywords
     # 2: songs record their bitrate; keeps read every file again once to fill it in.
     icon = "headphones"
+    # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
+    fonts = {"titles": ("Nunito", "Poppins", "Segoe UI", "sans-serif")}
     extensions = frozenset(AUDIO | FOLDER_IMAGE_EXTENSIONS | KIND_EXTENSIONS[Kind.ARCHIVE])
     dirs = True
     entities = [Artist, Album, Song]

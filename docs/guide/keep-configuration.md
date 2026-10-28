@@ -86,6 +86,8 @@ Click a place's font to pick one of the fonts installed on this computer, with a
 
 The **Google Fonts** tab lists Google's free fonts: search them by name, or narrow them to serif, sans serif, display, handwriting, or monospace. Until a font is downloaded, its preview is in a similar font on your computer. **Download** fetches the font and its license from `raw.githubusercontent.com` (Google Fonts' collection on GitHub) into the keep folder, and uses it; nothing is downloaded until you press it. A font already in the keep shows **Use** instead. If the download fails (offline, say), pick an installed font or one from a file instead.
 
-**Text size** makes the window's text larger or smaller than the system's, as a percent; titles and notes follow it.
+Your keep's theme may suggest fonts, shown as, for example, **Literata (the theme's)**. A suggested font that isn't on this computer is passed over for the next one the theme names, and the note under the fonts says so; when it's a Google Font, **Download Literata** fetches it into the keep. A font you choose always wins: **Use the theme's** goes back to the suggestion, and **Use the system's** keeps the system's font even where the theme suggests another.
+
+**Text size** makes the window's text larger or smaller than the system's, as a percent; titles and notes follow it. It starts at the theme's suggestion, if it has one (books: 105%).
 
 A font that isn't installed on this computer, or a file that's gone, shows the system's font instead, with a note under the fonts. Changes show at once, and with several keeps open, the fonts follow the keep whose window you're in.

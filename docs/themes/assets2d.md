@@ -35,3 +35,7 @@ Images that look alike (the same picture resized or re-saved, but not a recolore
 **Artist folder level** (Keep configuration's Keep tab, or per folder): which folder under a watched folder names the artist. Changing it moves assets to their new artists at the next scan; an artist left with nothing is removed.
 
 Reading RAR archives' images needs a RAR tool (`unrar`, 7-Zip, or `bsdtar`) installed; without one they show an icon. See [FAQ](../reference/faq.md).
+
+## Fonts
+
+Titles suggest Inter (else Segoe UI), a plain face that stays out of your assets' way. Keep configuration's [Appearance](../guide/keep-configuration.md#appearance) tab offers to download a suggested Google Font that isn't on your computer, and you can choose your own instead.

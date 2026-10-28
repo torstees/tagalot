@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 26
+API_VERSION = 27
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -54,7 +54,8 @@ added services' tokens and finding items by title (:class:`OnlineSource`'s
 ``token_env`` and ``titles``, :class:`OnlineRequest`); version 24 added placing an
 online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added icons
 (:attr:`Entity.icon`, :attr:`Theme.icon`); version 26 added color schemes
-(:class:`ColorScheme`, :attr:`Theme.color_schemes`)."""
+(:class:`ColorScheme`, :attr:`Theme.color_schemes`); version 27 added suggested fonts
+(:attr:`Theme.fonts`, :attr:`Theme.text_size`)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1560,6 +1561,19 @@ class Theme:
     icon: ClassVar[str | None] = None
     """The icon of keeps that use this theme, in the Open Keep dialog (API version 25): a
     Lucide icon's name or an SVG beside the theme's module, as :attr:`Entity.icon`."""
+
+    fonts: ClassVar[Mapping[str, Sequence[str]]] = {}
+    """Fonts suggested for the theme's keeps (API version 27), by place: ``"titles"`` (items'
+    pages, grid cards, the navigation's headings, title cards), ``"notes"`` (Markdown notes),
+    and ``"text"`` (the rest of the window). Each is a fallback chain, such as
+    ``("Literata", "Georgia", "serif")``: the first that is installed, downloaded into the
+    keep (a Google Font, from Keep configuration), or a TTF or OTF beside the theme's module
+    (a path, ``"fonts/Wand.ttf"``) shows. A generic family, ``serif``, ``sans-serif``, or
+    ``monospace``, ends a chain. A theme never forces a download, and a font the user
+    chooses for the keep always wins."""
+    text_size: ClassVar[int | None] = None
+    """The text's size suggested for the theme's keeps, in percent of the system's (50 to
+    200; API version 27). The user's choice for the keep wins."""
 
     color_schemes: ClassVar[Sequence[ColorScheme]] = ()
     """Color schemes offered to keeps that use this theme (API version 26), beside

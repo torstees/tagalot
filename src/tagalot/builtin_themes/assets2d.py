@@ -161,6 +161,8 @@ class Assets2DTheme(Theme):
     # Version 2 reads a picture hash from images: existing keeps read their files again once.
     id, name, version = "assets2d", "2D assets", 3  # 3: an artist's folder name
     icon = "shapes"
+    # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
+    fonts = {"titles": ("Inter", "Segoe UI", "sans-serif")}
     extensions = frozenset(
         KIND_EXTENSIONS[Kind.IMAGE] | KIND_EXTENSIONS[Kind.FONT] | KIND_EXTENSIONS[Kind.ARCHIVE]
     )

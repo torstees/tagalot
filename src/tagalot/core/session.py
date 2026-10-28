@@ -49,9 +49,9 @@ from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.folder_items import tagged_hidden
-from tagalot.core.fonts import copy_font_file, read_font_files
+from tagalot.core.fonts import copy_font_file, read_font_files, theme_font_files
 from tagalot.core.google_fonts import GoogleFont, download_font, downloaded
-from tagalot.core.icons import copy_icon_picture, keep_icon, type_icon
+from tagalot.core.icons import copy_icon_picture, keep_icon, theme_folder, type_icon
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
@@ -269,7 +269,7 @@ class KeepSession:
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
         session.colors = resolve_colors(opened.keep.config, theme)
-        session.font_files = read_font_files(opened.keep.dir, opened.keep.config.fonts)
+        session.font_files = session._read_font_files(opened.keep.config)
         with reader.connect() as conn:
             session.has_keywords = any_keywords(conn)
         return session
@@ -583,7 +583,7 @@ class KeepSession:
         self.keep = replace(self.keep, config=config)
         self._icons = {}  # looked up again (#557)
         self.colors = resolve_colors(config, self.theme)
-        self.font_files = read_font_files(self.keep.dir, config.fonts)
+        self.font_files = self._read_font_files(config)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
 
     # --- ignored note keys (core.note_keys, #381) ---
@@ -664,7 +664,17 @@ class KeepSession:
         """Download a Google Font into the keep folder (#566), only when the user asked;
         what ``keep.toml`` names it by. Raises ``GoogleFontError``. Runs in a worker and
         goes online."""
-        return download_font(self.keep.dir, font, progress=progress)
+        value = download_font(self.keep.dir, font, progress=progress)
+        self.font_files = self._read_font_files(self.keep.config)  # a theme's may be it
+        return value
+
+    def _read_font_files(self, config: KeepConfig) -> dict[str, bytes | None]:
+        """The font files the keep's fonts name, and those its theme's suggestions may
+        show (#567). Runs in a worker."""
+        found = theme_font_files(
+            self.keep.dir, getattr(self.theme, "fonts", {}), theme_folder(self.theme)
+        )
+        return {**found, **read_font_files(self.keep.dir, config.fonts)}
 
     def google_fonts_here(self) -> set[str]:
         """The Google Fonts already in the keep folder. Runs in a worker."""

@@ -25,6 +25,7 @@ import platformdirs
 
 import tagalot.builtin_themes
 from tagalot.core.color_schemes import scheme_problems
+from tagalot.core.fonts import theme_font_problems
 from tagalot.core.theme_schema import SchemaBuildError, build_theme_schema
 from tagalot.themes.api import (
     API_VERSION,
@@ -195,6 +196,7 @@ def validate_theme(theme: type[Theme]) -> list[str]:
     if not isinstance(getattr(theme, "icon", None), str | None):
         problems.append("the theme's icon must be a Lucide icon's name or an SVG's path")
     problems += scheme_problems(list(getattr(theme, "color_schemes", ())))
+    problems += theme_font_problems(theme)
 
     for c in getattr(theme, "containment", ()):
         for side in (c.parent, c.child):

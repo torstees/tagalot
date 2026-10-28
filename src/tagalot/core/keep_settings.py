@@ -252,7 +252,7 @@ def with_fonts(
     return replace(
         config,
         fonts=ordered,
-        text_size=None if text_size == 100 else text_size,
+        text_size=text_size,
         roots=copy.deepcopy(config.roots),
     )
 

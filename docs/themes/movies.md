@@ -77,3 +77,7 @@ All grids, sorted by title: **Movies** (inheriting tags: tag a collection `Fanta
 ## Genres as tags
 
 The `.nfo`'s genres are [file keywords](../guide/file-keywords.md).
+
+## Fonts
+
+Titles suggest Oswald, a narrow poster face (else Arial Narrow). Keep configuration's [Appearance](../guide/keep-configuration.md#appearance) tab offers to download a suggested Google Font that isn't on your computer, and you can choose your own instead.

@@ -343,6 +343,12 @@ class BooksTheme(Theme):
     id, name, version = "books", "Books", 9  # 9: folder images; 8: pictures; 7: ratings;
     # 6: covers not found; 5: extra; 4: assets; 3: synopsis; 2: authors
     icon = "library"
+    # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
+    fonts = {
+        "titles": ("Literata", "Merriweather", "Georgia", "serif"),
+        "notes": ("Literata", "Georgia", "serif"),
+    }
+    text_size = 105
     # 19: own folder galleries; 18: folders; 17: pictures; 16: ratings;
     # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
