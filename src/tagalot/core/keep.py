@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from tagalot.core.fsinfo import is_network_path
+from tagalot.core.own_fields import OwnField, dump_fields, parse_fields
 from tagalot.core.tomlio import (
     toml_inline_table,
     toml_key,
@@ -25,7 +26,7 @@ KEEP_TOML = "keep.toml"
 KEEP_DB = "keep.db"
 THUMBS_DB = "thumbs.db"
 UI_STATE_JSON = "ui_state.json"
-KEEP_FORMAT_VERSION = 30
+KEEP_FORMAT_VERSION = 31
 """Core format version written to new keeps (DESIGN.md §4)."""
 
 NETWORK_WARNING = (
@@ -216,6 +217,9 @@ class KeepConfig:
     type_icons: dict[str, str] = field(default_factory=dict)
     """``[appearance.icons]``: the user's icons for types, by type id (#557), as
     :attr:`icon`; a type not listed shows the theme's."""
+    fields: dict[str, dict[str, OwnField]] = field(default_factory=dict)
+    """``[fields."<type>".<name>]``: the keep's own fields (#581), by type id, then
+    name, in the file's order (``core/own_fields.py``)."""
 
 
 def clean_names(names: Iterable[str]) -> list[str]:
@@ -342,6 +346,7 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += [f"{p} = {toml_str(config.fonts[p])}" for p in FONT_PLACES if p in config.fonts]
         if config.text_size is not None:
             lines.append(f"text_size = {config.text_size}")
+    lines += dump_fields(config.fields)
     for root in config.roots:
         lines += [
             "",
@@ -383,6 +388,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             "markdown",
             "folders",
             "appearance",
+            "fields",
         },
         "top level",
     )
@@ -626,6 +632,12 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
     if notes_root is None:
         notes_writable = notes_write_back = False
 
+    own_fields: dict[str, dict[str, OwnField]] = {}
+    if "fields" in data:
+        own_fields, problems = parse_fields(reader.table(data, "fields"))
+        for problem in problems:
+            logger.warning("%s: %s; leaving it out", path, problem)
+
     return KeepConfig(
         id=keep_id,
         name=name,
@@ -655,6 +667,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         text_size=text_size,
         colors=colors,
         custom_colors=custom_colors,
+        fields=own_fields,
     )
 
 

@@ -23,8 +23,10 @@ from tagalot.core.models import (
     NoteKeyRemoval,
     utcnow,
 )
+from tagalot.core.own_fields import OWN, OwnField
+from tagalot.core.own_values import item_values, store_value
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
-from tagalot.themes.api import FieldInfo, entity_label
+from tagalot.themes.api import FieldInfo, FieldSpec, entity_label
 
 
 class FieldEditError(ValueError):
@@ -39,7 +41,8 @@ class FieldChange:
     """What the user did, e.g. ``Set Year of 'Heat' to 1995``."""
     entity_id: int
     field: str
-    """A theme field's name, or ``"title"``."""
+    """A theme field's name, ``"title"``, or ``own:<name>`` for one of the keep's own
+    fields (#581)."""
     before: Any
     after: Any
     source_before: FieldSource | None
@@ -102,6 +105,49 @@ def edit_field(
     )
 
 
+def own_field_info(own: OwnField) -> FieldInfo:
+    """One of the keep's own fields (#581) as the core sees a theme's field."""
+    spec = FieldSpec(own.label, card=own.card, display=own.shown_as)
+    spec.name = own.key
+    return FieldInfo(own.key, own.python_type, True, spec)
+
+
+def edit_own_field(
+    conn: Connection, schema: ThemeSchema, own: OwnField, entity_id: int, value: Any
+) -> FieldChange:
+    """Set an item's value of one of the keep's own fields (#581), as :func:`edit_field`
+    does a theme field's: provenance ``user``, the search index kept in step."""
+    row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
+    if row is None:
+        raise FieldEditError("This item no longer exists")
+    if row.type != own.type_id:
+        raise FieldEditError(f"{row.title!r} has no field {own.label!r}")
+    after = check_value(own_field_info(own), value)
+    before = own_value(conn, entity_id, own)
+    source_before = conn.scalar(
+        select(FieldProvenance.source).where(
+            FieldProvenance.entity_id == entity_id, FieldProvenance.field == own.key
+        )
+    )
+    source_after = None if after is None else FieldSource.USER
+    _write(conn, schema, None, entity_id, own.key, after, source_after)
+    shown = "(empty)" if after is None else repr(after) if isinstance(after, str) else after
+    return FieldChange(
+        f"Set {own.label} of {row.title!r} to {shown}",
+        entity_id,
+        own.key,
+        before,
+        after,
+        source_before,
+        source_after,
+    )
+
+
+def own_value(conn: Connection, entity_id: int, own: OwnField) -> Any:
+    """An item's value of one of the keep's own fields, or None."""
+    return item_values(conn, entity_id, [own]).get(own.name)
+
+
 def restore_field(
     conn: Connection, schema: ThemeSchema, change: FieldChange, *, forward: bool
 ) -> None:
@@ -111,13 +157,16 @@ def restore_field(
         return  # deleted since: nothing to put back
     value = change.after if forward else change.before
     source = change.source_after if forward else change.source_before
+    if change.field.startswith(OWN):
+        _write(conn, schema, None, change.entity_id, change.field, value, source)
+        return
     _write(conn, schema, schema.by_type_id(row.type), change.entity_id, change.field, value, source)
 
 
 def _write(
     conn: Connection,
     schema: ThemeSchema,
-    table: EntityTable,
+    table: EntityTable | None,
     entity_id: int,
     name: str,
     value: Any,
@@ -125,7 +174,10 @@ def _write(
 ) -> None:
     if name == TITLE:
         conn.execute(update(Entity).where(Entity.id == entity_id).values(title=value))
+    elif name.startswith(OWN):
+        store_value(conn, entity_id, name.removeprefix(OWN), value)
     else:
+        assert table is not None
         conn.execute(update(table.table).where(table.table.c.id == entity_id).values({name: value}))
     conn.execute(update(Entity).where(Entity.id == entity_id).values(updated_at=utcnow()))
     if source is None:

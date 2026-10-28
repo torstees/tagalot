@@ -1,6 +1,6 @@
 # Keep configuration
 
-**Keep → Configure keep…** opens a window of five tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
+**Keep → Configure keep…** opens a window of six tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
 
 ![Keep configuration's Keep tab, for a research keep](../images/screens/keep-configuration.png)
 
@@ -48,6 +48,23 @@ The folders the keep watches, each with its state (online, offline, not watched,
 **Keys to ignore in notes:** front-matter keys that never become Extra fields, one per line. **In this keep** is saved with the keep; **In all your keeps** is saved for you on this computer; **Always** lists the built-in ones. Each list is saved when you leave its box and applies at the next scan. See [Notes](notes.md#keys-to-ignore).
 
 **Keys to read as fields:** front-matter keys read as one of the item's fields rather than as Extra fields, one `key = field` a line (`synopsis = Description`), naming the field by its name or label. **In this keep** is saved with the keep and wins over **In all your keeps** for the same key. Saved when you leave the box; applies at the next scan. See [Notes](notes.md#keys-to-read-as-fields).
+
+## Fields
+
+Fields of your own for a kind of item, beside the ones its theme gives it: a book's **Pages read**, an album's **Bought**. They're saved with the keep, so they go where it goes. You fill them in on an item's page, where they follow the theme's under **Details** (see [Changing details](item-pages.md#changing-details)).
+
+**Add field…** asks for:
+
+- **Type:** the kind of item it belongs to.
+- **Label:** its name on pages. It can't be the name of one of the theme's fields; to fill one of those from your notes, add a key to **Keys to read as fields** (Notes tab) instead.
+- **Kind:** text, a whole number (integer), a number, a date, yes/no, or a link (a web address that opens in your browser).
+- **Searched:** by its words, by a range, by picking values, or not at all, as the kind allows.
+- **Shown:** a number can show as a size (3.0 MB) or a time (3:25).
+- Whether it's on grid cards, and a column in lists.
+
+**Change…** (or a double-click) changes all of that but its type and kind, which stay as made. **Remove…** asks first, and can't be undone: items that had a value keep it as an Extra field named by the label.
+
+If a newer version of the theme adds a field with the same name as one of yours, yours is marked ⚠. Both keep their values; change your label to tell them apart.
 
 ## Appearance
 

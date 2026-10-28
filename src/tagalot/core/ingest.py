@@ -50,6 +50,7 @@ from tagalot.core.models import (
     UserRelation,
     utcnow,
 )
+from tagalot.core.own_values import texts as own_texts
 from tagalot.core.roots import local_path
 from tagalot.core.theme_options import ASSETS_KEY
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -1166,6 +1167,8 @@ def theme_text_source(schema: ThemeSchema) -> fts.TextSource:
         )
         for entity_id, body in notes:  # an item's note is searchable as text (#379)
             result.setdefault(entity_id, []).append(body)
+        for entity_id, values in own_texts(conn, ids).items():  # the keep's own (#581)
+            result.setdefault(entity_id, []).extend(values)
         return result
 
     return source

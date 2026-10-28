@@ -9,14 +9,16 @@ handle those explicitly.
 """
 
 import enum
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import (
     JSON,
     Column,
+    Date,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -655,6 +657,32 @@ class NoteIgnoredKey(Base):
     __tablename__ = "note_ignored_key"
 
     key: Mapped[str] = mapped_column(primary_key=True)
+
+
+class EntityField(Base):
+    """A value of one of the keep's own fields (#581, ``keep.toml``'s ``[fields]``,
+    ``core/own_values.py``): one row per item and field, the value in the column of its
+    kind (text and links in ``text``; whole numbers and yes/no in ``integer``; numbers
+    in ``real``; dates in ``day``), each indexed with the field's name for sorting and
+    filtering. An empty value has no row."""
+
+    __tablename__ = "entity_field"
+
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    field: Mapped[str] = mapped_column(primary_key=True)
+    text: Mapped[str | None] = mapped_column(Text)
+    integer: Mapped[int | None] = mapped_column(Integer)
+    real: Mapped[float | None] = mapped_column(Float)
+    day: Mapped[date | None] = mapped_column(Date)
+
+    __table_args__ = (
+        Index("ix_entity_field_text", "field", "text"),
+        Index("ix_entity_field_integer", "field", "integer"),
+        Index("ix_entity_field_real", "field", "real"),
+        Index("ix_entity_field_day", "field", "day"),
+    )
 
 
 class NoteKeyAlias(Base):
