@@ -68,7 +68,7 @@ The knight says what's in the way: kinds you hid (**All kinds are hidden**), you
 
 ## Saved searches
 
-**Edit → Save search…** (Ctrl+S) keeps the page as it is (its chips, text, toggles, layout, and sort) under **SAVED** in the navigation. On a saved search's page, Ctrl+S updates it; **Save search as…** (Ctrl+Shift+S) saves a copy under a new name. Right-click a saved search to rename or delete it. Saving, renaming, and deleting can be undone.
+**Edit → Save search…** (Ctrl+S) keeps the page as it is (its chips, text, toggles, layout, and sort) under **SAVED** in the navigation. On a saved search's page, Ctrl+S updates it; **Save search as…** (Ctrl+Shift+S) saves a copy under a new name. Right-click a saved search to rename or delete it, or to give it an icon of its own (**Change icon…**). Saving, renaming, changing the icon, and deleting can be undone.
 
 A "reading list" or "to watch" list is a saved search: say, Papers with the field filter `Read: Unread`.
 

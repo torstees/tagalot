@@ -46,7 +46,7 @@ from tagalot.core.activity import SCAN, Problem
 from tagalot.core.contents import ContentsResult
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
-from tagalot.core.icons import type_icon
+from tagalot.core.icons import user_icon
 from tagalot.core.item_pictures import PICTURES
 from tagalot.core.keywords import (
     KeywordInfo,
@@ -109,6 +109,7 @@ from tagalot.ui.details_dock import (
 from tagalot.ui.field_editor import open_web_address
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.folder_picker import choose_open_file, choose_save_file
+from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icon_pictures import SVG_SUFFIX, read_icon_file
 from tagalot.ui.icons import lucide
 from tagalot.ui.keep_config import KeepConfigWindow
@@ -325,12 +326,9 @@ class MainWindow(QMainWindow):
         # Navigation and the center stack.
         search_views = [v for v in session.theme.views if isinstance(v, SearchView)]
         self.navigation = NavigationPane(
-            [v.name for v in search_views],
-            view_icons={
-                v.name: type_icon(session.theme, v.types[0]) if v.types else None
-                for v in search_views
-            },
+            [v.name for v in search_views], view_icons=self._view_icons()
         )
+        self.navigation.view_menu_requested.connect(self._view_menu)
         self.navigation.setMinimumWidth(NAVIGATION_MIN_WIDTH)  # pages can't squeeze it
         self.navigation.set_folded(self._ui_state.get("nav_folded", []))
         self.navigation.navigate.connect(self.show_target)
@@ -2249,15 +2247,21 @@ class MainWindow(QMainWindow):
         session = self.session
         assert session is not None
 
-        def query() -> list[tuple[int, str, dict[str, Any]]]:
+        def query() -> tuple[list[tuple[int, str, dict[str, Any]]], dict[int, str | None]]:
             with session.reader.connect() as conn:
-                return list_saved(conn)
+                saved = list_saved(conn)
+            # Their own icons (#557), found here: a picture's file is looked for.
+            icons = {i: user_icon(d.get("icon"), session.keep) for i, _, d in saved}
+            return saved, icons
 
-        def loaded(saved: list[tuple[int, str, dict[str, Any]]]) -> None:
+        def loaded(
+            found: tuple[list[tuple[int, str, dict[str, Any]]], dict[int, str | None]],
+        ) -> None:
             if not shiboken6.isValid(self.navigation):  # the window may have closed meanwhile
                 return
+            saved, icons = found
             self._saved = {i: (n, d) for i, n, d in saved}
-            self.navigation.set_saved([(i, n) for i, n, _ in saved])
+            self.navigation.set_saved([(i, n) for i, n, _ in saved], icons)
             for target in [t for t in self._pages if t.kind == "saved"]:
                 if int(target.key) not in self._saved:
                     self._close_page(target)
@@ -2321,10 +2325,128 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction("Open").triggered.connect(lambda: self.show_target(target))
         menu.addAction("Rename\u2026").triggered.connect(lambda: self.rename_saved(saved_id))
+        menu.addAction("Change icon\u2026").triggered.connect(
+            lambda: self.change_saved_icon(saved_id)
+        )
+        standard = menu.addAction("Use the standard icon")
+        standard.setEnabled(bool(self._saved.get(saved_id, ("", {}))[1].get("icon")))
+        standard.triggered.connect(lambda: self.tag_actions.set_saved_icon(saved_id, ""))
         delete = menu.addAction("Delete")
         delete.setToolTip("Edit \u2192 Undo brings it back")
         delete.triggered.connect(lambda: self.tag_actions.delete_saved(saved_id))
         menu.exec(point)
+
+    def change_saved_icon(self, saved_id: int) -> None:
+        """Choose a saved search's icon (#557); one undo step."""
+        if saved_id not in self._saved:
+            return
+        name, definition = self._saved[saved_id]
+        current = definition.get("icon")
+        choice = self.choose_icon(
+            f"Icon for {name}",
+            current if isinstance(current, str) else None,
+            "Use the standard icon" if current else None,
+        )
+        if choice is not None:
+            self.tag_actions.set_saved_icon(saved_id, choice.name or "", choice.picture)
+
+    # --- icons (#557) ---
+
+    def _view_type(self, view_name: str) -> str | None:
+        """The type id a search view's icon is: its first type's."""
+        assert self.session is not None
+        theme = self.session.theme
+        for view in theme.views:
+            if isinstance(view, SearchView) and view.name == view_name and view.types:
+                return theme.type_id_of(view.types[0])
+        return None
+
+    def _view_icons(self) -> dict[str, str | None]:
+        assert self.session is not None
+        session = self.session
+        icons: dict[str, str | None] = {}
+        for view in session.theme.views:
+            if isinstance(view, SearchView):
+                type_id = self._view_type(view.name)
+                icons[view.name] = None if type_id is None else session.type_icon(type_id)
+        return icons
+
+    def _view_menu(self, target: NavTarget, point: QPoint) -> None:
+        assert self.session is not None
+        type_id = self._view_type(target.key)
+        if type_id is None:
+            return
+        plural = type_plurals(self.session.schema).get(type_id, target.label)
+        menu = QMenu(self)
+        menu.addAction("Open").triggered.connect(lambda: self.show_target(target))
+        change = menu.addAction("Change icon\u2026")
+        change.setToolTip(f"The icon of {plural}, everywhere in this keep")
+        change.triggered.connect(lambda: self.change_type_icon(type_id))
+        theirs = menu.addAction("Use the theme's icon")
+        theirs.setEnabled(type_id in self.session.keep.config.type_icons)
+        theirs.triggered.connect(lambda: self.set_type_icon(type_id, IconChoice()))
+        menu.exec(point)
+
+    def change_type_icon(self, type_id: str) -> None:
+        """Choose a type's icon for this keep (#557), saved in ``keep.toml``."""
+        assert self.session is not None
+        session = self.session
+        plural = type_plurals(session.schema).get(type_id, type_id)
+        own = session.keep.config.type_icons.get(type_id)
+        try:
+            entity = session.schema.by_type_id(type_id).entity
+        except KeyError:
+            return
+        current = own or getattr(entity, "icon", None)
+        choice = self.choose_icon(
+            f"Icon for {plural}", current, "Use the theme's icon" if own else None
+        )
+        if choice is not None:
+            self.set_type_icon(type_id, choice)
+
+    def set_type_icon(self, type_id: str, choice: IconChoice) -> None:
+        """Save a type's icon in a worker (a picture is copied into the keep folder)."""
+        assert self.session is not None
+        session = self.session
+        plural = type_plurals(session.schema).get(type_id, type_id)
+
+        def done(_: object) -> None:
+            if shiboken6.isValid(self):
+                theirs = choice.name is None and choice.picture is None
+                self.icons_changed(
+                    f"{plural} show the theme's icon again."
+                    if theirs
+                    else f"Changed the icon of {plural}."
+                )
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                self.statusBar().showMessage(f"Couldn't change the icon: {error}")
+
+        run_in_pool(
+            lambda: session.set_type_icon(type_id, choice.name, choice.picture),
+            on_done=done,
+            on_error=failed,
+        )
+
+    def icons_changed(self, message: str = "") -> None:
+        """A type's or the keep's icon changed: show it wherever it is."""
+        if message:
+            self.statusBar().showMessage(message)
+        self.navigation.set_view_icons(self._view_icons())
+        self.thumbnails.clear()  # placeholders show types' icons
+        self._refresh_details()
+        for page in self.search_pages():
+            page.refresh()
+
+    def choose_icon(
+        self, title: str, current: str | None, standard: str | None
+    ) -> IconChoice | None:
+        """Ask for an icon (tests replace this)."""
+        picker = IconPicker(title, current, standard, self)
+        if picker.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return picker.choice
 
     def rename_saved(self, saved_id: int) -> None:
         if saved_id not in self._saved:

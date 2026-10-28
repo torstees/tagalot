@@ -180,6 +180,12 @@ class KeepConfig:
     """``[folders] see_through``: names of folders that are never items, their files
     counting as their parent folder's (#459, §6 *See-through folders*). Matched exactly,
     case aside."""
+    icon: str | None = None
+    """``[appearance] icon``: the keep's own icon (#557), a Lucide icon's name or a file in
+    the keep folder (``icons/…``); None for the theme's (``core/icons.py``)."""
+    type_icons: dict[str, str] = field(default_factory=dict)
+    """``[appearance.icons]``: the user's icons for types, by type id (#557), as
+    :attr:`icon`; a type not listed shows the theme's."""
 
 
 def clean_names(names: Iterable[str]) -> list[str]:
@@ -285,6 +291,11 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
     if config.see_through:
         lines += ["", "[folders]", f"see_through = {toml_list(config.see_through)}"]
+    if config.icon is not None:
+        lines += ["", "[appearance]", f"icon = {toml_str(config.icon)}"]
+    if config.type_icons:
+        lines += ["", "[appearance.icons]"]
+        lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in config.type_icons.items()]
     for root in config.roots:
         lines += [
             "",
@@ -325,6 +336,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             "notes",
             "markdown",
             "folders",
+            "appearance",
         },
         "top level",
     )
@@ -449,6 +461,20 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
             raise KeepConfigError(path, "[folders] see_through must be a list of strings")
         see_through = clean_names(names)
 
+    icon: str | None = None
+    type_icons: dict[str, str] = {}
+    if "appearance" in data:
+        appearance = reader.table(data, "appearance")
+        reader.warn_unknown(appearance, {"icon", "icons"}, "[appearance]")
+        if "icon" in appearance:
+            icon = reader.string(appearance, "icon", "[appearance]").strip()
+        icons = appearance.get("icons", {})
+        if not isinstance(icons, dict) or not all(
+            isinstance(v, str) and v.strip() for v in icons.values()
+        ):
+            raise KeepConfigError(path, "[appearance.icons] must map type ids to icons")
+        type_icons = {k.strip(): v.strip() for k, v in icons.items() if k.strip()}
+
     raw_roots = data.get("roots", [])
     if not isinstance(raw_roots, list) or not all(isinstance(r, dict) for r in raw_roots):
         raise KeepConfigError(path, "roots must be written as [[roots]] tables")
@@ -532,6 +558,8 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         new_notes=new_notes,
         markdown_assets=markdown_assets,
         see_through=see_through,
+        icon=icon,
+        type_icons=type_icons,
     )
 
 

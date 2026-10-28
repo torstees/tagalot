@@ -136,6 +136,9 @@ class ThumbnailResolver:
             if (icon := type_icon(theme, entity)) is not None
         }
         """Each type's own icon (#556): it shows instead of its chain's ``Icon``."""
+        self.icon_of: Callable[[str], str | None] = self._type_icons.get
+        """A type's icon by type id: the theme's, or the keep's choice (the session sets
+        it, #557)."""
         self._chains: dict[str, list[ThumbnailProvider]] = {}
         self._failed: set[str] = set()
         """Cache keys that failed to render this session: the same file isn't retried
@@ -230,7 +233,7 @@ class ThumbnailResolver:
             return self._chains[type_id]
 
     def type_icon(self, type_id: str) -> str | None:
-        return self._type_icons.get(type_id)
+        return self.icon_of(type_id)
 
     def entity_type(self, type_id: str) -> type[ThemeEntity] | None:
         return self._types.get(type_id)

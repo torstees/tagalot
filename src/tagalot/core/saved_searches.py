@@ -42,6 +42,9 @@ class SavedDefinition:
     layout: str = "list"
     grouped: bool = False
     """Search all, shown in sections by type."""
+    icon: str = ""
+    """The user's icon for it (#557): a Lucide name or a picture in the keep's ``icons/``
+    folder; ``""`` for the standard one."""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -52,6 +55,7 @@ class SavedDefinition:
             "within_type": self.within_type,
             "layout": self.layout,
             "grouped": self.grouped,
+            **({"icon": self.icon} if self.icon else {}),
         }
 
     @classmethod
@@ -74,6 +78,7 @@ class SavedDefinition:
                 within_type=str(data.get("within_type") or ""),
                 layout=layout if layout in LAYOUTS else "list",
                 grouped=bool(data.get("grouped", False)),
+                icon=data["icon"] if isinstance(data.get("icon"), str) else "",
             )
         except SearchSpecError as e:
             raise SavedSearchError(str(e)) from None
@@ -131,6 +136,8 @@ def save_search(
         before = _rows(conn, [replace])
         if not before:
             raise SavedSearchError("That saved search no longer exists.")
+        if not definition.icon and before[0][2].get("icon"):
+            data["icon"] = before[0][2]["icon"]  # updating it keeps its icon (#557)
         conn.execute(
             update(SavedSearch).where(SavedSearch.id == replace).values(name=name, definition=data)
         )
@@ -162,6 +169,22 @@ def rename_search(conn: Connection, saved_id: int, name: str) -> SavedChange:
         _rows(conn, [saved_id]),
         (saved_id,),
     )
+
+
+def set_search_icon(conn: Connection, saved_id: int, icon: str) -> SavedChange:
+    """Give a saved search the user's icon (#557), or the standard one (``""``)."""
+    before = _rows(conn, [saved_id])
+    if not before:
+        raise SavedSearchError("That saved search no longer exists.")
+    _, name, definition = before[0]
+    changed = dict(definition)
+    if icon:
+        changed["icon"] = icon
+    else:
+        changed.pop("icon", None)
+    conn.execute(update(SavedSearch).where(SavedSearch.id == saved_id).values(definition=changed))
+    label = f"Change the icon of the saved search {name!r}"
+    return SavedChange(label, before, _rows(conn, [saved_id]), (saved_id,))
 
 
 def delete_search(conn: Connection, saved_id: int) -> SavedChange:

@@ -19,7 +19,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 On the left, in four groups (click a heading to fold it; a folded one shows how many it hides):
 
 - **LIBRARY:** the [Dashboard](dashboard.md), and **Search all**, every item grouped by kind.
-- **SEARCHES:** the theme's searches (Albums, Songs; Movies, People; Papers, Authors…), each with its kind's icon: a disc for albums, a film for movies. The same icon marks that kind on an item's page and its tabs, and stands in for the picture of an item that has none.
+- **SEARCHES:** the theme's searches (Albums, Songs; Movies, People; Papers, Authors…), each with its kind's icon: a disc for albums, a film for movies. The same icon marks that kind on an item's page and its tabs, and stands in for the picture of an item that has none. To choose another for this keep, right-click the search → **Change icon…**: pick one of the icons (search them by name or meaning: *movie* finds the film), or **From a file…** for an SVG or PNG of your own, which Tagalot copies into the keep folder. **Use the theme's icon** goes back.
 - **SAVED:** your [saved searches](searching.md#saved-searches).
 - **TOOLS:** [Triage](triage.md), [Dedupe](dedupe.md), [File keywords](file-keywords.md) (with how many match no tag), and the [Tag manager](tags.md#the-tag-manager).
 

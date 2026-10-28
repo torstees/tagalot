@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from tagalot.core.assets import clean_setting
+from tagalot.core.icons import IconFileError, check_user_icon
 from tagalot.core.keep import (
     CONTENTS_INDEXES,
     FIND_BY,
@@ -213,3 +214,28 @@ def with_note_key_aliases(config: KeepConfig, aliases: Mapping[str, str]) -> Kee
             del listed[known]
         listed[key] = field_name
     return replace(config, note_key_aliases=listed, roots=copy.deepcopy(config.roots))
+
+
+def with_type_icon(config: KeepConfig, type_id: str, icon: str | None) -> KeepConfig:
+    """``config`` with the user's icon for a type (``[appearance.icons]``, #557): a Lucide
+    name or a picture in the keep's ``icons/`` folder; None for the theme's."""
+    icons = dict(config.type_icons)
+    if icon is None:
+        icons.pop(type_id, None)
+    else:
+        icons[type_id] = _checked_icon(icon)
+    return replace(config, type_icons=icons, roots=copy.deepcopy(config.roots))
+
+
+def with_keep_icon(config: KeepConfig, icon: str | None) -> KeepConfig:
+    """``config`` with the keep's own icon (``[appearance] icon``, #557); None for the
+    theme's."""
+    checked = None if icon is None else _checked_icon(icon)
+    return replace(config, icon=checked, roots=copy.deepcopy(config.roots))
+
+
+def _checked_icon(icon: str) -> str:
+    try:
+        return check_user_icon(icon)
+    except IconFileError as e:
+        raise KeepError(str(e)) from None

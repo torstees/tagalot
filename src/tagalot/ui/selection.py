@@ -6,9 +6,10 @@ keeps the text color, except in views with alternating row colors, which it fill
 highlight while still drawing the text dark. Taking ``HighlightedText`` for granted put white
 text on a faint tint in light mode, and the style's dark text on a strong accent fill.
 
-So the selection's fill is measured: the style draws a selected item's panel into a small
-picture, and the text gets whichever of the palette's text and highlighted-text colors
-stands out more from it.
+So the selection's fill is measured: the style draws an empty selected item into a small
+picture. The text gets the palette's highlighted-text color when it reads on that fill (a
+contrast of :data:`READABLE` or more), as styles intend; otherwise whichever of the text
+and highlighted-text colors stands out more from it.
 """
 
 from PySide6.QtCore import QRect
@@ -22,6 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 _SIZE = QRect(0, 0, 24, 12)
+READABLE = 3.0
+"""The contrast ratio at which the highlighted-text color is kept (WCAG's for large text and
+icons): white on Fusion's blue stays white, though black would contrast a little more."""
 _cache: dict[tuple[int, int, bool, bool], QColor] = {}
 
 
@@ -68,6 +72,8 @@ def _measure(style: QStyle, palette: QPalette, widget: QWidget | None, alternate
     fill = pixmap.toImage().pixelColor(_SIZE.center())
     text = palette.color(QPalette.ColorRole.Text)
     highlighted = palette.color(QPalette.ColorRole.HighlightedText)
+    if contrast(highlighted, fill) >= READABLE:
+        return highlighted  # what the style means for its selection
     return highlighted if contrast(highlighted, fill) > contrast(text, fill) else text
 
 

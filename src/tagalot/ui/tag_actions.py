@@ -14,13 +14,14 @@ from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
+from tagalot.core.icons import IconFileError
 from tagalot.core.item_pictures import PictureChange, PictureError
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
 from tagalot.core.picture_problems import PictureProblem, PictureScope
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.relations import RelationError
-from tagalot.core.saved_searches import SavedDefinition
+from tagalot.core.saved_searches import SavedDefinition, SavedSearchError
 from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.core.tag_service import Applied
@@ -478,6 +479,13 @@ class TagActions(QObject):
     def rename_saved(self, saved_id: int, name: str) -> None:
         self._run(lambda: self.session.rename_saved(saved_id, name), lambda label: f"{label}.")
 
+    def set_saved_icon(self, saved_id: int, icon: str, picture: Path | None = None) -> None:
+        """Give a saved search its own icon, or the standard one (``""``); one undo step."""
+        self._run(
+            lambda: self.session.set_saved_icon(saved_id, icon, picture),
+            lambda label: f"{label}.",
+        )
+
     def delete_saved(self, saved_id: int) -> None:
         self._run(
             lambda: self.session.delete_saved(saved_id),
@@ -538,7 +546,9 @@ class TagActions(QObject):
                 | LinkError
                 | RelationError
                 | NoteKeyError
-                | PictureError,
+                | PictureError
+                | SavedSearchError
+                | IconFileError,
             ):
                 self.message.emit(str(error))
             else:

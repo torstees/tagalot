@@ -81,6 +81,8 @@ from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 from tagalot.ui.folder_picker import choose_folder
+from tagalot.ui.icon_picker import IconChoice, IconPicker
+from tagalot.ui.icons import icon
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -338,6 +340,20 @@ class KeepConfigWindow(QWidget):
         about.setWordWrap(True)
         form = QFormLayout()
         form.addRow("Name:", self.keep_name)
+        # The keep's icon (#557): its own, else its theme's; the Open Keep dialog shows it.
+        self.keep_icon = QPushButton("Change\u2026")
+        self.keep_icon.setObjectName("keep_icon")
+        self.keep_icon.setToolTip("The keep's icon in the Open Keep dialog")
+        self.keep_icon.clicked.connect(self.change_keep_icon)
+        self.keep_icon_theme = QPushButton("Use the theme's")
+        self.keep_icon_theme.setObjectName("keep_icon_theme")
+        self.keep_icon_theme.clicked.connect(lambda: self.set_keep_icon(IconChoice()))
+        icon_row = QHBoxLayout()
+        icon_row.setContentsMargins(0, 0, 0, 0)
+        icon_row.addWidget(self.keep_icon)
+        icon_row.addWidget(self.keep_icon_theme)
+        icon_row.addStretch(1)
+        form.addRow("Icon:", icon_row)
         form.addRow("Folder:", folder)
         form.addRow("Theme:", theme_label)
         form.addRow("Holds:", types)
@@ -811,6 +827,8 @@ class KeepConfigWindow(QWidget):
         """The Thumbnails and Keep tabs, from the saved configuration."""
         config = self.session.keep.config
         self.keep_name.setText(config.name)
+        self.keep_icon.setIcon(icon(self.session.keep_icon()))
+        self.keep_icon_theme.setEnabled(config.icon is not None)
         self.keep_assets.setText(config.markdown_assets)
         if not self.see_through.hasFocus():
             self.see_through.setPlainText("\n".join(config.see_through))
@@ -957,6 +975,34 @@ class KeepConfigWindow(QWidget):
             return
         session = self.session
         self._run(lambda: session.rename_keep(name), f"Renamed the keep {name.strip()}.")
+
+    def change_keep_icon(self) -> None:
+        own = self.session.keep.config.icon
+        choice = self.choose_icon(
+            "Icon for this keep",
+            own or getattr(self.session.theme, "icon", None),
+            "Use the theme's icon" if own else None,
+        )
+        if choice is not None:
+            self.set_keep_icon(choice)
+
+    def choose_icon(
+        self, title: str, current: str | None, standard: str | None
+    ) -> IconChoice | None:
+        """Ask for an icon (tests replace this)."""
+        picker = IconPicker(title, current, standard, self)
+        if picker.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return picker.choice
+
+    def set_keep_icon(self, choice: IconChoice) -> None:
+        """Save the keep's icon (a picture is copied into the keep folder first)."""
+        session = self.session
+        theirs = choice.name is None and choice.picture is None
+        self._run(
+            lambda: session.set_keep_icon(choice.name, choice.picture),
+            "The keep shows its theme's icon again." if theirs else "Saved the keep's icon.",
+        )
 
     def _set_markdown_assets(self, assets: str) -> None:
         config = self.session.keep.config

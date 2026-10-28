@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, Qt, Signal
-from PySide6.QtGui import QFont, QMouseEvent, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QFont, QIcon, QMouseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QAbstractItemView, QTreeView, QWidget
 
 from tagalot.ui.icons import icon, lucide
@@ -51,6 +51,8 @@ class NavigationPane(QTreeView):
     navigate = Signal(object)
     saved_menu_requested = Signal(object, object)
     """Right-click on a saved search: (its target, the global point) (#127)."""
+    view_menu_requested = Signal(object, object)
+    """Right-click on a search view: (its target, the global point) (#557)."""
     folded_changed = Signal(list)
 
     def __init__(
@@ -72,6 +74,7 @@ class NavigationPane(QTreeView):
         self._headings: dict[str, QStandardItem] = {}
         self._icons = {kind: lucide(name) for kind, name in FIXED_ICONS.items()}
         self._view_icons = dict(view_icons or {})
+        self._saved_icons: dict[str, str | None] = {}
 
         for key in SECTIONS:
             heading = QStandardItem()
@@ -111,13 +114,27 @@ class NavigationPane(QTreeView):
 
     # --- content ---
 
-    def set_saved(self, saved: Iterable[tuple[int, str]]) -> None:
-        """Replace the SAVED section with ``(id, name)`` pairs."""
+    def set_saved(
+        self, saved: Iterable[tuple[int, str]], icons: Mapping[int, str | None] | None = None
+    ) -> None:
+        """Replace the SAVED section with ``(id, name)`` pairs; ``icons`` gives the icon
+        sources of those with their own (#557)."""
+        self._saved_icons = {str(k): v for k, v in (icons or {}).items()}
         folded = self.folded()
         self._fill("saved", [NavTarget("saved", key=str(i), label=name) for i, name in saved])
         if "saved" not in folded:
             self.setExpanded(self._headings["saved"].index(), True)
         self._refresh_headings()
+
+    def set_view_icons(self, view_icons: Mapping[str, str | None]) -> None:
+        """Show the search views' icons again (a type's icon changed, #557)."""
+        self._view_icons = dict(view_icons)
+        heading = self._headings["searches"]
+        for row in range(heading.rowCount()):
+            child = heading.child(row)
+            target = child.data(_TARGET)
+            if isinstance(target, NavTarget):
+                child.setIcon(self._icon_of(target))
 
     def set_count(self, kind: str, count: int) -> None:
         """Show ``count`` after an item's name, as "File keywords (7)"; none when 0."""
@@ -186,19 +203,24 @@ class NavigationPane(QTreeView):
         target = self.indexAt(point).data(_TARGET)
         if isinstance(target, NavTarget) and target.kind == "saved":
             self.saved_menu_requested.emit(target, self.viewport().mapToGlobal(point))
+        elif isinstance(target, NavTarget) and target.kind == "view":
+            self.view_menu_requested.emit(target, self.viewport().mapToGlobal(point))
 
     def _fill(self, section: str, targets: Sequence[NavTarget]) -> None:
         heading = self._headings[section]
         heading.removeRows(0, heading.rowCount())
         for target in targets:
-            if target.kind == "view":
-                item_icon = icon(self._view_icons.get(target.key))
-            else:
-                item_icon = self._icons[target.kind]
-            item = QStandardItem(item_icon, target.label)
+            item = QStandardItem(self._icon_of(target), target.label)
             item.setData(target, _TARGET)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             heading.appendRow(item)
+
+    def _icon_of(self, target: NavTarget) -> QIcon:
+        if target.kind == "view":
+            return icon(self._view_icons.get(target.key))
+        if target.kind == "saved" and self._saved_icons.get(target.key):
+            return icon(self._saved_icons[target.key])
+        return self._icons[target.kind]
 
     def _refresh_headings(self) -> None:
         for key, heading in self._headings.items():

@@ -48,11 +48,13 @@ from tagalot.core.contents import Progress as ContentsProgress
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.dedupe import Verifier
 from tagalot.core.folder_items import tagged_hidden
+from tagalot.core.icons import copy_icon_picture, keep_icon, type_icon
 from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
     with_contents_index,
+    with_keep_icon,
     with_markdown_assets,
     with_name,
     with_note_ignore_keys,
@@ -64,6 +66,7 @@ from tagalot.core.keep_settings import (
     with_see_through,
     with_thumbnail_max,
     with_thumbnails_after_scan,
+    with_type_icon,
 )
 from tagalot.core.keywords import any_keywords
 from tagalot.core.links import link_files, unlink_file
@@ -116,6 +119,7 @@ from tagalot.core.saved_searches import (
     delete_search,
     rename_search,
     save_search,
+    set_search_icon,
 )
 from tagalot.core.scanjob import Progress, ScanReport, scan_notes_folder, scan_root
 from tagalot.core.search import ContentsScope
@@ -164,6 +168,9 @@ class KeepSession:
     _closing: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _temp: Path | None = field(default=None, init=False, repr=False)
     _queue: ThumbnailQueue | None = field(default=None, init=False, repr=False)
+    _icons: dict[str, str | None] = field(default_factory=dict, init=False, repr=False)
+    """Types' icon sources, found once (a picture's file is looked for) until ``keep.toml``
+    changes."""
     problems: ProblemLog = field(default_factory=ProblemLog, init=False)
     verifier: Verifier = field(default_factory=Verifier, init=False)
     """Full-hash checks of duplicate files, kept for the session (core.dedupe)."""
@@ -246,6 +253,7 @@ class KeepSession:
         # From now on, root paths follow the configuration (roots added, moved, overridden).
         thumbnails.root_path = session.root_path
         thumbnails.see_through = lambda: session.see_through
+        thumbnails.icon_of = session.type_icon  # the keep's choices too (#557)
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
         with reader.connect() as conn:
@@ -559,6 +567,7 @@ class KeepSession:
         ``root`` table in line. Runs in a worker."""
         save_keep_config(config, self.keep.toml_path)
         self.keep = replace(self.keep, config=config)
+        self._icons = {}  # looked up again (#557)
         self.writer.run(lambda conn: sync_roots(conn, config.roots))
 
     # --- ignored note keys (core.note_keys, #381) ---
@@ -592,6 +601,42 @@ class KeepSession:
         """Set the keep's default assets folder (#418); it applies to pictures and links on
         items' pages at once, and to covers at the next scan. Runs in a worker."""
         self.save_config(with_markdown_assets(self.keep.config, assets))
+
+    # --- icons (#557, core.icons) ---
+
+    def type_icon(self, type_id: str) -> str | None:
+        """The source of a type's icon: the keep's choice, else the theme's; None for
+        the generic one."""
+        if type_id not in self._icons:
+            try:
+                entity = self.schema.by_type_id(type_id).entity
+            except KeyError:
+                return None
+            self._icons[type_id] = type_icon(self.theme, entity, self.keep)
+        return self._icons[type_id]
+
+    def keep_icon(self) -> str | None:
+        """The source of the keep's icon: its own, else its theme's."""
+        return keep_icon(self.theme, self.keep)
+
+    def set_type_icon(self, type_id: str, icon: str | None, picture: Path | None = None) -> None:
+        """Choose a type's icon: a Lucide name, ``picture`` (copied into the keep folder),
+        or None (with no picture) for the theme's. Raises ``KeepError`` or
+        ``IconFileError``. Runs in a worker."""
+        if picture is not None:
+            icon = copy_icon_picture(self.keep.dir, picture)
+        self.save_config(with_type_icon(self.keep.config, type_id, icon))
+
+    def set_keep_icon(self, icon: str | None, picture: Path | None = None) -> None:
+        """Choose the keep's icon, as :meth:`set_type_icon`. Runs in a worker."""
+        if picture is not None:
+            icon = copy_icon_picture(self.keep.dir, picture)
+        self.save_config(with_keep_icon(self.keep.config, icon))
+
+    def icon_picture(self, picture: Path) -> str:
+        """Copy a picture into the keep folder for an icon; its stored path. Runs in a
+        worker."""
+        return copy_icon_picture(self.keep.dir, picture)
 
     def set_see_through(self, names: Iterable[str]) -> None:
         """Set the keep's see-through folder names (#459); they apply at the next scan,
@@ -755,6 +800,16 @@ class KeepSession:
         """Save a search (over ``replace``, if given); one undo step. Returns its label.
         Raises ``SavedSearchError``. Runs in a worker."""
         change = self.writer.run(lambda conn: save_search(conn, name, definition, replace=replace))
+        self.tags.record(change)
+        return change.label
+
+    def set_saved_icon(self, saved_id: int, icon: str, picture: Path | None = None) -> str:
+        """Give a saved search the user's icon: a Lucide name, ``picture`` (copied into the
+        keep folder), or the standard one (``""``); one undo step. Returns its label.
+        Runs in a worker."""
+        if picture is not None:
+            icon = copy_icon_picture(self.keep.dir, picture)
+        change = self.writer.run(lambda conn: set_search_icon(conn, saved_id, icon))
         self.tags.record(change)
         return change.label
 
