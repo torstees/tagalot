@@ -37,6 +37,17 @@ def test_the_color_that_reads_on_the_fill(qtbot: QtBot, highlight: str, expected
     assert selected_text_color(_palette(highlight)).name() == expected  # no view: the app's
 
 
+def test_highlighted_text_is_kept_while_it_reads(qtbot: QtBot) -> None:
+    """White on Fusion's blue stays white, though black contrasts a little more there."""
+    palette = _palette("#308cc6")
+    palette.setColor(QPalette.ColorRole.Text, QColor("#000000"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    assert contrast(QColor("#000000"), QColor("#308cc6")) > contrast(
+        QColor("#ffffff"), QColor("#308cc6")
+    )
+    assert selected_text_color(palette).name() == "#ffffff"
+
+
 def test_selected_icons_use_it(qapp: QApplication) -> None:
     old = qapp.palette()
     try:

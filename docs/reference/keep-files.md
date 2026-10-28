@@ -48,6 +48,12 @@ find_by = "title-year"                      # what may identify an item: "ids" (
 
 [contents]                                  # searching inside documents
 index = "words"                             # or "substrings"; absent: Off
+
+[appearance]                                # your own icons
+icon = "radio"                              # the keep's, in the Open Keep dialog
+
+[appearance.icons]                          # kinds of items, by type id
+"music.album" = "icons/vinyl.svg"           # an icon's name, or a picture in the keep's icons folder
 ```
 
 Unknown keys are ignored (with a warning in the log), so an older Tagalot can still open a keep a newer one wrote, as long as its format is one it knows.

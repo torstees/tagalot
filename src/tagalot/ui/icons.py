@@ -120,23 +120,32 @@ def lucide(name: str) -> QIcon:
 
 
 def icon(source: str | None) -> QIcon:
-    """The icon a source from ``core/icons.py`` means (a Lucide name, or an SVG file's
-    path); the generic icon for None, or a file that can't be read."""
+    """The icon a source from ``core/icons.py`` means (a Lucide name, or an SVG or PNG
+    file's path); the generic icon for None, or a file that can't be read."""
     if source is None:
         return lucide(GENERIC)
-    if source.lower().endswith(".svg"):
+    if source.lower().endswith((".svg", ".png")):
         return _file_icon(source)
     return lucide(source)
 
 
 @functools.cache
 def _file_icon(path: str) -> QIcon:
-    """A theme's own SVG, read once (a small file beside the theme's module)."""
+    """A theme's SVG, or a picture the user chose (an SVG, drawn in the palette's colors
+    when it uses ``currentColor``, or a PNG, as it is), read once: a small file beside the
+    theme's module or in the keep folder, never replaced in place (``copy_icon_picture``)."""
     try:
-        return _svg_icon(Path(path).read_bytes())
+        data = Path(path).read_bytes()
     except OSError as e:
         logger.warning("Can't read the icon %s: %s", path, e)
         return lucide(GENERIC)
+    if path.lower().endswith(".svg"):
+        return _svg_icon(data)
+    picture = QPixmap()
+    if not picture.loadFromData(data):
+        logger.warning("Can't read the icon %s: not a picture", path)
+        return lucide(GENERIC)
+    return QIcon(picture)
 
 
 def icon_for(name: str | None) -> QIcon:

@@ -3,11 +3,12 @@
 built-in themes use, and a choice for themes' and users' own types.
 
 Run it after changing ``VERSION`` or ``NAMES``: ``uv run python scripts/fetch_lucide.py``.
-It downloads the ``lucide-static`` package from npm, writes each icon on one line, and
-copies Lucide's license beside them.
+It downloads the ``lucide-static`` package from npm, writes each icon on one line and
+their keywords in ``tags.json``, and copies Lucide's license beside them.
 """
 
 import io
+import json
 import re
 import sys
 import tarfile
@@ -74,6 +75,14 @@ def main() -> int:
         license = archive.extractfile("package/LICENSE")
         assert license is not None
         (TARGET / "LICENSE").write_bytes(license.read().replace(b"\r\n", b"\n"))
+        # Each icon's keywords, for searching the icon picker ("movie" finds film).
+        tags_file = archive.extractfile("package/tags.json")
+        assert tags_file is not None
+        tags = json.load(tags_file)
+        kept = {name: tags.get(name, []) for name in NAMES}
+        (TARGET / "tags.json").write_text(
+            json.dumps(kept, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n"
+        )
     if missing:
         print(f"Not in Lucide {VERSION}: {', '.join(missing)}", file=sys.stderr)
         return 1

@@ -54,7 +54,6 @@ from tagalot.core.assets import assets_folders
 from tagalot.core.containers import hand_made_types
 from tagalot.core.detail import DetailSection, EntityDetail, FileRow, load_detail
 from tagalot.core.handlers import OPEN
-from tagalot.core.icons import type_icon
 from tagalot.core.ingest import TITLE
 from tagalot.core.item_pictures import USER, is_picture
 from tagalot.core.keep import KeepConfig
@@ -754,12 +753,9 @@ class DetailPage(QWidget):
         self._fit_header()
 
     def _type_icon(self, type_id: str | None) -> QIcon:
-        """A type's icon (#556); the generic one for no type, or one not in the theme."""
-        try:
-            entity = self.session.schema.by_type_id(type_id or "").entity
-        except KeyError:
-            return icon(None)
-        return icon(type_icon(self.session.theme, entity))
+        """A type's icon (#556), the keep's choice first (#557); the generic one for no
+        type, or one not in the theme."""
+        return icon(self.session.type_icon(type_id or ""))
 
     def _embed(self, page: QWidget, label: str, key: str, tab_icon: QIcon) -> None:
         """Put an embedded search (or a gallery) below the sections; with more than one, as
