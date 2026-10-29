@@ -11,11 +11,11 @@ doesn't read as the field's kind stays an Extra field, and the scan says so.
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import Connection, delete, select
+from sqlalchemy import Connection, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from tagalot.core.extra_keys import as_text, convert, loose_key, read_again
-from tagalot.core.models import FieldProvenance, FieldSource, OwnFieldRead, utcnow
+from tagalot.core.extra_keys import EXTRA, as_text, convert, loose_key, read_again
+from tagalot.core.models import Entity, FieldProvenance, FieldSource, OwnFieldRead, utcnow
 from tagalot.core.own_fields import OWN, OwnField, OwnFields
 from tagalot.core.own_values import raw_values, store_value
 
@@ -93,6 +93,54 @@ def take_own(
             if as_text(value) is not None:
                 rest[key] = value
     return mine, rest, problems
+
+
+def absorb_extras(
+    conn: Connection, entity_id: int, given: Mapping[str, Any], fields: Iterable[OwnField]
+) -> bool:
+    """Extra fields named like the own fields a note or file now ``given`` (by field name),
+    which a note or file gave before (found in review: ``pages: soon``, edited on the page,
+    stayed beside the field the file's ``pages`` now fills). Each goes; one the user edited
+    moves into its field first, unless the field has a value of the user's or it isn't of
+    the field's kind (then it stays). An Extra field the user typed (no provenance) stays.
+    Returns whether anything changed."""
+    by_key = {k: f for k, f in own_by_key(fields).items() if f.name in given}
+    if not by_key:
+        return False
+    extra = conn.scalar(select(Entity.extra).where(Entity.id == entity_id))
+    if not extra:
+        return False
+    sources = dict(
+        conn.execute(
+            select(FieldProvenance.field, FieldProvenance.source).where(
+                FieldProvenance.entity_id == entity_id
+            )
+        ).all()
+    )
+    after = dict(extra)
+    for key, text in extra.items():
+        own = by_key.get(loose_key(str(key)))
+        source = sources.get(EXTRA + key)
+        if own is None or source is None:
+            continue
+        if source == FieldSource.USER and sources.get(own.key) != FieldSource.USER:
+            try:
+                value = read_own(own, text)
+            except ValueError:
+                continue
+            store_value(conn, entity_id, own.name, value)
+            _set_source(conn, entity_id, own.key, FieldSource.USER)
+            sources[own.key] = FieldSource.USER
+        del after[key]
+        conn.execute(
+            delete(FieldProvenance).where(
+                FieldProvenance.entity_id == entity_id, FieldProvenance.field == EXTRA + key
+            )
+        )
+    if after == extra:
+        return False
+    conn.execute(update(Entity).where(Entity.id == entity_id).values(extra=after))
+    return True
 
 
 def apply_own(

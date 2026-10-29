@@ -57,7 +57,13 @@ from tagalot.core.models import (
     utcnow,
 )
 from tagalot.core.own_fields import OwnField
-from tagalot.core.own_notes import applied_own_fields, apply_own, own_by_key, read_own
+from tagalot.core.own_notes import (
+    absorb_extras,
+    applied_own_fields,
+    apply_own,
+    own_by_key,
+    read_own,
+)
 from tagalot.core.roots import local_path
 from tagalot.core.see_through import logical
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -261,6 +267,10 @@ def apply_note(
     kept while there is none."""
     conn = ctx.conn
     entity_table = ctx.schema.by_type_id(entity.type)
+    if values is not None and values.own:  # Extra fields now under own fields' keys (#584)
+        fields = applied_own_fields(conn).get(entity.type, [])
+        if absorb_extras(conn, entity.id, values.own, fields):
+            ctx.mark_changed(entity.id)
     row = conn.execute(
         select(Entity.title, Entity.extra).where(Entity.id == entity.id)
     ).one_or_none()

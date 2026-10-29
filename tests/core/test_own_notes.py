@@ -22,7 +22,7 @@ from tagalot.core.root_admin import with_notes_folder, with_notes_writing
 from tagalot.core.save_note import plan_note
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
-from tagalot.core.writeback import own_changes, plan_write_back
+from tagalot.core.writeback import own_changes, plan_write_back, write_files
 
 BOOK, AUTHOR = "books.book", "books.author"
 PAGES = OwnField(BOOK, "pages", "Pages read", "integer")
@@ -66,7 +66,12 @@ def keep(tmp_path: Path) -> Iterator[tuple[KeepSession, Path]]:
     )
     (files / "plain.epub").write_bytes(b"not a real epub")
     keep_dir = tmp_path / "Books.keep"
-    create_keep(keep_dir, "Books", ThemeRef("books", 1), [RootConfig("r", "Files", str(files))])
+    create_keep(
+        keep_dir,
+        "Books",
+        ThemeRef("books", 1),
+        [RootConfig("r", "Files", str(files), writable=True)],
+    )
     with KeepSession.open(keep_dir, Settings()) as session:
         config = with_notes_folder(session.keep.config, "r", "Notes")
         session.save_config(with_notes_writing(config, writable=True))
@@ -182,3 +187,73 @@ def test_save_as_note_includes_them(keep: tuple[KeepSession, Path]) -> None:
         )
     assert "pages: 99\n" in note.text
     assert "finished: 2026-10-01\n" in note.text
+
+
+def test_a_value_written_back_replaces_the_extra_field_it_was(
+    keep: tuple[KeepSession, Path],
+) -> None:
+    """Found in review: the file's ``pages: soon`` stayed an Extra field beside the field
+    after Write to file… wrote ``pages: 320`` over it and the file was scanned again."""
+    session, files = keep
+    story = files / "story.md"
+    story.write_text(
+        story.read_text(encoding="utf-8").replace("pages: 412", "pages: soon"), encoding="utf-8"
+    )
+    session.scan_all()
+    assert _extra(session, "The Story")["pages"] == "soon"
+    assert _values(session, "The Story") == {}
+    story_id = _id(session, "The Story")
+    session.tags.edit_field(story_id, PAGES.key, 320)
+    with session.reader.connect() as conn:
+        plan = plan_write_back(
+            conn,
+            session.schema,
+            session.tag_cache.get(),
+            [story_id],
+            {"r": session.root_path("r")},
+            {"r"},
+            own_fields=session.own_fields,
+        )
+    [result] = write_files(plan.files, session.keep.dir, {"r"})
+    assert result.error is None
+    assert "pages: 320\n" in story.read_text(encoding="utf-8")
+    session.scan_all()
+    assert _values(session, "The Story") == {"pages": 320}
+    assert "pages" not in _extra(session, "The Story")
+
+
+@pytest.mark.parametrize("own_too", [False, True], ids=["extra only", "field too"])
+def test_an_extra_field_edited_on_the_page_moves_into_the_field(
+    keep: tuple[KeepSession, Path], own_too: bool
+) -> None:
+    """Found in review: ``pages: soon`` from the file, edited on the page to 320 (so the
+    user's), stayed an Extra field beside the field once the file's ``pages`` filled it."""
+    session, files = keep
+    story = files / "story.md"
+    story.write_text(
+        story.read_text(encoding="utf-8").replace("pages: 412", "pages: soon"), encoding="utf-8"
+    )
+    session.scan_all()
+    story_id = _id(session, "The Story")
+    session.tags.edit_extra(story_id, "pages", "320")
+    if own_too:
+        session.tags.edit_field(story_id, PAGES.key, 321)
+    story.write_text(
+        story.read_text(encoding="utf-8").replace("pages: soon", "pages: 300"), encoding="utf-8"
+    )
+    session.scan_all()
+    assert "pages" not in _extra(session, "The Story")
+    assert _values(session, "The Story") == {"pages": 321 if own_too else 320}  # the user's
+    assert _source(session, "The Story", PAGES.key) == FieldSource.USER
+    assert _source(session, "The Story", "extra:pages") is None
+
+
+def test_an_extra_field_the_user_typed_stays(keep: tuple[KeepSession, Path]) -> None:
+    session, files = keep
+    session.tags.edit_extra(_id(session, "Ann Writer"), "Born", "long ago", new=True)
+    (files / "Notes" / "Authors" / "Ann Writer.md").write_text(
+        "---\nborn: 1951\n---\nShe writes.\n", encoding="utf-8"
+    )  # read again
+    session.scan_all()
+    assert _values(session, "Ann Writer") == {"born": 1951}
+    assert _extra(session, "Ann Writer") == {"Born": "long ago"}

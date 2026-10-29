@@ -51,7 +51,7 @@ from tagalot.core.models import (
     utcnow,
 )
 from tagalot.core.own_fields import OwnField
-from tagalot.core.own_notes import applied_own_fields, apply_own, take_own
+from tagalot.core.own_notes import absorb_extras, applied_own_fields, apply_own, take_own
 from tagalot.core.own_values import texts as own_texts
 from tagalot.core.roots import local_path
 from tagalot.core.theme_options import ASSETS_KEY
@@ -745,6 +745,8 @@ class IngestSession:
         if self._aliases:
             values = self._fill_aliased(entity.id, entity_table, values)
         values = self._fill_own(entity, values)
+        # Filling own fields may have taken Extra fields under their keys (#584).
+        row = self.conn.execute(select(Entity.extra).where(Entity.id == entity.id)).one()
         given = extra_values(values, self._ignored)
         before = dict(row.extra or {})
         extras = dict(before)
@@ -814,7 +816,9 @@ class IngestSession:
             title = self.conn.scalar(select(Entity.title).where(Entity.id == entity.id))
             for problem in problems:
                 self.warn(None, f"The front matter of {title!r}: {problem}")
+        absorbed = absorb_extras(self.conn, entity.id, mine, fields)
         changed, dropped = apply_own(self.conn, entity.id, mine, self.source)
+        changed = changed or absorbed
         if dropped:  # the note may give them
             self.conn.execute(
                 update(EntityNote).where(EntityNote.entity_id == entity.id).values(size=None)
