@@ -10,12 +10,26 @@
 """
 
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import date
 from typing import Any
 
-from sqlalchemy import ColumnElement, Connection, and_, false, func, or_, select
+from sqlalchemy import (
+    Boolean,
+    ColumnElement,
+    Connection,
+    and_,
+    false,
+    func,
+    or_,
+    select,
+    type_coerce,
+)
 
+from tagalot.core.fields import own_field_info
 from tagalot.core.kinds import FILES_KEY
-from tagalot.core.models import Entity, EntityResource
+from tagalot.core.models import Entity, EntityField, EntityResource
+from tagalot.core.own_fields import OWN, OwnFields
+from tagalot.core.own_values import VALUE_ROW, read_value
 from tagalot.core.search import CORE_FIELDS, SearchHit
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -89,22 +103,55 @@ def scoped_tables(schema: ThemeSchema, types: Sequence[str]) -> list[EntityTable
     return [t for type_id in dict.fromkeys(types) for t in tables if t.type_id == type_id]
 
 
-def scope_fields(schema: ThemeSchema, types: Sequence[str]) -> list[FieldInfo]:
+def type_fields(table: EntityTable, own: OwnFields | None = None) -> tuple[FieldInfo, ...]:
+    """A type's theme fields, then the keep's own for it (#583), named ``own:<name>``."""
+    mine = (own or {}).get(table.type_id, {})
+    return table.fields + tuple(own_field_info(f) for f in mine.values())
+
+
+def scope_fields(
+    schema: ThemeSchema, types: Sequence[str], own: OwnFields | None = None
+) -> list[FieldInfo]:
     """Fields that every scoped type declares, with the same value type, in the first
-    type's declaration order. Fields named like a core field (``title``…) are left out."""
+    type's declaration order, then the keep's ``own`` fields every scoped type has, by
+    name and kind (#583). Fields named like a core field (``title``…) are left out."""
     tables = scoped_tables(schema, types)
     if not tables:
         return []
     common = []
-    for f in tables[0].fields:
+    others = [type_fields(t, own) for t in tables[1:]]
+    for f in type_fields(tables[0], own):
         if f.name in CORE_FIELDS:
             continue
-        if all(any(g.name == f.name and g.type is f.type for g in t.fields) for t in tables[1:]):
+        if all(any(g.name == f.name and g.type is f.type for g in t) for t in others):
             common.append(f)
     return common
 
 
-def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, ColumnElement[Any]]:
+def own_expression(info: FieldInfo) -> ColumnElement[Any]:
+    """An own field's value on the listed entity: a scalar subquery on ``entity_field``
+    by its primary key, in the column of its kind (``NULL`` without a value)."""
+    kind = info.type
+    column = (
+        EntityField.integer
+        if kind in (int, bool)
+        else EntityField.real
+        if kind is float
+        else EntityField.day
+        if kind is date
+        else EntityField.text
+    )
+    value = (
+        select(column)
+        .where(EntityField.entity_id == Entity.id, EntityField.field == info.name.removeprefix(OWN))
+        .scalar_subquery()
+    )
+    return type_coerce(value, Boolean()) if kind is bool else value
+
+
+def search_fields(
+    schema: ThemeSchema, types: Sequence[str], own: OwnFields | None = None
+) -> dict[str, ColumnElement[Any]]:
     """The core fields plus the scope's theme fields, as expressions on the listed entity.
 
     A theme field is a scalar subquery on its type's table (``NULL`` for entities of other
@@ -117,7 +164,10 @@ def search_fields(schema: ThemeSchema, types: Sequence[str]) -> dict[str, Column
     """
     tables = scoped_tables(schema, types)
     fields: dict[str, ColumnElement[Any]] = dict(CORE_FIELDS)
-    for f in scope_fields(schema, types):
+    for f in scope_fields(schema, types, own):
+        if f.name.startswith(OWN):  # the keep's own (#583)
+            fields[f.name] = own_expression(f)
+            continue
         values = [
             select(t.table.c[f.name]).where(t.table.c.id == Entity.id).scalar_subquery()
             for t in tables
@@ -144,9 +194,14 @@ def primary_files(schema: ThemeSchema) -> ColumnElement[bool]:
 
 
 def field_values(
-    conn: Connection, schema: ThemeSchema, hits: Iterable[SearchHit], names: Sequence[str]
+    conn: Connection,
+    schema: ThemeSchema,
+    hits: Iterable[SearchHit],
+    names: Sequence[str],
+    own: OwnFields | None = None,
 ) -> dict[int, dict[str, Any]]:
-    """``{entity id: {field: value}}`` for ``names`` on the given hits (one query per type).
+    """``{entity id: {field: value}}`` for ``names`` on the given hits (one query per type),
+    the keep's ``own`` fields (``own:<name>``) among them.
 
     Entities whose type has none of the fields (or isn't the theme's) get an empty dict.
     """
@@ -162,10 +217,21 @@ def field_values(
         except KeyError:
             continue
         columns = [table.c[n] for n in names if n in table.c]
-        if not columns:
-            continue
-        for row in conn.execute(select(table.c.id, *columns).where(table.c.id.in_(ids))):
-            values[row[0]] = {c.name: v for c, v in zip(columns, row[1:], strict=True)}
+        if columns:
+            rows = conn.execute(select(table.c.id, *columns).where(table.c.id.in_(ids)))
+            for row in rows:
+                values[row[0]] = {c.name: v for c, v in zip(columns, row[1:], strict=True)}
+        mine = (own or {}).get(type_id, {})
+        bare = (n.removeprefix(OWN) for n in names if n.startswith(OWN))
+        wanted = {n: mine[n] for n in bare if n in mine}
+        if wanted:
+            rows = conn.execute(
+                select(*VALUE_ROW).where(
+                    EntityField.entity_id.in_(ids), EntityField.field.in_(list(wanted))
+                )
+            )
+            for row in rows:
+                values[row.entity_id][OWN + row.field] = read_value(wanted[row.field], row)
     return values
 
 

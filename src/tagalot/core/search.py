@@ -575,6 +575,11 @@ def _column(name: str, fields: Mapping[str, ColumnElement[Any]]) -> ColumnElemen
     try:
         return fields[name]
     except KeyError:
+        if name.startswith("own:"):  # a saved search's field, since removed (#583)
+            raise SearchError(
+                f"This search uses your field {name.removeprefix('own:')!r}, which was "
+                "removed (Keep configuration \u2192 Fields)."
+            ) from None
         raise SearchError(f"Unknown field {name!r} for this search.") from None
 
 

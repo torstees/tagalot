@@ -60,7 +60,9 @@ Fields of your own for a kind of item, beside the ones its theme gives it: a boo
 - **Kind:** text, a whole number (integer), a number, a date, yes/no, or a link (a web address that opens in your browser).
 - **Searched:** by its words, by a range, by picking values, or not at all, as the kind allows.
 - **Shown:** a number can show as a size (3.0 MB) or a time (3:25).
-- Whether it's on grid cards, and a column in lists.
+- Whether it's on grid cards (and in the preview under a list), and a column in lists.
+
+Your fields work like the theme's in lists: sort by their column, show or hide it from the header's menu, pick them as card lines, and filter by them with **+ Field** (see [Searching](searching.md#fields)), unless **Searched** is **Not searched**.
 
 **Change…** (or a double-click) changes all of that but its type and kind, which stay as made. **Remove…** asks first: items that had a value keep it as an Extra field named by the label. **Edit → Undo** brings the field back.
 

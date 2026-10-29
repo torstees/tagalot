@@ -64,13 +64,13 @@ def load_groups(
 ) -> list[TypeGroup]:
     """Count ``spec``'s matches per type and load each type's first ``limit`` matches, in the
     theme's type order. Types without matches are left out. Runs in a worker."""
-    schema = session.schema
+    schema, own = session.schema, session.own_fields
     labels = type_plurals(schema)
     tree = session.tag_cache.get()
     groups = []
     with session.reader.connect() as conn:  # one read transaction: counts and rows agree
         contents = session.contents_scope(conn, spec)
-        counts = count_by_type(conn, spec, tree, search_fields(schema, spec.types), contents)
+        counts = count_by_type(conn, spec, tree, search_fields(schema, spec.types, own), contents)
         for table in scoped_tables(schema, spec.types):
             count = counts.get(table.type_id, 0)
             if not count:
@@ -82,16 +82,17 @@ def load_groups(
                 session.has_keywords,
                 contents=contents is not None,
                 badges=tree.has_icons,
+                own=own,
             )
             hits = run_search(
                 conn,
                 replace(spec, types=types),
                 tree,
                 limit=limit,
-                fields=search_fields(schema, types),
+                fields=search_fields(schema, types, own),
                 contents=contents,
             )
-            values = row_values(conn, schema, tree, hits, columns)
+            values = row_values(conn, schema, tree, hits, columns, own)
             add_snippets(conn, spec, contents, hits, values)
             rows = tuple((h, values.get(h.id, {})) for h in hits)
             groups.append(

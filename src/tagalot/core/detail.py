@@ -702,8 +702,11 @@ def load_titles(conn: Connection, entity_ids: Sequence[int]) -> list[str]:
     return [found[i] for i in entity_ids if i in found]
 
 
-def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Preview | None:
-    """The preview of one entity, or ``None`` if it no longer exists."""
+def load_preview(
+    conn: Connection, schema: ThemeSchema, entity_id: int, own_fields: OwnFields | None = None
+) -> Preview | None:
+    """The preview of one entity, or ``None`` if it no longer exists. The keep's own
+    fields with ``card`` follow the theme's card fields (#583)."""
     row = conn.execute(select(Entity.type, Entity.title).where(Entity.id == entity_id)).first()
     if row is None:
         return None
@@ -728,6 +731,13 @@ def load_preview(conn: Connection, schema: ThemeSchema, entity_id: int) -> Previ
             )
             if described and values[-1]:
                 description = str(values[-1])
+    mine = [f for f in (own_fields or {}).get(row.type, {}).values() if f.card]
+    if mine:
+        given = item_values(conn, entity_id, mine)
+        facts += tuple(
+            FieldRow(f.key, f.label, given.get(f.name), f.python_type, display=f.shown_as)
+            for f in mine
+        )
     primary = next((r for r in entity.roles if r.primary), None)
     file = None
     if primary is not None:

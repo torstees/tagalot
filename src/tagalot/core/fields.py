@@ -26,7 +26,7 @@ from tagalot.core.models import (
 from tagalot.core.own_fields import OWN, OwnField
 from tagalot.core.own_values import item_values, store_value
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
-from tagalot.themes.api import FieldInfo, FieldSpec, entity_label
+from tagalot.themes.api import FieldInfo, FieldSpec, SearchKind, entity_label
 
 
 class FieldEditError(ValueError):
@@ -105,9 +105,15 @@ def edit_field(
     )
 
 
+_SEARCH_KINDS: dict[str, SearchKind] = {"words": "text", "range": "range", "choice": "choice"}
+"""An own field's search as a theme field's (``none``: not searched)."""
+
+
 def own_field_info(own: OwnField) -> FieldInfo:
     """One of the keep's own fields (#581) as the core sees a theme's field."""
-    spec = FieldSpec(own.label, card=own.card, display=own.shown_as)
+    spec = FieldSpec(
+        own.label, card=own.card, search=_SEARCH_KINDS.get(own.search), display=own.shown_as
+    )
     spec.name = own.key
     return FieldInfo(own.key, own.python_type, True, spec)
 

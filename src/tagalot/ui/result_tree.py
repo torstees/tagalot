@@ -207,7 +207,7 @@ class ResultTreeModel(QAbstractItemModel):
             sort, fields = contents_order(session.schema, parent_type)
             with session.reader.connect() as conn:
                 hits = child_hits(conn, spec, tree, parent_id, sort=sort, fields=fields)
-                values = row_values(conn, session.schema, tree, hits, columns)
+                values = row_values(conn, session.schema, tree, hits, columns, session.own_fields)
                 mark_hidden(conn, spec, fields, hits, values)
             return [(h, values.get(h.id, {})) for h in hits]
 
