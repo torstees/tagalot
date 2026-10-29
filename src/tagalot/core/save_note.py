@@ -34,6 +34,7 @@ from tagalot.core.keep import KeepConfig
 from tagalot.core.models import Entity, EntityNote, EntityTag, Resource
 from tagalot.core.notes import NOTE_EXTENSIONS
 from tagalot.core.notes_folder import TYPE_KEY, type_names
+from tagalot.core.own_values import item_values
 from tagalot.core.roots import local_path
 from tagalot.core.tags import TagTree, search_key
 from tagalot.core.theme_schema import ThemeSchema
@@ -126,6 +127,9 @@ def plan_note(
     front: dict[str, object] = {"title": row.title}
     if typed:
         front[TYPE_KEY] = entity_label(entity)
+    mine = list(config.fields.get(row.type, {}).values())  # the keep's own (#584)
+    given = item_values(conn, entity_id, mine)
+    front.update({f.name: given[f.name] for f in mine if f.name in given})
     item_tags = conn.scalars(select(EntityTag.tag_id).where(EntityTag.entity_id == entity_id))
     front.update(tag_changes({}, item_tags, (), tree))
     body = (note.body if note is not None else None) or ""

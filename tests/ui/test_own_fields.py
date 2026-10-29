@@ -71,7 +71,9 @@ def test_the_fields_tab_adds_changes_and_removes_fields(
     monkeypatch.setattr(tab, "ask_field", lambda current, type_id: pages)
     with qtbot.waitSignal(config.changed, timeout=5000) as blocker:
         tab.add_field()
-    assert blocker.args == ["Added the field 'Designer'; set it on an item's page."]
+    assert blocker.args == [
+        "Added the field 'Designer'; set it on an item's page. Notes fill it from the next scan."
+    ]
     qtbot.waitUntil(lambda: tab.selected() == pages, timeout=5000)
     assert list(load_keep_config(session.keep.toml_path).fields[type_id]) == ["designer"]
 

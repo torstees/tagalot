@@ -59,6 +59,8 @@ from tagalot.core.models import ArchiveMode, Resource, ResourceKind, ResourceSta
 from tagalot.core.note_keys import sync_aliases, sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
+from tagalot.core.own_fields import OwnFields
+from tagalot.core.own_notes import sync_own_fields
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
     BATCH_SIZE,
@@ -149,6 +151,7 @@ def scan_root(
     note_key_aliases: Mapping[str, str] | None = None,
     notes_folder: str | None = None,
     see_through: frozenset[str] = frozenset(),
+    own_fields: OwnFields | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -272,6 +275,7 @@ def scan_root(
             options.values,
             note_ignore_keys=note_ignore_keys,
             note_key_aliases=note_key_aliases,
+            own_fields=own_fields,
             notes_folder=notes_folder,
             see_through=see_through,
         )
@@ -442,6 +446,7 @@ def _ingest_pending(
     note_key_aliases: Mapping[str, str] | None = None,
     notes_folder: str | None = None,
     see_through: frozenset[str] = frozenset(),
+    own_fields: OwnFields | None = None,
 ) -> None:
     """Hand every pending resource of the root to the theme, in batches, then read the
     root's notes that changed (§9 *Notes*).
@@ -456,6 +461,8 @@ def _ingest_pending(
         writer.run(partial(sync_ignored, keys=note_ignore_keys))
     if reread_notes and note_key_aliases is not None:
         writer.run(partial(sync_aliases, aliases=note_key_aliases))
+    if reread_notes and own_fields is not None:  # the keep's own fields (#584)
+        writer.run(partial(sync_own_fields, fields=own_fields))
     with reader.connect() as conn:
         rows = conn.execute(
             select(

@@ -685,6 +685,20 @@ class EntityField(Base):
     )
 
 
+class OwnFieldRead(Base):
+    """The keep's own fields (#584, ``keep.toml``'s ``[fields]``) that its notes and
+    Markdown files were last read with: a key named like one fills that field. When
+    ``keep.toml`` says otherwise, the next scan reads them all again (as for
+    :class:`NoteKeyAlias`). Reading looks the fields up here."""
+
+    __tablename__ = "own_field_read"
+
+    type_id: Mapped[str] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(primary_key=True)
+    label: Mapped[str]
+    kind: Mapped[str]
+
+
 class NoteKeyAlias(Base):
     """The user's front-matter key aliases (#411; the key case-folded, and the field's name
     or label as written) that the keep's notes and Markdown files were last read with: when

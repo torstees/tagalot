@@ -30,19 +30,17 @@ from tagalot.core.extra_keys import (
     NOT_ALIASED,
     RESERVED_PREFIX,
     applied_aliases,
+    read_again,
 )
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.models import (
     Entity,
-    EntityNote,
     FieldProvenance,
     FieldSource,
     NoteIgnoredKey,
     NoteKeyAlias,
-    Resource,
     utcnow,
 )
-from tagalot.core.notes import NOTE_EXTENSIONS
 from tagalot.core.theme_schema import ThemeSchema
 
 
@@ -82,21 +80,11 @@ def sync_ignored(conn: Connection, keys: frozenset[str]) -> bool:
     applied = set(conn.scalars(select(NoteIgnoredKey.key)))
     if applied == keys:
         return False
-    _read_again(conn)
+    read_again(conn)
     conn.execute(delete(NoteIgnoredKey))
     if keys:
         conn.execute(sqlite_insert(NoteIgnoredKey), [{"key": k} for k in sorted(keys)])
     return True
-
-
-def _read_again(conn: Connection) -> None:
-    """Mark every note file and every Markdown file a theme reads to be read again."""
-    conn.execute(update(EntityNote).where(EntityNote.resource_id.is_not(None)).values(size=None))
-    conn.execute(
-        update(Resource)
-        .where(Resource.ext.in_(NOTE_EXTENSIONS), Resource.ingested_at.is_not(None))
-        .values(ingested_at=None)
-    )
 
 
 # --- the user's key aliases (#411) ---
@@ -173,7 +161,7 @@ def sync_aliases(conn: Connection, aliases: Mapping[str, str]) -> bool:
     field again). Returns whether they differed."""
     if applied_aliases(conn) == dict(aliases):
         return False
-    _read_again(conn)
+    read_again(conn)
     conn.execute(delete(NoteKeyAlias))
     if aliases:
         conn.execute(

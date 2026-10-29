@@ -40,6 +40,7 @@ from tagalot.core.extra_keys import (
     field_keys,
     loose_key,
 )
+from tagalot.core.extra_keys import NOTE_EXTENSIONS as NOTE_EXTENSIONS  # its home
 from tagalot.core.ingest import TITLE, IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -55,6 +56,14 @@ from tagalot.core.models import (
     ResourceStatus,
     utcnow,
 )
+from tagalot.core.own_fields import OwnField
+from tagalot.core.own_notes import (
+    absorb_extras,
+    applied_own_fields,
+    apply_own,
+    own_by_key,
+    read_own,
+)
 from tagalot.core.roots import local_path
 from tagalot.core.see_through import logical
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
@@ -63,7 +72,6 @@ from tagalot.themes.readers import no_path, split_front_matter, split_keywords
 
 logger = logging.getLogger(__name__)
 
-NOTE_EXTENSIONS = (".md", ".markdown")
 NOTE_NAMES = ("index", "readme")
 """A folder's note is named after the folder, else one of these, in this order."""
 MAX_NOTE = 1024 * 1024
@@ -119,6 +127,8 @@ class NoteValues:
     """Field name -> value, converted to the field's type."""
     extra: dict[str, str] = field(default_factory=dict)
     """Extra field name (as the note writes it) -> text."""
+    own: dict[str, Any] = field(default_factory=dict)
+    """The keep's own fields (#584), by field name -> value, read as the field's kind."""
     body: str = ""
     problems: list[str] = field(default_factory=list)
     picture: str | None = None
@@ -130,12 +140,16 @@ def map_note(
     fields: Sequence[FieldInfo],
     ignored: Collection[str] = (),
     aliases: Mapping[str, str] | None = None,
+    own: Iterable[OwnField] = (),
 ) -> NoteValues:
     """What ``note`` gives an item with these fields; ``ignored`` keys (and the built-in
     ones) are left out. A key the user's ``aliases`` (#411; key -> a field's name or label)
     name fills that field, unless the note gives the field under its own name or label: then
-    it stays an Extra field."""
+    it stays an Extra field. A key named like one of the item's type's ``own`` fields
+    (#584) fills that field; a value that isn't of its kind stays an Extra field, and
+    is listed among the problems."""
     by_key = field_keys(fields)
+    own_keys = own_by_key(own)
     aliased = aliased_fields(fields, aliases or {})
     later: list[tuple[str, FieldInfo, Any]] = []
     skip = DEFAULT_IGNORED_KEYS | {k.casefold() for k in ignored}
@@ -164,6 +178,13 @@ def map_note(
                 found.fields[target.name] = convert(value, target.type)
             except ValueError as e:
                 found.problems.append(f"{key}: {e}")
+        elif (mine := own_keys.get(loose_key(key))) is not None:
+            try:
+                found.own[mine.name] = read_own(mine, value)
+            except ValueError as e:
+                found.problems.append(f"{key}: {e}, so it stays an Extra field")
+                if (text := as_text(value)) is not None:
+                    found.extra[key] = text
         elif (target := aliased.get(loose_key(key))) is not None:
             later.append((key, target, value))
         elif (text := as_text(value)) is not None:
@@ -246,6 +267,10 @@ def apply_note(
     kept while there is none."""
     conn = ctx.conn
     entity_table = ctx.schema.by_type_id(entity.type)
+    if values is not None and values.own:  # Extra fields now under own fields' keys (#584)
+        fields = applied_own_fields(conn).get(entity.type, [])
+        if absorb_extras(conn, entity.id, values.own, fields):
+            ctx.mark_changed(entity.id)
     row = conn.execute(
         select(Entity.title, Entity.extra).where(Entity.id == entity.id)
     ).one_or_none()
@@ -308,6 +333,10 @@ def apply_note(
     if writes:
         conn.execute(update(table).where(table.c.id == entity.id).values(**writes))
         changed = True
+
+    # The keep's own fields (#584): as fields, but the file's own front matter wins.
+    own_changed, _ = apply_own(conn, entity.id, given.own, FieldSource.NOTE)
+    changed = changed or own_changed
 
     # Extra fields: the note's, unless the user removed or edited them, or the item's own
     # file gives the key (#410: the file wins, as for fields).
@@ -568,6 +597,7 @@ def apply_notes(
     ctx = IngestSession(conn, schema)
     ignored = set(conn.scalars(select(NoteIgnoredKey.key))) or DEFAULT_IGNORED_KEYS
     aliases = applied_aliases(conn)
+    own = applied_own_fields(conn)
     reread: list[int] = []
     warnings: list[IngestWarning] = []
     for change in changes:
@@ -575,7 +605,7 @@ def apply_notes(
         values = None
         if change.text is not None:
             fields = schema.by_type_id(site.entity.type).fields
-            values = map_note(change.text, fields, ignored, aliases)
+            values = map_note(change.text, fields, ignored, aliases, own.get(site.entity.type, ()))
             relpath = change.file.relpath if change.file else None
             warnings += [
                 IngestWarning(root_id, relpath, f"A note's value was left out: {problem}")

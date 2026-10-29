@@ -12,10 +12,25 @@ import re
 from collections.abc import Collection, Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import Connection, select
+from sqlalchemy import Connection, select, update
 
-from tagalot.core.models import NoteKeyAlias
+from tagalot.core.models import EntityNote, NoteKeyAlias, Resource
 from tagalot.themes.api import FieldInfo
+
+NOTE_EXTENSIONS = (".md", ".markdown")
+"""Markdown: a note's file, and the files whose front matter gives Extra fields."""
+
+
+def read_again(conn: Connection) -> None:
+    """Mark every note file and every Markdown file a theme reads to be read again (the
+    keys they are read with changed: ignored keys, aliases, the keep's own fields)."""
+    conn.execute(update(EntityNote).where(EntityNote.resource_id.is_not(None)).values(size=None))
+    conn.execute(
+        update(Resource)
+        .where(Resource.ext.in_(NOTE_EXTENSIONS), Resource.ingested_at.is_not(None))
+        .values(ingested_at=None)
+    )
+
 
 DEFAULT_IGNORED_KEYS = frozenset({"cssclasses", "cssclass", "publish", "permalink", "position"})
 """Keys editors add for themselves, never Extra fields (§9 *Notes*: built-in defaults)."""

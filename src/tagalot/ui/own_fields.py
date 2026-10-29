@@ -419,7 +419,8 @@ class OwnFieldsTab(QWidget):
         session = self.session
         self._run(
             lambda: session.add_own_field(own),
-            f"Added the field {own.label!r}; set it on an item's page.",
+            f"Added the field {own.label!r}; set it on an item's page. Notes fill it from "
+            "the next scan.",
             lambda: self.select(own.type_id, own.name),
         )
 
