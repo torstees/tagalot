@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QColor,
@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -54,6 +55,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -351,13 +353,16 @@ class KeepConfigWindow(QWidget):
         folders_layout.addWidget(self.detail, 5)
         folders_layout.addWidget(self.empty, 5)
         self.tabs = QTabWidget()
-        self.tabs.addTab(folders, "Folders")
-        self.tabs.addTab(self._thumbnails_tab(), "Thumbnails")
-        self.tabs.addTab(self._keep_tab(), "Keep")
-        self.tabs.addTab(self._notes_tab(), "Notes")
+        # Each tab scrolls when it's taller than the window, so the window needn't be as
+        # tall as its tallest tab and fits the screen (#593).
+        self.tabs.addTab(_scrolled(folders), "Folders")
+        self.tabs.addTab(_scrolled(self._thumbnails_tab()), "Thumbnails")
+        self.tabs.addTab(_scrolled(self._keep_tab()), "Keep")
+        self.tabs.addTab(_scrolled(self._notes_tab()), "Notes")
         self.fields_tab = OwnFieldsTab(session, self.changed.emit, pool)
-        self.tabs.addTab(self.fields_tab, "Fields")
-        self.tabs.addTab(self._appearance_tab(), "Appearance")
+        self.tabs.addTab(_scrolled(self.fields_tab), "Fields")
+        self.tabs.addTab(_scrolled(self._appearance_tab()), "Appearance")
+        self._fitted = False
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         # Thumbnails are stored as the grids show them: count them again while the
@@ -1495,7 +1500,29 @@ class KeepConfigWindow(QWidget):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        if not self._fitted:
+            self._fitted = True
+            self.fit_to_screen()
         self._watch_stats()
+
+    def fit_to_screen(self) -> None:
+        """Open at :data:`OPEN_SIZE`, wider when a tab needs it, within the screen's free
+        area (less a margin), centered on it, so the top and the buttons are on screen; tabs
+        taller than that scroll (#593)."""
+        free = self.screen().availableGeometry()
+        width = OPEN_SIZE.width()
+        for i in range(self.tabs.count()):
+            area = self.tabs.widget(i)
+            inner = area.widget() if isinstance(area, QScrollArea) else area
+            if inner is not None:
+                width = max(width, inner.minimumSizeHint().width() + 40)
+        size = QSize(width, OPEN_SIZE.height()).boundedTo(
+            QSize(free.width() * 9 // 10, free.height() * 9 // 10)
+        )
+        self.resize(size)
+        frame = self.frameGeometry()
+        frame.moveCenter(free.center())
+        self.move(max(frame.left(), free.left()), max(frame.top(), free.top()))
 
     def hideEvent(self, event: QHideEvent) -> None:
         super().hideEvent(event)
@@ -2166,6 +2193,20 @@ FIND_BY_CHOICES = (
     ("IDs, or any title", "title"),
 )
 """Keep configuration's choices for what may identify an item to a service (#485)."""
+
+
+OPEN_SIZE = QSize(820, 720)
+"""The Keep configuration window's size when it opens (#593), within the screen."""
+
+
+def _scrolled(tab: QWidget) -> QScrollArea:
+    """``tab`` in a frameless area that scrolls when the window is shorter (or narrower)
+    than it."""
+    area = QScrollArea()
+    area.setWidget(tab)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    return area
 
 
 def describe_contents(stats: ContentsStats | None) -> str:
