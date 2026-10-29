@@ -670,6 +670,12 @@ class SearchPage(QWidget):
                 self._count_kinds(self.model.spec)
         self._load_tags()
 
+    def fields_changed(self) -> None:
+        """The keep's own fields changed (#583): build the columns, card lines, and + Field
+        menu again, then run the search; rows stay when the columns are the same."""
+        self._run()
+        self._load_tags()
+
     def show_all(self, type_id: str) -> None:
         """Narrow the global search to one type (a section's "Show all")."""
         self.filter_bar.set_only(type_id, self._plurals.get(type_id, type_id))

@@ -12,6 +12,7 @@ from tagalot.core.models import Entity
 from tagalot.core.own_fields import OwnField
 from tagalot.core.search_spec import SortKey
 from tagalot.core.session import KeepSession
+from tagalot.ui.main_window import MainWindow
 from tagalot.ui.result_table import list_columns
 from tagalot.ui.search_view import SearchPage
 from tests.ui.test_field_columns import _books, _shown, session
@@ -92,3 +93,19 @@ def test_a_card_line_shows_them(qtbot: QtBot, fields: KeepSession) -> None:
     assert ("own:pages", "Pages") in lines
     assert ("own:shop", "Shop") not in lines  # card = false
     assert ("own:shop", "Shop") in page.card_fields((BOOK,))
+
+
+def test_an_open_list_shows_a_field_added_in_keep_configuration(
+    qtbot: QtBot, session: KeepSession
+) -> None:
+    """Found in review: the new field's column, card line, and + Field entry waited for the
+    view to be switched."""
+    page = _books(qtbot, session)
+    window = page.window()
+    assert isinstance(window, MainWindow)
+    session.add_own_field(PAGES)
+    window._config_changed("Added the field 'Pages'.")  # as Keep configuration's save does
+    qtbot.waitUntil(lambda: "Pages" in _shown(page), timeout=5000)
+    assert "Pages" in [a.text() for a in page.filter_bar.field_menu.actions()]
+    assert ("own:pages", "Pages") in page.card_lines((BOOK,))[BOOK]
+    assert page.grid.card_lines[BOOK][-1:] == [("own:pages", "Pages")]

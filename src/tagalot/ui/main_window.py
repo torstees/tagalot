@@ -60,7 +60,7 @@ from tagalot.core.keywords import (
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
 from tagalot.core.online import LookupReport
-from tagalot.core.own_fields import OWN, OwnField
+from tagalot.core.own_fields import OWN, OwnField, OwnFields
 from tagalot.core.promote import KeyValue
 from tagalot.core.root_admin import RootStatus, add_skipped, root_statuses
 from tagalot.core.roots import place_in_roots
@@ -192,6 +192,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self.session = session
+        self._own_fields_shown: OwnFields = session.own_fields if session is not None else {}
+        """The keep's own fields the search pages were last built with (#583)."""
         self.resize(1200, 800)
         if session is None:
             self.setWindowTitle(WINDOW_TITLE)
@@ -1848,8 +1850,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
         self._refresh_details()  # a field edit (or its undo) shows on the page
         self._schedule_summary()
+        fields_changed = self._own_fields_changed()  # made, or turned back (#582)
         for page in self.search_pages():
-            page.refresh()  # tag filters may now match differently
+            if fields_changed:
+                page.fields_changed()
+            else:
+                page.refresh()  # tag filters may now match differently
         self.tag_panel.reload()  # undo can change the tag tree
         for manager in self._pages.values():
             if isinstance(manager, TagManagerPage):
@@ -2606,8 +2612,21 @@ class MainWindow(QMainWindow):
         self._refresh_triage()
         self.thumbnails.clear()
         self._refresh_details()
+        fields_changed = self._own_fields_changed()  # Keep configuration's Fields tab
         for page in self.search_pages():
-            page.refresh()
+            if fields_changed:
+                page.fields_changed()
+            else:
+                page.refresh()
+
+    def _own_fields_changed(self) -> bool:
+        """Whether the keep's own fields changed since the search pages were built: their
+        columns, card lines, and + Field menus are then built again (#583; found in review,
+        they waited for the layout to be switched)."""
+        if self.session is None or self.session.own_fields == self._own_fields_shown:
+            return False
+        self._own_fields_shown = self.session.own_fields
+        return True
 
     def _scan_started(self) -> None:
         self.scan_action.setEnabled(False)
