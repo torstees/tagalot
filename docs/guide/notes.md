@@ -69,6 +69,7 @@ Painted skies and dusk light, since 2009.
 - **`tags`** (or `keywords`): [file keywords](file-keywords.md). They become tags when they match tags you have.
 - **`cover`** (or `image`): the item's picture, a file relative to the note (`cover: pictures/pratchett.jpg`, or from the top of the watched folder with a leading `/`). It's shown for the item everywhere, before the picture the theme would choose. If the file isn't there, [Triage → Pictures](triage.md#pictures) lists it. In the notes folder, a picture named like the note beside it (`Terry Pratchett.jpg` beside `Terry Pratchett.md`) does the same without a key.
 - **A key matching one of the item's fields**, by its name or label (`year`, `Genre`): that field, where no file gives one. What the files themselves say still wins, and a note's value replaces one looked up online.
+- **A key matching one of [your own fields](keep-configuration.md#fields)**, by its name or label (`pages`, `Pages read`): that field. If the value isn't of the field's kind (`soon` for a date), it stays an Extra field and the [Activity panel](activity.md) says so. A field you add or relabel is read from notes at the next scan (F5).
 - **Any other key** becomes an **Extra field**, marked "• from the note", unless it is [ignored](#keys-to-ignore).
 - **The body** shows under the item's title, and is searchable.
 
@@ -115,7 +116,7 @@ A typed note is kept in the keep, not in a file. If a note file for the item tur
 
 ### Save as note…
 
-**More ▾ → Save as note…** writes the item's typed note as a new file in the [notes folder](#the-notes-folder), so you can keep it with your files and edit it in your own editor. It's there once Tagalot may add notes to the notes folder (**Let Save as note… add new notes to this folder** in [Keep configuration → Notes](keep-configuration.md#notes); it asks first).
+**More ▾ → Save as note…** writes the item's typed note, with the values of your own fields, as a new file in the [notes folder](#the-notes-folder), so you can keep it with your files and edit it in your own editor. It's there once Tagalot may add notes to the notes folder (**Let Save as note… add new notes to this folder** in [Keep configuration → Notes](keep-configuration.md#notes); it asks first).
 
 Tagalot shows where the file will go and asks before writing:
 

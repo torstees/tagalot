@@ -52,6 +52,8 @@ from tagalot.core.models import (
     Resource,
     ResourceStatus,
 )
+from tagalot.core.own_fields import OwnFields
+from tagalot.core.own_values import item_values
 from tagalot.core.roots import local_path
 from tagalot.core.tags import TagTree
 from tagalot.core.theme_schema import ThemeSchema
@@ -371,6 +373,25 @@ def field_changes(
     return changes
 
 
+def own_changes(
+    current: Mapping[str, Any], values: Mapping[str, tuple[str, Any]]
+) -> dict[str, Any]:
+    """The keys for the keep's own fields the user edited (#584): ``values`` maps each
+    field's name to ``(label, value)``. Each is written under the key the file already
+    uses for it (its name or label, as notes read them), else its name; a value already
+    as written is left out."""
+    by_key = {_loose(str(k)): str(k) for k in current}
+    changes: dict[str, Any] = {}
+    for name, (label, value) in values.items():
+        key = by_key.get(_loose(name)) or by_key.get(_loose(label)) or name
+        if key in current and current[key] == value:
+            continue
+        if value is None and key not in current:
+            continue
+        changes[key] = value
+    return changes
+
+
 # --- planning (a worker) ---
 
 
@@ -430,11 +451,13 @@ def plan_write_back(
     root_paths: Mapping[str, str | None],
     writable: Iterable[str],
     notes_write_back: bool = False,
+    own_fields: OwnFields | None = None,
 ) -> WritePlan:
     """Work out, for each item, the new front matter of its Markdown files (its primary
     role's) and of its note (#501), reading them (call it from a worker). ``root_paths``
     gives this computer's path of each root (``None``: none here); only roots in
-    ``writable`` are written, and notes in the notes folder also when ``notes_write_back``."""
+    ``writable`` are written, and notes in the notes folder also when ``notes_write_back``.
+    The keep's ``own_fields`` (#584) the user edited are written under their names too."""
     from tagalot.core.ingest import IngestSession
 
     theme = schema.theme()
@@ -469,6 +492,9 @@ def plan_write_back(
                 )
             )
         )
+        mine = [f for f in (own_fields or {}).get(type_id, {}).values() if f.key in edited]
+        given = item_values(conn, entity_id, mine)
+        own = {f.name: (f.label, given.get(f.name)) for f in mine}
         item_tags = set(
             conn.scalars(select(EntityTag.tag_id).where(EntityTag.entity_id == entity_id))
         )
@@ -505,7 +531,16 @@ def plan_write_back(
             else:
                 plan.files.append(
                     _plan_file(
-                        write, theme, entity_type, record, edited, item_tags, removed, tree, aliases
+                        write,
+                        theme,
+                        entity_type,
+                        record,
+                        edited,
+                        item_tags,
+                        removed,
+                        tree,
+                        aliases,
+                        own,
                     )
                 )
     return plan
@@ -606,6 +641,7 @@ def _plan_file(
     removed: set[int],
     tree: TagTree,
     aliases: Mapping[str, str] | None = None,
+    own: Mapping[str, tuple[str, Any]] | None = None,
 ) -> FileWrite:
     try:
         stat = os.stat(write.path)
@@ -627,6 +663,7 @@ def _plan_file(
         changes: dict[str, Any] = {
             **field_changes(theme, entity_type, record, edited, current, note, aliases)
         }
+        changes.update(own_changes(current, own or {}))
         changes.update(tag_changes(current, item_tags, removed, tree))
         new = edit_front_matter(text, changes)
     except (WriteBackError, ValueError, TypeError) as e:

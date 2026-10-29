@@ -310,6 +310,11 @@ def _v30_entity_fields(conn: Connection) -> None:
     Base.metadata.tables["entity_field"].create(conn, checkfirst=True)
 
 
+def _v31_own_field_read(conn: Connection) -> None:
+    """Format 32: the keep's own fields its notes were last read with (#584)."""
+    Base.metadata.tables["own_field_read"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -341,6 +346,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     28: _v28_tag_groups,
     29: _v29_note_key_aliases,
     30: _v30_entity_fields,
+    31: _v31_own_field_read,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

@@ -1001,7 +1001,14 @@ class MainWindow(QMainWindow):
             tree = session.tag_cache.get()
             with session.reader.connect() as conn:
                 return plan_write_back(
-                    conn, session.schema, tree, entity_ids, paths, writable, notes
+                    conn,
+                    session.schema,
+                    tree,
+                    entity_ids,
+                    paths,
+                    writable,
+                    notes,
+                    session.own_fields,
                 )
 
         def planned(found: WritePlan) -> None:

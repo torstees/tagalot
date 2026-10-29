@@ -50,6 +50,8 @@ from tagalot.core.models import (
     UserRelation,
     utcnow,
 )
+from tagalot.core.own_fields import OwnField
+from tagalot.core.own_notes import applied_own_fields, apply_own, take_own
 from tagalot.core.own_values import texts as own_texts
 from tagalot.core.roots import local_path
 from tagalot.core.theme_options import ASSETS_KEY
@@ -189,6 +191,8 @@ class IngestSession:
         self._ignored: frozenset[str] | None = None
         """Keys never made Extra fields (the lists notes are applied with), looked up once."""
         self._aliases: dict[str, str] | None = None
+        self._own: dict[str, list[OwnField]] | None = None
+        """The keep's own fields its files are read with, by type (#584)."""
         """The user's key aliases (#411), as notes are applied with them, looked up once."""
 
     # --- entities ---
@@ -740,6 +744,7 @@ class IngestSession:
             self._aliases = applied_aliases(self.conn)
         if self._aliases:
             values = self._fill_aliased(entity.id, entity_table, values)
+        values = self._fill_own(entity, values)
         given = extra_values(values, self._ignored)
         before = dict(row.extra or {})
         extras = dict(before)
@@ -791,6 +796,33 @@ class IngestSession:
             self._touch(entity.id)
             self.conn.execute(update(Entity).where(Entity.id == entity.id).values(extra=extras))
             self._dirty.add(entity.id)
+
+    def _fill_own(self, entity: EntityRef, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Keys named like the item's type's own fields (#584) fill them, as the file's;
+        what the file gave before and doesn't now goes (the note may give it: it is read
+        again). Returns the other keys, and values not of their field's kind, which stay
+        Extra fields."""
+        if self._own is None:
+            self._own = applied_own_fields(self.conn)
+        fields = self._own.get(entity.type, [])
+        if not fields:
+            return dict(values)
+        ignored = self._ignored or frozenset()
+        kept = {k: v for k, v in values.items() if not skipped(str(k).strip(), ignored)}
+        mine, rest, problems = take_own(kept, fields)
+        if problems:
+            title = self.conn.scalar(select(Entity.title).where(Entity.id == entity.id))
+            for problem in problems:
+                self.warn(None, f"The front matter of {title!r}: {problem}")
+        changed, dropped = apply_own(self.conn, entity.id, mine, self.source)
+        if dropped:  # the note may give them
+            self.conn.execute(
+                update(EntityNote).where(EntityNote.entity_id == entity.id).values(size=None)
+            )
+        if changed:
+            self._touch(entity.id)
+            self._dirty.add(entity.id)
+        return rest
 
     def _fill_aliased(
         self, entity_id: int, entity_table: EntityTable, values: Mapping[str, Any]

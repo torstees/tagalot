@@ -46,6 +46,7 @@ from tagalot.core.notes import (
     primary_files,
     read_note,
 )
+from tagalot.core.own_notes import applied_own_fields
 from tagalot.core.roots import local_path
 from tagalot.core.scanner import in_notes
 from tagalot.core.tags import search_key
@@ -302,6 +303,7 @@ def apply_folder_notes(
     ctx = IngestSession(conn, schema)
     ignored = set(conn.scalars(select(NoteIgnoredKey.key))) or DEFAULT_IGNORED_KEYS
     aliases = applied_aliases(conn)
+    own = applied_own_fields(conn)
     types = (
         dict(conn.execute(select(Entity.id, Entity.type)).all()) if plan.give or plan.take else {}
     )
@@ -317,7 +319,8 @@ def apply_folder_notes(
         file, values = None, None
         if given is not None:
             file, text = given
-            values = map_note(text, schema.by_type_id(type_id).fields, ignored, aliases)
+            infos = schema.by_type_id(type_id).fields
+            values = map_note(text, infos, ignored, aliases, own.get(type_id, ()))
             warnings += [
                 IngestWarning(plan.root_id, file.relpath, f"A note's value was left out: {p}")
                 for p in values.problems
