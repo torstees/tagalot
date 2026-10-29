@@ -33,6 +33,7 @@ from sqlalchemy import ColumnElement, Connection
 
 from tagalot.core.formats import format_rating_number, format_stars, format_value, rating_scale
 from tagalot.core.keywords import keyword_index, keyword_key, keywords_of
+from tagalot.core.own_fields import OwnFields
 from tagalot.core.search import (
     MATCH_END,
     MATCH_START,
@@ -249,11 +250,12 @@ def row_values(
     tree: TagTree,
     hits: Sequence[SearchHit],
     columns: Sequence[ResultColumn],
+    own_fields: OwnFields | None = None,
 ) -> dict[int, dict[str, Any]]:
     """The cell values for ``hits``: their theme fields and, if shown, their tags. Runs in a
     worker."""
     names = [c.key for c in columns if c.key not in ("title", "type", TAGS, KEYWORDS, BADGES)]
-    values = field_values(conn, schema, hits, names) if names else {}
+    values = field_values(conn, schema, hits, names, own_fields) if names else {}
     tags_shown = any(c.key == TAGS for c in columns)
     if tags_shown or tree.has_icons:  # badges are on every row, for grid cards too
         tagged = entity_tags(conn, (h.id for h in hits))
@@ -515,6 +517,7 @@ class ResultsModel(QAbstractTableModel):
     def _fetcher(self, spec: SearchSpec) -> Callable[..., tuple[int, list[Row]]]:
         """A function, safe to call in a worker, that loads one page (and maybe the count)."""
         session, limit = self.session, self.page_size
+        own = session.own_fields
         shown = {c.key for c in self._columns}
         columns = list(self._columns) + [
             ResultColumn(name, name) for name in self._extra_fields if name not in shown
@@ -522,13 +525,13 @@ class ResultsModel(QAbstractTableModel):
 
         def fetch(conn: Connection, *, count: bool, offset: int) -> tuple[int, list[Row]]:
             tree: TagTree = session.tag_cache.get()
-            fields: dict[str, ColumnElement[Any]] = search_fields(session.schema, spec.types)
+            fields: dict[str, ColumnElement[Any]] = search_fields(session.schema, spec.types, own)
             contents = session.contents_scope(conn, spec)
             total = count_matches(conn, spec, tree, fields, contents) if count else -1
             hits = run_search(
                 conn, spec, tree, offset=offset, limit=limit, fields=fields, contents=contents
             )
-            values = row_values(conn, session.schema, tree, hits, columns)
+            values = row_values(conn, session.schema, tree, hits, columns, own)
             add_snippets(conn, spec, contents, hits, values)
             if spec.nest:  # only a tree keeps hidden kinds' items
                 mark_hidden(conn, spec, fields, hits, values)
@@ -656,9 +659,11 @@ class ResultsModel(QAbstractTableModel):
         generation, spec, session = self._generation, self._spec, self.session
         first, last = missing[0], missing[-1]
 
+        own = session.own_fields
+
         def job() -> list[int]:
             tree = session.tag_cache.get()
-            fields = search_fields(session.schema, spec.types)
+            fields = search_fields(session.schema, spec.types, own)
             with session.reader.connect() as conn:
                 hits = run_search(
                     conn,

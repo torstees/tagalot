@@ -52,6 +52,7 @@ from tagalot.core.search_fields import (
     scope_fields,
     scoped_tables,
     search_fields,
+    type_fields,
     type_labels,
     type_plurals,
 )
@@ -476,7 +477,9 @@ class SearchPage(QWidget):
         filterable = {f.name for f in self._filter_fields(types)}
         fields = tuple(f for f in filters.fields if f.field in filterable)
         # A sort chosen on one type's list (Year on albums) may not exist across types.
-        valid = set(CORE_FIELDS) | {f.name for f in scope_fields(self.session.schema, types)}
+        valid = set(CORE_FIELDS) | {
+            f.name for f in scope_fields(self.session.schema, types, self.session.own_fields)
+        }
         sort = self._sort if all(k.field in valid for k in self._sort) else base.sort
         return replace(
             base,
@@ -514,7 +517,7 @@ class SearchPage(QWidget):
         """The fields the listed types can all be filtered on."""
         return [
             FilterField(f.name, f.spec.label, f.spec.search, f.type, f.spec.display)
-            for f in scope_fields(self.session.schema, types)
+            for f in scope_fields(self.session.schema, types, self.session.own_fields)
             if f.spec.search is not None
         ]
 
@@ -523,7 +526,7 @@ class SearchPage(QWidget):
         spec, session = self.current_spec(), self.session
 
         def job() -> ChoiceCounts:
-            fields = search_fields(session.schema, spec.types)
+            fields = search_fields(session.schema, spec.types, session.own_fields)
             with session.reader.connect() as conn:
                 contents = session.contents_scope(conn, spec)
                 tree = session.tag_cache.get()
@@ -667,6 +670,12 @@ class SearchPage(QWidget):
                 self._count_kinds(self.model.spec)
         self._load_tags()
 
+    def fields_changed(self) -> None:
+        """The keep's own fields changed (#583): build the columns, card lines, and + Field
+        menu again, then run the search; rows stay when the columns are the same."""
+        self._run()
+        self._load_tags()
+
     def show_all(self, type_id: str) -> None:
         """Narrow the global search to one type (a section's "Show all")."""
         self.filter_bar.set_only(type_id, self._plurals.get(type_id, type_id))
@@ -723,6 +732,7 @@ class SearchPage(QWidget):
             self.session.has_keywords,
             contents=matches,
             badges=self._has_icons,  # no icons: no empty column
+            own=self.session.own_fields,
         )
         self.grid.show_match = matches
         shows_contents = self._tree_layout() or spec.show_contained
@@ -764,7 +774,7 @@ class SearchPage(QWidget):
 
         def job() -> tuple[dict[str, int], int]:
             tree = session.tag_cache.get()
-            fields = search_fields(session.schema, spec.types)
+            fields = search_fields(session.schema, spec.types, session.own_fields)
             with session.reader.connect() as conn:
                 contents = session.contents_scope(conn, spec)
                 counts = count_by_kind(conn, reachable, tree, fields, contents)
@@ -931,11 +941,13 @@ class SearchPage(QWidget):
         if types is None:
             types = self._types()
         lines: dict[str, list[tuple[str, str]]] = {}
+        own = self.session.own_fields
         for table in scoped_tables(self.session.schema, types):
-            fields = {f.name: f for f in table.fields}
+            fields = {f.name: f for f in type_fields(table, own)}
             names = self._card_override
-            if names is None:
-                names = list(table.entity.card_lines)
+            if names is None:  # the theme's, then the keep's own that say card (#583)
+                mine = own.get(table.type_id, {}).values()
+                names = list(table.entity.card_lines) + [f.key for f in mine if f.card]
             lines[table.type_id] = [(n, fields[n].spec.label) for n in names if n in fields]
         return lines
 
@@ -943,7 +955,7 @@ class SearchPage(QWidget):
         """Every field a card line could show for the listed types, in declaration order."""
         found: dict[str, str] = {}
         for table in scoped_tables(self.session.schema, self._types() if types is None else types):
-            for f in table.fields:
+            for f in type_fields(table, self.session.own_fields):
                 if f.name not in CORE_FIELDS:
                     found.setdefault(f.name, f.spec.label)
         return list(found.items())
@@ -964,7 +976,7 @@ class SearchPage(QWidget):
         self.grid.displays = {
             f.name: f.spec.display
             for table in scoped_tables(self.session.schema, types)
-            for f in table.fields
+            for f in type_fields(table, self.session.own_fields)
             if f.spec.display is not None
         }
         self.grid.set_card_lines(lines)

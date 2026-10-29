@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.own_fields import OWN, OwnFields
 from tagalot.core.search_fields import scope_fields, scoped_tables
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.ui.badges import BadgeDelegate
@@ -74,14 +75,16 @@ def list_columns(
     *,
     contents: bool = False,
     badges: bool = True,
+    own: OwnFields | None = None,
 ) -> list[ResultColumn]:
     """The list layout's columns for a scope: the title (named as the types call it), the
     type when several types are in scope, the item's tags (hidden unless the user shows
     them, :data:`DEFAULT_HIDDEN`; next to the title so they stay in view when shown), then
     every field the scoped types share that their pages show: card fields first, shown,
     then the types' description (#414), shown, then the rest, hidden until the user shows
-    them (#314). The Badges column (#398) is shown unless ``badges`` is false (a keep whose
-    tags have no icons), when it's offered hidden."""
+    them (#314); then the keep's ``own`` fields the types share, shown when they say
+    ``column`` (#583). The Badges column (#398) is shown unless ``badges`` is false (a
+    keep whose tags have no icons), when it's offered hidden."""
     tables = scoped_tables(schema, types)
     described = {t.entity.description_field for t in tables} - {None}
     labels = {t.entity.title_label for t in tables}
@@ -94,11 +97,13 @@ def list_columns(
     columns.append(ResultColumn(TAGS, "Tags", sortable=False))
     if keywords:  # only in keeps whose files give keywords (§7)
         columns.append(ResultColumn(KEYWORDS, "Keywords", sortable=False))
+    in_lists = {f.key for by_name in (own or {}).values() for f in by_name.values() if f.column}
     fields = [
         f
         for f in scope_fields(schema, types)
         if f.spec.card or f.spec.detail or f.name in described
     ]
+    mine = [f for f in scope_fields(schema, types, own) if f.name.startswith(OWN)]
     columns.extend(
         ResultColumn(
             f.name,
@@ -110,6 +115,16 @@ def list_columns(
         )
         # card fields first, then the description
         for f in sorted(fields, key=lambda f: (not f.spec.card, f.name not in described))
+    )
+    columns.extend(
+        ResultColumn(
+            f.name,
+            f.spec.label,
+            numeric=f.type in (int, float),
+            display=f.spec.display,
+            hidden_by_default=f.name not in in_lists,
+        )
+        for f in mine
     )
     return columns
 

@@ -159,7 +159,7 @@ class PreviewStrip(QFrame):
 
         def job() -> Preview | None:
             with session.reader.connect() as conn:
-                return load_preview(conn, session.schema, entity_id)
+                return load_preview(conn, session.schema, entity_id, session.own_fields)
 
         def done(preview: Preview | None) -> None:
             if shiboken6.isValid(self) and generation == self._generation:

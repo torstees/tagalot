@@ -22,13 +22,15 @@ From the Tags panel, right-click a tag for **Show only items with…** or **Hide
 
 ## Fields
 
-**+ Field** lists the fields every listed kind of item has. Pick one:
+**+ Field** lists the fields every listed kind of item has, [your own](keep-configuration.md#fields) among them. Pick one:
 
 - a **choice** field (extension, genre, venue) lists its values among the results, with counts; tick the ones you want;
 - a **range** field (year, size, width) has From and To;
 - a **text** field has "contains" or "starts with".
 
 **Apply** adds a purple chip (`Year: 1990–1999`, `Extension: .png, .jpg`); click the chip to change it.
+
+A saved search that filters by one of your fields keeps working when you rename the field. If you remove the field, the search says so instead of showing results.
 
 ## Toggles
 
