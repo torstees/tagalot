@@ -18,6 +18,7 @@ from tagalot.core.icons import IconFileError
 from tagalot.core.item_pictures import PictureChange, PictureError
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
+from tagalot.core.own_fields import OwnField, OwnFieldError
 from tagalot.core.picture_problems import PictureProblem, PictureScope
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.relations import RelationError
@@ -286,6 +287,21 @@ class TagActions(QObject):
             lambda change: f"{change.label}.",
         )
 
+    def promote_extra(self, key: str, fields: list[OwnField]) -> None:
+        """Make an Extra field a field of the keep's own (#582); one undo step."""
+        self._run(
+            lambda: self.session.promote_extra(key, fields),
+            lambda change: f"{change.label}. Edit \u2192 Undo reverses it.",
+        )
+
+    def turn_back_field(self, own: OwnField) -> None:
+        """Turn one of the keep's own fields back into Extra fields (#582); one undo
+        step."""
+        self._run(
+            lambda: self.session.remove_own_field(own),
+            lambda change: f"{change.label}. Edit \u2192 Undo reverses it.",
+        )
+
     def edit_note(self, entity_id: int, text: str) -> None:
         """Set the note typed for an item (empty: remove it); one undo step."""
         self._run(
@@ -548,7 +564,8 @@ class TagActions(QObject):
                 | NoteKeyError
                 | PictureError
                 | SavedSearchError
-                | IconFileError,
+                | IconFileError
+                | OwnFieldError,
             ):
                 self.message.emit(str(error))
             else:

@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy import Connection, Engine, and_, func, or_, select, update
 from sqlalchemy.exc import OperationalError
 
-from tagalot.core.actions import ActionResult, delete_items, run_action
+from tagalot.core.actions import ActionChange, ActionResult, delete_items, run_action
 from tagalot.core.activity import (
     ProblemLog,
     contents_problems,
@@ -52,7 +52,7 @@ from tagalot.core.folder_items import tagged_hidden
 from tagalot.core.fonts import copy_font_file, read_font_files, theme_font_files
 from tagalot.core.google_fonts import GoogleFont, download_font, downloaded
 from tagalot.core.icons import copy_icon_picture, keep_icon, theme_folder, type_icon
-from tagalot.core.ingest import IngestSession, theme_text_source
+from tagalot.core.ingest import IngestSession
 from tagalot.core.item_pictures import set_picture
 from tagalot.core.keep import Keep, KeepConfig, allowed_hosts, open_keep, save_keep_config
 from tagalot.core.keep_settings import (
@@ -109,12 +109,22 @@ from tagalot.core.own_fields import (
     with_field,
     without_field,
 )
-from tagalot.core.own_values import count_values, remove_field_values
+from tagalot.core.own_values import count_values
 from tagalot.core.picture_problems import (
     PictureProblem,
     PictureScope,
     ignore_pictures,
     stop_ignoring,
+)
+from tagalot.core.promote import (
+    FieldMove,
+    KeyValue,
+    field_items,
+    key_values,
+    promote,
+    promotion_items,
+    recorded,
+    turn_back,
 )
 from tagalot.core.reextract import ReextractReport, reextract
 from tagalot.core.relations import add_related, move_related, remove_related
@@ -279,6 +289,7 @@ class KeepSession:
         thumbnails.report = lambda found: session.problems.add(thumbnail_problems(found))
         session.tags.on_note_key = session._list_note_key
         session.tags.own_fields = lambda: session.own_fields
+        session.tags.on_own_fields = session._save_own_fields
         session.colors = resolve_colors(opened.keep.config, theme)
         session.font_files = session._read_font_files(opened.keep.config)
         with reader.connect() as conn:
@@ -702,16 +713,62 @@ class KeepSession:
         with self.reader.connect() as conn:
             return count_values(conn, own)
 
-    def remove_own_field(self, own: OwnField) -> int:
-        """Remove an own field: its values become Extra fields named by its label, and
-        its edits leave the undo history. Returns how many items kept a value. Runs in
-        a worker."""
-        source = theme_text_source(self.schema)
-        moved = self.writer.run(lambda conn: remove_field_values(conn, own, source))
-        self.tags.forget_field(own.key)
-        fields = without_field(self.own_fields, own.type_id, own.name)
-        self.save_config(replace(self.keep.config, fields=fields))
-        return moved
+    def remove_own_field(self, own: OwnField) -> FieldMove:
+        """Turn an own field back into Extra fields (#582; Keep configuration's Remove):
+        its values become text Extra fields named by its label, and it leaves
+        ``keep.toml``. One undo step. Runs in a worker."""
+        schema, before = self.schema, self.own_fields
+        after = without_field(before, own.type_id, own.name)
+
+        def work(conn: Connection) -> tuple[ActionChange, int]:
+            ids = field_items(conn, own)
+            return recorded(conn, schema, ids, lambda c: turn_back(c, schema, own))
+
+        action, moved = self.writer.run(work)
+        self._save_own_fields(after)
+        items = "1 item" if moved == 1 else f"{moved} items"
+        label = f"Turn {own.label!r} back into an Extra field ({items})"
+        change = FieldMove(label, action, before, after, moved)
+        self.tags.record(change)
+        return change
+
+    def extra_key_values(self, key: str) -> list[KeyValue]:
+        """Every item's Extra field named ``key`` (case aside), for **Make it a
+        field…**'s preview. Runs in a worker."""
+        with self.reader.connect() as conn:
+            return key_values(conn, key)
+
+    def promote_extra(self, key: str, fields: Sequence[OwnField]) -> FieldMove:
+        """Make the Extra field ``key`` a field of the keep's own (#582), one per type
+        in ``fields``: values that read as its kind move into it with their provenance;
+        the rest stay Extra fields. One undo step. Raises :class:`OwnFieldError` for a
+        field that can't be added. Runs in a worker."""
+        if not fields:
+            raise OwnFieldError("Choose a type for the field")
+        before = after = self.own_fields
+        for own in fields:
+            if own.name in after.get(own.type_id, {}):
+                raise OwnFieldError(f"There is already a field named {own.name!r}")
+            problem = self.own_field_problem(own)
+            if problem is not None:
+                raise OwnFieldError(problem)
+            after = with_field(after, own)
+        schema, types = self.schema, [f.type_id for f in fields]
+
+        def work(conn: Connection) -> tuple[ActionChange, int]:
+            ids = promotion_items(conn, key, types)
+            return recorded(conn, schema, ids, lambda c: promote(c, schema, key, fields))
+
+        action, moved = self.writer.run(work)
+        self._save_own_fields(after)
+        items = "1 item" if moved == 1 else f"{moved} items"
+        label = f"Make {key!r} the field {fields[0].label!r} ({items})"
+        change = FieldMove(label, action, before, after, moved)
+        self.tags.record(change)
+        return change
+
+    def _save_own_fields(self, fields: OwnFields) -> None:
+        self.save_config(replace(self.keep.config, fields={t: dict(f) for t, f in fields.items()}))
 
     # --- icons (#557, core.icons) ---
 

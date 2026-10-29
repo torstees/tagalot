@@ -60,6 +60,8 @@ from tagalot.core.keywords import (
 from tagalot.core.links import kind_of_file
 from tagalot.core.models import ResourceKind
 from tagalot.core.online import LookupReport
+from tagalot.core.own_fields import OWN, OwnField
+from tagalot.core.promote import KeyValue
 from tagalot.core.root_admin import RootStatus, add_skipped, root_statuses
 from tagalot.core.roots import place_in_roots
 from tagalot.core.save_note import NewNote, plan_note, write_note
@@ -122,6 +124,7 @@ from tagalot.ui.lookups import OnlineLookups, lookup_summary
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
+from tagalot.ui.own_fields import PromoteDialog, schema_types
 from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.relate_dialog import RelateDialog
 from tagalot.ui.result_table import DEFAULT_HIDDEN
@@ -847,6 +850,8 @@ class MainWindow(QMainWindow):
         detail.extra_edited.connect(self.tag_actions.edit_extra)
         detail.note_key_ignore_requested.connect(self.tag_actions.ignore_note_key)
         detail.note_key_alias_requested.connect(self.alias_note_key)
+        detail.promote_requested.connect(self.promote_extra)
+        detail.turn_back_requested.connect(self.turn_back_field)
         detail.note_edited.connect(self.tag_actions.edit_note)
         detail.save_note_requested.connect(self.save_as_note)
         detail.reread_requested.connect(self.reread)
@@ -1855,6 +1860,7 @@ class MainWindow(QMainWindow):
         self._load_saved_searches()  # saving, renaming, and their undo
         if self.keep_config is not None:
             self.keep_config.show_note_keys()  # ignoring a note key, and its undo
+            self.keep_config.fields_tab.reload()  # a field made or turned back (#582)
 
     def _tag_message(self, message: str) -> None:
         self.statusBar().showMessage(message)
@@ -2080,6 +2086,50 @@ class MainWindow(QMainWindow):
                 self.keep_config.reload()
 
         run_in_pool(job, on_done=done, on_error=lambda e: self.statusBar().showMessage(str(e)))
+
+    def promote_extra(self, key: str, type_id: str) -> None:
+        """**Make it a field…** (#582): read every item's values of the key (in a
+        worker), ask how the field should be, then move them."""
+        session = self.session
+        assert session is not None
+
+        def ask(values: list[KeyValue]) -> None:
+            if not shiboken6.isValid(self) or self.session is not session:
+                return
+            fields = self.ask_promotion(key, values, type_id)
+            if fields:
+                self.tag_actions.promote_extra(key, fields)
+
+        run_in_pool(
+            lambda: session.extra_key_values(key),
+            on_done=ask,
+            on_error=lambda e: self.statusBar().showMessage(str(e)),
+        )
+
+    def ask_promotion(
+        self, key: str, values: list[KeyValue], type_id: str
+    ) -> list[OwnField] | None:
+        """The fields the user describes for an Extra field's key, or None (tests
+        replace this)."""
+        session = self.session
+        assert session is not None
+        dialog = PromoteDialog(
+            schema_types(session),
+            session.own_field_problem,
+            key,
+            values,
+            type_id,
+            lambda t: set(session.own_fields.get(t, {})),
+            parent=self,
+        )
+        return dialog.fields() if dialog.exec() == QDialog.DialogCode.Accepted else None
+
+    def turn_back_field(self, type_id: str, key: str) -> None:
+        """**Turn back into an Extra field** (#582); one undo step."""
+        assert self.session is not None
+        own = self.session.own_fields.get(type_id, {}).get(key.removeprefix(OWN))
+        if own is not None:
+            self.tag_actions.turn_back_field(own)
 
     def alias_note_key(self, key: str, field_name: str, label: str) -> None:
         """Read ``key`` as the field ``field_name`` (shown as ``label``) in this keep's
@@ -2550,6 +2600,7 @@ class MainWindow(QMainWindow):
     def _config_changed(self, message: str) -> None:
         """Roots were renamed, moved, or removed: pages show the change."""
         self.statusBar().showMessage(message)
+        self._update_undo_actions()  # removing a field is a step (#582)
         self.apply_colors()  # the keep's colors may have changed (#558)
         self._show_folders()
         self._refresh_triage()

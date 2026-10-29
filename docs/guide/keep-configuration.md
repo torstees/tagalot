@@ -62,7 +62,7 @@ Fields of your own for a kind of item, beside the ones its theme gives it: a boo
 - **Shown:** a number can show as a size (3.0 MB) or a time (3:25).
 - Whether it's on grid cards, and a column in lists.
 
-**Change…** (or a double-click) changes all of that but its type and kind, which stay as made. **Remove…** asks first, and can't be undone: items that had a value keep it as an Extra field named by the label.
+**Change…** (or a double-click) changes all of that but its type and kind, which stay as made. **Remove…** asks first: items that had a value keep it as an Extra field named by the label. **Edit → Undo** brings the field back.
 
 If a newer version of the theme adds a field with the same name as one of yours, yours is marked ⚠. Both keep their values; change your label to tell them apart.
 

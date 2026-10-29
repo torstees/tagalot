@@ -6,7 +6,8 @@ A field's name and kind stay as made, since its values are stored by them.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from dataclasses import replace
 
 import shiboken6
 from PySide6.QtCore import Qt, QThreadPool
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.own_fields import KINDS, OwnField, name_for, searches_for
+from tagalot.core.promote import KeyValue, fits, preview, type_counts
 from tagalot.core.session import KeepSession
 from tagalot.themes.api import entity_label
 from tagalot.ui.colors import ERROR, css
@@ -95,7 +98,7 @@ class OwnFieldDialog(QDialog):
         self.error.setObjectName("error")
         self.error.setStyleSheet(f"color: {css(ERROR)};")
         self.error.setWordWrap(True)
-        form = QFormLayout()
+        form = self.form = QFormLayout()
         form.addRow("Type:", self.type_combo)
         form.addRow("Label:", self.label_edit)
         form.addRow("Kind:", self.kind_combo)
@@ -162,6 +165,120 @@ class OwnFieldDialog(QDialog):
         ok.setEnabled(bool(self.label_edit.text().strip()) and problem is None)
 
 
+def schema_types(session: KeepSession) -> list[tuple[str, str]]:
+    """The keep's theme's types as ``(type id, label)``, in its order."""
+    return [(t.type_id, entity_label(t.entity)) for t in session.schema.entities.values()]
+
+
+GUESSES = ("integer", "number", "date", "yes/no", "link")
+"""The kinds :class:`PromoteDialog` tries, in order, before text: the first every value
+reads as."""
+MISFITS_SHOWN = 200
+
+
+def guess_kind(values: Iterable[KeyValue]) -> str:
+    """The kind an Extra field's values all read as (text when there's none)."""
+    texts = [v.text for v in values]
+    return next((k for k in GUESSES if texts and all(fits(k, t) for t in texts)), "text")
+
+
+class PromoteDialog(OwnFieldDialog):
+    """**Make it a field…** (#582): the Add-a-field dialog for an Extra field's key, with
+    the types where the key appears (the item's own ticked) and a preview of how many
+    values read as the kind; those that don't are listed, and stay Extra fields."""
+
+    def __init__(
+        self,
+        types: list[tuple[str, str]],
+        check: Callable[[OwnField], str | None],
+        key: str,
+        values: list[KeyValue],
+        type_id: str,
+        taken: Callable[[str], set[str]] = lambda _: set(),
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(types, check, None, type_id, taken, parent)
+        self.key = key
+        self.values = values
+        self.setWindowTitle(f"Make {key!r} a field")
+        counts = type_counts(values)
+        labels = dict(types)
+        self.form.setRowVisible(self.type_combo, False)
+        self.type_boxes: dict[str, QCheckBox] = {}
+        boxes = QVBoxLayout()
+        for tid, count in sorted(counts.items(), key=lambda t: (t[0] != type_id, t[0])):
+            box = QCheckBox(f"{labels.get(tid, tid)} ({_items(count)})")
+            box.setChecked(tid == type_id)
+            box.toggled.connect(lambda _on: self._show_problem())
+            self.type_boxes[tid] = box
+            boxes.addWidget(box)
+        self.form.insertRow(0, "For:", boxes)
+        self.preview = QLabel()
+        self.preview.setObjectName("preview")
+        self.preview.setWordWrap(True)
+        self.misfits = QListWidget()
+        self.misfits.setObjectName("misfits")
+        self.misfits.setMaximumHeight(140)
+        layout = self.layout()
+        assert isinstance(layout, QVBoxLayout)
+        layout.insertWidget(1, self.preview)
+        layout.insertWidget(2, self.misfits)
+        label = key.strip()
+        self.label_edit.setText(label[:1].upper() + label[1:])  # pages -> Pages
+        self.kind_combo.setCurrentIndex(self.kind_combo.findData(guess_kind(values)))
+        self._show_problem()
+
+    def chosen_types(self) -> list[str]:
+        return [t for t, box in getattr(self, "type_boxes", {}).items() if box.isChecked()]
+
+    def fields(self) -> list[OwnField]:
+        """The field for each chosen type: the same name, label, and kind."""
+        label = self.label_edit.text().strip()
+        types = self.chosen_types()
+        taken = set().union(*(self._taken(t) for t in types)) if types else set()
+        one = self.field()
+        name = name_for(label, taken)
+        return [replace(one, type_id=t, name=name) for t in types]
+
+    def _show_problem(self) -> None:
+        if not hasattr(self, "type_boxes"):
+            return  # still being made
+        fields = self.fields()
+        problem = None
+        if not fields:
+            problem = "Choose a type for the field"
+        elif self.label_edit.text().strip():
+            problem = next((p for f in fields if (p := self._check(f)) is not None), None)
+        self.error.setText(problem or "")
+        ok = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setEnabled(bool(self.label_edit.text().strip()) and problem is None)
+        self._show_preview()
+
+    def _show_preview(self) -> None:
+        kind = str(self.kind_combo.currentData())
+        found = preview(self.values, kind, self.chosen_types())
+        what = {"integer": "whole numbers", "number": "numbers", "date": "dates"}.get(
+            kind, "yes or no" if kind == "yes/no" else f"{kind}s"
+        )
+        text = f"{_items(found.items)}: "
+        if not found.misfits:
+            text += "all move into the field."
+        else:
+            text += f"{found.fit} read as {what} and move; {len(found.misfits)} don't, and "
+            text += "stay Extra fields (below), for you to fix."
+        self.preview.setText(text)
+        self.misfits.clear()
+        for value in found.misfits[:MISFITS_SHOWN]:
+            self.misfits.addItem(f"{value.title}: {value.text}")
+        if len(found.misfits) > MISFITS_SHOWN:
+            self.misfits.addItem(f"and {len(found.misfits) - MISFITS_SHOWN} more")
+        self.misfits.setVisible(bool(found.misfits))
+
+
+def _items(count: int) -> str:
+    return "1 item" if count == 1 else f"{count} items"
+
+
 class OwnFieldsTab(QWidget):
     """The Fields tab; ``saved`` takes a status-bar message after a change was saved."""
 
@@ -216,7 +333,7 @@ class OwnFieldsTab(QWidget):
 
     def types(self) -> list[tuple[str, str]]:
         """The theme's types as ``(type id, label)``, in its order."""
-        return [(t.type_id, entity_label(t.entity)) for t in self.session.schema.entities.values()]
+        return schema_types(self.session)
 
     def reload(self) -> None:
         """Show the keep's own fields as ``keep.toml`` has them now."""
@@ -329,11 +446,11 @@ class OwnFieldsTab(QWidget):
         def counted(count: int) -> None:
             if not shiboken6.isValid(self) or not self.confirm_remove(own, count):
                 return
-            items = "1 item" if count == 1 else f"{count} items"
+            verb = "keeps" if count == 1 else "keep"
+            kept = f"; {_items(count)} {verb} its value as an Extra field" if count else ""
             self._run(
                 lambda: session.remove_own_field(own),
-                f"Removed the field {own.label!r}"
-                + (f"; {items} keep its value as an Extra field." if count else "."),
+                f"Removed the field {own.label!r}{kept}. Edit \u2192 Undo brings it back.",
             )
 
         run_in_pool(lambda: session.count_own_values(own), on_done=counted, pool=self._pool)
@@ -380,6 +497,6 @@ class OwnFieldsTab(QWidget):
         answer = QMessageBox.question(
             self,
             "Remove field",
-            f"Remove the field {own.label!r}? {what} This can't be undone.",
+            f"Remove the field {own.label!r}? {what} Edit \u2192 Undo brings it back.",
         )
         return answer == QMessageBox.StandardButton.Yes
