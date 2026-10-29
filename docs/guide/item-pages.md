@@ -61,6 +61,10 @@ Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** can
 
 **Fields of your own** (added in [Keep configuration](keep-configuration.md#fields)) follow the theme's under Details and edit the same way. Text you type in them is found by the search box.
 
+**Make it a field…**, on the arrow beside an Extra field's ×, turns that Extra field into a field of your own, in every item that has it. It asks for the label, the kind, and so on, as Keep configuration's **Add field…** does, and which kinds of item it's for: the item's own, and others that have the same Extra field. Before anything changes it says how many values fit ("212 items: 205 read as whole numbers and move; 7 don't…") and lists those that don't: they stay Extra fields, for you to fix. Values from a note stay marked as the note's. **Edit → Undo** reverses it.
+
+**Turn back into an Extra field**, on the arrow (▾) beside one of your fields, does the reverse, in every item, at any time. **Edit → Undo** reverses that too.
+
 **A value you edited is yours:** it's marked "• edited", and scans never change it. Every edit is one step you can undo.
 
 **Fields that name other items** (a book's **Series**, **Universe**, **Collections**, and **Author**; a comic's **Writer** and **Artist**; an album's **Artist**) edit the same way, and move the item: type `Witches` as a book's series and it leaves its old series for **Witches** (made if there isn't one). Separate several names with commas (`Cosmere, Favourites`), or with `;` when a name has a comma in it (`Pratchett, Terry; Gaiman, Neil`). Scans keep what you chose, even though the file still says otherwise. A book in a series takes its **Universe** from the series: change it on the series' page, and its books follow.

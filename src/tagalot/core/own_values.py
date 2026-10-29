@@ -4,23 +4,21 @@ table.
 Each value is a row in the column of its kind, so it sorts and filters by its index
 (#583). Edits go through :func:`tagalot.core.fields.edit_own_field`, one undo step with
 provenance ``user`` (``own:<name>``), as a theme field's do. Removing a field puts its
-values back as Extra fields (:func:`remove_field_values`).
+values back as Extra fields (``core/promote.py``).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import Connection, delete, func, select, update
+from sqlalchemy import Connection, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from tagalot.core import fts
-from tagalot.core.extra_keys import as_text
-from tagalot.core.models import Entity, EntityField, FieldProvenance, utcnow
+from tagalot.core.models import Entity, EntityField
 from tagalot.core.own_fields import OwnField
 
 _COLUMNS = ("text", "integer", "real", "day")
-_ROW = (
+VALUE_ROW = (
     EntityField.entity_id,
     EntityField.field,
     EntityField.text,
@@ -75,7 +73,7 @@ def item_values(conn: Connection, entity_id: int, fields: Iterable[OwnField]) ->
     if not by_name:
         return {}
     rows = conn.execute(
-        select(*_ROW).where(
+        select(*VALUE_ROW).where(
             EntityField.entity_id == entity_id, EntityField.field.in_(list(by_name))
         )
     )
@@ -86,7 +84,7 @@ def raw_values(conn: Connection, entity_ids: Sequence[int]) -> dict[int, dict[st
     """Every own-field value of these items as stored, by item and field name (for
     snapshots and merges, which don't need the fields' kinds)."""
     found: dict[int, dict[str, Any]] = {}
-    for row in conn.execute(select(*_ROW).where(EntityField.entity_id.in_(entity_ids))):
+    for row in conn.execute(select(*VALUE_ROW).where(EntityField.entity_id.in_(entity_ids))):
         value = next((v for c in _COLUMNS if (v := getattr(row, c)) is not None), None)
         found.setdefault(row.entity_id, {})[row.field] = value
     return found
@@ -117,46 +115,6 @@ def count_values(conn: Connection, own: OwnField) -> int:
         )
         or 0
     )
-
-
-def remove_field_values(
-    conn: Connection, own: OwnField, text_source: fts.TextSource = fts.no_text_fields
-) -> int:
-    """Put the field's values back as Extra fields named by its label, and delete them
-    (Keep configuration's Remove, #581). An item whose Extra field of that name already
-    holds something else gets ``"<label> (<name>)"``. Returns how many items changed."""
-    rows = conn.execute(
-        select(*_ROW, Entity.extra)
-        .join(Entity, Entity.id == EntityField.entity_id)
-        .where(EntityField.field == own.name, Entity.type == own.type_id)
-    ).all()
-    ids = []
-    for row in rows:
-        text = as_text(read_value(own, row))
-        if text is None:
-            continue
-        after = dict(row.extra or {})
-        key = own.label
-        if key in after and after[key] != text:
-            key = f"{own.label} ({own.name})"
-        after[key] = text
-        conn.execute(
-            update(Entity)
-            .where(Entity.id == row.entity_id)
-            .values(extra=after, updated_at=utcnow())
-        )
-        ids.append(row.entity_id)
-    of_type = select(Entity.id).where(Entity.type == own.type_id)
-    conn.execute(
-        delete(EntityField).where(EntityField.field == own.name, EntityField.entity_id.in_(of_type))
-    )
-    conn.execute(
-        delete(FieldProvenance).where(
-            FieldProvenance.field == own.key, FieldProvenance.entity_id.in_(of_type)
-        )
-    )
-    fts.sync_entities(conn, ids, text_source)
-    return len(ids)
 
 
 def restore_raw(conn: Connection, values: Mapping[int, Mapping[str, Any]]) -> None:

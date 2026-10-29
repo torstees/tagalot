@@ -276,7 +276,7 @@ def test_the_page_lists_them_after_the_themes(session: KeepSession) -> None:
     assert (owned.value, owned.type, owned.edited) == (None, bool, False)
 
 
-def test_removing_a_field_puts_its_values_in_extra_fields(session: KeepSession) -> None:
+def test_removing_a_field_puts_its_values_in_extra_fields_with_undo(session: KeepSession) -> None:
     session.add_own_field(PAGES)
     session.add_own_field(WHERE)
     dune, emma = _id(session, "Dune"), _id(session, "Emma")
@@ -286,7 +286,7 @@ def test_removing_a_field_puts_its_values_in_extra_fields(session: KeepSession) 
     session.tags.edit_field(dune, WHERE.key, "Kobo")
     assert session.count_own_values(PAGES) == 2
 
-    assert session.remove_own_field(PAGES) == 2
+    assert session.remove_own_field(PAGES).moved == 2
     assert list(session.own_fields["books.book"]) == ["where_bought"]
     assert list(load_keep_config(session.keep.toml_path).fields["books.book"]) == ["where_bought"]
     with session.reader.connect() as conn:
@@ -298,8 +298,22 @@ def test_removing_a_field_puts_its_values_in_extra_fields(session: KeepSession) 
     assert left == ["where_bought"]
     assert PAGES.key not in sources
     assert _search(session, "120") == ["Dune"]
-    # Its edits left the history: undoing goes to the edit before them.
-    assert session.tags.undo_label == "Set Where bought of 'Dune' to 'Kobo'"
+    # One step (#582): undo brings the field, its values, and their provenance back.
+    assert session.tags.undo_label == "Turn 'Pages read' back into an Extra field (2 items)"
+    session.tags.undo()
+    assert list(load_keep_config(session.keep.toml_path).fields["books.book"]) == [
+        "pages_read",
+        "where_bought",
+    ]
+    assert [r[:4] for r in _rows(session)] == [
+        (dune, "pages_read", None, 120),
+        (dune, "where_bought", "Kobo", None),
+        (emma, "pages_read", None, 40),
+    ]
+    with session.reader.connect() as conn:
+        assert conn.scalar(select(Entity.extra).where(Entity.id == emma)) == {"Pages read": "a few"}
+    session.tags.redo()
+    assert list(session.own_fields["books.book"]) == ["where_bought"]
 
 
 def test_changing_a_field_keeps_its_name_and_kind(session: KeepSession) -> None:

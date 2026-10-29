@@ -58,6 +58,7 @@ from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicat
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
 from tagalot.core.own_fields import OWN, OwnField, OwnFields
 from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
+from tagalot.core.promote import FieldMove
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
 from tagalot.core.tag_pictures import set_tag_picture
@@ -170,6 +171,7 @@ Step = (
     | MergeChange
     | NotDuplicateChange
     | SavedChange
+    | FieldMove
 )
 """One entry in the undo history."""
 
@@ -203,6 +205,9 @@ class TagService:
         self.own_fields: Callable[[], OwnFields] = dict
         """The keep's own fields (#581), which :meth:`edit_field` sets as ``own:<name>``
         (the session sets it from ``keep.toml``)."""
+        self.on_own_fields: Callable[[OwnFields], None] | None = None
+        """Writes the keep's own fields to ``keep.toml`` as a :class:`FieldMove` is undone
+        and redone (the session sets it)."""
 
     # --- operations ---
 
@@ -551,12 +556,6 @@ class TagService:
         self._undo.append(change)
         return change.label
 
-    def forget_field(self, key: str) -> None:
-        """Drop the edits of a field from the history (one of the keep's own fields,
-        removed: undoing them would bring back values of a field that isn't there)."""
-        self._undo = [s for s in self._undo if not _edits(s, key)]
-        self._redo = [s for s in self._redo if not _edits(s, key)]
-
     def clear_history(self) -> None:
         self._undo.clear()
         self._redo.clear()
@@ -602,6 +601,12 @@ class TagService:
             self.writer.run(lambda conn: restore_saved(conn, step, forward=forward))
         elif isinstance(step, NotDuplicateChange):
             self.writer.run(lambda conn: restore_not_duplicates(conn, step, forward=forward))
+        elif isinstance(step, FieldMove):
+            assert schema is not None
+            action = step.action
+            self.writer.run(lambda conn: restore_action(conn, schema, action, forward=forward))
+            if self.on_own_fields is not None:
+                self.on_own_fields(step.fields_after if forward else step.fields_before)
         elif isinstance(step, MergeChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_merge(conn, schema, step, forward=forward))
@@ -870,10 +875,6 @@ def _tag_values(row: TagRow) -> dict[str, Any]:
         "description": description,
         "types": types,
     }
-
-
-def _edits(step: Step, key: str) -> bool:
-    return isinstance(step, FieldChange) and step.field == key
 
 
 def _own_field(conn: Connection, fields: OwnFields, entity_id: int, key: str) -> OwnField:

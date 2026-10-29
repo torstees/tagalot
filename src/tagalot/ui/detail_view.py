@@ -62,6 +62,7 @@ from tagalot.core.markdown_glimpse import glimpse
 from tagalot.core.models import FieldSource, ResourceStatus
 from tagalot.core.note_markdown import find_links, read_pictures, renderable
 from tagalot.core.notes import read_note
+from tagalot.core.own_fields import OWN
 from tagalot.core.roots import local_path
 from tagalot.core.search import POSITION
 from tagalot.core.search_fields import contained_types, contents_order, type_contents_order
@@ -110,6 +111,8 @@ FROM_FILE_TIP = (
 )
 IGNORE_KEY = "Ignore this key in every note…"
 ALIAS_KEY = "Read this key as a field…"
+MAKE_FIELD = "Make it a field…"
+TURN_BACK = "Turn back into an Extra field"
 
 
 @dataclass
@@ -210,6 +213,11 @@ class DetailPage(QWidget):
     note_key_alias_requested = Signal(str, str, str)
     """Read this front-matter key as a field (#411): the key, the field's name, and its
     label."""
+    promote_requested = Signal(str, str)
+    """**Make it a field…** on an Extra field (#582): its key and the item's type."""
+    turn_back_requested = Signal(str, str)
+    """**Turn back into an Extra field** on one of the keep's own fields (#582): the
+    item's type and the field's ``own:<name>``."""
     note_edited = Signal(int, str)
     """The user typed the item's note (#383): entity id, the Markdown (empty: removed)."""
     save_note_requested = Signal(int)
@@ -1087,11 +1095,21 @@ class DetailPage(QWidget):
             remove.clicked.connect(
                 lambda _c=False, name=name: self.extra_edited.emit(entity_id, name, None, False)
             )
-            if given:  # the arrow: this key in every note and file (#381, #410)
-                remove.setObjectName(f"remove_{name}")
-                remove.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
-                menu = QMenu(remove)
-                menu.addAction("Remove from this item", remove.click)
+            # The arrow: make it a field (#582); and for a note's or file's key, that
+            # key in every note and file (#381, #410).
+            remove.setObjectName(f"remove_{name}")
+            remove.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+            menu = QMenu(remove)
+            menu.addAction("Remove from this item", remove.click)
+            make = menu.addAction(MAKE_FIELD)
+            make.setToolTip(
+                f"Make {name!r} a field of your own, for this item and every other with it"
+            )
+            make.triggered.connect(
+                lambda _c=False, name=name: self.promote_requested.emit(name, detail.type)
+            )
+            remove.setMenu(menu)
+            if given:
                 ignore = menu.addAction(IGNORE_KEY)
                 ignore.setToolTip(f"Leave {name!r} out of every note and file in this keep")
                 ignore.triggered.connect(lambda _c=False, name=name: self.ignore_note_key(name))
@@ -1102,7 +1120,6 @@ class DetailPage(QWidget):
                 as_field.triggered.connect(
                     lambda _c=False, name=name: self.alias_note_key(name, detail.type)
                 )
-                remove.setMenu(menu)
             row.addWidget(editor)
             row.addWidget(remove)
             row.addStretch(1)  # the x follows its value
@@ -1192,8 +1209,35 @@ class DetailPage(QWidget):
             value.committed.connect(
                 lambda new, name=row.name: self.field_edited.emit(self.entity_id, name, new)
             )
+            if row.name.startswith(OWN):  # one of the keep's own (#582)
+                form.addRow(f"{row.label}:", self._own_row(value, row.name))
+                continue
             form.addRow(f"{row.label}:", value)
         return body
+
+    def _own_row(self, value: EditableValue, name: str) -> QHBoxLayout:
+        """An own field's value with a menu: turn it back into Extra fields."""
+        more = QToolButton()
+        more.setObjectName(f"more_{name}")
+        more.setText("\u25be")
+        more.setAutoRaise(True)
+        more.setToolTip("A field of your own (Keep configuration \u2192 Fields)")
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(more)
+        back = menu.addAction(TURN_BACK)
+        back.setToolTip("Its values become Extra fields again, in every item")
+        back.triggered.connect(
+            lambda _c=False: self.turn_back_requested.emit(self._type_id(), name)
+        )
+        more.setMenu(menu)
+        row = QHBoxLayout()
+        row.addWidget(value)
+        row.addWidget(more)
+        row.addStretch(1)
+        return row
+
+    def _type_id(self) -> str:
+        return self.detail.type if self.detail is not None else ""
 
     def _show_action_buttons(self, detail: EntityDetail) -> None:
         """A button for each theme action that applies to the item (once)."""

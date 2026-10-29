@@ -94,7 +94,10 @@ def test_the_fields_tab_adds_changes_and_removes_fields(
     with qtbot.waitSignal(config.changed, timeout=5000) as blocker:
         tab.remove_button.click()
     assert asked == [1]
-    assert blocker.args == ["Removed the field 'Made by'; 1 item keep its value as an Extra field."]
+    assert blocker.args == [
+        "Removed the field 'Made by'; 1 item keeps its value as an Extra field. "
+        "Edit → Undo brings it back."
+    ]
     assert session.own_fields == {}
     assert tab.selected() is None
 
