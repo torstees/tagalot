@@ -57,7 +57,7 @@ Fields of your own for a kind of item, beside the ones its theme gives it: a boo
 
 - **Type:** the kind of item it belongs to.
 - **Label:** its name on pages. It can't be the name of one of the theme's fields; to fill one of those from your notes, add a key to **Keys to read as fields** (Notes tab) instead.
-- **Kind:** text, a whole number (integer), a number, a date, yes/no, or a link (a web address that opens in your browser).
+- **Kind:** text, a whole number (integer), a number, a date, yes/no, a link (a web address that opens in your browser), or a rating (five stars, in half stars). A kind of item has one rating at most, and none of yours when its theme rates it already.
 - **Searched:** by its words, by a range, by picking values, or not at all, as the kind allows.
 - **Shown:** a number can show as a size (3.0 MB) or a time (3:25).
 - Whether it's on grid cards (and in the preview under a list), and a column in lists.

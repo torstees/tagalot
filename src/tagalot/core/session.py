@@ -106,6 +106,7 @@ from tagalot.core.own_fields import (
     OwnFields,
     clash,
     field_problem,
+    name_for,
     with_field,
     without_field,
 )
@@ -664,7 +665,44 @@ class KeepSession:
         except KeyError:
             return f"This keep's theme has no type {own.type_id!r}"
         others = self.own_fields.get(own.type_id, {}).values()
+        if own.kind == "rating":  # one rating an item (#577)
+            if self.theme_rates(own.type_id):
+                return "The theme rates these items already"
+            if any(f.kind == "rating" and f.name != own.name for f in others):
+                return "These items have a rating of yours already"
         return field_problem(own) or clash(own, self.theme_fields(own.type_id), title_label, others)
+
+    def theme_rates(self, type_id: str) -> bool:
+        """Whether the theme gives the type a rating field of its own (#419): it isn't
+        offered one of the user's (#577), so no item has two."""
+        try:
+            entity = self.schema.by_type_id(type_id).entity
+        except KeyError:
+            return False
+        return any(f.spec.rating is not None for f in entity_fields(entity))
+
+    def own_rating(self, type_id: str) -> OwnField | None:
+        """The type's rating of the user's own (#577), if it has one."""
+        found = self.own_fields.get(type_id, {}).values()
+        return next((f for f in found if f.kind == "rating"), None)
+
+    def rate_type(self, type_id: str) -> OwnField:
+        """Turn ratings on for a type (#577): a rating of the user's own, out of five,
+        shown on cards and in lists. Raises :class:`OwnFieldError` for a type the theme
+        rates already. Runs in a worker."""
+        if self.theme_rates(type_id):
+            raise OwnFieldError("The theme rates these items already")
+        found = self.own_rating(type_id)
+        if found is not None:
+            return found
+        taken = set(self.own_fields.get(type_id, {})) | {n for n, _ in self.theme_fields(type_id)}
+        rating = OwnField(
+            type_id, name_for("rating", taken), "Rating", "rating", card=True, column=True
+        )
+        if self.own_field_problem(rating) is not None:  # a field labelled Rating
+            rating = replace(rating, label="Stars")
+        self.add_own_field(rating)
+        return rating
 
     def theme_clash(self, own: OwnField) -> str | None:
         """The theme field an own field is now named or labelled like (a later theme

@@ -28,8 +28,11 @@ OWN = "own:"
 """An own field's key where the core names fields (provenance, edits, merges, the page's
 rows): ``own:<name>``, so it never clashes with a theme field of that name."""
 
-KINDS = ("text", "integer", "number", "date", "yes/no", "link")
-"""What an own field holds; a ``link`` is a web address, text that opens in the browser."""
+KINDS = ("text", "integer", "number", "date", "yes/no", "link", "rating")
+"""What an own field holds; a ``link`` is a web address, text that opens in the browser;
+a ``rating`` is a number out of :data:`RATING_SCALE`, in half stars (#577)."""
+RATING_SCALE = 5
+"""What a rating of the user's own is out of: five stars, as a theme's ``rating=5``."""
 SEARCHES = ("words", "range", "choice", "none")
 """How an own field is searched: its words, a range, a choice of its values, or not at
 all (filters, #583)."""
@@ -46,6 +49,7 @@ _PYTHON_TYPES: Mapping[str, type] = {
     "date": date,
     "yes/no": bool,
     "link": str,
+    "rating": float,
 }
 _SEARCHES_FOR: Mapping[str, tuple[str, ...]] = {
     "text": ("words", "choice", "none"),
@@ -54,6 +58,7 @@ _SEARCHES_FOR: Mapping[str, tuple[str, ...]] = {
     "date": ("range", "none"),
     "yes/no": ("choice", "none"),
     "link": ("words", "none"),
+    "rating": ("range", "none"),
 }
 """The searches each kind may have, its default first."""
 
@@ -99,11 +104,23 @@ class OwnField:
     @property
     def shown_as(self) -> str | None:
         """Its display format as theme fields have it: ``"url"`` for a link."""
+        if self.kind == "rating":
+            return f"stars/{RATING_SCALE}"
         return "url" if self.kind == "link" else self.display
 
 
 OwnFields = Mapping[str, Mapping[str, OwnField]]
 """A keep's own fields: type id -> name -> field, in ``keep.toml``'s order."""
+
+
+def rating_problem(value: float) -> str | None:
+    """Why ``value`` can't be a rating of the user's own (out of :data:`RATING_SCALE`, in
+    half stars), or None."""
+    if not 0 <= value <= RATING_SCALE:
+        return f"isn't a rating from 0 to {RATING_SCALE}"
+    if value * 2 != int(value * 2):
+        return "isn't in half stars"
+    return None
 
 
 def default_search(kind: str) -> str:

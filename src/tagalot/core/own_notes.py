@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core.extra_keys import EXTRA, as_text, convert, loose_key, read_again
 from tagalot.core.models import Entity, FieldProvenance, FieldSource, OwnFieldRead, utcnow
-from tagalot.core.own_fields import OWN, OwnField, OwnFields
+from tagalot.core.own_fields import OWN, OwnField, OwnFields, rating_problem
 from tagalot.core.own_values import raw_values, store_value
 
 
@@ -69,7 +69,10 @@ def own_by_key(fields: Iterable[OwnField]) -> dict[str, OwnField]:
 
 def read_own(own: OwnField, value: Any) -> Any:
     """A front-matter value as the field's: ``ValueError`` when it isn't one."""
-    return convert(value, own.python_type)
+    found = convert(value, own.python_type)
+    if own.kind == "rating" and (problem := rating_problem(found)) is not None:
+        raise ValueError(problem)
+    return found
 
 
 def take_own(
