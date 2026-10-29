@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -205,6 +205,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(f"{session.keep.config.name} — {WINDOW_TITLE}")
         self._ui_state = load_ui_state(session.keep.ui_state_path)
+        self._restore_size()
         self.scans = scans or ScanController()
         self._pages: dict[NavTarget, QWidget] = {}
         self._saved: dict[int, tuple[str, dict[str, Any]]] = {}
@@ -2928,10 +2929,43 @@ class MainWindow(QMainWindow):
             if app is not None:
                 app.removeEventFilter(self)
             if self.session is not None:
+                self._save_size()
                 # Thumbnail jobs read the keep: let them finish before it closes.
                 self.thumbnails.clear()
                 self.thumbnails.wait()
             self.closed.emit()
+
+    def _restore_size(self) -> None:
+        """Open at the size this keep's window had when it was last closed (#594), within
+        the screen's free area, maximized if it was."""
+        saved = self._ui_state.get(WINDOW_KEY)
+        if not isinstance(saved, dict):
+            return
+        width, height = saved.get("width"), saved.get("height")
+        if isinstance(width, int) and isinstance(height, int):
+            free = self.screen().availableGeometry().size()
+            wanted = QSize(width, height).expandedTo(MIN_WINDOW)
+            self.resize(wanted.boundedTo(free))
+        if saved.get("maximized") is True:
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
+
+    def _save_size(self) -> None:
+        """Remember the window's size in the keep's ``ui_state.json`` (#594): its size
+        when not maximized, and whether it is."""
+        assert self.session is not None
+        normal = self.normalGeometry() if self.isMaximized() else self.geometry()
+        self._ui_state[WINDOW_KEY] = {
+            "width": normal.width(),
+            "height": normal.height(),
+            "maximized": self.isMaximized(),
+        }
+        save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+
+WINDOW_KEY = "window"
+"""``ui_state.json``'s key for the window's size (#594)."""
+MIN_WINDOW = QSize(640, 400)
+"""The smallest size a remembered window opens at."""
 
 
 def scan_summary(reports: list[ScanReport]) -> str:
