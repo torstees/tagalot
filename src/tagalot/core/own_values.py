@@ -60,7 +60,7 @@ def read_value(own: OwnField, row: Any) -> Any:
         return None if row.integer is None else bool(row.integer)
     if own.kind == "integer":
         return row.integer
-    if own.kind == "number":
+    if own.kind in ("number", "rating"):
         return row.real
     if own.kind == "date":
         return row.day

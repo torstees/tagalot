@@ -2451,7 +2451,46 @@ class MainWindow(QMainWindow):
         theirs = menu.addAction("Use the theme's icon")
         theirs.setEnabled(type_id in self.session.keep.config.type_icons)
         theirs.triggered.connect(lambda: self.set_type_icon(type_id, IconChoice()))
+        if not self.session.theme_rates(type_id):  # ratings for any type (#577)
+            menu.addSeparator()
+            rate = menu.addAction(f"Rate {plural}")
+            rate.setCheckable(True)
+            rate.setChecked(self.session.own_rating(type_id) is not None)
+            rate.setToolTip(f"Give {plural} a rating out of five stars, on their pages")
+            rate.toggled.connect(lambda on: self.set_rating(type_id, on))
         menu.exec(point)
+
+    def set_rating(self, type_id: str, on: bool) -> None:
+        """Turn ratings on or off for a type (#577): a rating of the user's own. Turning
+        it off asks first; it is then one undo step, its values kept as Extra fields."""
+        session = self.session
+        assert session is not None
+        plural = type_plurals(session.schema).get(type_id, type_id)
+        if not on:
+            rating = session.own_rating(type_id)
+            if rating is not None and self.confirm_unrate(plural):
+                self.tag_actions.turn_back_field(rating)
+            return
+
+        def done(_: object) -> None:
+            if shiboken6.isValid(self):
+                self._config_changed(f"{plural} can be rated now: on their pages.")
+
+        run_in_pool(
+            lambda: session.rate_type(type_id),
+            on_done=done,
+            on_error=lambda e: self.statusBar().showMessage(f"Couldn't turn on ratings: {e}"),
+        )
+
+    def confirm_unrate(self, plural: str) -> bool:
+        """Ask before turning a type's ratings off (tests replace this)."""
+        answer = QMessageBox.question(
+            self,
+            "Stop rating",
+            f"Stop rating {plural}? Their ratings become Extra fields; Edit → Undo brings "
+            "them back.",
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def change_type_icon(self, type_id: str) -> None:
         """Choose a type's icon for this keep (#557), saved in ``keep.toml``."""

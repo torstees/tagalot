@@ -28,7 +28,7 @@ from tagalot.core.entity_state import ChangeRecorder
 from tagalot.core.extra_keys import EXTRA, as_text
 from tagalot.core.ingest import theme_text_source
 from tagalot.core.models import Entity, EntityField, FieldProvenance, FieldSource, utcnow
-from tagalot.core.own_fields import OwnField, OwnFields
+from tagalot.core.own_fields import OwnField, OwnFields, rating_problem
 from tagalot.core.own_values import VALUE_ROW, read_value, store_value
 from tagalot.core.theme_schema import ThemeSchema
 
@@ -56,10 +56,12 @@ def parse_as(kind: str, text: str) -> Any:
             if not _INTEGER.match(text):
                 raise ValueError("not a whole number")
             return int(text.replace(",", ""))
-        case "number":
+        case "number" | "rating":
             number = float(text.replace(",", ""))
             if not math.isfinite(number):
                 raise ValueError("not a number")
+            if kind == "rating" and (problem := rating_problem(number)) is not None:
+                raise ValueError(problem)
             return number
         case "date":
             if len(text) != 10:

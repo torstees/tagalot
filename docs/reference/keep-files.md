@@ -66,7 +66,7 @@ text_size = 110                             # percent of the system's size
 
 [fields."music.album".bought]               # a field of your own, for albums
 label = "Bought"                            # its name on pages
-kind = "date"                              # text, integer, number, date, yes/no, or link
+kind = "date"                              # text, integer, number, date, yes/no, link, or rating
 search = "range"                           # words, range, choice, or none
 # display = "bytes"                        # numbers only: bytes or duration
 card = true                                 # on grid cards

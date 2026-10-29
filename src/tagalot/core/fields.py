@@ -23,7 +23,7 @@ from tagalot.core.models import (
     NoteKeyRemoval,
     utcnow,
 )
-from tagalot.core.own_fields import OWN, OwnField
+from tagalot.core.own_fields import OWN, RATING_SCALE, OwnField, rating_problem
 from tagalot.core.own_values import item_values, store_value
 from tagalot.core.theme_schema import EntityTable, ThemeSchema
 from tagalot.themes.api import FieldInfo, FieldSpec, SearchKind, entity_label
@@ -115,6 +115,8 @@ def own_field_info(own: OwnField) -> FieldInfo:
         own.label, card=own.card, search=_SEARCH_KINDS.get(own.search), display=own.shown_as
     )
     spec.name = own.key
+    if own.kind == "rating":  # stars, as a theme's rating=5 (#577)
+        spec.rating = RATING_SCALE
     return FieldInfo(own.key, own.python_type, True, spec)
 
 
@@ -129,6 +131,10 @@ def edit_own_field(
     if row.type != own.type_id:
         raise FieldEditError(f"{row.title!r} has no field {own.label!r}")
     after = check_value(own_field_info(own), value)
+    if own.kind == "rating" and after is not None:
+        problem = rating_problem(after)
+        if problem is not None:
+            raise FieldEditError(f"{own.label} {problem}")
     before = own_value(conn, entity_id, own)
     source_before = conn.scalar(
         select(FieldProvenance.source).where(
