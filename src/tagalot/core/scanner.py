@@ -17,6 +17,8 @@ from tagalot.core.models import (
     ArchiveRead,
     Entity,
     EntityResource,
+    LinkedPlace,
+    PlaceContains,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -485,6 +487,7 @@ def detect_moves(conn: Connection, candidate_ids: Collection[int] | None = None)
         Resource.kind == ResourceKind.FILE,
         Resource.fingerprint.is_not(None),
         ~linked,
+        Resource.id.not_in(select(LinkedPlace.resource_id)),  # another place of a file (#598)
     )
     if candidate_ids is not None:
         if not candidate_ids:
@@ -581,6 +584,25 @@ def _move_members(conn: Connection, old_id: int, new_id: int) -> None:
     )
 
 
+def _move_places(conn: Connection, old_id: int, new_id: int) -> None:
+    """A linked place, or a first place, moved (#598): its links, and the containers it
+    files its item in, follow it."""
+    conn.execute(
+        update(LinkedPlace)
+        .where(LinkedPlace.resource_id == old_id)
+        .values(resource_id=new_id)
+        .prefix_with("OR IGNORE")
+    )
+    conn.execute(update(LinkedPlace).where(LinkedPlace.first_id == old_id).values(first_id=new_id))
+    conn.execute(delete(LinkedPlace).where(LinkedPlace.resource_id == LinkedPlace.first_id))
+    conn.execute(
+        update(PlaceContains)
+        .where(PlaceContains.resource_id == old_id)
+        .values(resource_id=new_id)
+        .prefix_with("OR IGNORE")
+    )
+
+
 def _transfer(conn: Connection, old_id: int, new_id: int) -> None:
     conn.execute(
         update(EntityResource)
@@ -592,6 +614,7 @@ def _transfer(conn: Connection, old_id: int, new_id: int) -> None:
         update(Entity).where(Entity.thumb_resource_id == old_id).values(thumb_resource_id=new_id)
     )
     _move_members(conn, old_id, new_id)
+    _move_places(conn, old_id, new_id)
     first_seen = select(Resource.first_seen_at).where(Resource.id == old_id).scalar_subquery()
     conn.execute(update(Resource).where(Resource.id == new_id).values(first_seen_at=first_seen))
     conn.execute(delete(Resource).where(Resource.id == old_id))  # leftover links cascade

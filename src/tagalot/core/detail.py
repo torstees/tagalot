@@ -36,6 +36,7 @@ from tagalot.core.models import (
 )
 from tagalot.core.own_fields import OwnField, OwnFields
 from tagalot.core.own_values import item_values
+from tagalot.core.places import first_place, places_of
 from tagalot.core.roots import local_path
 from tagalot.core.skipped_items import skipped_items
 from tagalot.core.tags import PATH_SEPARATOR, TagTree
@@ -75,6 +76,9 @@ class FileRow:
     archive: str = ""
     """For a file inside an archive (#391, #524): the archive's relpath. ``path`` is then
     the archive's: the member is opened from a copy taken out of it."""
+    place_of: int | None = None
+    """For a linked place (#598): the file it is another place of, listed just before it
+    ("Also at …")."""
 
     @property
     def member(self) -> str:
@@ -519,9 +523,12 @@ def role_files(
     *,
     resource_id: int | None = None,
 ) -> tuple[FileRow, ...]:
-    """The entity's files in ``role`` (every role if ``None``), in their sort order; with
-    ``resource_id``, only that one of them. A file inside an archive (#524) has the
-    archive's path."""
+    """The entity's files in ``role`` (every role if ``None``), in their sort order, each
+    followed by its linked places (#598); with ``resource_id``, only that one of them (or
+    of their places). A file inside an archive (#524) has the archive's path."""
+    wanted = resource_id
+    if resource_id is not None:
+        resource_id = first_place(conn, resource_id)
     archive = aliased(Resource)
     query = (
         select(
@@ -567,7 +574,33 @@ def role_files(
                 archive=row.archive or "",
             )
         )
+    found = _with_places(conn, found, root_path)
+    if wanted is not None:
+        return tuple(f for f in found if f.resource_id == wanted)
     return tuple(found)
+
+
+def _with_places(
+    conn: Connection, files: list[FileRow], root_path: Callable[[str], str | None]
+) -> list[FileRow]:
+    """``files``, each followed by its linked places (#598), in its role."""
+    places = places_of(conn, [f.resource_id for f in files])
+    if not places:
+        return files
+    rows = {
+        r.resource_id: r
+        for r in (resource_file(conn, p, root_path) for ps in places.values() for p in ps)
+        if r is not None
+    }
+    found: list[FileRow] = []
+    for file in files:
+        found.append(file)
+        found.extend(
+            replace(rows[p], role=file.role, place_of=file.resource_id)
+            for p in places.get(file.resource_id, ())
+            if p in rows
+        )
+    return found
 
 
 def resource_file(

@@ -1463,8 +1463,10 @@ def _form(body: QWidget) -> QFormLayout:
 
 def _file_label(file: FileRow) -> QLabel:
     text = html.escape(file.shown or "(the root folder)")
+    if file.place_of is not None:  # another place of the file above it (#598)
+        text = f"Also at {text}"
     facts = [html.escape(file.root_name)]
-    if file.size is not None and file.kind == "file":
+    if file.size is not None and file.kind == "file" and file.place_of is None:
         facts.append(f"{file.size:,} bytes")
     if file.status is ResourceStatus.OFFLINE:
         facts.append("<b>offline</b>")
@@ -1478,6 +1480,8 @@ def _file_label(file: FileRow) -> QLabel:
     label.setTextFormat(Qt.TextFormat.RichText)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setWordWrap(True)  # long paths wrap rather than widen the page
+    if file.place_of is not None:
+        label.setIndent(16)
     if file.path is None:
         label.setToolTip("This root has no path on this computer")
     elif file.archive:  # opened from a copy; the archive is never changed (#524)

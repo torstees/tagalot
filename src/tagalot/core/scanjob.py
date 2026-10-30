@@ -55,7 +55,15 @@ from tagalot.core.markdown_check import (
     is_markdown,
     record_markdown_problems,
 )
-from tagalot.core.models import ArchiveMode, Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import (
+    ArchiveMode,
+    EntityResource,
+    LinkedPlace,
+    Resource,
+    ResourceKind,
+    ResourceStatus,
+    Root,
+)
 from tagalot.core.note_keys import sync_aliases, sync_ignored
 from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
@@ -495,8 +503,24 @@ def _ingest_pending(
     if notes:
         writer.run(partial(_mark_ingested, [r.id for r in notes], when))
     pending += _pending_members(reader, root, path, see_through)
+    pending, places = _apart_places(writer, reader, pending, when)
     pending = _read_last(reader, root, path, theme, pending, see_through)
     _ingest_files(writer, reader, root, theme, schema, when, report, say, options, pending)
+    if places:  # after the rest: they file the items their first places made (#598)
+        firsts = _ready_places(writer, reader, places, when)
+        _ingest_files(
+            writer,
+            reader,
+            root,
+            theme,
+            schema,
+            when,
+            report,
+            say,
+            options,
+            [p for p in places if p.id in firsts],
+            firsts,
+        )
     if gallery_roles(schema):  # gallery roles filled from folders (#387)
         writer.run(
             partial(fill_galleries, schema=schema, root_id=root.id, notes_folder=notes_folder)
@@ -629,11 +653,15 @@ def _ingest_files(
     say: Progress,
     options: Mapping[str, Any],
     pending: list[ResourceInfo],
+    places: Mapping[int, int] | None = None,
 ) -> None:
-    """Hand ``pending`` to the theme in batches (see :func:`_ingest_pending`)."""
+    """Hand ``pending`` to the theme in batches (see :func:`_ingest_pending`). With
+    ``places`` (each linked place's first place), they are linked places, read one at a
+    time in place mode (#598)."""
     ingester = theme()
     reads = type(ingester).prepare is not Theme.prepare
-    batches = [pending[i : i + INGEST_BATCH] for i in range(0, len(pending), INGEST_BATCH)]
+    size = 1 if places else INGEST_BATCH
+    batches = [pending[i : i + size] for i in range(0, len(pending), size)]
     if not batches:
         return
     # The next batch is read (on several threads) while the writer ingests this one.
@@ -663,9 +691,7 @@ def _ingest_files(
         reading = start_reading(ready)
         for number in range(len(batches)):
             batch = ready
-            done = (
-                f"{number * INGEST_BATCH + len(batches[number])} of {len(pending)} in {root.name}"
-            )
+            done = f"{number * size + len(batches[number])} of {len(pending)} in {root.name}"
             prepared: dict[int, Any] = {}
             if pool is not None:
                 say(f"Reading {done}…")
@@ -675,13 +701,82 @@ def _ingest_files(
                 if pool is not None:
                     reading = start_reading(ready)
             say(f"Ingesting {done}…")
-            _ingest_batch(writer, ingester, schema, batch, when, prepared, options, report, root)
+            place = (batch[0].id, places[batch[0].id]) if places and batch else None
+            _ingest_batch(
+                writer, ingester, schema, batch, when, prepared, options, report, root, place
+            )
             copies.pop(number).close()
     finally:
         for stack in copies.values():
             stack.close()
         if pool is not None:
             pool.shutdown(wait=True, cancel_futures=True)
+
+
+def _apart_places(
+    writer: DbWriter, reader: Engine, pending: list[ResourceInfo], when: datetime
+) -> tuple[list[ResourceInfo], list[ResourceInfo]]:
+    """``pending`` without its linked places (#598), and the places. Members of an archive
+    that is a linked place are its first place's members' business: marked read."""
+    ids = [r.id for r in pending]
+    places: set[int] = set()
+    inside: set[int] = set()
+    with reader.connect() as conn:
+        for start in range(0, len(ids), BATCH_SIZE):
+            chunk = ids[start : start + BATCH_SIZE]
+            places.update(
+                conn.scalars(
+                    select(LinkedPlace.resource_id).where(LinkedPlace.resource_id.in_(chunk))
+                )
+            )
+            inside.update(
+                conn.scalars(
+                    select(Resource.id).where(
+                        Resource.id.in_(chunk),
+                        Resource.parent_resource_id.in_(select(LinkedPlace.resource_id)),
+                    )
+                )
+            )
+    if inside:
+        writer.run(partial(_mark_ingested, sorted(inside), when))
+    return (
+        [r for r in pending if r.id not in places and r.id not in inside],
+        [r for r in pending if r.id in places and r.id not in inside],
+    )
+
+
+def _ready_places(
+    writer: DbWriter, reader: Engine, places: list[ResourceInfo], when: datetime
+) -> dict[int, int]:
+    """The places to read now, with their first places: those whose first place has been
+    read. A place whose first place has no item has nothing to file, and is marked read;
+    one whose first place is still waiting to be read waits too."""
+    ids = [p.id for p in places]
+    ready: dict[int, int] = {}
+    nothing: list[int] = []
+    with reader.connect() as conn:
+        for start in range(0, len(ids), BATCH_SIZE):
+            rows = conn.execute(
+                select(
+                    LinkedPlace.resource_id,
+                    LinkedPlace.first_id,
+                    Resource.ingested_at,
+                    select(EntityResource.entity_id)
+                    .where(EntityResource.resource_id == LinkedPlace.first_id)
+                    .limit(1)
+                    .scalar_subquery(),
+                )
+                .join(Resource, Resource.id == LinkedPlace.first_id)
+                .where(LinkedPlace.resource_id.in_(ids[start : start + BATCH_SIZE]))
+            )
+            for place, first, read, item in rows:
+                if item is not None:
+                    ready[place] = first
+                elif read is not None:
+                    nothing.append(place)
+    if nothing:
+        writer.run(partial(_mark_ingested, sorted(nothing), when))
+    return ready
 
 
 def _mark_ingested(ids: list[int], when: datetime, conn: Connection) -> None:
@@ -835,14 +930,16 @@ def _ingest_batch(
     options: Mapping[str, Any],
     report: ScanReport,
     root: RootConfig,
+    place: tuple[int, int] | None = None,
 ) -> None:
-    """Ingest one batch; if it fails, each resource alone (see :func:`_ingest_pending`)."""
+    """Ingest one batch; if it fails, each resource alone (see :func:`_ingest_pending`).
+    ``place`` is a linked place's batch's (see :func:`_ingest_files`)."""
     if not batch:
         return
     try:
         _record(
             report,
-            writer.run(partial(_ingest, ingester, schema, batch, when, prepared, options)),
+            writer.run(partial(_ingest, ingester, schema, batch, when, prepared, options, place)),
             batch,
         )
     except Exception:
@@ -850,7 +947,9 @@ def _ingest_batch(
             try:
                 _record(
                     report,
-                    writer.run(partial(_ingest, ingester, schema, [info], when, prepared, options)),
+                    writer.run(
+                        partial(_ingest, ingester, schema, [info], when, prepared, options, place)
+                    ),
                     [info],
                 )
             except Exception as e:
@@ -906,10 +1005,11 @@ def _ingest(
     when: datetime,
     prepared: Mapping[int, Any],
     options: Mapping[str, Any],
+    place: tuple[int, int] | None,
     conn: Connection,
 ) -> list[IngestWarning]:
     """One ingest transaction: the theme's ingest, its flush, and marking the batch done."""
-    ctx = IngestSession(conn, schema, prepared, options)
+    ctx = IngestSession(conn, schema, prepared, options, place)
     forget_not_found(conn, [r.id for r in batch])
     ingester.ingest(batch, ctx)
     flushed = ctx.flush()

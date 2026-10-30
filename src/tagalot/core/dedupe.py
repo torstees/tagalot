@@ -29,7 +29,15 @@ from sqlalchemy import Connection, Table, func, select
 from sqlalchemy.orm import aliased
 
 from tagalot.core.member_paths import member_name, shown_path
-from tagalot.core.models import Entity, EntityResource, Resource, ResourceKind, ResourceStatus, Root
+from tagalot.core.models import (
+    Entity,
+    EntityResource,
+    LinkedPlace,
+    Resource,
+    ResourceKind,
+    ResourceStatus,
+    Root,
+)
 from tagalot.core.roots import local_path
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError, read_member
@@ -87,6 +95,7 @@ def exact_groups(conn: Connection, root_path: Callable[[str], str | None]) -> li
         Resource.fingerprint.is_not(None),
         Resource.status != ResourceStatus.MISSING,
         Resource.skipped.is_(False),
+        Resource.id.not_in(select(LinkedPlace.resource_id)),  # the same file (#598)
     )
     archive = aliased(Resource)
     shared = (

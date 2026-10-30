@@ -43,6 +43,7 @@ from tagalot.core.models import (
     EntityResource,
     EntityTag,
     KeywordIgnored,
+    LinkedPlace,
     NotesFolderNote,
     Resource,
     ResourceKind,
@@ -123,9 +124,16 @@ def triage_condition(
             .join(Resource, Resource.id == EntityResource.resource_id)
             .where(or_(Resource.status != ResourceStatus.MISSING, Resource.skipped))
         )
+        elsewhere = (  # a file is there while any of its linked places is (#598)
+            select(EntityResource.entity_id)
+            .join(LinkedPlace, LinkedPlace.first_id == EntityResource.resource_id)
+            .join(Resource, Resource.id == LinkedPlace.resource_id)
+            .where(Resource.status != ResourceStatus.MISSING)
+        )
         return and_(
             Entity.id.in_(select(EntityResource.entity_id)),
             Entity.id.not_in(present),
+            Entity.id.not_in(elsewhere),
         )
     raise ValueError(f"no triage list {name!r}")
 
@@ -174,6 +182,7 @@ def _unlinked_where(notes: NotesFolder = None) -> list[ColumnElement[bool]]:
         Resource.status != ResourceStatus.MISSING,
         Resource.skipped.is_(False),
         Resource.id.not_in(select(EntityResource.resource_id)),
+        Resource.id.not_in(select(LinkedPlace.resource_id)),  # another place of a file (#598)
         Resource.id.not_in(  # an item's note is used, though not linked (#379)
             select(EntityNote.resource_id).where(EntityNote.resource_id.is_not(None))
         ),
