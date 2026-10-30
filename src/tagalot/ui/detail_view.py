@@ -228,6 +228,8 @@ class DetailPage(QWidget):
     """Look up online (#340): the item's id, in a list."""
     """Write to file… on this item (#299)."""
     unlink_requested = Signal(int, int, str)
+    place_unlink_requested = Signal(int)
+    """**Unlink** on an Also at row (#600): the place's resource id."""
     """Remove a link made by hand: (entity id, resource id, role)."""
     picture_requested = Signal(int, object)
     """Make a file the item's own picture (#439): entity id, resource id, or ``None`` to
@@ -1351,6 +1353,14 @@ class DetailPage(QWidget):
             )
         if self.archive_actions is not None:
             self._add_archive_actions(menu, file)
+        if file.place_of is not None:  # another place of the file above (#600)
+            menu.addSeparator()
+            split = menu.addAction("Unlink this place")
+            split.setToolTip(
+                "It isn't the same file: make it a file of its own, with its own item "
+                "(Edit \u2192 Undo)"
+            )
+            split.triggered.connect(lambda: self.place_unlink_requested.emit(file.resource_id))
         if file.by_user and file.role is not None:
             menu.addSeparator()
             unlink = menu.addAction("Unlink from this item")

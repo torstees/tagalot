@@ -664,6 +664,7 @@ class MainWindow(QMainWindow):
                 lambda ids: self.tag_actions.merge_items(ids[0], ids[1:], {})
             )
             dedupe.not_duplicate_requested.connect(self.tag_actions.set_not_duplicate)
+            dedupe.link_requested.connect(self.tag_actions.link_as_one)
             return dedupe
         if target.kind == "triage":
             triage = TriagePage(
@@ -861,6 +862,7 @@ class MainWindow(QMainWindow):
         detail.write_back_requested.connect(self.write_back)
         detail.look_up_requested.connect(self.look_up_online)
         detail.unlink_requested.connect(self.tag_actions.unlink_file)
+        detail.place_unlink_requested.connect(self.tag_actions.split_place)
         detail.picture_requested.connect(self.set_picture)
         detail.choose_picture_requested.connect(self.choose_picture)
         detail.keyword_map_requested.connect(lambda info: self.map_keywords([info]))

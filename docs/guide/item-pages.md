@@ -84,4 +84,6 @@ Double-click a value (or click its ✎) to edit it: **Enter** saves, **Esc** can
 
 If the file can't be opened, the status bar says why: it's missing, its folder is offline, or the folder has no path on this computer.
 
+**A file in several places** (a link, see [Links](keeps-and-folders.md#links-one-file-in-several-places)) lists its other places under it as **Also at …**; opening uses whichever place is there. **Unlink this place**, on an Also at row's menu, makes it a file of its own: it gets an item of its own, with a copy of the item's tags and your edits, listed in that place's folder (**Edit → Undo** links it again).
+
 **A file inside an archive** (a font in a zip, when the keep reads inside its archives) shows as the archive, then its path inside it: `Aurora Studio/pack.zip › fonts/Regular.ttf`. **Open file** and **Open with** open a copy taken out of the archive (the archive isn't changed, and neither is anything you save in the copy), and **Show the archive in file manager** shows the archive. **Hide inside its archive** stops reading it; an archive's own row has **Choose what to read inside…**, **Read everything inside**, and **Stop reading inside** (see [Reading inside archives](keeps-and-folders.md#reading-inside-archives)).

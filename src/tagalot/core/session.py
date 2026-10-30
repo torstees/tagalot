@@ -117,6 +117,7 @@ from tagalot.core.picture_problems import (
     ignore_pictures,
     stop_ignoring,
 )
+from tagalot.core.place_links import link_as_one, split_place
 from tagalot.core.promote import (
     FieldMove,
     KeyValue,
@@ -979,6 +980,23 @@ class KeepSession:
         change = self.writer.run(
             lambda conn: merge_items(conn, schema, keep_id, other_ids, choices)
         )
+        self.tags.record(change)
+        return change.label
+
+    def link_as_one(self, resource_ids: Sequence[int]) -> str:
+        """**Link as one** (#600): the copies after the first become places of the first's
+        item; one undo step. Returns its label. Raises ``PlaceError``. Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: link_as_one(conn, schema, resource_ids))
+        self.tags.record(change)
+        return change.label
+
+    def split_place(self, resource_id: int) -> str:
+        """**Unlink** (#600): a linked place becomes a file of its own, with an item of
+        its own; one undo step. Returns its label. Raises ``PlaceError``. Runs in a
+        worker."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: split_place(conn, schema, resource_id))
         self.tags.record(change)
         return change.label
 

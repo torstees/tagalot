@@ -20,6 +20,7 @@ from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
 from tagalot.core.own_fields import OwnField, OwnFieldError
 from tagalot.core.picture_problems import PictureProblem, PictureScope
+from tagalot.core.place_links import PlaceError
 from tagalot.core.reextract import ReextractReport
 from tagalot.core.relations import RelationError
 from tagalot.core.saved_searches import SavedDefinition, SavedSearchError
@@ -420,6 +421,20 @@ class TagActions(QObject):
             lambda label: f"{label}. Edit \u2192 Undo separates them again.",
         )
 
+    def link_as_one(self, resource_ids: list[int]) -> None:
+        """Link copies as places of one file (#600); one undo step."""
+        self._run(
+            lambda: self.session.link_as_one(resource_ids),
+            lambda label: f"{label}. Edit \u2192 Undo separates them again.",
+        )
+
+    def split_place(self, resource_id: int) -> None:
+        """Make a linked place a file of its own (#600); one undo step."""
+        self._run(
+            lambda: self.session.split_place(resource_id),
+            lambda label: f"{label}: it has an item of its own now.",
+        )
+
     def set_not_duplicate(self, entries: list[tuple[str, str, str]], dismissed: bool) -> None:
         """Hide groups or pairs from Dedupe as not duplicates, or show them again; one
         undo step."""
@@ -565,7 +580,8 @@ class TagActions(QObject):
                 | PictureError
                 | SavedSearchError
                 | IconFileError
-                | OwnFieldError,
+                | OwnFieldError
+                | PlaceError,
             ):
                 self.message.emit(str(error))
             else:
