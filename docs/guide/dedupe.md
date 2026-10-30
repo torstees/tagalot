@@ -18,6 +18,8 @@ The theme's near-duplicates, most alike first: songs with the same artist and ti
 
 Folders with the same name whose files match by name, size, and fingerprint, the most matches first: a folder your share shows as an ordinary folder when it's really a link to another (a bundle's folder linked into an author's, say). The table gives how many files match, differ, and are on one side only; select a pair to see them listed beside it.
 
+Folders inside are suggested too: when two *Backgrounds* folders don't match (one has an extra file) but the *Shop01* folders inside them do, both pairs are listed, so you can link just *Shop01*. When a pair matches completely, the folders inside it aren't listed apart, since linking it links them too.
+
 - **Link folders** makes them one folder in two places: each file that matches becomes one item, listed in both folders, with the files' items merged into the first folder's (as Merge does). A file that turns up in both later is linked by the next scan when the two match; one that differs is listed in [Triage → Links](triage.md#links) instead.
 - **Files that differ block linking**, with a warning: two places of one file can't differ, so they may be copies, one edited. A file changing while it was read, or a network glitch, can also make one look different: **Check again** reads them whole, and if they're the same after all, linking is allowed.
 - **Not the same folder** hides the pair, as Not a duplicate does.

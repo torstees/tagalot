@@ -143,3 +143,49 @@ def test_files_that_turn_up_later_are_linked_when_they_match(session: KeepSessio
         [difference] = folder_differences(conn)
     assert difference.relpath == f"{COPY}/sketch.jpg"
     assert difference.first_shown.endswith(f"{FOLDER}/sketch.jpg")
+
+
+def _shop(session: KeepSession) -> None:
+    """A Shop01 folder with two pictures in both Backgrounds folders."""
+    root = _root(session)
+    for folder in (FOLDER, COPY):
+        (root / folder / "Shop01").mkdir()
+        shutil.copy(root / "Kenji Sato" / "tileset.png", root / folder / "Shop01" / "tiles.png")
+        shutil.copy(root / "Kenji Sato" / "sketch 01.jpg", root / folder / "Shop01" / "a.jpg")
+
+
+def test_a_folder_that_matches_inside_one_that_doesnt_is_suggested(
+    session: KeepSession,
+) -> None:
+    _shop(session)
+    extra = _root(session) / COPY / "extra.png"
+    shutil.copy(_root(session) / "Kenji Sato" / "tileset.png", extra)
+    extra.write_bytes(extra.read_bytes() + b"x")  # a file in one Backgrounds only
+    session.scan_all()
+    with session.reader.connect() as conn:
+        pairs = suggest_linked_folders(conn)
+    found = {(p.first.relpath, p.other.relpath): p for p in pairs}
+    assert set(found) == {(FOLDER, COPY), (f"{FOLDER}/Shop01", f"{COPY}/Shop01")}
+    assert found[FOLDER, COPY].only_other == ("extra.png",)
+    shop = found[f"{FOLDER}/Shop01", f"{COPY}/Shop01"]
+    assert {p.inside for p in shop.same} >= {"tiles.png", "a.jpg"}
+    assert shop.only_first == shop.only_other == ()
+    assert shop.differ == ()
+
+    session.link_folders(shop.first, shop.other)  # Shop01 alone
+    assert len(_titled(session, "tiles.png")) == 1
+    assert len(_titled(session, "forest.png")) == 2  # Backgrounds isn't linked
+    with session.reader.connect() as conn:
+        left = [(p.first.relpath, p.other.relpath) for p in suggest_linked_folders(conn)]
+    assert left == [(FOLDER, COPY)]
+
+
+def test_a_folder_inside_a_pair_that_matches_completely_isnt_suggested_apart(
+    session: KeepSession,
+) -> None:
+    _shop(session)
+    session.scan_all()
+    with session.reader.connect() as conn:
+        pairs = suggest_linked_folders(conn)
+    assert [(p.first.relpath, p.other.relpath) for p in pairs] == [(FOLDER, COPY)]
+    assert {"Shop01/tiles.png", "Shop01/a.jpg"} <= {p.inside for p in pairs[0].same}

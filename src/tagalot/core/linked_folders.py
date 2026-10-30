@@ -109,9 +109,12 @@ class _Entry:
 
 def suggest_linked_folders(conn: Connection, max_group: int = MAX_GROUP) -> list[FolderPair]:
     """Folders with the same name holding identical files of the same name, not linked
-    already, the most matches first. For each two identical files, the pair is the
-    highest folders up from them whose names still match (``Bundle/Book`` and
-    ``Authors/Jane/Book`` give ``Book``)."""
+    already, the most matches first. For each two identical files, each pair of folders
+    up from them whose names still match is a candidate (``Bundle/Book/Shop`` and
+    ``Authors/Jane/Book/Shop`` give ``Shop`` and ``Book``). A pair is left out when the
+    pair just above it matches completely (nothing differs, nothing on one side only),
+    since linking that one links it too; so a folder that matches inside one that
+    doesn't is suggested on its own."""
     usable = (
         Resource.kind == ResourceKind.FILE,
         Resource.fingerprint.is_not(None),
@@ -152,37 +155,53 @@ def suggest_linked_folders(conn: Connection, max_group: int = MAX_GROUP) -> list
             for root_b, path_b in files[i + 1 :]:
                 if posixpath.basename(path_a).casefold() != posixpath.basename(path_b).casefold():
                     continue
-                top = _common_top(path_a, path_b)
-                if top is None:
-                    continue
-                a = Folder(root_a, names.get(root_a, root_a), top[0])
-                b = Folder(root_b, names.get(root_b, root_b), top[1])
-                if root_a == root_b and (
-                    _within(a.relpath, b.relpath) or _within(b.relpath, a.relpath)
-                ):
-                    continue
-                if frozenset({(a.root_id, a.relpath), (b.root_id, b.relpath)}) in linked:
-                    continue
-                first, other = sorted((a, b), key=_order)
-                candidates[first, other] = None
-    pairs = [folder_pair(conn, first, other) for first, other in candidates]
+                for top_a, top_b in _common_levels(path_a, path_b):  # highest first
+                    if frozenset({(root_a, top_a), (root_b, top_b)}) in linked:
+                        break  # linked already, and what's inside with it
+                    if root_a == root_b and (_within(top_a, top_b) or _within(top_b, top_a)):
+                        continue
+                    a = Folder(root_a, names.get(root_a, root_a), top_a)
+                    b = Folder(root_b, names.get(root_b, root_b), top_b)
+                    first, other = sorted((a, b), key=_order)
+                    candidates[first, other] = None
+    found = {
+        frozenset({_key(first), _key(other)}): folder_pair(conn, first, other)
+        for first, other in candidates
+    }
+    pairs = [
+        pair
+        for pair in found.values()
+        if not _complete(found.get(frozenset({_parent(pair.first), _parent(pair.other)})))
+    ]
     pairs.sort(key=lambda p: (-p.files_same, p.first.name.casefold(), _order(p.first)))
     return pairs
+
+
+def _key(folder: Folder) -> tuple[str, str]:
+    return folder.root_id, folder.relpath
+
+
+def _parent(folder: Folder) -> tuple[str, str]:
+    return folder.root_id, posixpath.dirname(folder.relpath)
+
+
+def _complete(pair: FolderPair | None) -> bool:
+    """A suggested pair whose contents all match: linking it links everything inside."""
+    return pair is not None and not pair.differ and not pair.only_first and not pair.only_other
 
 
 def _order(folder: Folder) -> tuple[str, str, str]:
     return folder.root_name.casefold(), folder.relpath.casefold(), folder.root_id
 
 
-def _common_top(path_a: str, path_b: str) -> tuple[str, str] | None:
-    """The highest folders above two files whose names match all the way down."""
+def _common_levels(path_a: str, path_b: str) -> list[tuple[str, str]]:
+    """The pairs of folders above two files whose names match all the way down, the
+    highest first."""
     a, b = path_a.split("/")[:-1], path_b.split("/")[:-1]
     k = 0
     while k < min(len(a), len(b)) and a[-1 - k].casefold() == b[-1 - k].casefold():
         k += 1
-    if k == 0:
-        return None
-    return "/".join(a[: len(a) - k + 1]), "/".join(b[: len(b) - k + 1])
+    return [("/".join(a[: len(a) - j]), "/".join(b[: len(b) - j])) for j in range(k - 1, -1, -1)]
 
 
 def _within(path: str, folder: str) -> bool:
