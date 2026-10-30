@@ -315,6 +315,12 @@ def _v31_own_field_read(conn: Connection) -> None:
     Base.metadata.tables["own_field_read"].create(conn, checkfirst=True)
 
 
+def _v32_linked_places(conn: Connection) -> None:
+    """Format 33: linked places, and the containers they file their items in (#598)."""
+    Base.metadata.tables["linked_place"].create(conn, checkfirst=True)
+    Base.metadata.tables["place_contains"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -347,6 +353,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     29: _v29_note_key_aliases,
     30: _v30_entity_fields,
     31: _v31_own_field_read,
+    32: _v32_linked_places,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

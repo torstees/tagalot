@@ -14,7 +14,18 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from sqlalchemy import Connection, Insert, Table, bindparam, delete, func, insert, select, update
+from sqlalchemy import (
+    Connection,
+    Insert,
+    Table,
+    bindparam,
+    delete,
+    func,
+    insert,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure, fts
@@ -42,6 +53,7 @@ from tagalot.core.models import (
     FileNotFound,
     NoteIgnoredKey,
     NoteKeyRemoval,
+    PlaceContains,
     Resource,
     ResourceKind,
     ResourceStatus,
@@ -143,9 +155,22 @@ class IngestSession:
         schema: ThemeSchema,
         prepared: Mapping[int, Any] | None = None,
         options: Mapping[str, Any] | None = None,
+        place: tuple[int, int] | None = None,
     ) -> None:
         self.conn = conn
         self.schema = schema
+        self.place = place
+        """Place mode (§13 *Linked places*, #598): ``(place, first place)`` while reading a
+        linked place, which has no items of its own. The theme finds the group's items
+        through the place (:meth:`entities_of`); what it adds to them from the place's path
+        (containers) is added and recorded in ``place_contains``; their values, links, and
+        relations are the first place's, so those writes are dropped, and so is anything
+        that would take something away."""
+        self._group: set[int] | None = None
+        """In place mode, the items linked to the first place (looked up once)."""
+        self._place_edges: set[tuple[int, int]] = set()
+        """In place mode, the containment edges the place gives its group's items."""
+        self._any_place_edges: bool | None = None
         self._prepared = prepared or {}
         self._options = dict(options) if options is not None else default_options(schema.theme)
         self.warnings: list[IngestWarning] = []
@@ -260,6 +285,8 @@ class IngestSession:
         else:
             entity_id = existing
             self._keys[(type_id, key)] = entity_id
+            if self._held(entity_id):  # a linked place's: the first place gives values
+                return EntityRef(entity_id, type_id)
             self._touch(entity_id)
             self._apply_extracted(entity_id, entity_table, title, fields)
         self._dirty.add(entity_id)
@@ -271,7 +298,7 @@ class IngestSession:
         unknown = sorted(set(fields) - {f.name for f in entity_table.fields})
         if unknown:
             raise IngestError(f"{entity_table.entity.__name__} has no field {', '.join(unknown)}")
-        if self._gone(entity):
+        if self._gone(entity) or self._held(entity.id):
             return
         if (
             entity.id not in self._created
@@ -323,8 +350,8 @@ class IngestSession:
         """Delete an entity and everything linked to it (not its resources). In a scan (no
         recorder), an item the user made by hand (no ingest key) is left alone (#260)."""
         self._table_of(entity)
-        if self._gone(entity):
-            return
+        if self._gone(entity) or self.place is not None:
+            return  # merged away, or reading a linked place: it never takes anything away
         if self.recorder is None:
             key = self.conn.execute(select(Entity.ingest_key).where(Entity.id == entity.id)).first()
             if key is not None and key.ingest_key is None:
@@ -436,8 +463,11 @@ class IngestSession:
         """Entities linked to a resource (in ``role``, if given), of this theme's types.
         Links the user made by hand aren't included: the file isn't the theme's to read into
         that item. An item the user merged away that had the file is (§13): writes to it are
-        dropped, so the theme doesn't make a new item for the file."""
+        dropped, so the theme doesn't make a new item for the file. In place mode, the
+        linked place's are its first place's items, the user's included."""
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
+        if self.place is not None and resource_id == self.place[0]:
+            return self._group_refs(role)
         rows = (
             self.conn.execute(_LINKED_TO, {"resource": resource_id})
             if role is None
@@ -519,8 +549,8 @@ class IngestSession:
         unless the user linked one there by hand: then this link is skipped."""
         declared = self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
-        if self._gone(entity):
-            return
+        if self._gone(entity) or self._held(entity.id) or self._is_place(resource_id):
+            return  # a linked place isn't a file of an item; the first place's links stand
         self._touch(entity.id)
         new = entity.id in self._created  # no links yet but this session's, none by hand
         if not declared.many and not new:
@@ -558,7 +588,7 @@ class IngestSession:
     def unlink(self, entity: EntityRef, resource: ResourceInfo | int, role: str) -> None:
         self._role(entity, role)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
-        if self._gone(entity):
+        if self._gone(entity) or self.place is not None:
             return
         self._touch(entity.id)
         self.conn.execute(
@@ -585,7 +615,7 @@ class IngestSession:
         brought up to date at :meth:`flush`."""
         self._table_of(entity)
         resource_id = resource.id if isinstance(resource, ResourceInfo) else resource
-        if self._gone(entity):
+        if self._gone(entity) or self._held(entity.id) or self._is_place(resource_id):
             return
         if set_keywords(self.conn, entity.id, resource_id, keywords):
             self._touch(entity.id)
@@ -601,14 +631,20 @@ class IngestSession:
             return  # merged away, or the user took it out (#329)
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
+        if self._held(parent.id) or self._held(child.id):
+            self._place_edges.add(edge)
         self._removed_edges = [e for e in self._removed_edges if e != edge]
         if edge not in self._added_edges:
             self._added_edges.append(edge)
 
     def uncontain(self, parent: EntityRef, child: EntityRef) -> None:
         self._check_containment(parent, child)
-        if self._gone(parent, child) or self._contained_by_user(parent.id, child.id):
-            return  # merged away, or the user put it there (#329)
+        if (
+            self._gone(parent, child)
+            or self.place is not None
+            or self._contained_by_user(parent.id, child.id)
+        ):
+            return  # merged away, reading a linked place, or the user put it there (#329)
         self._touch(parent.id, child.id)
         edge = (parent.id, child.id)
         self._added_edges = [e for e in self._added_edges if e != edge]
@@ -624,6 +660,8 @@ class IngestSession:
         table, rel = self._relationship(name, a, b)
         if position is not None and not rel.ordered:
             raise IngestError(f"{name!r} isn't ordered: relate it without a position")
+        if self._held(a.id) or self._held(b.id):
+            return  # a linked place's: the first place (the same file) relates them
         if self._gone(a, b) or self._by_user(name, a.id, b.id) is False:
             return  # merged away, or the user removed it (#260)
         if not rel.many:
@@ -667,8 +705,8 @@ class IngestSession:
 
     def unrelate(self, name: str, a: EntityRef, b: EntityRef) -> None:
         table, _ = self._relationship(name, a, b)
-        if self._gone(a, b) or self._by_user(name, a.id, b.id):
-            return  # merged away, or the user added it (#260)
+        if self._gone(a, b) or self.place is not None or self._by_user(name, a.id, b.id):
+            return  # merged away, reading a linked place, or the user added it (#260)
         self._touch(a.id, b.id)
         self.conn.execute(delete(table).where(table.c.a_id == a.id, table.c.b_id == b.id))
 
@@ -709,7 +747,7 @@ class IngestSession:
         kind = self.conn.scalar(select(Resource.kind).where(Resource.id == folder_id))
         if kind is not ResourceKind.DIR:
             raise IngestError(f"ctx.note needs a folder, not resource {folder_id}")
-        if self._gone(entity):
+        if self._gone(entity) or self._held(entity.id):
             return
         stored = self.conn.scalar(
             select(EntityNote.folder_id).where(EntityNote.entity_id == entity.id)
@@ -891,6 +929,8 @@ class IngestSession:
         """Apply batched containment changes and refresh the search index for touched
         entities. Call before the transaction commits; safe to call more than once."""
         report = FlushReport()
+        if self.place is not None:
+            self._sync_place_edges()
         self._flush_edges(report)
         if self._keyword_entities:
             apply_file_tags(self.conn, self._keyword_entities)
@@ -908,6 +948,8 @@ class IngestSession:
         if self._new_closure:  # before edges: containment builds on these rows
             closure.add_entities(self.conn, self._new_closure)
             self._new_closure = []
+        if self._removed_edges and self.place is None:
+            self._removed_edges = self._not_placed(self._removed_edges)
         if self._added_edges or self._removed_edges:
             result = closure.apply(self.conn, self._added_edges, self._removed_edges)
             report.edges_added += len(result.added)
@@ -945,6 +987,114 @@ class IngestSession:
     def _gone(self, *entities: EntityRef) -> bool:
         """Any of these stands for an item merged away (see :meth:`upsert`)."""
         return any(e.id in self._merged for e in entities)
+
+    # --- place mode (#598) ---
+
+    def _is_place(self, resource_id: int) -> bool:
+        return self.place is not None and resource_id == self.place[0]
+
+    def _held(self, entity_id: int) -> bool:
+        """In place mode, whether this is one of the group's items, whose values, links,
+        and relations are the first place's."""
+        if self.place is None:
+            return False
+        if self._group is None:
+            self._group = set(
+                self.conn.scalars(
+                    select(EntityResource.entity_id).where(
+                        EntityResource.resource_id == self.place[1]
+                    )
+                )
+            )
+        return entity_id in self._group
+
+    def _group_refs(self, role: str | None) -> list[EntityRef]:
+        """The first place's items (in ``role``), the user's links included."""
+        assert self.place is not None
+        query = (
+            select(Entity.id, Entity.type)
+            .join(EntityResource, EntityResource.entity_id == Entity.id)
+            .where(EntityResource.resource_id == self.place[1])
+            .distinct()
+            .order_by(Entity.id)
+        )
+        if role is not None:
+            query = query.where(EntityResource.role == role)
+        types = {t.type_id for t in self.schema.entities.values()}
+        return [EntityRef(i, t) for i, t in self.conn.execute(query) if t in types]
+
+    def _sync_place_edges(self) -> None:
+        """Record the edges the place gives its group's items, and take away those it gave
+        before and no longer does, unless another place gives them or the user put them
+        there. An edge the item had already from its first place isn't the place's; one
+        another place gives is this one's too."""
+        assert self.place is not None
+        place_id = self.place[0]
+        before = {
+            (p, c)
+            for p, c in self.conn.execute(
+                select(PlaceContains.parent_id, PlaceContains.child_id).where(
+                    PlaceContains.resource_id == place_id
+                )
+            )
+        }
+        given = {edge for edge in self._place_edges if edge in before or not self._firsts(*edge)}
+        gone = before - given
+        if gone:
+            self.conn.execute(
+                delete(PlaceContains).where(
+                    PlaceContains.resource_id == place_id,
+                    tuple_(PlaceContains.parent_id, PlaceContains.child_id).in_(sorted(gone)),
+                )
+            )
+            for edge in self._not_placed(sorted(gone)):
+                if not self._contained_by_user(*edge) and edge not in self._added_edges:
+                    self._removed_edges.append(edge)
+        if given - before:
+            self.conn.execute(
+                insert(PlaceContains).prefix_with("OR IGNORE"),
+                [
+                    {"resource_id": place_id, "parent_id": p, "child_id": c}
+                    for p, c in sorted(given - before)
+                ],
+            )
+        self._place_edges = set()
+
+    def _firsts(self, parent_id: int, child_id: int) -> bool:
+        """Whether the item has this edge already from its first place (or by hand): stored,
+        and given by no linked place."""
+        stored = self.conn.scalar(
+            select(EntityContains.parent_id).where(
+                EntityContains.parent_id == parent_id, EntityContains.child_id == child_id
+            )
+        )
+        if stored is None:
+            return False
+        placed = self.conn.scalar(
+            select(PlaceContains.resource_id)
+            .where(PlaceContains.parent_id == parent_id, PlaceContains.child_id == child_id)
+            .limit(1)
+        )
+        return placed is None
+
+    def _not_placed(self, edges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """The edges no linked place gives: a place's edge stays whatever the first place's
+        scans say, until the place stops giving it."""
+        if self._any_place_edges is None:
+            self._any_place_edges = (
+                self.conn.scalar(select(PlaceContains.resource_id).limit(1)) is not None
+            )
+        if not self._any_place_edges:
+            return edges
+        placed = {
+            (p, c)
+            for p, c in self.conn.execute(
+                select(PlaceContains.parent_id, PlaceContains.child_id)
+                .where(tuple_(PlaceContains.parent_id, PlaceContains.child_id).in_(edges))
+                .distinct()
+            )
+        }
+        return [e for e in edges if e not in placed]
 
     def _touch(self, *ids: int) -> None:
         if self.recorder is not None:

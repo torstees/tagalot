@@ -224,7 +224,7 @@ def _files(
             primary = next((r for r in entity.roles if r.primary), None)
             role = primary.name if primary is not None else None
         linked = role_files(conn, entity_id, role, root_path)
-        files = [f for f in linked if f.kind == "file"]
+        files = [f for f in linked if f.kind == "file" and f.place_of is None]  # #598
         formats = sorted({_format(f.relpath) for f in files} - {""})
         put(column, "format", "Format", ", ".join(formats))
         sizes = [f.size for f in files if f.size is not None]

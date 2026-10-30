@@ -34,3 +34,12 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
     monkeypatch.setattr(urllib.request.OpenerDirector, "open", refuse)
+
+
+@pytest.fixture(autouse=True)
+def no_user_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests never see the user's own ``TAGALOT_*`` variables (a TMDb token, #544): with
+    one set, a keep would have something to look up online, and ask."""
+    for name in list(os.environ):
+        if name.upper().startswith("TAGALOT_"):
+            monkeypatch.delenv(name)

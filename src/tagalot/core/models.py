@@ -818,6 +818,47 @@ class SavedSearch(Base):
     definition: Mapped[dict[str, Any]]
 
 
+class LinkedPlace(Base):
+    """A place that is the same file or folder as another (§13 *Linked places*, #598): a
+    symbolic link, a junction, a hard link, a shortcut, or a link a share shows as an
+    ordinary file, linked to the first place of its group. A place has no item of its own:
+    a scan reads it into the group's items (``IngestSession``'s place mode), adding the
+    containers its path gives them, and pages list it as one of the item's places."""
+
+    __tablename__ = "linked_place"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    first_id: Mapped[int] = mapped_column(ForeignKey("resource.id", ondelete=CASCADE), index=True)
+    """The group's first place: never itself a linked place."""
+    how: Mapped[str]
+    """How it was linked: ``symlink``, ``junction``, ``hardlink``, ``shortcut``, ``user``,
+    or ``inside`` (a path inside linked folders)."""
+    linked_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class PlaceContains(Base):
+    """A containment edge a linked place added to its group's item (#598): the item is
+    filed where the place's path puts it (an author's folder). Kept so that the edge goes
+    when the place stops giving it, and stays while any place does, whatever the first
+    place's scans say."""
+
+    __tablename__ = "place_contains"
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resource.id", ondelete=CASCADE), primary_key=True
+    )
+    parent_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+    child_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete=CASCADE), primary_key=True
+    )
+
+    __table_args__ = (Index("ix_place_contains_edge", "parent_id", "child_id"),)
+
+
 class SchemaVersion(Base):
     """The schema version of the core (``component = "core"``) and of the keep's theme."""
 
