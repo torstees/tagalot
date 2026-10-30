@@ -665,6 +665,7 @@ class MainWindow(QMainWindow):
             )
             dedupe.not_duplicate_requested.connect(self.tag_actions.set_not_duplicate)
             dedupe.link_requested.connect(self.tag_actions.link_as_one)
+            dedupe.link_folders_requested.connect(self.tag_actions.link_folders)
             return dedupe
         if target.kind == "triage":
             triage = TriagePage(

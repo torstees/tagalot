@@ -859,6 +859,21 @@ class PlaceContains(Base):
     __table_args__ = (Index("ix_place_contains_edge", "parent_id", "child_id"),)
 
 
+class LinkedFolder(Base):
+    """A folder linked as one with another (§13 *Linked places*, #601): the folder at
+    ``root_id``/``relpath`` is the same as the one at ``first_root_id``/``first_relpath``.
+    What's inside pairs by path: the pairs found when linking are linked places (``how``
+    ``inside``), and a scan links a file that turns up in both later, when they match."""
+
+    __tablename__ = "linked_folder"
+
+    root_id: Mapped[str] = mapped_column(ForeignKey("root.id", ondelete=CASCADE), primary_key=True)
+    relpath: Mapped[str] = mapped_column(primary_key=True)
+    first_root_id: Mapped[str] = mapped_column(ForeignKey("root.id", ondelete=CASCADE))
+    first_relpath: Mapped[str]
+    linked_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class SchemaVersion(Base):
     """The schema version of the core (``component = "core"``) and of the keep's theme."""
 

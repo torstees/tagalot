@@ -125,8 +125,8 @@ def test_an_older_refresh_finishing_last_is_not_shown(
     [(_, older_done), (newer, newer_done)] = jobs
     newer_done(newer())
     assert len(triage.pictures.problems) == 1
-    counts, files, notes, _, skipped, new = newer()
-    older_done((counts, files, notes, [], skipped, new))  # what it saw, different, last
+    counts, files, notes, _, skipped, new, links = newer()
+    older_done((counts, files, notes, [], skipped, new, links))  # what it saw, different, last
     assert len(triage.pictures.problems) == 1
 
 

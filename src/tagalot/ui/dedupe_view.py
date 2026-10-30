@@ -20,6 +20,13 @@ the left item at once (#121). **Not a duplicate** hides the current group or pai
 dismissed** lists those greyed, to show them as duplicates again. **Link as one** (#600)
 makes the current group's copies places of one file (``core.place_links.link_as_one``),
 for links a share shows as ordinary files; not once **Check** found them different.
+
+A third tab, **Linked folders** (#601, ``core.linked_folders``), suggests folders with the
+same name whose files match, for linked folders a share shows as ordinary ones. The
+selected pair's preview lists the files that match, those that differ, and those on one
+side only. **Link folders** links them as one; files that differ block it, with a
+warning, until **Check again** (reading them whole) finds them the same. **Not the same
+folder** hides a pair, as Not a duplicate does.
 """
 
 from functools import partial
@@ -54,10 +61,12 @@ from tagalot.core.dedupe import (
 )
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL
+from tagalot.core.linked_folders import FolderPair, PairedPath, confirm_same, suggest_linked_folders
 from tagalot.core.not_duplicates import (
     EXACT,
     Dismissals,
     Entry,
+    folder_entry,
     group_entry,
     load_dismissals,
     pair_entry,
@@ -72,6 +81,10 @@ from tagalot.ui.workers import run_in_pool
 
 COLUMNS = ("Name", "Where", "Size", "Items", "Check")
 SIMILAR_COLUMNS = ("Alike", "Type", "Item", "And")
+FOLDER_COLUMNS = ("Folder", "And", "Match", "Differ", "One side only")
+FOLDERS_TAB = 2
+MAX_PREVIEW = 500
+"""Paths a preview section lists at most (its count says how many there are)."""
 NAME, WHERE, SIZE, ITEMS, CHECK = range(5)
 _GROUP = Qt.ItemDataRole.UserRole
 _FILE = Qt.ItemDataRole.UserRole + 1
@@ -89,6 +102,9 @@ class DedupePage(QWidget):
     """Not a duplicate (``True``) or Show as a duplicate again (``False``): the entries."""
     link_requested = Signal(list)
     """Link as one (#600): the current group's copies, the first place first."""
+    link_folders_requested = Signal(object, object, object)
+    """Link folders (#601): the first folder, the other, and the ``(first id, other id)``
+    pairs that differed but were found the same on a full read."""
 
     def __init__(
         self,
@@ -108,7 +124,13 @@ class DedupePage(QWidget):
         self.all_groups: list[DuplicateGroup] = []
         self.all_pairs = NearDuplicates([])
         self.dismissals = Dismissals()
-        self._hidden_groups = self._hidden_pairs = 0
+        self._hidden_groups = self._hidden_pairs = self._hidden_folders = 0
+        self.all_folders: list[FolderPair] = []
+        self.folder_pairs: list[FolderPair] | None = None
+        """The pairs of folders listed (dismissed ones only with Show dismissed)."""
+        self.folder_checks: dict[Entry, set[tuple[int, int]]] = {}
+        """Check again's results, by pair: the files that differed but read the same."""
+        self.checking_folders = 0
         self.checks: dict[bytes, Verification] = {}
         self.checking = 0
         self._generation = 0
@@ -180,6 +202,7 @@ class DedupePage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(identical, "Identical files")
         self.tabs.addTab(similar, "Similar items")
+        self.tabs.addTab(self._folders_tab(), "Linked folders")
         self.show_dismissed = QCheckBox("Show dismissed")
         self.show_dismissed.setObjectName("show_dismissed")
         self.show_dismissed.setToolTip("List the groups and pairs marked as not duplicates, greyed")
@@ -201,6 +224,7 @@ class DedupePage(QWidget):
         self.compare_pane.add_action(self.link_button)
         self.tree.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.similar_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
+        self.folders_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.tabs.currentChanged.connect(lambda _: self._compare())
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setChildrenCollapsible(False)
@@ -249,6 +273,18 @@ class DedupePage(QWidget):
                 self._show_pairs(self.all_pairs)
 
         run_in_pool(similar_job, on_done=similar_done)
+        self.folders_summary.setText("Looking for linked folders\u2026")
+
+        def folders_job() -> tuple[list[FolderPair], Dismissals]:
+            with session.reader.connect() as conn:
+                return suggest_linked_folders(conn), load_dismissals(conn)
+
+        def folders_done(found: tuple[list[FolderPair], Dismissals]) -> None:
+            if shiboken6.isValid(self) and generation == self._generation:
+                self.all_folders, self.dismissals = found
+                self._show_folders(self.all_folders)
+
+        run_in_pool(folders_job, on_done=folders_done)
 
     # --- similar items ---
 
@@ -320,6 +356,20 @@ class DedupePage(QWidget):
                 else "Hide it from this page (Show dismissed lists it again)"
                 + ("; it comes back if its copies change" if entry[0] == EXACT else "")
             )
+        if self.tabs.currentIndex() == FOLDERS_TAB:
+            self.not_duplicate_button.setText(
+                "Show as a suggestion again"
+                if entry is not None and self.dismissals.hides(entry)
+                else "Not the same folder"
+            )
+            self._preview_folders()
+            folders = self._current_folders()
+            pane.clear(
+                "Select a pair of folders to preview it above."
+                if folders is None
+                else "Linking makes each file that matches one item, listed in both folders."
+            )
+            return
         if self.tabs.currentIndex() == 1:
             pair = self._current_pair()
             if pair is None:
@@ -342,6 +392,9 @@ class DedupePage(QWidget):
 
     def _current_entry(self) -> Entry | None:
         """How the current group or pair would be dismissed, if there is one."""
+        if self.tabs.currentIndex() == FOLDERS_TAB:
+            folders = self._current_folders()
+            return folder_entry(folders) if folders is not None else None
         if self.tabs.currentIndex() == 1:
             pair = self._current_pair()
             return pair_entry(pair) if pair is not None else None
@@ -378,11 +431,217 @@ class DedupePage(QWidget):
     def _relist(self) -> None:
         self._show(self.all_groups)
         self._show_pairs(self.all_pairs)
+        self._show_folders(self.all_folders)
 
     def _count_dismissed(self) -> None:
-        n = self._hidden_groups + self._hidden_pairs
+        n = self._hidden_groups + self._hidden_pairs + self._hidden_folders
         self.show_dismissed.setText(f"Show dismissed ({n:,})" if n else "Show dismissed")
         self.show_dismissed.setEnabled(bool(n) or self.show_dismissed.isChecked())
+
+    # --- linked folders ---
+
+    def _folders_tab(self) -> QWidget:
+        self.folders_summary = QLabel()
+        self.folders_summary.setObjectName("folders_summary")
+        self.folders_summary.setWordWrap(True)
+        self.folders = QStandardItemModel(0, len(FOLDER_COLUMNS))
+        self.folders.setHorizontalHeaderLabels(list(FOLDER_COLUMNS))
+        self.folders_table = QTableView()
+        self.folders_table.setObjectName("linked_folders")
+        self.folders_table.setModel(self.folders)
+        self.folders_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.folders_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.folders_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.folders_table.verticalHeader().hide()
+        header = self.folders_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.preview = QStandardItemModel(0, 2)
+        self.preview.setHorizontalHeaderLabels(["Inside the folders", "Check"])
+        self.preview_tree = QTreeView()
+        self.preview_tree.setObjectName("folder_preview")
+        self.preview_tree.setModel(self.preview)
+        self.preview_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.preview_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.folder_warning = QLabel()
+        self.folder_warning.setObjectName("folder_warning")
+        self.folder_warning.setWordWrap(True)
+        self.link_folders_button = QPushButton("Link folders")
+        self.link_folders_button.setObjectName("link_folders")
+        self.link_folders_button.clicked.connect(self._link_folders)
+        self.check_folders_button = QPushButton("Check again")
+        self.check_folders_button.setObjectName("check_folders")
+        self.check_folders_button.setToolTip(
+            "Read the files that differ whole, in both folders, and compare them (slow on a share)"
+        )
+        self.check_folders_button.clicked.connect(self._check_folders)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.folder_warning, 1)
+        buttons.addWidget(self.check_folders_button)
+        buttons.addWidget(self.link_folders_button)
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setChildrenCollapsible(False)
+        split.addWidget(self.folders_table)
+        split.addWidget(self.preview_tree)
+        tab = QWidget()
+        column = QVBoxLayout(tab)
+        column.addWidget(self.folders_summary)
+        column.addWidget(split, 1)
+        column.addLayout(buttons)
+        self._preview_folders()
+        return tab
+
+    def _show_folders(self, everything: list[FolderPair]) -> None:
+        current = self._current_folders()
+        hidden = [p for p in everything if self.dismissals.hides(folder_entry(p))]
+        shown = (
+            everything
+            if self.show_dismissed.isChecked()
+            else [p for p in everything if p not in hidden]
+        )
+        self.folder_pairs = shown
+        self.folders.removeRows(0, self.folders.rowCount())
+        for pair in shown:
+            one_side = len(pair.only_first) + len(pair.only_other)
+            cells = [
+                QStandardItem(_where(pair.first.root_name, pair.first.relpath)),
+                QStandardItem(_where(pair.other.root_name, pair.other.relpath)),
+                QStandardItem(f"{pair.files_same:,}"),
+                QStandardItem(f"{len(pair.differ):,}" if pair.differ else ""),
+                QStandardItem(f"{one_side:,}" if one_side else ""),
+            ]
+            if pair in hidden:
+                _grey(cells)
+            self.folders.appendRow(cells)
+        n = len(everything) - len(hidden)
+        text = (
+            f"{n:,} {'pair' if n == 1 else 'pairs'} of folders with the same name and "
+            "matching files. If one is a link to the other (your share shows links as "
+            "ordinary folders), link them: each file becomes one item, listed in both."
+            if n
+            else "No folders look linked."
+        )
+        if hidden:
+            text += f" {len(hidden):,} marked as not the same folder."
+        self.folders_summary.setText(text)
+        self._hidden_folders = len(hidden)
+        self._count_dismissed()
+        self.tabs.setTabText(FOLDERS_TAB, f"Linked folders ({n:,})" if n else "Linked folders")
+        if current is not None:  # the same pair stays current
+            key = folder_entry(current)
+            row = next((i for i, p in enumerate(shown) if folder_entry(p) == key), None)
+            if row is not None:
+                self.folders_table.setCurrentIndex(self.folders.index(row, 0))
+        self.folders_table.resizeColumnsToContents()
+        if self.tabs.currentIndex() == FOLDERS_TAB:
+            self._compare()
+        else:
+            self._preview_folders()
+
+    def _current_folders(self) -> FolderPair | None:
+        row = self.folders_table.currentIndex().row()
+        if self.folder_pairs is None or not 0 <= row < len(self.folder_pairs):
+            return None
+        return self.folder_pairs[row]
+
+    def _preview_folders(self) -> None:
+        """The current pair's preview, the warning, and what the buttons can do."""
+        self.preview.removeRows(0, self.preview.rowCount())
+        pair = self._current_folders()
+        self.link_folders_button.setEnabled(False)
+        self.check_folders_button.setVisible(False)
+        if pair is None:
+            self.folder_warning.setText("")
+            self.link_folders_button.setToolTip("Select a pair of folders to link them")
+            return
+        same_on_reading = self.folder_checks.get(folder_entry(pair))
+        checked = same_on_reading or set()
+        blocking = [p for p in pair.differ if (p.first_id, p.other_id) not in checked]
+
+        def section(title: str, paths: list[str], checks: list[str] | None = None) -> None:
+            head = QStandardItem(f"{title} ({len(paths):,})")
+            for n, path in enumerate(paths[:MAX_PREVIEW]):
+                head.appendRow([QStandardItem(path), QStandardItem(checks[n] if checks else "")])
+            if len(paths) > MAX_PREVIEW:
+                head.appendRow(QStandardItem(f"\u2026 and {len(paths) - MAX_PREVIEW:,} more"))
+            self.preview.appendRow([head, QStandardItem("")])
+
+        if pair.differ:
+            section(
+                "Differ",
+                [p.inside or "(the folders)" for p in pair.differ],
+                [
+                    (
+                        "same, read whole"
+                        if (p.first_id, p.other_id) in checked
+                        else "differs"
+                        if same_on_reading is not None
+                        else ""
+                    )
+                    for p in pair.differ
+                ],
+            )
+        section(
+            "Match",
+            [p.inside + ("  (linked already)" if p.linked else "") for p in pair.same if p.inside],
+        )
+        if pair.only_first:
+            section(f"Only in {pair.first.shown}", list(pair.only_first))
+        if pair.only_other:
+            section(f"Only in {pair.other.shown}", list(pair.only_other))
+        if pair.differ:
+            self.preview_tree.expand(self.preview.index(0, 0))
+        self.preview_tree.resizeColumnToContents(1)
+        self.check_folders_button.setVisible(bool(pair.differ))
+        self.check_folders_button.setEnabled(bool(blocking) and not self.checking_folders)
+        if blocking:
+            n = len(blocking)
+            self.folder_warning.setText(
+                f"\u26a0 {n:,} {'file differs' if n == 1 else 'files differ'}, so these "
+                "may be copies (one edited) rather than one folder: two places of one file "
+                "can't differ. A file changing while it was read, or a network glitch, can "
+                "make one look different: Check again reads them whole."
+            )
+            self.link_folders_button.setToolTip("Files that differ block linking")
+            return
+        self.folder_warning.setText(
+            "The files that differed are the same, read whole." if pair.differ else ""
+        )
+        self.link_folders_button.setEnabled(True)
+        self.link_folders_button.setToolTip(
+            "These are one folder in two places: make each file that matches one item, "
+            "listed in both, and link files that turn up in both later (Edit \u2192 Undo)"
+        )
+
+    def _check_folders(self) -> None:
+        """Check again: read the current pair's differing files whole, in a worker."""
+        pair = self._current_folders()
+        if pair is None or not pair.differ:
+            return
+        session, key = self.session, folder_entry(pair)
+        differ: tuple[PairedPath, ...] = pair.differ
+        self.checking_folders += 1
+        self.folder_warning.setText("Reading the files that differ\u2026")
+        self.check_folders_button.setEnabled(False)
+
+        def job() -> set[tuple[int, int]]:
+            with session.reader.connect() as conn:
+                return confirm_same(conn, known_root(session), session.verifier, differ)
+
+        def done(found: set[tuple[int, int]]) -> None:
+            if not shiboken6.isValid(self):
+                return
+            self.checking_folders -= 1
+            self.folder_checks[key] = found
+            self._preview_folders()
+
+        run_in_pool(job, on_done=done)
+
+    def _link_folders(self) -> None:
+        pair = self._current_folders()
+        if pair is not None:
+            checked = self.folder_checks.get(folder_entry(pair), set())
+            self.link_folders_requested.emit(pair.first, pair.other, set(checked))
 
     def _current_pair(self) -> NearPair | None:
         row = self.similar_table.currentIndex().row()
@@ -610,6 +869,10 @@ class DedupePage(QWidget):
         file = self._file_at(index)
         if file is not None and file.items:
             self.open_entity.emit(file.items[0][0])
+
+
+def _where(root_name: str, relpath: str) -> str:
+    return f"{root_name} \u203a {relpath}"
 
 
 def _grey(cells: list[QStandardItem]) -> None:

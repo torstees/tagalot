@@ -2,11 +2,12 @@
 
 :func:`link_place` and :func:`link_as_one` link places, and :func:`split_place` makes a
 place a file of its own again (**Unlink**, #600); each returns a :class:`PlaceChange`, one
-undo step (:func:`restore_place_change`).
+undo step (:func:`restore_place_change`). Linking folders (#601) is
+:mod:`tagalot.core.linked_folders`, whose change also records the folders' pair.
 """
 
 import posixpath
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from sqlalchemy import Connection, delete, insert, or_, select, tuple_, update
@@ -21,6 +22,7 @@ from tagalot.core.models import (
     Entity,
     EntityContains,
     EntityResource,
+    LinkedFolder,
     LinkedPlace,
     PlaceContains,
     Resource,
@@ -47,6 +49,10 @@ class PlaceRows:
     the user, by a gallery's folders)."""
 
 
+FolderRow = tuple[str, str, str, str]
+"""A ``linked_folder`` row: (root, path, first folder's root, its path)."""
+
+
 @dataclass(frozen=True)
 class PlaceChange:
     """Everything needed to undo and redo linking or unlinking places (#600)."""
@@ -60,6 +66,10 @@ class PlaceChange:
     """Items merged into their group's items, in order."""
     action: ActionChange | None = None
     """Items changed otherwise (the item **Unlink** makes)."""
+    folders: tuple[tuple[str, str], ...] = ()
+    """Linked folders (#601) whose ``linked_folder`` rows changed: (root, path)."""
+    folders_before: frozenset[FolderRow] = frozenset()
+    folders_after: frozenset[FolderRow] = frozenset()
 
 
 def link_as_one(conn: Connection, schema: ThemeSchema, resource_ids: Sequence[int]) -> PlaceChange:
@@ -323,14 +333,50 @@ def restore_place_change(
         if change.action is not None:
             restore_action(conn, schema, change.action, forward=True)
         _set_rows(conn, change.resources, change.after)
+        _set_folders(conn, change.folders, change.folders_after)
     else:
         if change.action is not None:
             restore_action(conn, schema, change.action, forward=False)
         for merge in reversed(change.merges):
             restore_merge(conn, schema, merge, forward=False)
         _set_rows(conn, change.resources, change.before)
+        _set_folders(conn, change.folders, change.folders_before)
     # Read again at the next scan, as they are now.
     conn.execute(update(Resource).where(Resource.id.in_(change.resources)).values(ingested_at=None))
+
+
+def folder_rows(conn: Connection, folders: Iterable[tuple[str, str]]) -> frozenset[FolderRow]:
+    """The ``linked_folder`` rows of these folders, (root, path)."""
+    wanted = list(folders)
+    if not wanted:
+        return frozenset()
+    rows = conn.execute(
+        select(
+            LinkedFolder.root_id,
+            LinkedFolder.relpath,
+            LinkedFolder.first_root_id,
+            LinkedFolder.first_relpath,
+        ).where(tuple_(LinkedFolder.root_id, LinkedFolder.relpath).in_(wanted))
+    )
+    return frozenset((a, b, c, d) for a, b, c, d in rows)
+
+
+def _set_folders(
+    conn: Connection, folders: Sequence[tuple[str, str]], rows: frozenset[FolderRow]
+) -> None:
+    if not folders:
+        return
+    conn.execute(
+        delete(LinkedFolder).where(tuple_(LinkedFolder.root_id, LinkedFolder.relpath).in_(folders))
+    )
+    if rows:
+        conn.execute(
+            insert(LinkedFolder),
+            [
+                {"root_id": a, "relpath": b, "first_root_id": c, "first_relpath": d}
+                for a, b, c, d in sorted(rows)
+            ],
+        )
 
 
 def _touched(conn: Connection, ids: Sequence[int]) -> list[int]:

@@ -59,6 +59,7 @@ CORE_TABLES = {
     "own_field_read",
     "linked_place",
     "place_contains",
+    "linked_folder",
     "notes_folder_note",
     "file_not_found",
     "picture_failure",

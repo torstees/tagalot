@@ -70,6 +70,7 @@ def test_the_three_lists(qtbot: QtBot, window: MainWindow) -> None:
         "Pictures (0)",  # pictures not found or that can't be drawn (#426)
         "New in archives (0)",  # archives with new files to review (#520)
         "Skipped (0)",  # files scans leave out, by rule (#527)
+        "Links (0)",  # files in linked folders that differ (#601)
     ]
     assert page.skipped_stack.currentWidget() is page.skipped_empty
     assert [f.relpath for f in page.files.files] == ["Miles Davis/Kind of Blue/cover.jpg"]

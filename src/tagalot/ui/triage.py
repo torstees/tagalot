@@ -25,6 +25,9 @@ Tabs, each with how many it holds:
   theme doesn't read, archive members not read), with how many files and how many items
   it hides (#527, ``core.skip_reasons``); selecting one lists its files and says where the
   rule lives.
+- **Links:** files in linked folders (#601, ``core.linked_folders``) that differ from the
+  file at the same path in the folder they're linked with, so they aren't linked; with
+  Open file and Show in file manager, for both.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -56,6 +59,7 @@ from sqlalchemy import Connection
 
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
+from tagalot.core.linked_folders import FolderDifference, folder_differences
 from tagalot.core.markdown_check import MarkdownFileProblem, markdown_problems
 from tagalot.core.models import ResourceStatus
 from tagalot.core.new_in_archives import NewInArchive, count_new_in_archives, new_in_archives
@@ -104,7 +108,8 @@ MAX_FILES = 10_000
     PICTURES_TAB,
     NEW_TAB,
     SKIPPED_TAB,
-) = range(8)
+    LINKS_TAB,
+) = range(9)
 _TITLES = {
     UNLINKED_TAB: "Unlinked files",
     UNTAGGED_TAB: "Untagged items",
@@ -114,6 +119,7 @@ _TITLES = {
     PICTURES_TAB: "Pictures",
     NEW_TAB: "New in archives",
     SKIPPED_TAB: "Skipped",
+    LINKS_TAB: "Links",
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
 SKIPPED_HINT = "Select a rule to see its files and where it lives."
@@ -136,6 +142,7 @@ class Counts:
     pictures: int = 0
     skipped: int = 0
     new_in_archives: int = 0
+    links: int = 0
 
 
 MarkdownRow = NoteProblem | MarkdownFileProblem
@@ -150,6 +157,7 @@ Loaded = tuple[
     list[PictureProblem],
     SkippedReport,
     list[NewInArchive],
+    list[FolderDifference],
 ]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
@@ -360,6 +368,40 @@ class SkippedFilesModel(QAbstractTableModel):
         if index.column() == 0:
             return self.root_names.get(file.root_id, file.root_id)
         return file.shown
+
+
+class LinksModel(QAbstractTableModel):
+    """Files in linked folders that differ from their counterparts (#601)."""
+
+    HEADERS = ("Folder", "Path", "Differs from")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[FolderDifference] = []
+
+    def set_rows(self, rows: list[FolderDifference]) -> None:
+        self.beginResetModel()
+        self.rows = rows
+        self.endResetModel()
+
+    def rowCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.rows)
+
+    def columnCount(self, parent: ModelIndex = QModelIndex()) -> int:  # noqa: B008
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> object:
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index: ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
+            return None
+        row = self.rows[index.row()]
+        return (row.root_name, row.relpath, row.first_shown)[index.column()]
 
 
 class NewInArchivesModel(QAbstractTableModel):
@@ -754,6 +796,39 @@ class TriagePage(QWidget):
         self.new_stack.addWidget(self.new_empty)
         new_tab = _tab(self.new_stack, [review, hide_new], self.new_note)
 
+        self.links = LinksModel()
+        self.links_table = QTableView()
+        self.links_table.setObjectName("links")
+        self.links_table.setModel(self.links)
+        self.links_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.links_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.links_table.verticalHeader().hide()
+        header = self.links_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        for column in (1, 2):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        self.links_table.doubleClicked.connect(lambda _: self._open_link(OPEN, other=False))
+        open_link = QPushButton("Open file")
+        open_link.clicked.connect(lambda: self._open_link(OPEN, other=False))
+        open_first = QPushButton("Open the other")
+        open_first.setToolTip("Open the file it differs from, in the folder it's linked with")
+        open_first.clicked.connect(lambda: self._open_link(OPEN, other=True))
+        reveal_link = QPushButton("Show in file manager")
+        reveal_link.clicked.connect(lambda: self._open_link(REVEAL, other=False))
+        self.links_note = QLabel(
+            "Files in linked folders that differ from the file at the same path in the "
+            "folder they're linked with, so they aren't linked: one may have been edited, "
+            "or be a copy. Make them the same on disk, and the next scan links them."
+        )
+        self.links_note.setWordWrap(True)
+        self.links_empty = EmptyState(
+            "Linked folders match", "Every file in a linked folder matches its other place."
+        )
+        self.links_stack = QStackedWidget()
+        self.links_stack.addWidget(self.links_table)
+        self.links_stack.addWidget(self.links_empty)
+        links_tab = _tab(self.links_stack, [open_link, open_first, reveal_link], self.links_note)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
         self.tabs.addTab(untagged_tab, _TITLES[UNTAGGED_TAB])
@@ -763,6 +838,7 @@ class TriagePage(QWidget):
         self.tabs.addTab(pictures_tab, _TITLES[PICTURES_TAB])
         self.tabs.addTab(new_tab, _TITLES[NEW_TAB])
         self.tabs.addTab(skipped_tab, _TITLES[SKIPPED_TAB])
+        self.tabs.addTab(links_tab, _TITLES[LINKS_TAB])
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)
         self.refresh()
@@ -795,9 +871,11 @@ class TriagePage(QWidget):
                     sum(1 for p in pictures if not p.ignored),
                     skipped.total,
                     count_new_in_archives(conn),
+                    len(links := folder_differences(conn)),
                 )
                 files = unlinked_files(conn, MAX_FILES, notes)
-                return counts, files, markdown, pictures, skipped, new_in_archives(conn)
+                new = new_in_archives(conn)
+                return counts, files, markdown, pictures, skipped, new, links
 
         # Refreshes overlap (a change, then Show ignored): only the latest is shown, or an
         # older one finishing last would put back what it saw (#406).
@@ -818,6 +896,7 @@ class TriagePage(QWidget):
         pictures: list[PictureProblem] | None = None,
         skipped: SkippedReport | None = None,
         new: list[NewInArchive] | None = None,
+        links: list[FolderDifference] | None = None,
     ) -> None:
         self.counts = counts
         for tab, n in (
@@ -829,9 +908,12 @@ class TriagePage(QWidget):
             (PICTURES_TAB, counts.pictures),
             (NEW_TAB, counts.new_in_archives),
             (SKIPPED_TAB, counts.skipped),
+            (LINKS_TAB, counts.links),
         ):
             self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
         names = {r.id: r.name for r in self.session.keep.config.roots}
+        self.links.set_rows(links or [])
+        self.links_stack.setCurrentWidget(self.links_table if links else self.links_empty)
         self.new_archives.set_archives(new or [], names)
         self.new_stack.setCurrentWidget(self.new_table if new else self.new_empty)
         self._show_skipped(skipped.rules if skipped is not None else [])
@@ -916,6 +998,25 @@ class TriagePage(QWidget):
             return
         # Looked up by id: a file inside an archive opens from a copy (#524).
         self.file_opener.act_on_resource(files[0].resource_id, how)
+
+    def selected_link(self) -> FolderDifference | None:
+        rows = self.links_table.selectionModel().selectedRows()
+        return self.links.rows[rows[0].row()] if rows else None
+
+    def _open_link(self, how: str, *, other: bool) -> None:
+        """Open or show the selected row's file, or (``other``) the one it differs from."""
+        row = self.selected_link()
+        if row is None or self.file_opener is None:
+            return
+        root_id, relpath = (
+            (row.first_root_id, row.first_relpath) if other else (row.root_id, row.relpath)
+        )
+        base = _known(self.session)(root_id)
+        if base is None:
+            self.message.emit("Its watched folder has no folder on this computer.")
+            return
+        resource_id = row.first_id if other else row.resource_id
+        self.file_opener.act(FileToOpen(resource_id, local_path(base, relpath), False), how)
 
     def selected_note(self) -> MarkdownRow | None:
         rows = self.notes_table.selectionModel().selectedRows()

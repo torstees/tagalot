@@ -16,6 +16,7 @@ from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.icons import IconFileError
 from tagalot.core.item_pictures import PictureChange, PictureError
+from tagalot.core.linked_folders import Folder
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
 from tagalot.core.own_fields import OwnField, OwnFieldError
@@ -425,6 +426,13 @@ class TagActions(QObject):
         """Link copies as places of one file (#600); one undo step."""
         self._run(
             lambda: self.session.link_as_one(resource_ids),
+            lambda label: f"{label}. Edit \u2192 Undo separates them again.",
+        )
+
+    def link_folders(self, first: Folder, other: Folder, confirmed: set[tuple[int, int]]) -> None:
+        """Link two folders as one (#601); one undo step."""
+        self._run(
+            lambda: self.session.link_folders(first, other, confirmed),
             lambda label: f"{label}. Edit \u2192 Undo separates them again.",
         )
 
