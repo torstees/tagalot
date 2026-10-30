@@ -20,6 +20,7 @@ Select a group or pair and the **compare pane** shows the items side by side: th
 
 - **Merge…** makes them one item: pick which to keep, and, where your own edited values differ, which wins. The kept item gets the others' tags, files, containers, and relationships; the others are removed. Their files become the kept item's versions where the kind allows it (songs, movies, books, papers).
 - **Keep both as versions** (or *Keep all*) merges at once into the left item, for kinds whose items have several files.
+- **Link as one** (identical files) is for copies that are really one file in several places, such as links your share shows as ordinary files. They become one item, listed in each place, with the files' items merged into the first copy's (as Merge does), and later scans keep them together. They then leave this page, since they're one file. It isn't offered once **Check** found the copies different. **Unlink this place** on the item's page separates one again.
 - **Not a duplicate** hides the group or pair. A group shows again if its files change. **Show dismissed** lists what you've hidden, to show it again.
 
-Merging and dismissing are steps you can undo. A merged item stays merged: scanning its old file again doesn't bring it back.
+Merging, linking, and dismissing are steps you can undo. A merged item stays merged: scanning its old file again doesn't bring it back.

@@ -17,7 +17,9 @@ group's items, or the current pair, side by side, highlighting what differs.
 Its **Merge…** opens ``ui.merge_dialog`` (#120); **Keep both as versions** merges into
 the left item at once (#121). **Not a duplicate** hides the current group or pair
 (``core.not_duplicates``; a group shows again once its files change), and **Show
-dismissed** lists those greyed, to show them as duplicates again.
+dismissed** lists those greyed, to show them as duplicates again. **Link as one** (#600)
+makes the current group's copies places of one file (``core.place_links.link_as_one``),
+for links a share shows as ordinary files; not once **Check** found them different.
 """
 
 from functools import partial
@@ -85,6 +87,8 @@ class DedupePage(QWidget):
     """The compare pane's Keep both as versions: the item ids, the one to keep first."""
     not_duplicate_requested = Signal(list, bool)
     """Not a duplicate (``True``) or Show as a duplicate again (``False``): the entries."""
+    link_requested = Signal(list)
+    """Link as one (#600): the current group's copies, the first place first."""
 
     def __init__(
         self,
@@ -190,6 +194,11 @@ class DedupePage(QWidget):
         self.not_duplicate_button.clicked.connect(self._not_duplicate)
         self.not_duplicate_button.setVisible(False)
         self.compare_pane.add_action(self.not_duplicate_button)
+        self.link_button = QPushButton("Link as one")
+        self.link_button.setObjectName("link_as_one")
+        self.link_button.clicked.connect(self._link)
+        self.link_button.setVisible(False)
+        self.compare_pane.add_action(self.link_button)
         self.tree.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.similar_table.selectionModel().currentRowChanged.connect(lambda *_: self._compare())
         self.tabs.currentChanged.connect(lambda _: self._compare())
@@ -299,6 +308,7 @@ class DedupePage(QWidget):
         pane = self.compare_pane
         entry = self._current_entry()
         self.not_duplicate_button.setVisible(entry is not None)
+        self._show_link()
         if entry is not None:
             dismissed = self.dismissals.hides(entry)
             self.not_duplicate_button.setText(
@@ -337,6 +347,28 @@ class DedupePage(QWidget):
             return pair_entry(pair) if pair is not None else None
         group = self._current_group()
         return group_entry(group) if group is not None else None
+
+    def _show_link(self) -> None:
+        """Link as one, for the current group of identical files: not once its copies were
+        found to differ."""
+        group = self._current_group() if self.tabs.currentIndex() == 0 else None
+        self.link_button.setVisible(group is not None)
+        if group is None:
+            return
+        check = self.checks.get(group.fingerprint)
+        differs = check is not None and bool(check.different)
+        self.link_button.setEnabled(not differs)
+        self.link_button.setToolTip(
+            "Check found these copies different, so they aren't one file"
+            if differs
+            else "These are one file in several places (links your share shows as files): "
+            "make them one item, listed in each place (Edit \u2192 Undo)"
+        )
+
+    def _link(self) -> None:
+        group = self._current_group()
+        if group is not None:
+            self.link_requested.emit([f.resource_id for f in group.files])
 
     def _not_duplicate(self) -> None:
         entry = self._current_entry()
@@ -488,6 +520,7 @@ class DedupePage(QWidget):
                 self.checking -= 1
                 self.checks[group.fingerprint] = result
                 self._show_check(group)
+                self._show_link()  # not once its copies differ
 
             run_in_pool(partial(verifier.verify_group, group), on_done=done)
 

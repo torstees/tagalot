@@ -58,6 +58,7 @@ from tagalot.core.not_duplicates import NotDuplicateChange, restore_not_duplicat
 from tagalot.core.note_keys import NoteKeyChange, ignore_note_key, restore_note_key
 from tagalot.core.own_fields import OWN, OwnField, OwnFields
 from tagalot.core.picture_problems import PictureIgnoreChange, restore_picture_ignores
+from tagalot.core.place_links import PlaceChange, restore_place_change
 from tagalot.core.promote import FieldMove
 from tagalot.core.reextract import ReextractChange, restore_entities
 from tagalot.core.saved_searches import SavedChange, restore_saved
@@ -169,6 +170,7 @@ Step = (
     | PictureIgnoreChange
     | PictureChange
     | MergeChange
+    | PlaceChange
     | NotDuplicateChange
     | SavedChange
     | FieldMove
@@ -610,6 +612,9 @@ class TagService:
         elif isinstance(step, MergeChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_merge(conn, schema, step, forward=forward))
+        elif isinstance(step, PlaceChange):
+            assert schema is not None
+            self.writer.run(lambda conn: restore_place_change(conn, schema, step, forward=forward))
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 
