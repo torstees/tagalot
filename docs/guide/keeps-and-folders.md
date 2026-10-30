@@ -37,6 +37,19 @@ Add, rename, or remove folders in **Keep → Configure keep…** ([Keep configur
 
 Large folders and slow shares are fine: Tagalot reads in the background, and the window stays usable.
 
+### Links: one file in several places
+
+If you file things in several places with links, Tagalot treats each linked file or folder as **one item** that is in each place:
+
+- **Symbolic links** (to a file or a folder), Windows **junctions**, and **hard links** are found by the scan and linked for you.
+- The item is listed under each place's folder (an artist's, an author's), as it would be without the link, but only once in a search.
+- Its tags, your edits, and its notes are shared, since it's one item.
+- Its page lists the other places as **Also at …**, and opening it uses whichever place is there.
+- A link to a folder brings everything in that folder along. A link back to a folder it's inside isn't followed, so a scan can't go round in circles.
+- A link to something outside the keep's folders is left out for now.
+
+Some shares (a Linux server's links seen from Windows, for example) show links as ordinary files and folders, so Tagalot can't tell they're links. Those show up as separate items for now.
+
 ### Offline folders
 
 When a folder can't be reached (a share that's down, a drive that isn't plugged in), its files are marked **offline**: their items, tags, and thumbnails stay, and the dashboard and the Activity panel say so. Nothing is ever deleted because a folder was unreachable. Scan again once it's back.

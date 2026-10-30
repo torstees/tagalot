@@ -7,12 +7,14 @@ Thumbnails (step 7) arrive in M8.
 
 import json
 import logging
+import os
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, Engine, select, update
@@ -40,6 +42,7 @@ from tagalot.core.fingerprint import (
     store_fingerprints,
 )
 from tagalot.core.folder_items import fill_folders, folder_table, link_folder_fields
+from tagalot.core.fsinfo import is_network_path
 from tagalot.core.gallery_fill import (
     fill_galleries,
     fill_note_galleries,
@@ -69,6 +72,7 @@ from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
 from tagalot.core.own_fields import OwnFields
 from tagalot.core.own_notes import sync_own_fields
+from tagalot.core.real_links import link_facts, sync_links
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
     BATCH_SIZE,
@@ -138,6 +142,8 @@ class ScanReport:
     ingest_warnings: list[IngestWarning] = field(default_factory=list)
     members: MemberCounts = field(default_factory=MemberCounts)
     """What happened to files inside archives the user chose to look inside (#391)."""
+    linked: int = 0
+    """Paths linked as places of others, or unlinked, because of real links (#599)."""
 
 
 def scan_root(
@@ -160,6 +166,7 @@ def scan_root(
     notes_folder: str | None = None,
     see_through: frozenset[str] = frozenset(),
     own_fields: OwnFields | None = None,
+    roots: Mapping[str, str] | None = None,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -187,6 +194,10 @@ def scan_root(
     folders, and those inside them, never reach the theme, and their files reach it as
     their parent folder's (:attr:`ResourceInfo.folder`). When they differ from the names the
     root was last ingested with, every file of the root is ingested again.
+
+    ``roots`` are this computer's paths of the keep's roots, by id (this root's alone if
+    ``None``): links to folders in them are walked, and links to paths in them become
+    linked places (#599).
     """
     if (theme is None) != (schema is None):
         raise ValueError("pass both theme and schema, or neither")
@@ -213,6 +224,8 @@ def scan_root(
         logger.warning("Cannot read %s in root %s: %s", relpath or "(root)", root.id, error)
 
     say(f"Walking {root.name}…")
+    keep_roots = dict(roots) if roots is not None else {}
+    keep_roots[root.id] = path
     entries = list(
         walk_root(
             path,
@@ -222,6 +235,8 @@ def scan_root(
             on_error=on_read_error,
             notes=notes_folder,
             see_through=see_through,
+            link_roots=[os.path.realpath(p) for p in keep_roots.values() if p],
+            hard_links=os.name != "nt" or not is_network_path(Path(path)),
         )
     )
     with reader.connect() as conn:
@@ -258,6 +273,17 @@ def scan_root(
         report.fingerprinted += writer.run(partial(_store, batch))
 
     report.moves = writer.run(partial(_moves, applied))
+    if schema is not None:  # paths reached through links are linked places (#599)
+        report.linked = writer.run(
+            partial(
+                sync_links,
+                schema=schema,
+                root_id=root.id,
+                facts=link_facts(entries),
+                walked=frozenset(e.relpath for e in entries),
+                roots={k: v for k, v in keep_roots.items() if v},
+            )
+        )
     _sync_members(writer, reader, root, path, extensions, when, report, say)
     if theme is not None and schema is not None:
         options = effective_options(

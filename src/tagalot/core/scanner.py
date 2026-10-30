@@ -49,6 +49,15 @@ class WalkEntry:
     size: int | None
     """File size in bytes; ``None`` for directories."""
     mtime_ns: int
+    target: str | None = None
+    """Reached through a link (#599): the real path this is (a symbolic link's or a
+    junction's target, or the path a linked folder's entry really has), else ``None``."""
+    how: str | None = None
+    """How it was reached through a link: ``symlink``, ``junction``, or ``inside`` (in a
+    linked folder)."""
+    file_id: tuple[int, int] | None = None
+    """``(device, file number)`` of a file with more than one hard link, when the walk
+    asked and the disk says (#599)."""
 
 
 def compile_excludes(patterns: Iterable[str]) -> re.Pattern[str] | None:
@@ -106,6 +115,8 @@ def walk_root(
     on_error: ErrorHandler | None = None,
     notes: str | None = None,
     see_through: frozenset[str] = frozenset(),
+    link_roots: Sequence[str] | None = None,
+    hard_links: bool = False,
 ) -> Iterator[WalkEntry]:
     """Yield the files (and optionally directories) under ``root_path``.
 
@@ -118,7 +129,13 @@ def walk_root(
       root): only its Markdown files are listed, whatever ``extensions`` and ``dirs`` say.
     - ``see_through``: see-through folder names, case-folded (#459): a note in one is its
       parent folder's.
-    - Symlinked folders and junctions are not followed; symlinked files are included.
+    - Links (#599): a symbolic link to a file is listed as the file, with its target. A
+      symbolic link or junction to a folder inside ``link_roots`` (real paths; the root's
+      own by default) is walked, its entries listed with the real paths they have
+      (``inside``); one to a folder elsewhere, or to a folder it is inside (a loop), is
+      not walked. A link whose target is gone is left out.
+    - ``hard_links``: also ask each file how many names it has (a second ``stat`` on
+      Windows), so a file with several gets its :attr:`WalkEntry.file_id`.
     - Unreadable folders and files go to ``on_error`` and the walk continues.
 
     Entries are yielded in name order within each folder, so results are deterministic.
@@ -126,22 +143,42 @@ def walk_root(
     excluded = compile_excludes(exclude)
     wanted = {e.lower() for e in extensions} if extensions is not None else None
     report = on_error or _log_error
-    stack = [""]
+    real_root = os.path.realpath(root_path)
+    allowed = [_norm(p) for p in (link_roots if link_roots is not None else [real_root])]
+    # Each folder to walk: its real path, whether it is in a linked folder, and the real
+    # paths of the folders it is in (a link back to one of them is a loop).
+    stack: list[tuple[str, str, bool, tuple[str, ...]]] = [
+        ("", real_root, False, (_norm(real_root),))
+    ]
     while stack:
-        rel_dir = stack.pop()
+        rel_dir, real_dir, linked, chain = stack.pop()
         try:
             with os.scandir(os.path.join(root_path, rel_dir) if rel_dir else root_path) as it:
                 entries = sorted(it, key=lambda e: e.name)
         except OSError as e:
             report(rel_dir, e)
             continue
-        subdirs: list[str] = []
+        subdirs: list[tuple[str, str, bool, tuple[str, ...]]] = []
         for entry in entries:
             relpath = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
             if excluded is not None and excluded.match(relpath):
                 continue
+            real = os.path.join(real_dir, entry.name)
+            target, how = (real, "inside") if linked else (None, None)
             try:
-                if entry.is_dir(follow_symlinks=False) and not entry.is_junction():
+                if entry.is_symlink() or entry.is_junction():
+                    target = os.path.realpath(entry.path)
+                    how = "junction" if entry.is_junction() else "symlink"
+                    if os.path.isdir(target):
+                        if not _may_walk(target, chain, allowed):
+                            continue  # outside the keep's folders, or a loop
+                        real = target
+                    elif not os.path.isfile(target):
+                        continue  # its target is gone
+                    is_dir = os.path.isdir(target)
+                else:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                if is_dir:
                     if in_notes(relpath, notes):
                         pass  # walked for its notes, never an entry
                     elif dirs is True or (callable(dirs) and dirs(relpath)):
@@ -151,8 +188,10 @@ def walk_root(
                             ext="",
                             size=None,
                             mtime_ns=entry.stat(follow_symlinks=False).st_mtime_ns,
+                            target=target,
+                            how=how,
                         )
-                    subdirs.append(relpath)
+                    subdirs.append((relpath, real, target is not None, (*chain, _norm(real))))
                 elif entry.is_file():
                     ext = os.path.splitext(entry.name)[1].lower()
                     if in_notes(relpath, notes):
@@ -171,10 +210,43 @@ def walk_root(
                         ext=ext,
                         size=st.st_size,
                         mtime_ns=st.st_mtime_ns,
+                        target=target,
+                        how=how,
+                        file_id=_file_id(entry, st) if hard_links and how is None else None,
                     )
             except OSError as e:
                 report(relpath, e)
         stack.extend(reversed(subdirs))  # pop in name order: depth-first, sorted
+
+
+def _norm(path: str) -> str:
+    """A real path as compared: case-folded where the OS ignores case."""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _within(path: str, folder: str) -> bool:
+    """Whether a normalized path is ``folder`` or inside it."""
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _may_walk(target: str, chain: Sequence[str], allowed: Sequence[str]) -> bool:
+    """Whether a link to the folder ``target`` (a real path) is walked: inside one of the
+    ``allowed`` folders, and not one holding a folder on the way to it (``chain``, real
+    paths), which would walk it forever."""
+    norm = _norm(target)
+    if any(_within(folder, norm) for folder in chain):
+        return False  # a loop: the link leads back up
+    return any(_within(norm, folder) for folder in allowed)
+
+
+def _file_id(entry: os.DirEntry[str], st: os.stat_result) -> tuple[int, int] | None:
+    """A file's ``(device, file number)`` when it has more than one hard link. Windows'
+    directory listings leave these out, so they are asked for there."""
+    if os.name == "nt":
+        st = os.stat(entry.path)
+    if st.st_nlink > 1 and st.st_ino:
+        return (st.st_dev, st.st_ino)
+    return None
 
 
 NOTES_FOLDER_EXTENSIONS = frozenset(NOTE_EXTENSIONS) | (

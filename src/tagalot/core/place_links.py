@@ -1,8 +1,9 @@
 """Linking places (DESIGN.md §13 *Linked places*, #598): see :mod:`tagalot.core.places`."""
 
-from sqlalchemy import Connection, delete, insert, select, update
+from sqlalchemy import Connection, delete, insert, select, tuple_, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from tagalot.core import closure
 from tagalot.core.merge import merge_items
 from tagalot.core.models import (
     Entity,
@@ -11,6 +12,7 @@ from tagalot.core.models import (
     LinkedPlace,
     PlaceContains,
     Resource,
+    UserContains,
 )
 from tagalot.core.places import HOWS, first_place
 from tagalot.core.theme_schema import ThemeSchema
@@ -100,3 +102,44 @@ def _parents(conn: Connection, entity_id: int) -> set[int]:
     return set(
         conn.scalars(select(EntityContains.parent_id).where(EntityContains.child_id == entity_id))
     )
+
+
+def unlink_place(conn: Connection, place_id: int) -> None:
+    """``place_id`` is no longer a place of its group: the containers it filed the group's
+    items in go (unless another place gives them, or the user put them there), and it is
+    read again at the next scan as a file of its own."""
+    edges = [
+        (p, c)
+        for p, c in conn.execute(
+            select(PlaceContains.parent_id, PlaceContains.child_id).where(
+                PlaceContains.resource_id == place_id
+            )
+        )
+    ]
+    conn.execute(delete(PlaceContains).where(PlaceContains.resource_id == place_id))
+    if not edges:
+        still: set[tuple[int, int]] = set()
+        by_hand: set[tuple[int, int]] = set()
+    else:
+        still = {
+            (p, c)
+            for p, c in conn.execute(
+                select(PlaceContains.parent_id, PlaceContains.child_id).where(
+                    tuple_(PlaceContains.parent_id, PlaceContains.child_id).in_(edges)
+                )
+            )
+        }
+        by_hand = {
+            (p, c)
+            for p, c in conn.execute(
+                select(UserContains.parent_id, UserContains.child_id).where(
+                    UserContains.added.is_(True),
+                    tuple_(UserContains.parent_id, UserContains.child_id).in_(edges),
+                )
+            )
+        }
+    gone = [e for e in edges if e not in still and e not in by_hand]
+    if gone:
+        closure.apply(conn, removed=gone)
+    conn.execute(delete(LinkedPlace).where(LinkedPlace.resource_id == place_id))
+    conn.execute(update(Resource).where(Resource.id == place_id).values(ingested_at=None))

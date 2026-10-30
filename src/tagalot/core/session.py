@@ -341,6 +341,7 @@ class KeepSession:
                     notes_folder=config.notes_path if root.id == config.notes_root else None,
                     see_through=self.see_through,
                     own_fields=self.own_fields,
+                    roots={r.id: self.root_path(r.id) for r in config.roots},
                 )
             )
             self.problems.add(problems_from_report(reports[-1]))
