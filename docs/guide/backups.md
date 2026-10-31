@@ -69,25 +69,46 @@ On Windows, use **`tagalot-cli.exe`**, not `tagalot.exe`. `tagalot.exe` opens a 
 
 ### Windows Task Scheduler
 
-In PowerShell, this backs the keep up every night at 3:00 and keeps two weeks of copies, then exports the tags beside them:
+In PowerShell, this backs the keep up every night at 3:00 and keeps two weeks of copies, then exports the tags beside them. Each command is one line (the `-Argument` lines are long): paste them as they are.
 
 ```powershell
 $cli = "$env:LOCALAPPDATA\Programs\Tagalot\tagalot-cli.exe"
-$backup = New-ScheduledTaskAction -Execute $cli `
-    -Argument '--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14'
-$tags = New-ScheduledTaskAction -Execute $cli `
-    -Argument '--export-tags "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies tags.yaml" --items'
+$backup = New-ScheduledTaskAction -Execute $cli -Argument '--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14 --output "E:\Backups\Tagalot\last backup.txt"'
+$tags = New-ScheduledTaskAction -Execute $cli -Argument '--export-tags "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies tags.yaml" --items --output "E:\Backups\Tagalot\last tag export.txt"'
 $trigger = New-ScheduledTaskTrigger -Daily -At 3am
 Register-ScheduledTask -TaskName "Tagalot backup" -Action $backup, $tags -Trigger $trigger
+```
+
+Before you rely on it, check what the task will run. Each action should show the program, then your arguments, and an empty working directory:
+
+```powershell
+(Get-ScheduledTask "Tagalot backup").Actions | Format-List Execute, Arguments, WorkingDirectory
 ```
 
 Or set it up in the **Task Scheduler** app:
 
 1. Choose **Create Basic Task…**, name it, and choose **Daily** and a time.
-2. Choose **Start a program**: the program is `tagalot-cli.exe` (Browse to it), and the arguments are `--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14`.
+2. Choose **Start a program**: the program is `tagalot-cli.exe` (Browse to it), and the arguments are `--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14 --output "E:\Backups\Tagalot\last backup.txt"`. Leave **Start in** empty.
 
-- **The console window:** it flashes up while the task runs, if you're signed in. In the task's **Properties**, **Run whether user is logged on or not** runs it out of sight.
-- **Did it work?** The task's **Last Run Result** is the exit code: `(0x0)` is success, `(0x1)` a failed or damaged copy, and `(0x2)` a mistake in the command. `backup.log` in the backup folder has a line for each run.
+Use full paths everywhere: a scheduled task doesn't start in your folder, so `scratch\Demo.keep` wouldn't be found.
+
+The console window flashes up while the task runs, if you're signed in. In the task's **Properties**, **Run whether user is logged on or not** runs it out of sight.
+
+### Seeing what went wrong
+
+A scheduled run has no one watching, so look in three places:
+
+- **What it printed:** `--output FILE` writes everything the command prints to that file, errors included, replacing it each run (the examples above use `last backup.txt`). Without it, a run's messages are lost.
+- **`backup.log`** in the backup folder: a line for each backup that got as far as copying, `ok` or `FAILED` with why. A mistake in the command (a keep that isn't there) stops it before then: see `--output`'s file.
+- **The task's Last Run Result** in Task Scheduler (or `Get-ScheduledTaskInfo "Tagalot backup"`, as `LastTaskResult`):
+
+  | Result | Meaning |
+  |---|---|
+  | `(0x0)` | It worked. |
+  | `(0x1)` | The copy failed or is damaged, or the export couldn't be written. |
+  | `(0x2)` | A mistake in the command: see the `--output` file. |
+  | `(0x41301)` | It is running now. |
+  | Anything else (`0x800710E0`, `0x80070002`…) | Windows couldn't start `tagalot-cli.exe` at all: check the action's program path, and that **Start in** is empty or a folder. Nothing was printed or logged. |
 
 ### cron (Linux and macOS)
 

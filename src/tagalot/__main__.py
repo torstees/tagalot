@@ -71,6 +71,7 @@ COMMANDS = (
 CLI_USAGE = """usage: tagalot-cli --backup KEEP --to FOLDER [--keep-last N]
        tagalot-cli --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]
        tagalot-cli --check | --version
+Add --output FILE to any of them to write what it prints to FILE (for scheduled tasks).
 tagalot-cli runs Tagalot's commands in a console, for scheduled tasks; tagalot.exe opens
 the window. See https://torstees.github.io/tagalot/#/guide/backups"""
 
@@ -86,6 +87,7 @@ def _output(args: list[str]) -> Callable[[str], None]:
     """Where ``--check`` and ``--version`` write: ``--output FILE``, else standard output."""
     if "--output" in args and args.index("--output") + 1 < len(args):
         path = Path(args[args.index("--output") + 1])
+        path.parent.mkdir(parents=True, exist_ok=True)  # a scheduled run's first time (#610)
         path.write_text("", encoding="utf-8")
 
         def to_file(line: str) -> None:
