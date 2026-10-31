@@ -1,6 +1,6 @@
 """Backups from the command line, for a scheduler (cron, Windows Task Scheduler) to run:
-``tagalot --backup KEEP --to FOLDER [--keep-last N]`` (#608), a checked copy of a keep
-(``core/backup.py``), and ``tagalot --export-tags KEEP --to FILE [--items]
+``tagalot --backup KEEP --to FOLDER [--keep-last N] [--tags]`` (#608; ``--tags``, #611), a
+checked copy of a keep (``core/backup.py``), and ``tagalot --export-tags KEEP --to FILE [--items]
 [--allow-watched]`` (#609), the tag export (``core/exports.py``)."""
 
 from collections.abc import Callable, Sequence
@@ -12,15 +12,18 @@ from tagalot.core.settings import Settings, load_settings
 
 Out = Callable[[str], None]
 
-USAGE_TEXT = "usage: tagalot --backup KEEP --to FOLDER [--keep-last N]"
+USAGE_TEXT = "usage: tagalot --backup KEEP --to FOLDER [--keep-last N] [--tags]"
 EXPORT_USAGE = "usage: tagalot --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]"
 
 
-def run_backup(args: Sequence[str], out: Out = print) -> int:
-    """Run ``--backup`` from the command line's arguments; returns the exit code."""
+def run_backup(args: Sequence[str], out: Out = print, settings: Settings | None = None) -> int:
+    """Run ``--backup`` from the command line's arguments; returns the exit code. With
+    ``--tags``, each copy holds the tag export too."""
     try:
         keep, to, keep_last = parse_backup_args(args)
-        result = backup_keep(keep, to, keep_last)
+        result = backup_keep(
+            keep, to, keep_last, tags="--tags" in args, settings=settings or load_settings()
+        )
     except BackupError as e:
         out(f"error: {e}")
         out(USAGE_TEXT)

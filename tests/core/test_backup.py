@@ -13,8 +13,17 @@ from tagalot.__main__ import main
 from tagalot.core import backup
 from tagalot.core.backup import BackupError, backup_keep, check_database, good_backups
 from tagalot.core.db import open_keep_database
-from tagalot.core.keep import KEEP_DB, KEEP_TOML, ThemeRef, create_keep, open_keep
+from tagalot.core.exports import ExportError
+from tagalot.core.keep import (
+    KEEP_DB,
+    KEEP_TOML,
+    RootConfig,
+    ThemeRef,
+    create_keep,
+    open_keep,
+)
 from tagalot.core.models import Tag
+from tagalot.core.settings import Settings
 from tagalot.core.tags import add_tag
 
 T0 = datetime(2026, 10, 30, 3, 0)
@@ -175,6 +184,7 @@ def test_the_command_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     keep_dir, _ = keep
+    monkeypatch.setattr("tagalot.backup_tool.load_settings", Settings)  # not the real one
     to = tmp_path / "backups"
     args = ["tagalot", "--backup", str(keep_dir), "--to", str(to), "--keep-last", "3"]
     monkeypatch.setattr(sys, "argv", args)
@@ -190,3 +200,57 @@ def test_the_command_line(
     monkeypatch.setattr(sys, "argv", [*args, "--output", str(report)])
     assert main() == 2
     assert "--keep-last needs a number" in report.read_text(encoding="utf-8")
+
+
+def test_with_the_tag_export(keep: tuple[Path, Engine], tmp_path: Path) -> None:
+    keep_dir, _ = keep
+    result = backup_keep(keep_dir, tmp_path / "b", now=lambda: T0, tags=True, settings=Settings())
+    assert result.ok
+    assert result.exit_code == 0
+    assert result.folder is not None
+    export = result.folder / "Movies tags.yaml"
+    text = export.read_text(encoding="utf-8")
+    assert "Favorites:" in text
+    assert "items:" in text  # with the items that have them
+    assert {p.name for p in result.folder.iterdir()} == {KEEP_DB, KEEP_TOML, export.name}
+
+
+def test_a_failed_tag_export_keeps_the_copy(
+    keep: tuple[Path, Engine], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keep_dir, _ = keep
+
+    def refused(*args: object, **kwargs: object) -> None:
+        raise ExportError("its theme isn't available")
+
+    monkeypatch.setattr(backup, "export_tag_file", refused)
+    result = backup_keep(keep_dir, tmp_path / "b", keep_last=1, now=lambda: T0, tags=True)
+    assert result.ok  # the copy is sound and counts
+    assert result.exit_code == 1
+    assert good_backups(tmp_path / "b" / "Movies") == [result.folder]
+    log = (tmp_path / "b" / "backup.log").read_text(encoding="utf-8")
+    assert log.rstrip().endswith("; tags FAILED: its theme isn't available")
+
+
+def test_never_into_a_watched_folder(tmp_path: Path) -> None:
+    files = tmp_path / "files"
+    files.mkdir()
+    made, engine = open_keep_database(
+        create_keep(
+            tmp_path / "Movies.keep",
+            "M",
+            ThemeRef("generic", 1),
+            [RootConfig(id="films", name="Films", path=str(files))],
+        )
+    )
+    engine.dispose()
+    for inside in (files, files / "backups"):
+        with pytest.raises(BackupError, match="in Films, a folder this keep watches"):
+            backup_keep(made.dir, inside)
+    assert list(files.iterdir()) == []
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()  # this computer reaches the folder there (a settings override)
+    settings = Settings(root_overrides={made.config.id: {"films": str(elsewhere)}})
+    with pytest.raises(BackupError, match="Films"):
+        backup_keep(made.dir, elsewhere / "backups", settings=settings)
+    assert backup_keep(made.dir, files / "backups", settings=settings).ok
