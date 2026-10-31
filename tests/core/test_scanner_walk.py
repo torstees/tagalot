@@ -142,9 +142,11 @@ def test_unreadable_folder_is_reported_and_skipped(
     assert not any(p.startswith("Artist A/Album 1/") for p in paths)
 
 
-def test_symlinked_folders_are_not_followed(
+def test_links_outside_are_read_only_when_wanted(
     root: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
+    """Links to places outside the keep's folders are reported, and read only with
+    ``outside_links`` (#603)."""
     outside = tmp_path_factory.mktemp("outside")
     (outside / "secret.flac").write_bytes(b"x")
     try:
@@ -152,10 +154,15 @@ def test_symlinked_folders_are_not_followed(
         os.symlink(outside / "secret.flac", root / "linked.flac")
     except OSError:
         pytest.skip("creating symlinks needs extra privileges on this system")
-    paths = _paths(list(walk_root(str(root), dirs=True)))
+    found: list[str] = []
+    paths = _paths(list(walk_root(str(root), dirs=True, on_outside=found.append)))
     assert "link" not in paths
     assert "link/secret.flac" not in paths
-    assert "linked.flac" in paths  # symlinked files are included
+    assert "linked.flac" not in paths
+    assert sorted(found) == ["link", "linked.flac"]
+    entries = {e.relpath: e for e in walk_root(str(root), dirs=True, outside_links=True)}
+    assert {"link", "link/secret.flac", "linked.flac"} <= set(entries)
+    assert entries["link/secret.flac"].how == "inside"
 
 
 def test_empty_root(tmp_path: Path) -> None:

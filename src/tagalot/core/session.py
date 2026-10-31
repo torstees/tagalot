@@ -68,6 +68,7 @@ from tagalot.core.keep_settings import (
     with_online_lookups,
     with_online_services,
     with_option,
+    with_outside_links,
     with_see_through,
     with_thumbnail_max,
     with_thumbnails_after_scan,
@@ -344,6 +345,7 @@ class KeepSession:
                     see_through=self.see_through,
                     own_fields=self.own_fields,
                     roots={r.id: self.root_path(r.id) for r in config.roots},
+                    outside_links=bool(config.outside_links),
                 )
             )
             self.problems.add(problems_from_report(reports[-1]))
@@ -903,6 +905,12 @@ class KeepSession:
         """Set the keep's see-through folder names (#459); they apply at the next scan,
         which reads every file again. Runs in a worker."""
         self.save_config(with_see_through(self.keep.config, names))
+
+    def set_outside_links(self, include: bool | None) -> None:
+        """Read links to places outside the watched folders (``True``), skip them
+        (``False``), or ask at the next scan that finds them (``None``; #603). It applies
+        at the next scan. Runs in a worker."""
+        self.save_config(with_outside_links(self.keep.config, include))
 
     def tagged_hidden_folders(self, names: Iterable[str]) -> int:
         """How many folder items the user tagged these see-through names would take away

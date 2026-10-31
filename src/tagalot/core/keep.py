@@ -198,6 +198,10 @@ class KeepConfig:
     """``[folders] see_through``: names of folders that are never items, their files
     counting as their parent folder's (#459, §6 *See-through folders*). Matched exactly,
     case aside."""
+    outside_links: bool | None = None
+    """``[folders] outside_links`` (#603): whether links and shortcuts to files and folders
+    outside every watched folder are read, as if they were where the link is (``true``)
+    or skipped (``false``); ``None`` (absent): not asked yet, skipped until the user says."""
     icon: str | None = None
     """``[appearance] icon``: the keep's own icon (#557), a Lucide icon's name or a file in
     the keep folder (``icons/…``); None for the theme's (``core/icons.py``)."""
@@ -323,8 +327,13 @@ def dump_keep_config(config: KeepConfig) -> str:
         lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in config.note_key_aliases.items()]
     if config.markdown_assets:
         lines += ["", "[markdown]", f"assets = {toml_str(config.markdown_assets)}"]
+    folders = []
     if config.see_through:
-        lines += ["", "[folders]", f"see_through = {toml_list(config.see_through)}"]
+        folders.append(f"see_through = {toml_list(config.see_through)}")
+    if config.outside_links is not None:
+        folders.append(f"outside_links = {'true' if config.outside_links else 'false'}")
+    if folders:
+        lines += ["", "[folders]", *folders]
     appearance = []
     if config.icon is not None:
         appearance.append(f"icon = {toml_str(config.icon)}")
@@ -505,9 +514,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         markdown_assets = _assets(path, markdown, "[markdown]")
 
     see_through: list[str] = []
+    outside_links: bool | None = None
     if "folders" in data:
         folders = reader.table(data, "folders")
-        reader.warn_unknown(folders, {"see_through"}, "[folders]")
+        reader.warn_unknown(folders, {"see_through", "outside_links"}, "[folders]")
+        outside_links = folders.get("outside_links")
+        if outside_links is not None and not isinstance(outside_links, bool):
+            raise KeepConfigError(path, "[folders] outside_links must be true or false")
         names = folders.get("see_through", [])
         if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
             raise KeepConfigError(path, "[folders] see_through must be a list of strings")
@@ -661,6 +674,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> KeepConfig:
         new_notes=new_notes,
         markdown_assets=markdown_assets,
         see_through=see_through,
+        outside_links=outside_links,
         icon=icon,
         type_icons=type_icons,
         fonts=fonts,

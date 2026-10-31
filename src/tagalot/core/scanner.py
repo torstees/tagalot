@@ -118,6 +118,8 @@ def walk_root(
     see_through: frozenset[str] = frozenset(),
     link_roots: Sequence[str] | None = None,
     hard_links: bool = False,
+    outside_links: bool = False,
+    on_outside: Callable[[str], None] | None = None,
 ) -> Iterator[WalkEntry]:
     """Yield the files (and optionally directories) under ``root_path``.
 
@@ -133,8 +135,12 @@ def walk_root(
     - Links (#599): a symbolic link to a file is listed as the file, with its target. A
       symbolic link or junction to a folder inside ``link_roots`` (real paths; the root's
       own by default) is walked, its entries listed with the real paths they have
-      (``inside``); one to a folder elsewhere, or to a folder it is inside (a loop), is
-      not walked. A link whose target is gone is left out.
+      (``inside``); one to a folder it is inside (a loop) is not walked. A link whose
+      target is gone is left out.
+    - Links outside (#603): a link or shortcut to a file or folder outside ``link_roots``
+      is reported to ``on_outside`` (its relative path) and, with ``outside_links``, read
+      as if it were where the link is (a folder walked, with the loop guard); without, it
+      is left out.
     - Windows shortcuts (#602, ``core.shortcuts``): a ``.lnk`` file is read as a link to its
       target, as a symbolic link is (``shortcut``): one to a file is listed at the
       shortcut's path with the target's extension, size, and time; one to a folder is
@@ -149,6 +155,19 @@ def walk_root(
     excluded = compile_excludes(exclude)
     wanted = {e.lower() for e in extensions} if extensions is not None else None
     report = on_error or _log_error
+
+    def follow(relpath: str, target: str, chain: Sequence[str] = ()) -> bool:
+        """Whether a link to ``target`` is read: not a loop, and inside the keep's
+        folders, or outside them when they're wanted (#603)."""
+        norm = _norm(target)
+        if any(_within(folder, norm) for folder in chain):
+            return False  # a loop: the link leads back up
+        if any(_within(norm, folder) for folder in allowed):
+            return True
+        if on_outside is not None:
+            on_outside(relpath)
+        return outside_links
+
     real_root = os.path.realpath(root_path)
     allowed = [_norm(p) for p in (link_roots if link_roots is not None else [real_root])]
     # Each folder to walk: its real path, whether it is in a linked folder, the real
@@ -179,19 +198,21 @@ def walk_root(
                         continue  # its target is gone
                     target, how = os.path.realpath(shortcut), "shortcut"
                     is_dir = os.path.isdir(target)
+                    if not follow(relpath, target, chain if is_dir else ()):
+                        continue  # a loop, or outside the keep's folders
                     if is_dir:
-                        if not _may_walk(target, chain, allowed):
-                            continue  # outside the keep's folders, or a loop
                         real = target
                 elif entry.is_symlink() or entry.is_junction():
                     target = os.path.realpath(entry.path)
                     how = "junction" if entry.is_junction() else "symlink"
                     if os.path.isdir(target):
-                        if not _may_walk(target, chain, allowed):
-                            continue  # outside the keep's folders, or a loop
+                        if not follow(relpath, target, chain):
+                            continue  # a loop, or outside the keep's folders
                         real = target
                     elif not os.path.isfile(target):
                         continue  # its target is gone
+                    elif not follow(relpath, target):
+                        continue  # outside the keep's folders
                     is_dir = os.path.isdir(target)
                 else:
                     is_dir = entry.is_dir(follow_symlinks=False)
@@ -259,16 +280,6 @@ def _norm(path: str) -> str:
 def _within(path: str, folder: str) -> bool:
     """Whether a normalized path is ``folder`` or inside it."""
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
-
-
-def _may_walk(target: str, chain: Sequence[str], allowed: Sequence[str]) -> bool:
-    """Whether a link to the folder ``target`` (a real path) is walked: inside one of the
-    ``allowed`` folders, and not one holding a folder on the way to it (``chain``, real
-    paths), which would walk it forever."""
-    norm = _norm(target)
-    if any(_within(folder, norm) for folder in chain):
-        return False  # a loop: the link leads back up
-    return any(_within(norm, folder) for folder in allowed)
 
 
 def _file_id(entry: os.DirEntry[str], st: os.stat_result) -> tuple[int, int] | None:
