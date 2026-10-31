@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import Connection, select
 
-from tagalot.core.models import EntityResource, LinkedPlace, Resource
+from tagalot.core.models import EntityResource, LinkedFolder, LinkedPlace, Resource
 from tagalot.core.place_links import PlaceError, link_place, unlink_place
 from tagalot.core.places import first_place
 from tagalot.core.scanner import WalkEntry
@@ -106,11 +106,24 @@ def sync_links(
         .join(Resource, Resource.id == LinkedPlace.resource_id)
         .where(Resource.root_id == root_id, LinkedPlace.how.in_(sorted(AUTOMATIC)))
     ).all()
+    folders = _linked_folders(conn, root_id)
     for place, relpath in automatic:
         if relpath in walked_set and place not in wanted:
+            if any(relpath == f or relpath.startswith(f + "/") for f in folders):
+                continue  # in folders the user linked (#601): not a link on disk
             unlink_place(conn, place)  # found as itself now: no longer a link
             changed += 1
     return changed
+
+
+def _linked_folders(conn: Connection, root_id: str) -> list[str]:
+    """This root's folders on either side of a linked folders pair (#601), whose paths
+    are linked though the walk finds them as themselves."""
+    others = conn.scalars(select(LinkedFolder.relpath).where(LinkedFolder.root_id == root_id))
+    firsts = conn.scalars(
+        select(LinkedFolder.first_relpath).where(LinkedFolder.first_root_id == root_id)
+    )
+    return [*others, *firsts]
 
 
 def _norm(path: str) -> str:

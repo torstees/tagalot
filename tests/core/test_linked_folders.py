@@ -94,6 +94,7 @@ def test_linking_makes_one_item_of_each_file_and_undoes(session: KeepSession) ->
     assert _folder_rows(session) == [(COPY, FOLDER)]
     session.scan_all()  # scans keep it so
     assert len(_titled(session, "forest.png")) == 1
+    assert _linked(session) == linked  # the walk finds them as files: still linked
     with session.reader.connect() as conn:
         assert suggest_linked_folders(conn) == []  # linked: no longer suggested
     with pytest.raises(PlaceError, match="linked to a folder already"):

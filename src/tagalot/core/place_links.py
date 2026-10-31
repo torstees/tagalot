@@ -4,13 +4,17 @@
 place a file of its own again (**Unlink**, #600); each returns a :class:`PlaceChange`, one
 undo step (:func:`restore_place_change`). Linking folders (#601) is
 :mod:`tagalot.core.linked_folders`, whose change also records the folders' pair.
+
+An archive that is a place brings the files read inside it along (#616): each is linked
+to the file at the same path inside the first place's archive (``inside``), when linking
+and at each scan (:func:`link_place_members`); unlinking the archive unlinks them.
 """
 
 import posixpath
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 
-from sqlalchemy import Connection, delete, insert, or_, select, tuple_, update
+from sqlalchemy import Connection, Select, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from tagalot.core import closure
@@ -26,6 +30,7 @@ from tagalot.core.models import (
     LinkedPlace,
     PlaceContains,
     Resource,
+    ResourceKind,
     UserContains,
 )
 from tagalot.core.places import HOWS, first_place
@@ -134,7 +139,76 @@ def _link(
         )
     )
     conn.execute(update(Resource).where(Resource.id == place_id).values(ingested_at=None))
+    merges += _link_members(conn, schema, place_id, first)
     return merges
+
+
+def _members(conn: Connection, archive_id: int) -> dict[str, int]:
+    """The files read inside an archive (#391), by their path inside it."""
+    archive = conn.scalar(select(Resource.relpath).where(Resource.id == archive_id))
+    if archive is None:
+        return {}
+    return {
+        relpath[len(archive) + 1 :]: rid
+        for rid, relpath in conn.execute(
+            select(Resource.id, Resource.relpath).where(Resource.parent_resource_id == archive_id)
+        )
+    }
+
+
+def _link_members(
+    conn: Connection, schema: ThemeSchema, place_id: int, first: int
+) -> list[MergeChange]:
+    """Link each file read inside the archive ``place_id`` to the one at the same path
+    inside its first place ``first`` (#616), when they aren't one already."""
+    mine = _members(conn, place_id)
+    if not mine:
+        return []
+    theirs = _members(conn, first)
+    merges: list[MergeChange] = []
+    for inside, member in sorted(mine.items()):
+        other = theirs.get(inside)
+        if other is None or first_place(conn, member) == first_place(conn, other):
+            continue
+        try:
+            merges.extend(_link(conn, schema, member, other, "inside"))
+        except PlaceError:
+            continue
+    return merges
+
+
+def link_place_members(conn: Connection, schema: ThemeSchema, root_id: str) -> int:
+    """After a scan read the files inside its archives: link those inside this root's
+    archives that are places to their first places' (#616). Returns how many archives
+    had files linked."""
+    archives = conn.execute(
+        select(LinkedPlace.resource_id, LinkedPlace.first_id)
+        .join(Resource, Resource.id == LinkedPlace.resource_id)
+        .where(
+            Resource.root_id == root_id,
+            Resource.kind == ResourceKind.FILE,
+            LinkedPlace.resource_id.in_(
+                select(Resource.parent_resource_id).where(Resource.parent_resource_id.is_not(None))
+            ),
+        )
+    ).all()
+    linked = 0
+    for place, first in archives:
+        before = conn.scalar(
+            select(func.count())
+            .select_from(LinkedPlace)
+            .join(Resource, Resource.id == LinkedPlace.resource_id)
+            .where(Resource.parent_resource_id == place)
+        )
+        _link_members(conn, schema, place, first)
+        after = conn.scalar(
+            select(func.count())
+            .select_from(LinkedPlace)
+            .join(Resource, Resource.id == LinkedPlace.resource_id)
+            .where(Resource.parent_resource_id == place)
+        )
+        linked += int(after != before)
+    return linked
 
 
 def _fold_items(
@@ -229,6 +303,13 @@ def unlink_place(conn: Connection, place_id: int) -> None:
         closure.apply(conn, removed=gone)
     conn.execute(delete(LinkedPlace).where(LinkedPlace.resource_id == place_id))
     conn.execute(update(Resource).where(Resource.id == place_id).values(ingested_at=None))
+    members = conn.scalars(
+        select(LinkedPlace.resource_id)
+        .join(Resource, Resource.id == LinkedPlace.resource_id)
+        .where(Resource.parent_resource_id == place_id)
+    ).all()
+    for member in members:  # files read inside an archive go with it (#616)
+        unlink_place(conn, member)
 
 
 def split_place(conn: Connection, schema: ThemeSchema, place_id: int) -> PlaceChange:
@@ -241,7 +322,46 @@ def split_place(conn: Connection, schema: ThemeSchema, place_id: int) -> PlaceCh
     ).first()
     if row is None:
         raise PlaceError("That file isn't linked to another.")
-    first = row[0]
+    # The place, and the files read inside it that are places too (#616): each gets its
+    # own copies, since a merged item isn't made again when its file is read.
+    targets = [(place_id, row[0])]
+    targets += [
+        (member, first)
+        for member, first in conn.execute(
+            select(LinkedPlace.resource_id, LinkedPlace.first_id)
+            .join(Resource, Resource.id == LinkedPlace.resource_id)
+            .where(Resource.parent_resource_id == place_id)
+            .order_by(Resource.relpath)
+        )
+    ]
+    plans = [
+        (target, _group(conn, schema, first), _given(conn, target)) for target, first in targets
+    ]
+    touched = _touched(conn, [place_id])  # with the files read inside it (#616)
+    before = _rows(conn, touched)
+    recorder = ChangeRecorder(conn, schema)
+    recorder.touch({entity_id for _, group, _ in plans for entity_id in group})
+    copies: dict[int, EntitySnapshot | None] = {}
+    next_id = next_entity_id(conn)
+    for target, group, given in plans:
+        for entity_id, (role, order) in group.items():
+            state = recorder.before[entity_id]
+            if state is None:
+                continue
+            parents = frozenset(p for p, c in given if c == entity_id)
+            copies[next_id] = _copy(schema, state, entity_id, next_id, target, role, order, parents)
+            recorder.created(next_id)
+            next_id += 1
+    unlink_place(conn, place_id)
+    restore_states(conn, schema, copies)
+    relpath = conn.scalar(select(Resource.relpath).where(Resource.id == place_id)) or ""
+    label = f"Unlink {posixpath.basename(relpath) or 'a place'}"
+    action = ActionChange(label, recorder.before, recorder.after())
+    return PlaceChange(label, tuple(touched), before, _rows(conn, touched), action=action)
+
+
+def _group(conn: Connection, schema: ThemeSchema, first: int) -> dict[int, tuple[str, int]]:
+    """The theme's items a first place is a file of, with its role and order in each."""
     types = {t.type_id for t in schema.entities.values()}
     group: dict[int, tuple[str, int]] = {}
     for entity_id, role, order, type_id in conn.execute(
@@ -254,7 +374,12 @@ def split_place(conn: Connection, schema: ThemeSchema, place_id: int) -> PlaceCh
     ):
         if type_id in types:
             group.setdefault(entity_id, (role, order))
-    given = [
+    return group
+
+
+def _given(conn: Connection, place_id: int) -> list[tuple[int, int]]:
+    """The containment edges a place gave its group's items."""
+    return [
         (p, c)
         for p, c in conn.execute(
             select(PlaceContains.parent_id, PlaceContains.child_id).where(
@@ -262,26 +387,6 @@ def split_place(conn: Connection, schema: ThemeSchema, place_id: int) -> PlaceCh
             )
         )
     ]
-    touched = [place_id]
-    before = _rows(conn, touched)
-    recorder = ChangeRecorder(conn, schema)
-    recorder.touch(group)
-    copies: dict[int, EntitySnapshot | None] = {}
-    next_id = next_entity_id(conn)
-    for entity_id, (role, order) in group.items():
-        state = recorder.before[entity_id]
-        if state is None:
-            continue
-        parents = frozenset(p for p, c in given if c == entity_id)
-        copies[next_id] = _copy(schema, state, entity_id, next_id, place_id, role, order, parents)
-        recorder.created(next_id)
-        next_id += 1
-    unlink_place(conn, place_id)
-    restore_states(conn, schema, copies)
-    relpath = conn.scalar(select(Resource.relpath).where(Resource.id == place_id)) or ""
-    label = f"Unlink {posixpath.basename(relpath) or 'a place'}"
-    action = ActionChange(label, recorder.before, recorder.after())
-    return PlaceChange(label, tuple(touched), before, _rows(conn, touched), action=action)
 
 
 def _copy(
@@ -380,17 +485,24 @@ def _set_folders(
 
 
 def _touched(conn: Connection, ids: Sequence[int]) -> list[int]:
-    """These resources and the places linked to them: whose place rows a change may
-    change."""
+    """These resources, the places linked to them, the files read inside them (#616),
+    and the places linked to those: whose place rows a change may change."""
     found = list(dict.fromkeys(ids))
-    found += [
-        i
-        for i in conn.scalars(
-            select(LinkedPlace.resource_id).where(LinkedPlace.first_id.in_(found))
-        )
-        if i not in found
-    ]
+    found += _new(found, conn.scalars(_linked_to(found)))
+    found += _new(
+        found, conn.scalars(select(Resource.id).where(Resource.parent_resource_id.in_(found)))
+    )
+    found += _new(found, conn.scalars(_linked_to(found)))
     return found
+
+
+def _linked_to(ids: Sequence[int]) -> Select[int]:
+    return select(LinkedPlace.resource_id).where(LinkedPlace.first_id.in_(ids))
+
+
+def _new(found: Sequence[int], more: Iterable[int]) -> list[int]:
+    seen = set(found)
+    return [i for i in dict.fromkeys(more) if i not in seen]
 
 
 def _rows(conn: Connection, resources: Sequence[int]) -> PlaceRows:

@@ -74,6 +74,7 @@ from tagalot.core.notes import apply_notes, note_rank, read_notes, used_notes
 from tagalot.core.notes_folder import apply_folder_notes, plan_folder_notes
 from tagalot.core.own_fields import OwnFields
 from tagalot.core.own_notes import sync_own_fields
+from tagalot.core.place_links import link_place_members
 from tagalot.core.real_links import link_facts, sync_links
 from tagalot.core.roots import RootCheck, check_root, local_path, record_root_check, sync_roots
 from tagalot.core.scanner import (
@@ -310,6 +311,8 @@ def scan_root(
             )
         )
     _sync_members(writer, reader, root, path, extensions, when, report, say)
+    if schema is not None:  # files inside archives that are places (#616)
+        report.linked += writer.run(partial(link_place_members, schema=schema, root_id=root.id))
     if theme is not None and schema is not None:
         options = effective_options(
             theme, theme_options or {}, root.options, (root.assets, markdown_assets)
