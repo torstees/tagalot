@@ -25,7 +25,7 @@ from tagalot.core.theme_schema import ThemeSchema
 
 logger = logging.getLogger(__name__)
 
-AUTOMATIC = frozenset({"symlink", "junction", "hardlink", "inside"})
+AUTOMATIC = frozenset({"symlink", "junction", "hardlink", "shortcut", "inside"})
 """Ways of linking the scan makes and unmakes itself; the user's links are left alone."""
 
 BATCH = 500

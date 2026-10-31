@@ -92,6 +92,7 @@ from tagalot.core.scanner import (
     walk_scope,
 )
 from tagalot.core.see_through import counts_in, hidden_dir, logical
+from tagalot.core.shortcuts import on_disk
 from tagalot.core.theme_options import effective_options
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError
@@ -259,7 +260,7 @@ def scan_root(
         say(f"Fingerprinting {len(jobs)} files in {root.name}…")
 
     def job_path(job: FingerprintJob) -> str:
-        return local_path(path, job.relpath)
+        return on_disk(local_path(path, job.relpath))  # through shortcuts (#602)
 
     def on_hash_error(job: FingerprintJob, error: OSError) -> None:
         report.read_errors.append((job.relpath, str(error)))
@@ -951,7 +952,7 @@ def _resource(
         ext,
         size,
         mtime,
-        local_path(path, rel),
+        on_disk(local_path(path, rel)),  # read through shortcuts (#602)
         counts_in(rel, see_through) if kind is ResourceKind.FILE else None,
         see_through,
     )
