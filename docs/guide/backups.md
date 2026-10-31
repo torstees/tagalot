@@ -87,7 +87,7 @@ writes the same file as **Tag manager → Export tags…**, which **Import tags�
 tagalot --export-keep "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies keep export.yaml"
 ```
 
-saves everything you did by hand in the keep, which a scan of its folders can't rebuild, as one YAML file you can read in any text editor. A `keep.db` backup is complete, but only Tagalot can read it. This file is the readable record, made to be found again after a fresh scan: each item is named by its type, title, key, and the paths of its files in their watched folder, never by a number only this keep knows. It holds:
+saves everything you did by hand in the keep, which a scan of its folders can't rebuild, as one YAML file you can read in any text editor, and load back with [Import keep…](#importing-a-keep-export). A `keep.db` backup is complete, but only Tagalot can read it. This file is the readable record, made to be found again after a fresh scan: each item is named by its type, title, key, and the paths of its files in their watched folder, never by a number only this keep knows. It holds:
 
 - **`tags`:** the tag tree, as **Export tags…** writes it, with the tags' pictures in a folder beside the file.
 - **`items`:** each item with anything set by hand:
@@ -101,6 +101,18 @@ saves everything you did by hand in the keep, which a scan of its folders can't 
 - **`keywords`**, **`archives`**, **`dismissed`:** keywords you ignored, archives whose inside you chose to read or not, and what you told Triage and Duplicates to hide.
 
 From the window, you choose where to save it, as for other exports. The command replaces the file each run. Like `--export-tags`, it changes nothing in the keep, and it refuses a file inside a watched folder unless you add `--allow-watched`; its exit codes are the same.
+
+## Importing a keep export
+
+**Keep → Import keep…** loads a keep export into the open keep: after starting the keep again from scratch (a new keep on the same folders, scanned), or to bring what you did by hand on one computer to a copy of the keep on another. The theme must be the same.
+
+It first shows what it would do, changing nothing yet:
+
+- **Items found**, and how each would change (tags, fields, a note…). Items are found by their key, else by the paths of their files, else by their type and title when only one item has it. An item it can't find is listed, never guessed.
+- **Conflicts:** values you set by hand in this keep that differ from the file's. They stay as they are unless you tick **Use the file's values where this keep's differ**.
+- **Problems:** what the file says that can't be done here (a field this keep doesn't have, a file that isn't in it), left out.
+
+**Import** then does it all as one step: **Edit → Undo** takes the whole import back. Whatever the keep has already is left alone, so importing the same file twice changes nothing the second time. Archives you chose to read are read that way at the next scan.
 
 ## Running on a schedule
 
@@ -181,3 +193,5 @@ A scheduler can use these to tell you when a backup failed.
 ## Restoring
 
 Close the keep, then copy `keep.db` and `keep.toml` from a backup folder into the keep's folder, replacing what's there. You can also copy them into a new folder ending in `.keep` and open that. Delete any `keep.db-wal` and `keep.db-shm` files beside the old `keep.db` first.
+
+Without a `keep.db` backup, make a new keep on the same folders, let it scan, and [import a keep export](#importing-a-keep-export) into it.

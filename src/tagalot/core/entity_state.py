@@ -54,8 +54,9 @@ class EntitySnapshot:
     provenance: frozenset[tuple[str, FieldSource]]
     links: frozenset[tuple[int, str, int, bool, bool]]
     """(resource id, role, sort order, made by the user, made from a gallery's folders)."""
-    tags: frozenset[tuple[int, datetime]]
-    """(tag id, when it was added)."""
+    tags: frozenset[tuple[int, datetime, bool]]
+    """(tag id, when it was added, from its files' keywords): a file tag stays one when
+    put back (#613)."""
     parents: frozenset[int]
     children: frozenset[int]
     relations: frozenset[tuple[str, int, int, int | None]]
@@ -126,7 +127,7 @@ def snapshot_entities(
             ),
             tags=_rows(
                 conn.execute(
-                    select(EntityTag.tag_id, EntityTag.added_at).where(
+                    select(EntityTag.tag_id, EntityTag.added_at, EntityTag.by_file).where(
                         EntityTag.entity_id == entity_id
                     )
                 )
@@ -313,9 +314,9 @@ def _replace_rows(conn: Connection, present: Mapping[int, EntitySnapshot]) -> No
         for r, role, order, mine, filled in s.links
     ]
     tags = [
-        {"entity_id": i, "tag_id": tag, "added_at": added}
+        {"entity_id": i, "tag_id": tag, "added_at": added, "by_file": by_file}
         for i, s in present.items()
-        for tag, added in s.tags
+        for tag, added, by_file in s.tags
     ]
     for model, rows in ((FieldProvenance, provenance), (EntityResource, links), (EntityTag, tags)):
         if rows:

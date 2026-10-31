@@ -213,7 +213,7 @@ class _Refs:
         return dict(found) if found is not None else None
 
 
-def _plain(value: Any) -> Any:
+def plain_value(value: Any) -> Any:
     """A stored value as YAML writes it plainly (dates as ``YYYY-MM-DD``)."""
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M")
@@ -256,7 +256,7 @@ def _items(
         put(entity_id, "fields", values)
     for entity_id, extra in conn.execute(select(Entity.id, Entity.extra)):
         hand = {
-            name: _plain(value)
+            name: plain_value(value)
             for name, value in (extra or {}).items()
             if sources.get((entity_id, EXTRA + name), FieldSource.USER) == FieldSource.USER
         }
@@ -265,7 +265,7 @@ def _items(
     for start in range(0, len(with_own), CHUNK):
         for entity_id, values in raw_values(conn, with_own[start : start + CHUNK]).items():
             own = {
-                name: _plain(value)
+                name: plain_value(value)
                 for name, value in values.items()
                 if sources.get((entity_id, OWN + name), FieldSource.USER) == FieldSource.USER
             }
@@ -354,7 +354,7 @@ def _field_values(
                 values = row._mapping
                 for name in names:
                     if name in edited[values["id"]]:
-                        found[values["id"]][name] = _plain(values[name])
+                        found[values["id"]][name] = plain_value(values[name])
     return found
 
 

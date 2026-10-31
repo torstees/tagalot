@@ -16,6 +16,8 @@ from tagalot.core.actions import ActionError, ActionResult
 from tagalot.core.fields import FieldEditError
 from tagalot.core.icons import IconFileError
 from tagalot.core.item_pictures import PictureChange, PictureError
+from tagalot.core.keep_import import KeepImportPlan
+from tagalot.core.keep_import import plan_summary as keep_import_summary
 from tagalot.core.linked_folders import Folder
 from tagalot.core.links import LinkError
 from tagalot.core.note_keys import NoteKeyError
@@ -157,6 +159,18 @@ class TagActions(QObject):
             return plan if changed else None
 
         self._run(work, lambda plan: plan_summary(plan) if plan else "No tags changed.")
+
+    def import_keep(
+        self, data: dict[str, object], name: str, base: Path, replace: bool = False
+    ) -> None:
+        """Load a keep export as one undoable step (#613)."""
+        tags = self.session.tags
+
+        def work() -> KeepImportPlan | None:
+            plan = tags.import_keep(data, name, base=base, replace=replace)
+            return plan if plan.changes else None
+
+        self._run(work, lambda plan: keep_import_summary(plan) if plan else "Nothing changed.")
 
     def merge(self, source_id: int, target_id: int, source: str, target: str) -> None:
         """Fold ``source_id`` into ``target_id`` (§7); the message says how many items

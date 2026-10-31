@@ -8,7 +8,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 
 - **Back** and **Forward** (Alt+Left, Alt+Right, or the mouse's back and forward buttons) move through the pages you've seen, like a browser.
 - **Scan now** (F5) scans every watched folder.
-- **Keep:** Scan now, Clear thumbnail cache…, Configure keep…, Export keep… ([Backups](backups.md#the-keep-export)), Open another keep…, Close.
+- **Keep:** Scan now, Clear thumbnail cache…, Configure keep…, Export keep… and Import keep… ([Backups](backups.md#the-keep-export)), Open another keep…, Close.
 - **Edit:** Undo, Redo, Tag selection… (Ctrl+T), Save search… (Ctrl+S), Save search as… (Ctrl+Shift+S).
 - **Go:** Back, Forward.
 - **View:** the Tags panel, the Details panel, the Preview, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
