@@ -13,7 +13,7 @@ def main() -> int:
     """Start Tagalot and return the process exit code. ``--check`` reports what this
     build can do and exits; ``--version`` prints the version; ``--new-theme ID`` and
     ``--check-theme FILE`` help theme authors (``theme_tools``); ``--backup KEEP --to FOLDER``
-    copies a keep and ``--export-tags KEEP --to FILE`` exports its tags (``backup_tool``).
+    copies a keep, ``--export-tags`` and ``--export-keep`` export it (``backup_tool``).
     With ``--output FILE`` they write to the file instead (a windowed Windows build has no
     console)."""
     if is_console_twin() and not any(c in sys.argv[1:] for c in COMMANDS):
@@ -41,6 +41,10 @@ def main() -> int:
         from tagalot.backup_tool import run_export_tags
 
         return run_export_tags(sys.argv[1:], _output(sys.argv[1:]))
+    if "--export-keep" in sys.argv[1:]:
+        from tagalot.backup_tool import run_export_keep
+
+        return run_export_keep(sys.argv[1:], _output(sys.argv[1:]))
     from tagalot.core.rar_tools import configure_rar_tools
 
     configure_rar_tools()  # WinRAR or 7-Zip off PATH, on Windows (#452)
@@ -67,9 +71,11 @@ COMMANDS = (
     "--check-theme",
     "--backup",
     "--export-tags",
+    "--export-keep",
 )
 CLI_USAGE = """usage: tagalot-cli --backup KEEP --to FOLDER [--keep-last N] [--tags]
        tagalot-cli --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]
+       tagalot-cli --export-keep KEEP --to FILE.yaml [--allow-watched]
        tagalot-cli --check | --version
 Add --output FILE to any of them to write what it prints to FILE (for scheduled tasks).
 tagalot-cli runs Tagalot's commands in a console, for scheduled tasks; tagalot.exe opens

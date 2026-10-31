@@ -1,19 +1,21 @@
 """Backups from the command line, for a scheduler (cron, Windows Task Scheduler) to run:
 ``tagalot --backup KEEP --to FOLDER [--keep-last N] [--tags]`` (#608; ``--tags``, #611), a
 checked copy of a keep (``core/backup.py``), and ``tagalot --export-tags KEEP --to FILE [--items]
-[--allow-watched]`` (#609), the tag export (``core/exports.py``)."""
+[--allow-watched]`` (#609), the tag export, and ``tagalot --export-keep KEEP --to FILE
+[--allow-watched]`` (#612), the keep export (``core/exports.py``)."""
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from tagalot.core.backup import FAILED, OK, USAGE, BackupError, backup_keep, log_line
-from tagalot.core.exports import ExportError, export_tag_file
+from tagalot.core.exports import ExportError, export_keep_file, export_tag_file
 from tagalot.core.settings import Settings, load_settings
 
 Out = Callable[[str], None]
 
 USAGE_TEXT = "usage: tagalot --backup KEEP --to FOLDER [--keep-last N] [--tags]"
 EXPORT_USAGE = "usage: tagalot --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]"
+KEEP_USAGE = "usage: tagalot --export-keep KEEP --to FILE.yaml [--allow-watched]"
 
 
 def run_backup(args: Sequence[str], out: Out = print, settings: Settings | None = None) -> int:
@@ -67,6 +69,36 @@ def run_export_tags(args: Sequence[str], out: Out = print, settings: Settings | 
         return FAILED
     what = f"{done.tags:,} tags" + (f" and {done.items:,} items" if done.items is not None else "")
     out(f"ok  exported {what} to {done.path}")
+    if done.pictures:
+        out(f"   with {done.pictures:,} pictures in {done.path.stem} pictures")
+    if done.watched:
+        out(f"   it is in {done.watched}, a watched folder: scans will read it unless skipped")
+    return OK
+
+
+def run_export_keep(args: Sequence[str], out: Out = print, settings: Settings | None = None) -> int:
+    """Run ``--export-keep`` from the command line's arguments; returns the exit code, as
+    ``--export-tags``'s: 0 written, 1 writing failed, 2 wrong arguments or no export."""
+    keep, to = _value(args, "--export-keep"), _value(args, "--to")
+    if keep is None or to is None:
+        missing = "the keep's folder" if keep is None else "--to FILE: where the export goes"
+        out(f"error: --export-keep needs {missing}")
+        out(KEEP_USAGE)
+        return USAGE
+    try:
+        done = export_keep_file(
+            Path(keep),
+            Path(to),
+            settings or load_settings(),
+            allow_watched="--allow-watched" in args,
+        )
+    except ExportError as e:
+        out(f"error: {e}")
+        return USAGE
+    except OSError as e:
+        out(f"error: couldn't write {to}: {e}")
+        return FAILED
+    out(f"ok  exported {done.tags:,} tags and {done.items:,} items to {done.path}")
     if done.pictures:
         out(f"   with {done.pictures:,} pictures in {done.path.stem} pictures")
     if done.watched:

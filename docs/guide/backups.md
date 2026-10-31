@@ -6,6 +6,7 @@ The easy way is **Keep configuration → Backups** ([below](#in-keep-configurati
 
 - **`tagalot --backup`:** a complete copy of the keep, to restore from, with the tag export in it if you like (`--tags`).
 - **`tagalot --export-tags`:** your tags, in a file you can read, edit, and load into any keep.
+- **`tagalot --export-keep`:** everything you did by hand in the keep, in one file you can read ([below](#the-keep-export)).
 
 ## In Keep configuration
 
@@ -77,6 +78,29 @@ writes the same file as **Tag manager → Export tags…**, which **Import tags�
 - **Replacing:** each run replaces the file, and a run that fails leaves the last one whole.
 - **The keep isn't changed,** and it can be open in Tagalot meanwhile. A keep that needs upgrading after you updated Tagalot isn't exported: open it in Tagalot once.
 - **Watched folders:** saving inside a folder the keep watches is refused, since no one is there to confirm as the window asks. Add `--allow-watched` to save there anyway. Even then, a file already there is never replaced, and scans will read the new file unless you add it to the folder's Skip list.
+
+## The keep export
+
+**Keep → Export keep…**, or
+
+```bash
+tagalot --export-keep "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies keep export.yaml"
+```
+
+saves everything you did by hand in the keep, which a scan of its folders can't rebuild, as one YAML file you can read in any text editor. A `keep.db` backup is complete, but only Tagalot can read it. This file is the readable record, made to be found again after a fresh scan: each item is named by its type, title, key, and the paths of its files in their watched folder, never by a number only this keep knows. It holds:
+
+- **`tags`:** the tag tree, as **Export tags…** writes it, with the tags' pictures in a folder beside the file.
+- **`items`:** each item with anything set by hand:
+  - its tags (not those that come from its files' keywords), and file keywords' tags you took off it;
+  - fields you edited (a changed title too), Extra fields you added, and the keep's own fields;
+  - a note typed in Tagalot, a picture you chose, and files you linked to it;
+  - containers you put it in or took it out of, relationships you made or removed, and items you put in order.
+- **`merged`:** items merged into others: what the merged one was, and the item it's now part of.
+- **`places`:** files and folders you linked as one.
+- **`saved searches`:** each by name, its tags written as paths.
+- **`keywords`**, **`archives`**, **`dismissed`:** keywords you ignored, archives whose inside you chose to read or not, and what you told Triage and Duplicates to hide.
+
+From the window, you choose where to save it, as for other exports. The command replaces the file each run. Like `--export-tags`, it changes nothing in the keep, and it refuses a file inside a watched folder unless you add `--allow-watched`; its exit codes are the same.
 
 ## Running on a schedule
 
@@ -150,7 +174,7 @@ cron mails or logs what a command prints, and `backup.log` has a line for each r
 |---|---|
 | 0 | The copy was made and checked, or the export written. |
 | 1 | The copy failed, or it is damaged; or the export (with `--tags`, the one in the copy) couldn't be written. |
-| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, `--to` inside the keep or a folder it watches, or (for `--export-tags`) a keep that needs upgrading or a file in a watched folder. Nothing was written. |
+| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, `--to` inside the keep or a folder it watches, or (for `--export-tags` and `--export-keep`) a keep that needs upgrading or a file in a watched folder. Nothing was written. |
 
 A scheduler can use these to tell you when a backup failed.
 
