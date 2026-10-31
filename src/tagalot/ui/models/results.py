@@ -417,6 +417,8 @@ class ResultsModel(QAbstractTableModel):
 
     counted = Signal(int)
     failed = Signal(str)
+    titles_loaded = Signal()
+    """Every row's title is known (:meth:`titles`), for type to find (#633)."""
 
     def __init__(
         self,
@@ -441,6 +443,8 @@ class ResultsModel(QAbstractTableModel):
         self._total = 0
         self._pages: OrderedDict[int, list[Row]] = OrderedDict()
         self._loading: set[int] = set()
+        self._titles: list[str] | None = None
+        self._titles_loading = False
         self.searching = False
         """True from :meth:`set_search` until the count arrives (or the search fails)."""
         self._refreshing = False
@@ -493,6 +497,7 @@ class ResultsModel(QAbstractTableModel):
         shows another search's instead, #406)."""
         self._generation += 1
         self._loading.clear()
+        self._forget_titles()
         self.searching = False
 
     def _start(self, *, refreshing: bool = False) -> None:
@@ -500,6 +505,7 @@ class ResultsModel(QAbstractTableModel):
         self._refreshing = refreshing
         self._generation += 1
         self._loading.clear()
+        self._forget_titles()
         self.searching = True
         generation, spec = self._generation, self._spec
         fetch, reader = self._fetcher(spec), self.session.reader
@@ -621,6 +627,45 @@ class ResultsModel(QAbstractTableModel):
         last = min(first + self.page_size, self._total) - 1
         if last >= first and self._columns:
             self.dataChanged.emit(self.index(first, 0), self.index(last, len(self._columns) - 1))
+
+    def titles(self) -> list[str] | None:
+        """Every row's title, in order, for type to find (#633); ``None`` until they are
+        loaded, which this starts (:attr:`titles_loaded` says when). One query, titles
+        only, so it is quick even when few pages are loaded."""
+        if self._titles is None:
+            self._load_titles()
+        return self._titles
+
+    def _forget_titles(self) -> None:
+        self._titles = None
+        self._titles_loading = False
+
+    def _load_titles(self) -> None:
+        if self._titles_loading or self._spec is None:
+            return
+        self._titles_loading = True
+        generation, spec, session = self._generation, self._spec, self.session
+
+        def job() -> list[str]:
+            with session.reader.connect() as conn:
+                fields = search_fields(session.schema, spec.types, session.own_fields)
+                contents = session.contents_scope(conn, spec)
+                tree: TagTree = session.tag_cache.get()
+                hits = run_search(conn, spec, tree, limit=None, fields=fields, contents=contents)
+                return [hit.title for hit in hits]
+
+        self._run(
+            job,
+            on_done=lambda titles: self._titles_done(generation, titles),
+            on_error=lambda error: self._search_failed(generation, error),
+        )
+
+    def _titles_done(self, generation: int, titles: list[str]) -> None:
+        if generation != self._generation:
+            return
+        self._titles_loading = False
+        self._titles = titles
+        self.titles_loaded.emit()
 
     # --- reading rows ---
 

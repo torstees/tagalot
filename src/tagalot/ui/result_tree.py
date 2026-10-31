@@ -49,6 +49,7 @@ from tagalot.ui.models.results import (
     mark_hidden,
     row_values,
 )
+from tagalot.ui.type_ahead import TypeAhead
 from tagalot.ui.workers import run_in_pool
 
 AnyIndex = QModelIndex | QPersistentModelIndex
@@ -311,6 +312,13 @@ class ResultTreeModel(QAbstractItemModel):
         )
 
 
+def _top_row(index: QModelIndex) -> int:
+    """The row of the top-level item ``index`` is in (or is)."""
+    while index.parent().isValid():
+        index = index.parent()
+    return index.row()
+
+
 class ResultTree(QTreeView):
     """The tree of results. Accepts tags dragged from the tagging panel, like the list:
     emits :attr:`tags_dropped` with entity ids and tag ids."""
@@ -334,6 +342,19 @@ class ResultTree(QTreeView):
         self._outline.setStyleSheet(f"#drop_outline {{ border: 2px dashed {css(WARNING)}; }}")
         self._outline.hide()
         self.hover = outline_hover(self)
+        self.type_ahead = TypeAhead(
+            self,
+            lambda: m.source if isinstance(m := self.model(), ResultTreeModel) else None,
+            lambda row, current: self.model().index(
+                row, current.column() if current.isValid() else 0
+            ),
+            _top_row,
+        )
+
+    def keyboardSearch(self, search: str) -> None:
+        """Type to find, among the search's own results (the top level, #633)."""
+        if not self.type_ahead.search(search):
+            super().keyboardSearch(search)
 
     def tree_model(self) -> ResultTreeModel:
         model = self.model()

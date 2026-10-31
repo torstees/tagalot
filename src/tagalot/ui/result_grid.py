@@ -73,6 +73,7 @@ from tagalot.ui.models.results import (
 )
 from tagalot.ui.selection import selected_text_color
 from tagalot.ui.thumbnails import ThumbnailLoader
+from tagalot.ui.type_ahead import TypeAhead
 
 PADDING = 6
 """Space around a card's thumbnail and text."""
@@ -310,9 +311,19 @@ class ResultGrid(QListView):
             loader.ready.connect(self._thumbnail_ready)
         self._apply_size()
         self.hover = outline_hover(self)
+        self.type_ahead = TypeAhead(
+            self,
+            lambda: model if isinstance(model := self.model(), ResultsModel) else None,
+            lambda row, _current: self.model().index(row, 0),
+            lambda index: index.row(),
+        )
 
     def _thumbnail_ready(self, _id: object) -> None:
         self._repaint.start()
+
+    def keyboardSearch(self, search: str) -> None:
+        if not self.type_ahead.search(search):
+            super().keyboardSearch(search)
 
     def results_model(self) -> ResultsModel:
         model = self.model()
