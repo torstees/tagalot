@@ -1,16 +1,39 @@
 """Shared pytest configuration."""
 
+import functools
 import os
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
+from pytestqt.qtbot import QtBot
 
 from tagalot.core import backup_schedule, color_schemes, settings
 from tagalot.themes import loader
 
 # GUI tests must run headless. This runs before pytest-qt creates the QApplication.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+WAIT_SCALE = 3
+"""Every pytest-qt wait gets this many times the timeout its test gives (#635): a test's
+``timeout=5000`` waits up to 15 s. Slow runners (macOS CI) now and then took longer than 5 s
+for nothing wrong; a test that is really stuck still fails, a little later (#374)."""
+
+
+def _more_room(wait: Callable[..., Any]) -> Callable[..., Any]:
+    @functools.wraps(wait)
+    def waiting(self: QtBot, *args: Any, timeout: int | None = 5000, **kwargs: Any) -> Any:
+        if timeout is not None and timeout > 0:  # none or 0: left as it is
+            timeout *= WAIT_SCALE
+        return wait(self, *args, timeout=timeout, **kwargs)
+
+    return waiting
+
+
+for _name in ("waitUntil", "waitSignal", "waitSignals", "waitCallback"):
+    setattr(QtBot, _name, _more_room(getattr(QtBot, _name)))
 
 
 @pytest.fixture(autouse=True)
