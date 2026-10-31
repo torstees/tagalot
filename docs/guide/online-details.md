@@ -1,6 +1,6 @@
 # Online details
 
-Some themes can look an item's details up online by an identifier it has: the [Research](../themes/research.md) theme looks papers up by DOI (Crossref) or arXiv ID (arXiv), the [Books](../themes/books.md) theme looks books up by ISBN (Open Library), and the [Movies](../themes/movies.md#details-from-tmdb) theme looks movies up in TMDb, by TMDb or IMDb ID (with a key of your own). Tagalot never goes online for anything else, and never without your say-so.
+Some themes can look an item's details up online by an identifier it has: the [Research](../themes/research.md) theme looks papers up by DOI (Crossref) or arXiv ID (arXiv), the [Books](../themes/books.md) theme looks books up by ISBN, or by title and author (Open Library), and the [Movies](../themes/movies.md#details-from-tmdb) theme looks movies up in TMDb, by TMDb or IMDb ID (with a key of your own). Tagalot never goes online for anything else, and never without your say-so.
 
 ## Asking first
 
@@ -20,7 +20,7 @@ An environment variable of the same name works too (on Windows: **Edit environme
 
 ## What may identify an item
 
-Some services can find an item that has no ID by its title, such as a home video. Each keep chooses what may be sent, in **Keep → Configure keep… → Keep** tab: **Find items by** (shown for themes that can search by title):
+Some services can find an item that has no ID by its title, such as a home video, or an old book with no ISBN (Open Library is sent its first author too). Each keep chooses what may be sent, in **Keep → Configure keep… → Keep** tab: **Find items by** (shown for themes that can search by title):
 
 - **IDs only** (the default): only identifiers are sent; items without one aren't looked up.
 - **IDs, or a title with its year:** an item without an ID is found by its title and year.
@@ -44,7 +44,7 @@ Answers are kept in the keep, so each identifier is fetched once (Look up online
 Looked-up details fill in and correct what Tagalot guessed from a file, but never override your files' own curated details or your edits:
 
 - **Research:** a literature note, a sidecar bibliography, or a library export beats what Crossref or arXiv say; what they say beats what Tagalot read from the PDF or its file name.
-- **Books:** Open Library only fills in empty fields (year, publisher, language, description); what the files say always wins. It also gives covers and authors' photos (below).
+- **Books:** Open Library only fills in empty fields (year, publisher, language, description; a book found by title gets its year and description, not an edition's publisher or language); what the files say always wins. It also gives covers and authors' photos (below).
 - **Your edits win over everything.** Looked-up values are marked as such, and scans and lookups never change a value you edited.
 
 Lookups only ever fill in descriptive details, never identifiers, so they can't change which item a file belongs to.

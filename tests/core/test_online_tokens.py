@@ -173,6 +173,10 @@ def env(tmp_path: Path) -> Iterator[Env]:
 def test_declaring_tokens_and_titles() -> None:
     with pytest.raises(ThemeDeclarationError, match="environment variable's name"):
         OnlineSource("Films DB", "api.films.test", "film IDs", token_env="NOT A NAME")
+    with pytest.raises(ThemeDeclarationError, match="titles_with needs titles=True"):
+        OnlineSource("Films DB", "api.films.test", "film IDs", titles_with="directors")
+    with pytest.raises(ThemeDeclarationError, match="titles_with needs titles=True"):
+        OnlineSource("Films DB", "api.films.test", "film IDs", titles=True, titles_with=" ")
     with pytest.raises(ValueError, match="'id', 'title-year', or 'title'"):
         OnlineRequest(f"{API}/search?q=Heat", "name")  # type: ignore[arg-type]
 
@@ -181,6 +185,20 @@ def test_declaring_tokens_and_titles() -> None:
 
     assert validate_theme(Films) == []
     assert "token_env or titles must set api_version = 23" in " ".join(validate_theme(Old))
+
+    class WithDirectors(Films):
+        api_version = 28
+        online_sources = [
+            OnlineSource(
+                "Films DB", "api.films.test", "film IDs", titles=True, titles_with="directors"
+            )
+        ]
+
+    class OldWithDirectors(WithDirectors):
+        api_version = 27
+
+    assert validate_theme(WithDirectors) == []
+    assert "titles_with must set api_version = 28" in " ".join(validate_theme(OldWithDirectors))
 
 
 def test_a_token_is_sent_only_while_set_and_kept_nowhere(

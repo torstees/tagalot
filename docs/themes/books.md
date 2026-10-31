@@ -55,6 +55,18 @@ Books are documents: when the keep [searches inside documents](../guide/search-i
 
 A book with an ISBN can be looked up in Open Library (with your consent, [Online details](../guide/online-details.md)), filling in an empty year, publisher, language, and description. What the files say always wins; titles, authors, and series never come from it.
 
+**Books without an ISBN,** such as old and public-domain books with just a title, an author, and a year (*Star Hunter* by Andre Norton), can be found by their title. A keep sends titles only when you allow it: set **Find items by** in **Keep → Configure keep… → Keep** tab ([What may identify an item](../guide/online-details.md#what-may-identify-an-item)). Then:
+
+- **What's sent:** the book's title and first author. A book needs both; with **IDs, or a title with its year**, it needs a year too.
+- **What counts as a match:** a work whose title and author are the book's (case and punctuation aside). If the book has a year, the work must also have first come out that year or one year either side. With no match, or two equally good, nothing is filled in: Tagalot never guesses.
+- **What's filled in:**
+  - The work's **Open Library ID** (a field on the book's page, such as `OL893415W`). From then on the book is looked up straight by it. You can type it in yourself, from the book's Open Library address.
+  - An empty year, from the work's first publication.
+  - An empty description.
+  - A cover, shown only when the book has no picture of its own.
+
+  Not the publisher or language: those belong to one edition, and a title finds the work.
+
 It also brings **covers and authors' photos**, kept in the keep and shown only for a book or author with no picture of its own. A book gets its edition's cover. An author gets their photo once Tagalot knows their **Open Library ID** (a field on their page): it's found from a book they wrote alone, or you can type it in (`OL25712A`, from their Open Library address). The photo is only used when Open Library's name for them is theirs. Covers and photos come from Open Library Covers, and most covers from the Internet Archive, where Open Library keeps them: two more services, which a keep that already looks things up is asked about once.
 
 ## Writing to Markdown
