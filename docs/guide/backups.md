@@ -34,13 +34,28 @@ Thumbnails and the text read from documents aren't copied: Tagalot makes them ag
 
 From source, run `uv run tagalot --backup …`. Packaged Windows builds have no console, so add `--output backup.txt` to read what it printed. The log is written either way.
 
-### Exit codes
+## tagalot --export-tags
+
+```bash
+tagalot --export-tags "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies tags.yaml" --items
+```
+
+writes the same file as **Tag manager → Export tags…**, which **Import tags…** loads back ([Tags](tags.md)). A backup of `keep.db` is complete, but this file is one you can read and edit:
+
+- **Without `--items`:** the tag tree (**Tags only…**).
+- **With `--items`:** the tree, then every item with tags of your own (**Tags and the items that have them…**).
+- **Pictures:** the tags' pictures and icons go in a folder beside it (`Movies tags pictures`).
+- **Replacing:** each run replaces the file, and a run that fails leaves the last one whole.
+- **The keep isn't changed,** and it can be open in Tagalot meanwhile. A keep that needs upgrading after you updated Tagalot isn't exported: open it in Tagalot once.
+- **Watched folders:** saving inside a folder the keep watches is refused, since no one is there to confirm as the window asks. Add `--allow-watched` to save there anyway. Even then, a file already there is never replaced, and scans will read the new file unless you add it to the folder's Skip list.
+
+## Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | The copy was made and checked. |
-| 1 | The copy failed, or it is damaged. |
-| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, or `--to` inside the keep. Nothing was written. |
+| 0 | The copy was made and checked, or the export written. |
+| 1 | The copy failed, or it is damaged; or the export couldn't be written. |
+| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, `--to` inside the keep, or (for `--export-tags`) a keep that needs upgrading or a file in a watched folder. Nothing was written. |
 
 A scheduler can use these to tell you when a backup failed.
 
