@@ -8,12 +8,15 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 
+from tagalot.core.handlers import OPEN
+from tagalot.core.linked_folders import FolderDifference
 from tagalot.core.not_duplicates import folder_entry
 from tagalot.core.session import KeepSession
 from tagalot.ui.dedupe_view import FOLDERS_TAB, DedupePage
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
 from tagalot.ui.triage import LINKS_TAB, TriagePage
+from tests.core.test_shortcuts import make_lnk
 from tests.ui.test_music_views import session, window
 
 pytestmark = pytest.mark.gui
@@ -109,5 +112,29 @@ def test_a_file_that_differs_later_is_listed_in_triage(
     qtbot.waitUntil(lambda: triage.counts is not None and triage.counts.links == 1, timeout=5000)
     assert triage.tabs.tabText(LINKS_TAB) == "Links (1)"
     [row] = triage.links.rows
+    assert isinstance(row, FolderDifference)
     assert row.relpath == "Jazz Hits/03 Late.mp3"
     assert row.first_relpath == "Copies/Jazz Hits/03 Late.mp3"
+
+
+def test_a_broken_shortcut_is_listed_in_triage(
+    qtbot: QtBot, window: MainWindow, session: KeepSession
+) -> None:
+    root = Path(session.root_path("music"))
+    (root / "Jazz Hits" / "Gone.mp3.lnk").write_bytes(make_lnk(relative="Gone.mp3"))
+    with qtbot.waitSignal(window.scans.finished, timeout=10_000):
+        window.scan_now()
+    window.navigation.select(NavTarget("triage", label="Triage"))
+    triage = window.stack.currentWidget()
+    assert isinstance(triage, TriagePage)
+    triage.refresh()
+    qtbot.waitUntil(lambda: triage.counts is not None and triage.counts.links == 1, timeout=5000)
+    assert triage.links.data(triage.links.index(0, 1)) == "Jazz Hits/Gone.mp3.lnk"
+    problem = triage.links.data(triage.links.index(0, 2))
+    assert isinstance(problem, str)
+    assert problem.startswith("Broken: pointed to ")
+    assert problem.endswith("Gone.mp3")
+    triage.links_table.selectRow(0)
+    with qtbot.waitSignal(triage.message, timeout=1000) as said:
+        triage._open_link(OPEN, other=False)  # nothing to open
+    assert said.args[0].startswith("Its target is gone")

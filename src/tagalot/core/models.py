@@ -874,6 +874,22 @@ class LinkedFolder(Base):
     linked_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
+class BrokenLink(Base):
+    """A link or shortcut whose target is gone (§13 *Linked places*, #604), as the last
+    scan of its root found it: listed in Triage so it can be fixed on disk. Each scan of
+    the root replaces its rows, so one whose target is back goes."""
+
+    __tablename__ = "broken_link"
+
+    root_id: Mapped[str] = mapped_column(ForeignKey("root.id", ondelete=CASCADE), primary_key=True)
+    relpath: Mapped[str] = mapped_column(primary_key=True)
+    how: Mapped[str]
+    """``symlink``, ``junction``, or ``shortcut``."""
+    target: Mapped[str]
+    """Where it pointed, as this computer's path (a shortcut's paths, one per line)."""
+    found_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
 class SchemaVersion(Base):
     """The schema version of the core (``component = "core"``) and of the keep's theme."""
 

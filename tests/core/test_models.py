@@ -60,6 +60,7 @@ CORE_TABLES = {
     "linked_place",
     "place_contains",
     "linked_folder",
+    "broken_link",
     "notes_folder_note",
     "file_not_found",
     "picture_failure",

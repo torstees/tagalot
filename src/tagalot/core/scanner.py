@@ -26,7 +26,12 @@ from tagalot.core.models import (
 )
 from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
 from tagalot.core.see_through import logical
-from tagalot.core.shortcuts import is_shortcut_name, read_shortcut, shortcut_target
+from tagalot.core.shortcuts import (
+    candidates,
+    is_shortcut_name,
+    read_shortcut,
+    shortcut_target,
+)
 from tagalot.themes.api import KIND_EXTENSIONS, Kind
 
 logger = logging.getLogger(__name__)
@@ -120,6 +125,7 @@ def walk_root(
     hard_links: bool = False,
     outside_links: bool = False,
     on_outside: Callable[[str], None] | None = None,
+    on_broken: Callable[[str, str, str], None] | None = None,
 ) -> Iterator[WalkEntry]:
     """Yield the files (and optionally directories) under ``root_path``.
 
@@ -137,6 +143,9 @@ def walk_root(
       own by default) is walked, its entries listed with the real paths they have
       (``inside``); one to a folder it is inside (a loop) is not walked. A link whose
       target is gone is left out.
+    - Broken links (#604): a link or shortcut whose target is gone is reported to
+      ``on_broken`` (its relative path, how it links, and where it pointed: a shortcut's
+      paths one per line) and left out.
     - Links outside (#603): a link or shortcut to a file or folder outside ``link_roots``
       is reported to ``on_outside`` (its relative path) and, with ``outside_links``, read
       as if it were where the link is (a folder walked, with the loop guard); without, it
@@ -195,6 +204,8 @@ def walk_root(
                 shortcut = _shortcut(entry)
                 if shortcut is not None:  # a Windows shortcut, read as a link (#602)
                     if not shortcut:
+                        if on_broken is not None:
+                            on_broken(relpath, "shortcut", _pointed(entry.path))
                         continue  # its target is gone
                     target, how = os.path.realpath(shortcut), "shortcut"
                     is_dir = os.path.isdir(target)
@@ -210,6 +221,8 @@ def walk_root(
                             continue  # a loop, or outside the keep's folders
                         real = target
                     elif not os.path.isfile(target):
+                        if on_broken is not None:
+                            on_broken(relpath, how, target)
                         continue  # its target is gone
                     elif not follow(relpath, target):
                         continue  # outside the keep's folders
@@ -270,6 +283,14 @@ def _shortcut(entry: os.DirEntry[str]) -> str | None:
     if found is None:
         return None
     return shortcut_target(entry.path, found) or ""
+
+
+def _pointed(path: str) -> str:
+    """Where a broken shortcut pointed: the paths it tried, one per line."""
+    found = read_shortcut(path)
+    if found is None:
+        return ""
+    return "\n".join(os.path.normpath(p) for p in candidates(path, found))
 
 
 def _norm(path: str) -> str:

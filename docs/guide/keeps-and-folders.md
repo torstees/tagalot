@@ -47,7 +47,7 @@ If you file things in several places with links, Tagalot treats each linked file
 - Its page lists the other places as **Also at …**, and opening it uses whichever place is there.
 - A link to a folder brings everything in that folder along. A link back to a folder it's inside isn't followed, so a scan can't go round in circles.
 - **Links outside the keep's folders:** the first scan that finds links to files or folders outside every watched folder asks once whether to include them. Included, what they lead to is read as if it were where the link is, as files of their own. Left out, they're skipped. **Keep configuration → Keep → Links outside** changes the answer.
-- A link whose target is gone is left out.
+- A link whose target is gone is left out, and listed in [Triage → Links](triage.md#links) with where it pointed, until a scan finds the target again.
 
 Some shares (a Linux server's links seen from Windows, for example) show links as ordinary files and folders, so Tagalot can't tell they're links: they show up as identical files in [Duplicates](dedupe.md), where **Link as one** makes them one item, and **Linked folders** links two folders as one, with files that turn up in both later. **Unlink this place**, on an item's page, separates a place again.
 

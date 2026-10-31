@@ -326,6 +326,11 @@ def _v33_linked_folders(conn: Connection) -> None:
     Base.metadata.tables["linked_folder"].create(conn, checkfirst=True)
 
 
+def _v34_broken_links(conn: Connection) -> None:
+    """Format 35: links and shortcuts whose targets are gone (#604)."""
+    Base.metadata.tables["broken_link"].create(conn, checkfirst=True)
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -360,6 +365,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     31: _v31_own_field_read,
     32: _v32_linked_places,
     33: _v33_linked_folders,
+    34: _v34_broken_links,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 
