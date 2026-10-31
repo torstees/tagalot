@@ -25,9 +25,10 @@ Tabs, each with how many it holds:
   theme doesn't read, archive members not read), with how many files and how many items
   it hides (#527, ``core.skip_reasons``); selecting one lists its files and says where the
   rule lives.
-- **Links:** files in linked folders (#601, ``core.linked_folders``) that differ from the
-  file at the same path in the folder they're linked with, so they aren't linked; with
-  Open file and Show in file manager, for both.
+- **Links:** broken links and shortcuts (#604, ``core.broken_links``), with where they
+  pointed, and files in linked folders (#601, ``core.linked_folders``) that differ from
+  the file at the same path in the folder they're linked with, so they aren't linked;
+  with Open file and Open the other (for a file that differs) and Show in file manager.
 
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
@@ -57,6 +58,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import Connection
 
+from tagalot.core.broken_links import Broken, broken_links
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
 from tagalot.core.linked_folders import FolderDifference, folder_differences
@@ -157,7 +159,7 @@ Loaded = tuple[
     list[PictureProblem],
     SkippedReport,
     list[NewInArchive],
-    list[FolderDifference],
+    list["LinkRow"],
 ]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
@@ -370,16 +372,21 @@ class SkippedFilesModel(QAbstractTableModel):
         return file.shown
 
 
-class LinksModel(QAbstractTableModel):
-    """Files in linked folders that differ from their counterparts (#601)."""
+LinkRow = Broken | FolderDifference
+"""A row of the Links tab: a broken link (#604), or a file that differs in linked folders
+(#601)."""
 
-    HEADERS = ("Folder", "Path", "Differs from")
+
+class LinksModel(QAbstractTableModel):
+    """Broken links, then files in linked folders that differ: folder, path, problem."""
+
+    HEADERS = ("Folder", "Path", "Problem")
 
     def __init__(self) -> None:
         super().__init__()
-        self.rows: list[FolderDifference] = []
+        self.rows: list[LinkRow] = []
 
-    def set_rows(self, rows: list[FolderDifference]) -> None:
+    def set_rows(self, rows: list[LinkRow]) -> None:
         self.beginResetModel()
         self.rows = rows
         self.endResetModel()
@@ -401,7 +408,11 @@ class LinksModel(QAbstractTableModel):
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
         row = self.rows[index.row()]
-        return (row.root_name, row.relpath, row.first_shown)[index.column()]
+        if isinstance(row, Broken):
+            problem = f"Broken: pointed to {row.pointed}"
+        else:
+            problem = f"Differs from {row.first_shown}"
+        return (row.root_name, row.relpath, problem)[index.column()]
 
 
 class NewInArchivesModel(QAbstractTableModel):
@@ -816,13 +827,16 @@ class TriagePage(QWidget):
         reveal_link = QPushButton("Show in file manager")
         reveal_link.clicked.connect(lambda: self._open_link(REVEAL, other=False))
         self.links_note = QLabel(
-            "Files in linked folders that differ from the file at the same path in the "
-            "folder they're linked with, so they aren't linked: one may have been edited, "
-            "or be a copy. Make them the same on disk, and the next scan links them."
+            "Links and shortcuts whose target is gone (deleted, renamed, moved, or on a drive "
+            "that isn't connected): fix them on disk, and the next scan clears them. And files "
+            "in linked folders that differ from the file at the same path in the other folder, "
+            "so they aren't linked: make them the same, and the next scan links them."
         )
         self.links_note.setWordWrap(True)
         self.links_empty = EmptyState(
-            "Linked folders match", "Every file in a linked folder matches its other place."
+            "Every link works",
+            "No link or shortcut is broken, and every file in a linked folder matches its "
+            "other place.",
         )
         self.links_stack = QStackedWidget()
         self.links_stack.addWidget(self.links_table)
@@ -862,6 +876,7 @@ class TriagePage(QWidget):
             with session.reader.connect() as conn:
                 pictures = picture_problems(conn, known, ignored=show_ignored)
                 skipped = skip_reasons(conn, roots, scope, notes)
+                links: list[LinkRow] = [*broken_links(conn), *folder_differences(conn)]
                 counts = Counts(
                     count_unlinked(conn, notes),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
@@ -871,7 +886,7 @@ class TriagePage(QWidget):
                     sum(1 for p in pictures if not p.ignored),
                     skipped.total,
                     count_new_in_archives(conn),
-                    len(links := folder_differences(conn)),
+                    len(links),
                 )
                 files = unlinked_files(conn, MAX_FILES, notes)
                 new = new_in_archives(conn)
@@ -896,7 +911,7 @@ class TriagePage(QWidget):
         pictures: list[PictureProblem] | None = None,
         skipped: SkippedReport | None = None,
         new: list[NewInArchive] | None = None,
-        links: list[FolderDifference] | None = None,
+        links: list[LinkRow] | None = None,
     ) -> None:
         self.counts = counts
         for tab, n in (
@@ -999,14 +1014,25 @@ class TriagePage(QWidget):
         # Looked up by id: a file inside an archive opens from a copy (#524).
         self.file_opener.act_on_resource(files[0].resource_id, how)
 
-    def selected_link(self) -> FolderDifference | None:
+    def selected_link(self) -> LinkRow | None:
         rows = self.links_table.selectionModel().selectedRows()
         return self.links.rows[rows[0].row()] if rows else None
 
     def _open_link(self, how: str, *, other: bool) -> None:
-        """Open or show the selected row's file, or (``other``) the one it differs from."""
+        """Open or show the selected row's file, or (``other``) the one it differs from. A
+        broken link can only be shown in the file manager."""
         row = self.selected_link()
         if row is None or self.file_opener is None:
+            return
+        if isinstance(row, Broken):
+            if how != REVEAL:
+                self.message.emit(f"Its target is gone: it pointed to {row.pointed}.")
+                return
+            base = _known(self.session)(row.root_id)
+            if base is None:
+                self.message.emit("Its watched folder has no folder on this computer.")
+                return
+            self.file_opener.act(FileToOpen(0, local_path(base, row.relpath), False), how)
             return
         root_id, relpath = (
             (row.first_root_id, row.first_relpath) if other else (row.root_id, row.relpath)

@@ -75,6 +75,8 @@ Select a rule to list its files and see where the rule lives. To read the files 
 
 ## Links
 
-Files in [linked folders](dedupe.md#linked-folders) that differ from the file at the same path in the folder they're linked with, so they aren't linked: one may have been edited, or be a copy. **Open file** and **Show in file manager** act on the file, **Open the other** on the one it differs from. Make them the same on disk (or remove the one you don't want), and the next scan links them.
+**Broken links:** symbolic links, junctions, and shortcuts whose target is gone (deleted, renamed, moved, or on a drive that isn't connected), with where they pointed ("Broken: pointed to D:\Books\x.pdf"). **Show in file manager** shows the link itself, so you can fix it or delete it. A scan that finds its target again clears it.
+
+**Files that differ:** files in [linked folders](dedupe.md#linked-folders) that differ from the file at the same path in the folder they're linked with, so they aren't linked: one may have been edited, or be a copy. **Open file** and **Show in file manager** act on the file, **Open the other** on the one it differs from. Make them the same on disk (or remove the one you don't want), and the next scan links them.
 
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

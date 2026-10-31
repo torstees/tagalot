@@ -34,6 +34,7 @@ from tagalot.core.archive_members import (
     wake_members,
 )
 from tagalot.core.archive_members import store_fingerprints as store_member_fingerprints
+from tagalot.core.broken_links import record_broken_links
 from tagalot.core.fingerprint import (
     FingerprintJob,
     FingerprintResult,
@@ -150,6 +151,9 @@ class ScanReport:
     outside_links: list[str] = field(default_factory=list)
     """Links and shortcuts the walk found to places outside every watched folder (#603),
     read or skipped as ``outside_links`` said."""
+    broken_links: list[tuple[str, str, str]] = field(default_factory=list)
+    """Links and shortcuts whose targets are gone (#604): (relative path, how, where it
+    pointed); recorded for Triage."""
 
 
 def scan_root(
@@ -247,6 +251,7 @@ def scan_root(
             hard_links=os.name != "nt" or not is_network_path(Path(path)),
             outside_links=outside_links,
             on_outside=report.outside_links.append,
+            on_broken=lambda rel, how, to: report.broken_links.append((rel, how, to)),
         )
     )
     with reader.connect() as conn:
@@ -283,6 +288,7 @@ def scan_root(
         report.fingerprinted += writer.run(partial(_store, batch))
 
     report.moves = writer.run(partial(_moves, applied))
+    writer.run(partial(record_broken_links, root_id=root.id, found=report.broken_links))
     if schema is not None:  # paths reached through links are linked places (#599)
         report.linked = writer.run(
             partial(
