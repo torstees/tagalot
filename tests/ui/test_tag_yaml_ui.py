@@ -14,13 +14,14 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from tagalot.core.models import Entity, EntityTag
+from tagalot.core.models import Entity, EntityNote, EntityTag
 from tagalot.core.search_fields import type_labels
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings
 from tagalot.core.tag_pictures import prepare_picture
 from tagalot.core.tag_yaml import ImportPlan
 from tagalot.core.tags import PATH_SEPARATOR
+from tagalot.ui.keep_import import KeepImportDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.models.tag_tree import tag_tooltip
 from tagalot.ui.navigation import NavTarget
@@ -370,3 +371,81 @@ def test_export_keep_from_the_keep_menu(
     assert iceland["picture"] == "my keep pictures/Places/Iceland.jpg"
     assert (tmp_path / "out" / "my keep pictures" / "Places" / "Iceland.jpg").is_file()
     assert any(item["tags"] for item in data["items"])
+
+
+def test_import_keep_from_the_keep_menu(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with session.reader.connect() as conn:
+        entity_id, type_id, title, key = conn.execute(
+            select(Entity.id, Entity.type, Entity.title, Entity.ingest_key)
+            .order_by(Entity.id)
+            .limit(1)
+        ).one()
+    item = {
+        "type": type_labels(session.schema)[type_id],
+        "title": title,
+        "key": key,
+        "tags": ["Restored"],
+        "note": "Back again.",
+    }
+    data = {
+        "tagalot": "keep export",
+        "format": 1,
+        "keep": "Demo",
+        "theme": session.keep.config.theme.id,
+        "tags": {"Restored": None},
+        "items": [item, {"type": item["type"], "title": "Not in this keep"}],
+    }
+    source = tmp_path / "Demo keep export.yaml"
+    source.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    seen: list[tuple[str, str, bool]] = []
+
+    def review(dialog: KeepImportDialog) -> bool:
+        seen.append(
+            (dialog.summary.text(), dialog.report.toPlainText(), dialog.replace_box.isVisible())
+        )
+        return dialog.import_button.isEnabled()
+
+    monkeypatch.setattr(window, "choose_keep_export", lambda: str(source))
+    monkeypatch.setattr(window, "review_keep_import", review)
+    window.import_keep_action.trigger()  # Keep → Import keep… (#613)
+    _wait_status(qtbot, window, "Imported the keep export: 1 new tag, 1 item changed; 1 not found.")
+
+    [(summary, report, conflicts)] = seen
+    assert summary == "1 item found, 1 not found: 1 to change; 1 new tag."
+    assert "Not found in this keep (1)\n  " in report
+    assert f"{item['type']} “{title}”: tags, note" in report
+    assert not conflicts
+    assert "Restored" in _paths(session)
+    with session.reader.connect() as conn:
+        note = conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
+    assert note == "Back again."
+    assert window.tag_actions.undo_label == "Import keep export 'Demo keep export.yaml'"
+    window.tag_actions.undo()
+    qtbot.waitUntil(lambda: "Restored" not in _paths(session), timeout=5000)
+
+
+def test_import_keep_refuses_a_tag_file(
+    qtbot: QtBot, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "tags.yaml"
+    source.write_text("Places: [Iceland]\n", encoding="utf-8")
+    warnings: list[str] = []
+
+    def warn(parent: QWidget, title: str, text: str) -> QMessageBox.StandardButton:
+        warnings.append(text)
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(window, "choose_keep_export", lambda: str(source))
+    monkeypatch.setattr(QMessageBox, "warning", warn)
+    window.import_keep_action.trigger()
+    qtbot.waitUntil(lambda: bool(warnings), timeout=5000)
+    assert warnings == [
+        "Couldn't import tags.yaml: it isn't a keep export (Keep → Export keep… makes one; "
+        "Import tags… loads a tag file)."
+    ]

@@ -52,6 +52,7 @@ from tagalot.core.item_pictures import PICTURES
 from tagalot.core.keep_export import HEADER as KEEP_EXPORT_HEADER
 from tagalot.core.keep_export import WIDTH as KEEP_EXPORT_WIDTH
 from tagalot.core.keep_export import keep_data
+from tagalot.core.keep_import import KeepImportError, KeepImportPlan, read_export
 from tagalot.core.keywords import (
     KeywordInfo,
     any_keywords,
@@ -123,6 +124,7 @@ from tagalot.ui.icon_picker import IconChoice, IconPicker
 from tagalot.ui.icon_pictures import SVG_SUFFIX, read_icon_file
 from tagalot.ui.icons import lucide
 from tagalot.ui.keep_config import KeepConfigWindow
+from tagalot.ui.keep_import import KeepImportDialog
 from tagalot.ui.keywords_page import KeywordsPage
 from tagalot.ui.link_dialog import LinkDialog
 from tagalot.ui.lookups import OnlineLookups, lookup_summary
@@ -251,6 +253,13 @@ class MainWindow(QMainWindow):
         )
         self.export_keep_action.triggered.connect(self.export_keep_file)
         keep_menu.addAction(self.export_keep_action)
+        self.import_keep_action = QAction("Import keep…", self)
+        self.import_keep_action.setToolTip(
+            "Load a keep export into this keep: everything done by hand in it, after a "
+            "preview, as one step you can undo"
+        )
+        self.import_keep_action.triggered.connect(self.import_keep_file)
+        keep_menu.addAction(self.import_keep_action)
         keep_menu.addSeparator()
         if on_open_other is not None:
             self.open_other_action = QAction("Open another keep…", self)
@@ -1597,6 +1606,64 @@ class MainWindow(QMainWindow):
             self.save_export(f"{name} keep export.yaml", "", "Export keep", build)
 
         run_in_pool(read, on_done=done)
+
+    def import_keep_file(self) -> None:
+        """Keep → Import keep… (#613): choose a keep export, preview it in a worker (both
+        ways of settling conflicts), show what it would do, and import it as one undoable
+        step."""
+        session = self.session
+        if session is None:
+            return
+        path = self.choose_keep_export()
+        if not path:
+            return
+        name = Path(path).name
+        theme = session.keep.config.theme.id
+
+        def plan() -> tuple[dict[str, Any], KeepImportPlan, KeepImportPlan]:
+            data = read_export(Path(path).read_text(encoding="utf-8-sig"), theme)
+            base = Path(path).parent
+            keep, replace = (
+                session.tags.import_keep(data, name, base=base, replace=r, preview=True)
+                for r in (False, True)
+            )
+            return data, keep, replace
+
+        def planned(result: tuple[dict[str, Any], KeepImportPlan, KeepImportPlan]) -> None:
+            if not shiboken6.isValid(self):
+                return
+            data, keep, replace = result
+            dialog = KeepImportDialog(name, keep, replace, self)
+            if self.review_keep_import(dialog):
+                self.tag_actions.import_keep(data, name, Path(path).parent, dialog.replace())
+
+        def failed(error: BaseException) -> None:
+            if not shiboken6.isValid(self):
+                return
+            if isinstance(error, UnicodeError):
+                reason = "it isn't a text file"
+            elif isinstance(error, KeepImportError | OSError):
+                reason = str(error)
+            else:
+                reason = f"{error.__class__.__name__}: {error}"
+            QMessageBox.warning(self, "Import keep", f"Couldn't import {name}: {reason}.")
+
+        run_in_pool(plan, on_done=planned, on_error=failed)
+
+    def choose_keep_export(self) -> str:
+        """Ask for a keep export to import (tests replace this)."""
+        assert self.session is not None
+        return choose_open_file(
+            self,
+            "Import keep",
+            "YAML files (*.yaml *.yml);;All files (*)",
+            self.session.settings,
+            self.files.settings_path,
+        )
+
+    def review_keep_import(self, dialog: KeepImportDialog) -> bool:
+        """Show what a keep import would do; whether to go ahead (tests replace this)."""
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def import_tag_file(self) -> None:
         """Choose a YAML tag file, read and plan it in a worker, show what it would do, and

@@ -422,7 +422,7 @@ class _Reader:
         self.base = base
         """The folder of the file read, where its pictures are (#506)."""
         self.problems: list[Problem] = []
-        self.items: list[_Item] = []
+        self.items: list[Item] = []
         """The items of the file's second document (#396)."""
         self.kinds: dict[str, str] = {}
         plurals = type_plurals(schema)
@@ -478,7 +478,7 @@ class _Reader:
             if item is not None:
                 self.items.append(item)
 
-    def item(self, entry: Any, line: int | None) -> "_Item | None":
+    def item(self, entry: Any, line: int | None) -> "Item | None":
         if not isinstance(entry, dict):
             self.problem(line, "An item is written with its type, title, and tags.")
             return None
@@ -516,7 +516,7 @@ class _Reader:
             if names:
                 tags.append(names)
         key = entry.get("key")
-        return _Item(
+        return Item(
             line,
             type_id,
             title,
@@ -720,7 +720,7 @@ def _is_items(data: Any) -> bool:
 
 
 @dataclass(frozen=True)
-class _Item:
+class Item:
     """One tagged item the file lists (#396)."""
 
     line: int | None
@@ -907,11 +907,11 @@ class _Prepared:
     plan: ImportPlan
     planned: list[_Planned]
     doomed: frozenset[int]
-    found: tuple[tuple[int, _Item], ...] = ()
+    found: tuple[tuple[int, Item], ...] = ()
     """The file's items found in the keep, with their entity ids (#396)."""
 
 
-def _find(conn: Connection, item: _Item) -> int | None:
+def find_item(conn: Connection, item: Item) -> int | None:
     """The item ``item`` names: by its key, else the one item of its kind with one of its
     files, else the one with its title (ignoring case); ``None`` when none or several."""
     of_type = Entity.type == item.type_id
@@ -941,7 +941,7 @@ def _find(conn: Connection, item: _Item) -> int | None:
     return int(same[0]) if len(same) == 1 else None
 
 
-def _resolve(tree: TagTree, names: Sequence[str]) -> int | None:
+def resolve_path(tree: TagTree, names: Sequence[str]) -> int | None:
     """The tag at a path, matched level by level as import matches tags."""
     parent: int | None = None
     for name in names:
@@ -951,30 +951,30 @@ def _resolve(tree: TagTree, names: Sequence[str]) -> int | None:
     return parent
 
 
-def _describe(item: _Item, labels: dict[str, str]) -> str:
+def _describe(item: Item, labels: dict[str, str]) -> str:
     return f"{labels.get(item.type_id, item.type_id)} \u201c{item.title}\u201d"
 
 
 def _plan_items(
     conn: Connection, schema: ThemeSchema, tree: TagTree, reader: _Reader, planner: _Planner
-) -> tuple[list[tuple[int, _Item]], list[str], int, int]:
+) -> tuple[list[tuple[int, Item]], list[str], int, int]:
     """Find the file's items, and count the tags import would add and (to match the
     file) take off: ``(found, not found, added, removed)``."""
     labels = dict(type_labels(schema))
-    found: list[tuple[int, _Item]] = []
+    found: list[tuple[int, Item]] = []
     missing: list[str] = []
     wanted: dict[int, set[int]] = defaultdict(set)
     new_uses = 0
     types: dict[int, str] = {}
     for item in reader.items:
-        entity_id = _find(conn, item)
+        entity_id = find_item(conn, item)
         if entity_id is None:
             missing.append(_describe(item, labels))
             continue
         found.append((entity_id, item))
         types[entity_id] = item.type_id
         for names in item.tags:
-            tag_id = _resolve(tree, names)
+            tag_id = resolve_path(tree, names)
             if tag_id is not None:
                 wanted[entity_id].add(tag_id)
             elif tuple(search_key(n) for n in names) in planner.new_paths:
@@ -1191,7 +1191,7 @@ def import_tags(
     return prepared.plan
 
 
-def _tag_items(conn: Connection, found: Sequence[tuple[int, _Item]], match: bool) -> None:
+def _tag_items(conn: Connection, found: Sequence[tuple[int, Item]], match: bool) -> None:
     """Put the file's tags on the items it lists (the tree is imported by now, so every tag
     it names is there), and, to ``match``, take off the user's others (#396)."""
     if not found:
@@ -1199,7 +1199,7 @@ def _tag_items(conn: Connection, found: Sequence[tuple[int, _Item]], match: bool
     tree = TagTree.load(conn)
     wanted: dict[int, set[int]] = defaultdict(set)
     for entity_id, item in found:
-        wanted[entity_id] |= {t for names in item.tags if (t := _resolve(tree, names))}
+        wanted[entity_id] |= {t for names in item.tags if (t := resolve_path(tree, names))}
     by_tag: dict[int, set[int]] = defaultdict(set)
     for entity_id, tag_ids in wanted.items():
         for tag_id in tag_ids:
