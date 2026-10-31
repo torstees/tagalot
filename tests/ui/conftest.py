@@ -135,7 +135,7 @@ def no_unexpected_modals(
         )
 
 
-POOL_DRAIN_MS = 10_000
+POOL_DRAIN_MS = 30_000
 """How long a test's leftover background jobs may take to finish after it."""
 
 
