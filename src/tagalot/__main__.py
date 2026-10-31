@@ -13,8 +13,9 @@ def main() -> int:
     """Start Tagalot and return the process exit code. ``--check`` reports what this
     build can do and exits; ``--version`` prints the version; ``--new-theme ID`` and
     ``--check-theme FILE`` help theme authors (``theme_tools``); ``--backup KEEP --to FOLDER``
-    copies a keep (``backup_tool``). With ``--output FILE`` they write to the file instead
-    (a windowed Windows build has no console)."""
+    copies a keep and ``--export-tags KEEP --to FILE`` exports its tags (``backup_tool``).
+    With ``--output FILE`` they write to the file instead (a windowed Windows build has no
+    console)."""
     if "--version" in sys.argv[1:]:
         import tagalot
 
@@ -32,6 +33,10 @@ def main() -> int:
         from tagalot.backup_tool import run_backup
 
         return run_backup(sys.argv[1:], _output(sys.argv[1:]))
+    if "--export-tags" in sys.argv[1:]:
+        from tagalot.backup_tool import run_export_tags
+
+        return run_export_tags(sys.argv[1:], _output(sys.argv[1:]))
     from tagalot.core.rar_tools import configure_rar_tools
 
     configure_rar_tools()  # WinRAR or 7-Zip off PATH, on Windows (#452)

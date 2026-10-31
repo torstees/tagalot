@@ -1,14 +1,19 @@
-"""``tagalot --backup KEEP --to FOLDER [--keep-last N]`` (#608): a checked copy of a keep,
-for a scheduler (cron, Windows Task Scheduler) to run. The work is ``core/backup.py``."""
+"""Backups from the command line, for a scheduler (cron, Windows Task Scheduler) to run:
+``tagalot --backup KEEP --to FOLDER [--keep-last N]`` (#608), a checked copy of a keep
+(``core/backup.py``), and ``tagalot --export-tags KEEP --to FILE [--items]
+[--allow-watched]`` (#609), the tag export (``core/exports.py``)."""
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from tagalot.core.backup import USAGE, BackupError, backup_keep, log_line
+from tagalot.core.backup import FAILED, OK, USAGE, BackupError, backup_keep, log_line
+from tagalot.core.exports import ExportError, export_tag_file
+from tagalot.core.settings import Settings, load_settings
 
 Out = Callable[[str], None]
 
 USAGE_TEXT = "usage: tagalot --backup KEEP --to FOLDER [--keep-last N]"
+EXPORT_USAGE = "usage: tagalot --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]"
 
 
 def run_backup(args: Sequence[str], out: Out = print) -> int:
@@ -26,6 +31,44 @@ def run_backup(args: Sequence[str], out: Out = print) -> int:
     for old in result.deleted:
         out(f"   deleted {old}")
     return result.exit_code
+
+
+def run_export_tags(args: Sequence[str], out: Out = print, settings: Settings | None = None) -> int:
+    """Run ``--export-tags`` from the command line's arguments; returns the exit code:
+    0 written, 1 writing failed, 2 the arguments are wrong or the export can't be made."""
+    keep, to = _value(args, "--export-tags"), _value(args, "--to")
+    problem = (
+        "--export-tags needs the keep's folder"
+        if keep is None
+        else "--to FILE is needed: where the tags go"
+        if to is None
+        else None
+    )
+    if problem is not None or keep is None or to is None:
+        out(f"error: {problem}")
+        out(EXPORT_USAGE)
+        return USAGE
+    try:
+        done = export_tag_file(
+            Path(keep),
+            Path(to),
+            settings or load_settings(),
+            items="--items" in args,
+            allow_watched="--allow-watched" in args,
+        )
+    except ExportError as e:
+        out(f"error: {e}")
+        return USAGE
+    except OSError as e:
+        out(f"error: couldn't write {to}: {e}")
+        return FAILED
+    what = f"{done.tags:,} tags" + (f" and {done.items:,} items" if done.items is not None else "")
+    out(f"ok  exported {what} to {done.path}")
+    if done.pictures:
+        out(f"   with {done.pictures:,} pictures in {done.path.stem} pictures")
+    if done.watched:
+        out(f"   it is in {done.watched}, a watched folder: scans will read it unless skipped")
+    return OK
 
 
 def parse_backup_args(args: Sequence[str]) -> tuple[Path, Path, int | None]:

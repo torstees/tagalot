@@ -105,6 +105,8 @@ An import is one step: **Undo** puts every tag back as it was, and takes the tag
 
 **Export tags… → Tags and the items that have them…** adds, after the tree, every item with tags of your own: to back your tagging up, or to carry it to another keep with the same theme. Tags that come from files' own keywords aren't written: they come back from the files.
 
+To export on a schedule, use `tagalot --export-tags` ([Backups](backups.md)).
+
 ```yaml
 ---
 items:
