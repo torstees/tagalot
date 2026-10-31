@@ -64,7 +64,7 @@ def backup_keep(
     folder isn't a keep or ``keep_last`` is below 1; a failed copy is returned, not raised."""
     if keep_last is not None and keep_last < 1:
         raise BackupError("--keep-last must be 1 or more")
-    keep_dir = keep_dir.resolve()
+    keep_dir, to = keep_dir.resolve(), to.resolve()  # relative paths work too
     db, toml = keep_dir / KEEP_DB, keep_dir / KEEP_TOML
     if not toml.is_file() or not db.is_file():
         raise BackupError(f"{keep_dir} isn't a keep: it needs {KEEP_TOML} and {KEEP_DB}")
@@ -72,7 +72,7 @@ def backup_keep(
         load_keep_config(toml)
     except KeepConfigError as e:
         raise BackupError(f"{toml} can't be read: {e}") from e
-    if to.resolve().is_relative_to(keep_dir):
+    if to.is_relative_to(keep_dir):
         raise BackupError("--to can't be inside the keep's folder")
     started = now()
     home = to / keep_name(keep_dir)
@@ -83,7 +83,7 @@ def backup_keep(
         _copy_database(db, partial / KEEP_DB)
         shutil.copy2(toml, partial / KEEP_TOML)
         problem = check_database(partial / KEEP_DB)
-    except (OSError, sqlite3.Error) as e:
+    except Exception as e:  # any failure: clean up, log it, exit 1 (never a traceback)
         logger.exception("Backing up %s failed", keep_dir)
         shutil.rmtree(partial, ignore_errors=True)
         result = BackupResult(keep_dir.name, started, None, False, f"couldn't copy: {e}")
@@ -138,7 +138,7 @@ def prune(home: Path, keep_last: int) -> list[Path]:
 
 def check_database(path: Path) -> str:
     """``""`` when SQLite finds the database sound, else what it found."""
-    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     try:
         rows = [str(row[0]) for row in conn.execute("PRAGMA integrity_check")]
     except sqlite3.DatabaseError as e:  # not a database at all

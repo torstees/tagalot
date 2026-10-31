@@ -107,6 +107,23 @@ def test_a_damaged_copy_fails_and_older_ones_stay(
     assert "  FAILED  Movies.keep: damaged: page 7" in log[1]
 
 
+def test_a_failed_copy_leaves_nothing_half_made(
+    keep: tuple[Path, Engine], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keep_dir, _ = keep
+
+    def broken(path: Path) -> str:
+        raise ValueError("something unexpected")
+
+    monkeypatch.setattr(backup, "check_database", broken)
+    result = backup_keep(keep_dir, tmp_path / "backups", now=lambda: T0)
+    assert result.exit_code == 1
+    assert result.problem == "couldn't copy: something unexpected"
+    assert list((tmp_path / "backups" / "Movies").iterdir()) == []
+    log = (tmp_path / "backups" / "backup.log").read_text(encoding="utf-8")
+    assert "FAILED  Movies.keep: couldn't copy: something unexpected" in log
+
+
 def test_check_database_finds_a_file_that_isnt_one(tmp_path: Path) -> None:
     bad = tmp_path / "keep.db"
     bad.write_bytes(b"not a database, just some bytes" * 200)
@@ -128,6 +145,16 @@ def test_copies_in_one_minute_are_kept_in_order(tmp_path: Path) -> None:
         "2026-10-30_0300-2",
         "2026-10-30_0300-10",
     ]
+
+
+def test_relative_paths(
+    keep: tuple[Path, Engine], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = backup_keep(Path("Movies.keep"), Path("backups"), now=lambda: T0)
+    assert result.ok
+    assert result.folder == tmp_path / "backups" / "Movies" / "2026-10-30_0300"
+    assert check_database(Path("backups/Movies/2026-10-30_0300") / KEEP_DB) == ""
 
 
 def test_what_isnt_started(keep: tuple[Path, Engine], tmp_path: Path) -> None:
