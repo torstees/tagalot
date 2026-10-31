@@ -21,6 +21,7 @@
   - [Online details](/guide/online-details.md)
   - [Writing to files](/guide/write-to-file.md)
   - [Undo and shortcuts](/guide/undo-and-shortcuts.md)
+  - [Backups](/guide/backups.md)
   - [Activity and checks](/guide/activity.md)
 
 - **Built-in themes**

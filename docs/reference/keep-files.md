@@ -1,5 +1,7 @@
 # Keep files and settings
 
+To back a keep up, see [Backups](../guide/backups.md).
+
 ## keep.toml
 
 Each keep's `keep.toml` says what it is. Tagalot writes it as you change things in Keep configuration; it's also fine to edit by hand (with the keep closed). Paths are written as literal strings, so Windows and UNC paths need no escaping.
