@@ -10,7 +10,7 @@
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 (PyInstaller defines SPECPATH)
 SRC = ROOT / "src"
@@ -22,6 +22,9 @@ import tagalot  # noqa: E402
 a = Analysis(  # noqa: F821
     [str(SRC / "tagalot" / "__main__.py")],
     pathex=[str(SRC)],
+    # pymediainfo's Linux wheel carries libmediainfo.so.0, which PyInstaller's hook misses
+    # (its patterns end at .so) and replaces with a system copy, when there is one (#623).
+    binaries=collect_dynamic_libs("pymediainfo", search_patterns=["lib*.so.*"]),
     # Built-in themes are found with pkgutil at run time, so nothing imports them by name.
     hiddenimports=collect_submodules("tagalot.builtin_themes"),
     # The theme template is copied as source by `tagalot --new-theme`.
