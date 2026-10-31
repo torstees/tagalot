@@ -11,4 +11,11 @@ To check what this build can do without opening a window:
 
     tagalot.exe --check --output check.txt
 
+For scheduled backups on Windows, run tagalot-cli.exe (in this folder) instead of
+tagalot.exe: it prints to the console and returns an exit code.
+
+    tagalot-cli.exe --backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14
+
+See https://torstees.github.io/tagalot/#/guide/backups
+
 https://github.com/torstees/tagalot

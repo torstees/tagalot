@@ -185,7 +185,7 @@ def test_the_command_line(
     monkeypatch.setattr(sys, "argv", ["tagalot", "--backup", str(keep_dir)])
     assert main() == 2
     assert capsys.readouterr().out.startswith("error: --to FOLDER is needed")
-    report = tmp_path / "report.txt"
+    report = tmp_path / "not yet made" / "report.txt"  # --output makes its folder (#610)
     args = ["tagalot", "--backup", str(keep_dir), "--to", str(to), "--keep-last", "x"]
     monkeypatch.setattr(sys, "argv", [*args, "--output", str(report)])
     assert main() == 2

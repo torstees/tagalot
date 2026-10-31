@@ -72,6 +72,10 @@ def run_check(out: Callable[[str], None] = print) -> int:
     shown = "the tower and the knight" if not missing else f"{', '.join(missing)} missing"
     line("Pictures", shown, ok=not missing)
 
+    if getattr(sys, "frozen", False) and sys.platform == "win32":
+        console = Path(sys.executable).with_name("tagalot-cli.exe")
+        line("Console", console.name, ok=console.is_file())  # for scheduled runs (#610)
+
     for name, probe, needed in READERS:
         try:
             line(name, probe(), needed=needed)
