@@ -12,7 +12,7 @@ step each, recorded as a :class:`~tagalot.core.fields.FieldChange`.
 """
 
 import logging
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +35,13 @@ from tagalot.core.fields import (
     restore_note,
 )
 from tagalot.core.item_pictures import PictureChange, restore_picture
+from tagalot.core.keep_import import (
+    ArchiveChange,
+    KeepImportPlan,
+    TagPhase,
+    import_keep,
+    restore_archives,
+)
 from tagalot.core.keywords import (
     IgnoreChange,
     apply_file_tags,
@@ -157,6 +164,15 @@ LinkDelta = tuple[
 and removal records dropped."""
 
 
+@dataclass(frozen=True)
+class KeepImportChange:
+    """Import keep… (#613): its parts' steps, in the order done; one undo step."""
+
+    label: str
+    steps: tuple[Any, ...]
+    """Each a :data:`Step`."""
+
+
 Step = (
     TagChange
     | FieldChange
@@ -174,6 +190,8 @@ Step = (
     | NotDuplicateChange
     | SavedChange
     | FieldMove
+    | ArchiveChange
+    | KeepImportChange
 )
 """One entry in the undo history."""
 
@@ -523,6 +541,43 @@ class TagService:
             self._push(change)
         return len(change.keys)
 
+    def import_keep(
+        self,
+        data: Mapping[str, Any],
+        name: str,
+        *,
+        base: Path | None = None,
+        replace: bool = False,
+        preview: bool = False,
+    ) -> KeepImportPlan:
+        """Load a keep export (``data``, from :func:`~tagalot.core.keep_import.read_export`)
+        as one undo step (#613); with ``preview``, only say what it would do. ``replace``
+        settles conflicts with the file's values."""
+        schema = self.schema
+        if schema is None:
+            raise RuntimeError("a keep import needs the keep's schema")
+        own = self.own_fields()
+        label = f"Import keep export {name!r}"
+
+        def tag_phase(
+            conn: Connection, op: Callable[[Connection], ImportPlan]
+        ) -> tuple[ImportPlan, TagChange]:
+            return self._tag_job(lambda tree: label, lambda tree: tree, op)(conn)
+
+        phase: TagPhase = tag_phase
+
+        def job(conn: Connection) -> tuple[KeepImportPlan, list[Any]]:
+            return import_keep(
+                conn, schema, data, own_fields=own, tag_phase=phase, base=base, replace=replace
+            )
+
+        if preview:
+            return self.writer.preview(job)[0]
+        plan, steps = self._apply(job)
+        if plan.changes:
+            self._push(KeepImportChange(label, tuple(steps)))
+        return plan
+
     def record(self, step: Step) -> None:
         """Add a step done elsewhere (a re-read of files) to the history."""
         self._push(step)
@@ -615,6 +670,11 @@ class TagService:
         elif isinstance(step, PlaceChange):
             assert schema is not None
             self.writer.run(lambda conn: restore_place_change(conn, schema, step, forward=forward))
+        elif isinstance(step, ArchiveChange):
+            self.writer.run(lambda conn: restore_archives(conn, step, forward=forward))
+        elif isinstance(step, KeepImportChange):
+            for part in step.steps if forward else reversed(step.steps):
+                self._replay(part, forward=forward)
         else:
             self._apply(lambda conn: _restore(conn, step, forward=forward))
 
@@ -624,6 +684,18 @@ class TagService:
         scope: Callable[[TagTree], Iterable[int]],
         op: Callable[[Connection], T],
     ) -> T:
+        result, change = self._apply(self._tag_job(label, scope, op))
+        self._push(change)
+        return result
+
+    def _tag_job[T](
+        self,
+        label: Callable[[TagTree], str],
+        scope: Callable[[TagTree], Iterable[int]],
+        op: Callable[[Connection], T],
+    ) -> Callable[[Connection], tuple[T, TagChange]]:
+        """A writer job running ``op`` and recording it as a :class:`TagChange`."""
+
         def job(conn: Connection) -> tuple[T, TagChange]:
             tree = TagTree.load(conn)
             tag_ids = frozenset(scope(tree))
@@ -663,9 +735,7 @@ class TagService:
             )
             return result, change
 
-        result, change = self._apply(job)
-        self._push(change)
-        return result
+        return job
 
     def _record_links(
         self,

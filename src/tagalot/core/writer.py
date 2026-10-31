@@ -26,6 +26,14 @@ class WriterClosedError(RuntimeError):
     """Work was submitted after the writer was closed."""
 
 
+class _RolledBack(Exception):
+    """A previewed job's result, raised to roll its transaction back."""
+
+    def __init__(self, result: Any) -> None:
+        super().__init__()
+        self.result = result
+
+
 class DbWriter:
     """Applies write jobs one at a time on a dedicated thread."""
 
@@ -56,6 +64,15 @@ class DbWriter:
             raise RuntimeError("a DB writer job cannot wait for another job (deadlock)")
         return self.submit(work).result(timeout)
 
+    def preview(self, work: Callable[[Connection], T], timeout: float | None = None) -> T:
+        """Run ``work`` as :meth:`run` does, then roll its transaction back: what it would
+        do, with nothing changed (Import keep…'s preview, #613)."""
+
+        def job(conn: Connection) -> T:
+            raise _RolledBack(work(conn))
+
+        return self.run(job, timeout)
+
     def close(self, timeout: float | None = None) -> None:
         """Finish queued jobs, stop the thread, and dispose of the engine."""
         with self._lock:
@@ -84,6 +101,8 @@ class DbWriter:
             try:
                 with self._engine.begin() as conn:
                     result = work(conn)
+            except _RolledBack as e:
+                future.set_result(e.result)
             except BaseException as e:
                 logger.exception("DB writer job failed")
                 future.set_exception(e)
