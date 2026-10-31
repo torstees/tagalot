@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 from PIL import Image
 from PySide6.QtCore import QThreadPool
 from PySide6.QtWidgets import QMessageBox, QWidget
@@ -340,3 +341,32 @@ def test_export_writes_the_pictures_beside_the_file(
     _wait_status(qtbot, window, "Saved tags.yaml.")
     assert picture.exists()
     assert "picture: tags pictures/Places/Iceland.jpg" in target.read_text(encoding="utf-8")
+
+
+def test_export_keep_from_the_keep_menu(
+    qtbot: QtBot,
+    window: MainWindow,
+    session: KeepSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session.tags.set_picture(_iceland(session), prepare_picture(_png()))
+    target = tmp_path / "out" / "my keep.yaml"
+    target.parent.mkdir()
+    asked: list[str] = []
+
+    def choose(name: str) -> str:
+        asked.append(name)
+        return str(target)
+
+    monkeypatch.setattr(window, "choose_export_path", choose)
+    window.export_keep_action.trigger()  # Keep → Export keep… (#612)
+    _wait_status(qtbot, window, "Saved my keep.yaml.")
+    assert asked == ["Demo keep export.yaml"]
+    data = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert data["tagalot"] == "keep export"
+    assert list(data)[:7] == ["tagalot", "format", "keep", "theme", "exported", "folders", "tags"]
+    iceland = data["tags"]["Places"]["tags"]["Iceland"]
+    assert iceland["picture"] == "my keep pictures/Places/Iceland.jpg"
+    assert (tmp_path / "out" / "my keep pictures" / "Places" / "Iceland.jpg").is_file()
+    assert any(item["tags"] for item in data["items"])

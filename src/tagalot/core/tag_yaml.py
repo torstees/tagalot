@@ -289,6 +289,22 @@ def export_tags(
     ``items`` (:func:`tagged_items`), followed by which items have each tag (#396); with
     ``pictures`` (:func:`picture_files`), each tag's picture file named (#506), and with
     ``icons`` (:func:`icon_files`), the file of each icon that is a picture (#507)."""
+    data = tag_tree(tree, schema, pictures, icons)
+    body = dump_yaml(data)
+    if items is None:
+        return HEADER + body
+    listed = dump_yaml({ITEMS: [_flowing_tags(i) for i in items]}, width=1000)
+    return HEADER + body + ITEMS_HEADER + "---\n" + listed
+
+
+def tag_tree(
+    tree: TagTree,
+    schema: ThemeSchema,
+    pictures: Mapping[int, str] | None = None,
+    icons: Mapping[int, str] | None = None,
+) -> dict[str, Any]:
+    """The tag tree as :func:`export_tags` writes it: each top-level tag by name, every tag
+    in the full form, in display order (shared with the keep export, #612)."""
     labels = type_labels(schema)
 
     def tag(tag_id: int) -> dict[str, Any] | None:
@@ -314,21 +330,31 @@ def export_tags(
             data["tags"] = {tree.node(c).name: tag(c) for c in children}
         return data or None
 
-    data = {tree.node(t).name: tag(t) for t in tree.children(None)}
-    body = yaml.dump(
-        data, Dumper=_Dumper, sort_keys=False, allow_unicode=True, default_flow_style=False
-    )
-    if items is None:
-        return HEADER + body
-    listed = yaml.dump(
-        {ITEMS: [_flowing_tags(i) for i in items]},
+    return {tree.node(t).name: tag(t) for t in tree.children(None)}
+
+
+def dump_yaml(data: Any, width: int = 80) -> str:
+    """``data`` as the exports write YAML: keys in order, ``Flow`` lists on one line, empty
+    values left empty, multi-line text as blocks (a wide ``width`` keeps an item's tags on
+    one line)."""
+    return yaml.dump(
+        data,
         Dumper=_Dumper,
         sort_keys=False,
         allow_unicode=True,
         default_flow_style=False,
-        width=1000,  # an item's tags on one line
+        width=width,
     )
-    return HEADER + body + ITEMS_HEADER + "---\n" + listed
+
+
+def tag_path_text(tree: TagTree, tag_id: int) -> str | list[str]:
+    """A tag's path as the exports write it: ``Genre > Fantasy``, or a list of names when
+    one holds ``>``."""
+    return _item_path(tree, tag_id)
+
+
+Flow = _Flow
+"""A list the exports write on one line."""
 
 
 def _flowing_tags(item: dict[str, Any]) -> dict[str, Any]:

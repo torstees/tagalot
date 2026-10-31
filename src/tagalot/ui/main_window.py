@@ -49,6 +49,9 @@ from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen
 from tagalot.core.icons import user_icon
 from tagalot.core.item_pictures import PICTURES
+from tagalot.core.keep_export import HEADER as KEEP_EXPORT_HEADER
+from tagalot.core.keep_export import WIDTH as KEEP_EXPORT_WIDTH
+from tagalot.core.keep_export import keep_data
 from tagalot.core.keywords import (
     KeywordInfo,
     any_keywords,
@@ -73,10 +76,12 @@ from tagalot.core.session import KeepSession
 from tagalot.core.tag_pictures import PICTURE_EXTENSIONS, prepare_picture
 from tagalot.core.tag_yaml import (
     ImportPlan,
+    dump_yaml,
     export_tags,
     icon_files,
     picture_files,
     plan_import,
+    tag_tree,
     tagged_items,
 )
 from tagalot.core.tags import (
@@ -239,6 +244,13 @@ class MainWindow(QMainWindow):
         self.configure_action.triggered.connect(self.configure_keep)
         keep_menu.addAction(self.configure_action)
         self.keep_config: KeepConfigWindow | None = None
+        self.export_keep_action = QAction("Export keep\u2026", self)
+        self.export_keep_action.setToolTip(
+            "Save everything done by hand in this keep (tags, edits, notes typed here, "
+            "merges, saved searches…) as one file you can read"
+        )
+        self.export_keep_action.triggered.connect(self.export_keep_file)
+        keep_menu.addAction(self.export_keep_action)
         keep_menu.addSeparator()
         if on_open_other is not None:
             self.open_other_action = QAction("Open another keep…", self)
@@ -1552,6 +1564,37 @@ class MainWindow(QMainWindow):
                 text = export_tags(tree, session.schema, items)
                 file = f"{name} tags and items.yaml"
                 self.save_export(file, text, "Export tags", with_pictures(items))
+
+        run_in_pool(read, on_done=done)
+
+    def export_keep_file(self) -> None:
+        """Keep → Export keep… (#612): everything done by hand, read in a worker, saved where
+        the user chooses (as other exports), with the tags' pictures beside it."""
+        session = self.session
+        if session is None:
+            return
+        tree = session.tag_cache.get()
+        name = session.keep.config.name
+
+        def read() -> dict[str, Any]:
+            with session.reader.connect() as conn:
+                return keep_data(conn, session.schema, tree, session.keep.config)
+
+        def done(data: dict[str, Any]) -> None:
+            if not shiboken6.isValid(self):
+                return
+
+            def build(folder: str) -> tuple[str, dict[str, bytes]]:
+                """The tags again, naming their pictures in ``folder`` beside the file."""
+                names = picture_files(tree, folder)
+                icons = icon_files(tree, folder, names.values())
+                files = {names[t]: p.data for t, p in tree.pictures().items() if t in names}
+                files |= {icons[t]: p.data for t, p in tree.icon_pictures().items() if t in icons}
+                tags = tag_tree(tree, session.schema, names, icons)
+                full = {k: tags if k == "tags" else v for k, v in data.items()}  # in place
+                return KEEP_EXPORT_HEADER + dump_yaml(full, KEEP_EXPORT_WIDTH), files
+
+            self.save_export(f"{name} keep export.yaml", "", "Export keep", build)
 
         run_in_pool(read, on_done=done)
 
