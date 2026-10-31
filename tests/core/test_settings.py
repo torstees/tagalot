@@ -11,6 +11,7 @@ import pytest
 from tagalot.core.keep import RootConfig
 from tagalot.core.settings import (
     MAX_RECENT_KEEPS,
+    BackupPlan,
     HandlerOverride,
     Settings,
     command_placeholder_error,
@@ -265,3 +266,33 @@ def test_last_save_folder(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> N
     with caplog.at_level(logging.WARNING):
         assert load_settings(path).last_save_folder is None
     assert "last_save_folder must be a path" in caplog.text
+
+
+def test_backup_plans(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "settings.toml"
+    plan = BackupPlan(r"E:\Backups\Tagalot", "monday", "21:30", False, 4)
+    save_settings(Settings(backups={KEEP_A: plan, KEEP_B: BackupPlan("/b")}), path)
+    loaded = load_settings(path)
+    assert loaded.backups == {KEEP_A: plan, KEEP_B: BackupPlan("/b", "day", "03:00", True, 14)}
+    assert plan.weekday == 0
+    assert (plan.hour, plan.minute) == (21, 30)
+    assert BackupPlan("/b").weekday is None
+    path.write_text(
+        f"""[backups.{KEEP_A}]
+folder = "/b"
+every = "fortnight"
+
+[backups.{KEEP_B}]
+folder = "/b"
+time = "25:00"
+
+[backups.not-a-keep]
+folder = "/b"
+""",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING):
+        assert load_settings(path).backups == {}
+    assert "every must be day or a weekday" in caplog.text
+    assert "time must be HH:MM" in caplog.text
+    assert "is not a keep id" in caplog.text

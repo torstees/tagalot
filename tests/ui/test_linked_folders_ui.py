@@ -63,8 +63,8 @@ def test_linking_folders_from_the_dedupe_page(
     with qtbot.waitSignal(window.tag_actions.changed, timeout=5000) as blocker:
         page.link_folders_button.click()
     assert blocker.args == ["Link folders Jazz Hits. Edit → Undo separates them again."]
-    qtbot.waitUntil(lambda: page.folder_pairs == [], timeout=5000)
-    assert page.groups == []  # the files are places of one file now, not duplicates
+    # The files are places of one file now, not duplicates; both lists refresh on their own.
+    qtbot.waitUntil(lambda: page.folder_pairs == [] and page.groups == [], timeout=5000)
 
 
 def test_files_that_differ_block_linking_until_checked(

@@ -195,7 +195,7 @@ def _window_color(qapp: QApplication, role: QPalette.ColorRole = QPalette.ColorR
 def test_the_colors_list(qtbot: QtBot, session: KeepSession) -> None:
     config = _config(qtbot, session)
     tabs = [config.tabs.tabText(i) for i in range(config.tabs.count())]
-    assert tabs[-1] == "Appearance"
+    assert tabs[-2:] == ["Appearance", "Backups"]
     combo = config.color_mode
     listed = [combo.itemData(i) for i in range(combo.count()) if combo.itemText(i)]
     assert listed == ["system", "light", "dark", *(s.id for s in BUILT_IN)]

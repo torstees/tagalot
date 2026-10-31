@@ -2,10 +2,31 @@
 
 Your tags, notes, and everything else you did by hand live in the keep's `keep.db`. Your files are never changed, but the keep is worth backing up, ideally on a schedule.
 
-Two commands do it, made for a scheduler to run ([below](#running-on-a-schedule)):
+The easy way is **Keep configuration → Backups** ([below](#in-keep-configuration)): choose a folder and a time, and Tagalot sets up the schedule on this computer. Underneath, it runs commands you can also run, or schedule, yourself ([Running on a schedule](#running-on-a-schedule)):
 
-- **`tagalot --backup`:** a complete copy of the keep, to restore from.
+- **`tagalot --backup`:** a complete copy of the keep, to restore from, with the tag export in it if you like (`--tags`).
 - **`tagalot --export-tags`:** your tags, in a file you can read, edit, and load into any keep.
+
+## In Keep configuration
+
+**Keep → Configure keep… → Backups** backs the open keep up on a schedule, on this computer:
+
+- **Back up to:** a folder, ideally on another disk or a network share. It can't be inside the keep's folder, or in a folder the keep watches: Tagalot never writes there.
+- **How often:** every day, or one day of the week, at a time. A backup missed while the computer was off is made when it's next on (on macOS, only one missed during sleep, not while shut down).
+- **Keep the last:** how many backups to keep; older ones are deleted.
+- **Also save:** each backup also holds the tag export, with the items that have them (`<keep> tags.yaml`, as **Export tags…** saves it).
+
+**Schedule backups** says what it will add, then adds it the system's own way:
+
+| | What it adds |
+|---|---|
+| **Windows** | A task in Task Scheduler, under **Tagalot** |
+| **macOS** | A launchd agent in `~/Library/LaunchAgents` |
+| **Linux** | A systemd user timer (`~/.config/systemd/user`), or a line in your crontab where there's no systemd |
+
+Then the tab shows the schedule and the **Last backup**: what the last run printed, from `<keep> last run.txt` in the backup folder. Both are read again each time you open the tab, and when you come back to the window. **Update schedule** changes it, and **Remove schedule** takes it away; your choices are remembered for this computer. **Back up now** makes a backup at once, and **Copy command** copies the command the schedule runs, to set it up by hand.
+
+The schedule belongs to this computer: a keep opened on another computer isn't backed up there until you schedule it there too.
 
 ## tagalot --backup
 
@@ -34,6 +55,9 @@ E:\Backups\Tagalot\
   2026-10-30 03:00:02  ok  Movies.keep -> 2026-10-30_0300 (12.4 MB), deleted 1 older
   2026-10-31 03:00:02  FAILED  Movies.keep: damaged: …
   ```
+
+- **`--tags`:** each copy also holds the tag export, with the items that have them (`Movies tags.yaml`, and its pictures), read from the copy itself. If only the export fails, the copy still counts, and the command fails with the reason in the log.
+- **Not in a watched folder:** `--to` can't be inside the keep's folder, or in a folder the keep watches.
 
 Thumbnails and the text read from documents aren't copied: Tagalot makes them again as needed.
 
@@ -125,8 +149,8 @@ cron mails or logs what a command prints, and `backup.log` has a line for each r
 | Code | Meaning |
 |---|---|
 | 0 | The copy was made and checked, or the export written. |
-| 1 | The copy failed, or it is damaged; or the export couldn't be written. |
-| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, `--to` inside the keep, or (for `--export-tags`) a keep that needs upgrading or a file in a watched folder. Nothing was written. |
+| 1 | The copy failed, or it is damaged; or the export (with `--tags`, the one in the copy) couldn't be written. |
+| 2 | Something is wrong with the command: a missing `--to`, a folder that isn't a keep, `--to` inside the keep or a folder it watches, or (for `--export-tags`) a keep that needs upgrading or a file in a watched folder. Nothing was written. |
 
 A scheduler can use these to tell you when a backup failed.
 

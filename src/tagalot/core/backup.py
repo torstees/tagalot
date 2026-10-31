@@ -5,9 +5,14 @@ app has the keep open) and ``keep.toml``, in a dated folder ``<to>/<keep>/<date>
 The copy is made under a ``.partial`` name and checked (``PRAGMA integrity_check``): a good
 one is renamed to its dated name, a damaged one to ``<name>_damaged``. Only good copies
 count toward ``keep_last``, so a damaged copy never pushes out an older good one. Each run
-adds one line to ``<to>/backup.log``. Restoring is copying the two files back."""
+adds one line to ``<to>/backup.log``. Restoring is copying the two files back.
+
+With ``tags`` (#611), the copy also holds the tag export, tags and the items that have them
+(``<keep> tags.yaml`` and its pictures), read from the copy itself, so the two agree. The
+backup folder can't be in a folder the keep watches (AGENTS.md rule 1)."""
 
 import logging
+import os
 import re
 import shutil
 import sqlite3
@@ -16,7 +21,16 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from tagalot.core.keep import KEEP_DB, KEEP_TOML, KeepConfigError, load_keep_config
+from tagalot.core.exports import ExportError, export_tag_file
+from tagalot.core.keep import (
+    KEEP_DB,
+    KEEP_TOML,
+    KeepConfig,
+    KeepConfigError,
+    load_keep_config,
+)
+from tagalot.core.roots import place_in_roots
+from tagalot.core.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +61,11 @@ class BackupResult:
     problem: str = ""  # why it failed, when it did
     size: int = 0  # bytes copied
     deleted: list[Path] = field(default_factory=list)  # old copies removed for keep_last
+    tags_problem: str = ""  # why the tag export (``tags``) failed; the copy still counts
 
     @property
     def exit_code(self) -> int:
-        return OK if self.ok else FAILED
+        return OK if self.ok and not self.tags_problem else FAILED
 
 
 def backup_keep(
@@ -58,22 +73,29 @@ def backup_keep(
     to: Path,
     keep_last: int | None = None,
     now: Callable[[], datetime] = datetime.now,
+    *,
+    tags: bool = False,
+    settings: Settings | None = None,
 ) -> BackupResult:
-    """Back up the keep in ``keep_dir`` under ``to``, then delete the oldest good copies
-    beyond ``keep_last``. Raises :class:`BackupError` before copying anything when the
-    folder isn't a keep or ``keep_last`` is below 1; a failed copy is returned, not raised."""
+    """Back up the keep in ``keep_dir`` under ``to`` (with its tag export, when ``tags``),
+    then delete the oldest good copies beyond ``keep_last``. ``settings`` gives this
+    computer's paths of the keep's folders and the theme folders. Raises
+    :class:`BackupError` before copying anything when the folder isn't a keep, ``to`` is
+    inside it or a folder it watches, or ``keep_last`` is below 1; a failed copy is
+    returned, not raised."""
     if keep_last is not None and keep_last < 1:
         raise BackupError("--keep-last must be 1 or more")
+    settings = settings or Settings()
     keep_dir, to = keep_dir.resolve(), to.resolve()  # relative paths work too
     db, toml = keep_dir / KEEP_DB, keep_dir / KEEP_TOML
     if not toml.is_file() or not db.is_file():
         raise BackupError(f"{keep_dir} isn't a keep: it needs {KEEP_TOML} and {KEEP_DB}")
     try:
-        load_keep_config(toml)
+        config = load_keep_config(toml)
     except KeepConfigError as e:
         raise BackupError(f"{toml} can't be read: {e}") from e
-    if to.is_relative_to(keep_dir):
-        raise BackupError("--to can't be inside the keep's folder")
+    if problem := folder_problem(to, keep_dir, watched_folders(config, settings)):
+        raise BackupError(problem)
     started = now()
     home = to / keep_name(keep_dir)
     target = _free_name(home, started.strftime(STAMP))
@@ -83,13 +105,14 @@ def backup_keep(
         _copy_database(db, partial / KEEP_DB)
         shutil.copy2(toml, partial / KEEP_TOML)
         problem = check_database(partial / KEEP_DB)
+        tags_problem = _export_tags(partial, keep_dir, settings) if tags and not problem else ""
     except Exception as e:  # any failure: clean up, log it, exit 1 (never a traceback)
         logger.exception("Backing up %s failed", keep_dir)
         shutil.rmtree(partial, ignore_errors=True)
         result = BackupResult(keep_dir.name, started, None, False, f"couldn't copy: {e}")
         _log(to, result)
         return result
-    size = sum(p.stat().st_size for p in partial.iterdir())
+    size = sum(p.stat().st_size for p in partial.rglob("*") if p.is_file())
     if problem:
         damaged = target.with_name(target.name + DAMAGED)
         partial.rename(damaged)
@@ -97,9 +120,50 @@ def backup_keep(
     else:
         partial.rename(target)
         deleted = prune(home, keep_last) if keep_last is not None else []
-        result = BackupResult(keep_dir.name, started, target, True, size=size, deleted=deleted)
+        result = BackupResult(keep_dir.name, started, target, True, "", size, deleted, tags_problem)
     _log(to, result)
     return result
+
+
+def watched_folders(config: KeepConfig, settings: Settings) -> dict[str, tuple[str, str | None]]:
+    """The keep's folders on this computer: root id -> (its name, its path)."""
+    return {r.id: (r.name, settings.root_path(config.id, r)) for r in config.roots}
+
+
+def folder_problem(folder: Path, keep_dir: Path, watched: dict[str, tuple[str, str | None]]) -> str:
+    """Why ``folder`` can't hold the keep's backups, or ``""``: it may not be inside the
+    keep's folder, nor in a folder the keep watches (Tagalot never writes there)."""
+    folder, keep_dir = folder.resolve(), keep_dir.resolve()
+    if folder.is_relative_to(keep_dir):
+        return "The backup folder can't be inside the keep's folder."
+    paths = {k: p for k, (_, p) in watched.items()}
+    place = place_in_roots(str(folder), paths)
+    same = next((k for k, p in paths.items() if p and _same_folder(folder, p)), None)
+    root_id = place[0] if place is not None else same
+    if root_id is not None:
+        return (
+            f"The backup folder can't be in {watched[root_id][0]}, a folder this keep "
+            "watches: Tagalot never writes there."
+        )
+    return ""
+
+
+def _same_folder(folder: Path, path: str) -> bool:
+    return os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.abspath(path))
+
+
+def _export_tags(copy: Path, keep_dir: Path, settings: Settings) -> str:
+    """Write the tag export, with items, into the copy, read from the copy; ``""`` when it
+    was written, else why not."""
+    target = copy / f"{keep_name(keep_dir)} tags.yaml"
+    try:
+        export_tag_file(copy, target, settings, items=True)
+    except ExportError as e:
+        return str(e)
+    except Exception as e:  # never a traceback from a scheduled run
+        logger.exception("Exporting the tags of %s failed", keep_dir)
+        return f"{type(e).__name__}: {e}"
+    return ""
 
 
 def keep_name(keep_dir: Path) -> str:
@@ -183,6 +247,8 @@ def log_line(result: BackupResult) -> str:
     line = f"{when}  ok  {result.keep} -> {result.folder.name} ({_size(result.size)})"
     if result.deleted:
         line += f", deleted {len(result.deleted)} older"
+    if result.tags_problem:
+        line += f"; tags FAILED: {result.tags_problem}"
     return line
 
 

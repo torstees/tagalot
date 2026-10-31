@@ -1,6 +1,6 @@
 # Keep configuration
 
-**Keep → Configure keep…** opens a window of six tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
+**Keep → Configure keep…** opens a window of seven tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
 
 ![Keep configuration's Keep tab, for a research keep](../images/screens/keep-configuration.png)
 
@@ -111,3 +111,7 @@ Your keep's theme may suggest fonts, shown as, for example, **Literata (the them
 **Text size** makes the window's text larger or smaller than the system's, as a percent; titles and notes follow it. It starts at the theme's suggestion, if it has one (books: 105%).
 
 A font that isn't installed on this computer, or a file that's gone, shows the system's font instead, with a note under the fonts. Changes show at once, and with several keeps open, the fonts follow the keep whose window you're in.
+
+## Backups
+
+Backs the keep up on a schedule, on this computer: where to, how often, how many to keep, and whether each backup holds the tag export. **Schedule backups** adds the schedule to your system's scheduler, after saying what it will add; the tab then shows it and the last backup. See [Backups](backups.md).

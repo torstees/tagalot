@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tagalot.core import color_schemes, settings
+from tagalot.core import backup_schedule, color_schemes, settings
 from tagalot.themes import loader
 
 # GUI tests must run headless. This runs before pytest-qt creates the QApplication.
@@ -23,6 +23,17 @@ def private_user_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     monkeypatch.setattr(loader, "default_user_themes_dir", lambda: user / "themes")
     monkeypatch.setattr(color_schemes, "default_schemes_dir", lambda: user / "color_schemes")
     return user
+
+
+@pytest.fixture(autouse=True)
+def no_system_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scheduled backups (#611) never reach the real Task Scheduler, launchd, systemd, or
+    crontab in tests: a test gives a scheduler its own fake runner."""
+
+    def refuse(args: object, stdin: object = None) -> tuple[int, str]:
+        raise AssertionError(f"a test tried to run {args!r}")
+
+    monkeypatch.setattr(backup_schedule, "run_command", refuse)
 
 
 @pytest.fixture(autouse=True)

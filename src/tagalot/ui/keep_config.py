@@ -11,6 +11,7 @@ A window of its own (Keep → Configure keep…), one per main window, with four
 - **Notes:** the keep's notes folder, Choose… and None (§9 *The notes folder*, #382); and
   the front-matter keys notes never make Extra fields: the keep's, the user's (every keep
   on this computer), and the built-in ones (§9 *Notes*, #381).
+- **Backups:** scheduled backups of the keep on this computer (#611, ``ui/backups_tab.py``).
 
 Every change is checked and saved as soon as it's made (``keep.toml``, or ``settings.toml``
 for this computer's folder), in a worker; a bad value is explained under the form and the
@@ -109,6 +110,7 @@ from tagalot.core.thumbnails.cache import CacheStats
 from tagalot.themes.api import ColorScheme, ThemeOption, entity_plural
 from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 from tagalot.ui.appearance import apply_colors, starting_colors
+from tagalot.ui.backups_tab import BackupsTab
 from tagalot.ui.colors import ERROR, css
 from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.font_picker import FontChoice, FontPicker
@@ -369,6 +371,8 @@ class KeepConfigWindow(QWidget):
         self.fields_tab = OwnFieldsTab(session, self.changed.emit, pool)
         self.tabs.addTab(_scrolled(self.fields_tab), "Fields")
         self.tabs.addTab(_scrolled(self._appearance_tab()), "Appearance")
+        self.backups_tab = BackupsTab(session, self.changed.emit, lambda: self.settings_path, pool)
+        self.tabs.addTab(_scrolled(self.backups_tab), "Backups")
         self._fitted = False
         layout = QVBoxLayout(self)
         layout.addWidget(self.tabs)

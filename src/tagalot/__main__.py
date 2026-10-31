@@ -68,7 +68,7 @@ COMMANDS = (
     "--backup",
     "--export-tags",
 )
-CLI_USAGE = """usage: tagalot-cli --backup KEEP --to FOLDER [--keep-last N]
+CLI_USAGE = """usage: tagalot-cli --backup KEEP --to FOLDER [--keep-last N] [--tags]
        tagalot-cli --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]
        tagalot-cli --check | --version
 Add --output FILE to any of them to write what it prints to FILE (for scheduled tasks).

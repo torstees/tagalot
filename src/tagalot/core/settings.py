@@ -51,6 +51,39 @@ class HandlerOverride:
         self.ext = normalize_ext(self.ext)
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+"""``[backups]`` ``every`` names a weekday, or ``"day"`` (#611)."""
+TIME = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
+
+
+@dataclass(frozen=True)
+class BackupPlan:
+    """A keep's scheduled backups on this computer (#611): what Keep configuration's Backups
+    tab chose, kept in ``[backups."<keep id>"]``. The schedule itself is the system's."""
+
+    folder: str
+    every: str = "day"
+    """``"day"``, or a weekday from :data:`WEEKDAYS`."""
+    time: str = "03:00"
+    """When, as ``HH:MM`` (24 hours)."""
+    tags: bool = True
+    """Each copy also holds the tag export (``--tags``)."""
+    keep_last: int = 14
+
+    @property
+    def hour(self) -> int:
+        return int(self.time[:2])
+
+    @property
+    def minute(self) -> int:
+        return int(self.time[3:])
+
+    @property
+    def weekday(self) -> int | None:
+        """0 for Monday to 6 for Sunday, or ``None`` every day."""
+        return WEEKDAYS.index(self.every) if self.every in WEEKDAYS else None
+
+
 @dataclass
 class Settings:
     """The contents of ``settings.toml``."""
@@ -81,6 +114,8 @@ class Settings:
     """``[environment."<keep id>"]``: each keep's environment variables for this user
     (#544), such as an online service's token, used ahead of the real environment. Kept
     here, never in the keep folder, so a shared keep doesn't share them."""
+    backups: dict[uuid.UUID, BackupPlan] = field(default_factory=dict)
+    """``[backups."<keep id>"]``: each keep's scheduled backups on this computer (#611)."""
 
     def add_recent_keep(self, keep_dir: Path) -> None:
         """Move ``keep_dir`` to the front of the recent list, dropping duplicates and extras."""
@@ -237,6 +272,18 @@ def dump_settings(settings: Settings) -> str:
             f"[environment.{toml_key(str(keep_id))}]",
         ]
         lines += [f"{toml_key(name)} = {toml_str(value)}" for name, value in env.items()]
+    for keep_id, plan in settings.backups.items():
+        lines += [
+            "",
+            "# A keep's scheduled backups (Keep configuration, Backups tab); the schedule",
+            "# itself is the system's (Task Scheduler, launchd, systemd, or cron).",
+            f"[backups.{toml_key(str(keep_id))}]",
+            f"folder = {toml_str(plan.folder)}",
+            f"every = {toml_str(plan.every)}",
+            f"time = {toml_str(plan.time)}",
+            f"tags = {'true' if plan.tags else 'false'}",
+            f"keep_last = {plan.keep_last}",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -278,6 +325,7 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
         "notes",
         "file_manager",
         "environment",
+        "backups",
     }
     for key in sorted(set(data) - known):
         logger.warning("%s: ignoring unknown key %r", path, key)
@@ -386,7 +434,41 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
                 logger.warning(
                     "%s: [environment.%s] %s: %s; ignoring it", path, raw_keep_id, name, e
                 )
+
+    backups = data.get("backups", {})
+    if not isinstance(backups, dict):
+        logger.warning("%s: backups must be a table; ignoring it", path)
+        backups = {}
+    for raw_keep_id, raw in backups.items():
+        plan = _parse_backup_plan(raw)
+        try:
+            keep_id = uuid.UUID(raw_keep_id)
+        except ValueError:
+            plan = f"key {raw_keep_id!r} is not a keep id"
+        if isinstance(plan, str):
+            logger.warning("%s: [backups.%s] %s; ignoring it", path, raw_keep_id, plan)
+        else:
+            settings.backups[keep_id] = plan
     return settings
+
+
+def _parse_backup_plan(raw: object) -> BackupPlan | str:
+    """A keep's backup plan, or what is wrong with it."""
+    if not isinstance(raw, dict):
+        return "is not a table"
+    folder, every, time = raw.get("folder"), raw.get("every", "day"), raw.get("time", "03:00")
+    tags, keep_last = raw.get("tags", True), raw.get("keep_last", 14)
+    if not isinstance(folder, str) or not folder.strip():
+        return "needs a folder"
+    if every not in ("day", *WEEKDAYS):
+        return "every must be day or a weekday, like monday"
+    if not isinstance(time, str) or not TIME.fullmatch(time):
+        return "time must be HH:MM, like 03:00"
+    if not isinstance(tags, bool):
+        return "tags must be true or false"
+    if not isinstance(keep_last, int) or isinstance(keep_last, bool) or keep_last < 1:
+        return "keep_last must be 1 or more"
+    return BackupPlan(folder.strip(), every, time, tags, keep_last)
 
 
 def _parse_handler(raw: object) -> HandlerOverride | str:
