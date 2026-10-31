@@ -201,5 +201,9 @@ def test_a_similar_pair_is_not_a_duplicate(
         timeout=5000,
     )
     assert page.tabs.tabText(1) == "Similar items"
-    # The identical group is a separate judgement: still listed.
-    assert page.summary.text().startswith("1 group of identical files")
+    # The identical group is a separate judgement: still listed (once the page's refresh,
+    # which the mark starts, is done).
+    qtbot.waitUntil(
+        lambda: page.summary.text().startswith("1 group of identical files"),
+        timeout=5000,
+    )
