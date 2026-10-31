@@ -24,7 +24,7 @@ The easy way is **Keep configuration → Backups** ([below](#in-keep-configurati
 | **macOS** | A launchd agent in `~/Library/LaunchAgents` |
 | **Linux** | A systemd user timer (`~/.config/systemd/user`), or a line in your crontab where there's no systemd |
 
-Then the tab shows the schedule and the **Last backup**: what the last run printed, from `<keep> last run.txt` in the backup folder. **Update schedule** changes it, and **Remove schedule** takes it away; your choices are remembered for this computer. **Back up now** makes a backup at once, and **Copy command** copies the command the schedule runs, to set it up by hand.
+Then the tab shows the schedule and the **Last backup**: what the last run printed, from `<keep> last run.txt` in the backup folder. Both are read again each time you open the tab, and when you come back to the window. **Update schedule** changes it, and **Remove schedule** takes it away; your choices are remembered for this computer. **Back up now** makes a backup at once, and **Copy command** copies the command the schedule runs, to set it up by hand.
 
 The schedule belongs to this computer: a keep opened on another computer isn't backed up there until you schedule it there too.
 

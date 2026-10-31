@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import shiboken6
-from PySide6.QtCore import QThreadPool, QTime
+from PySide6.QtCore import QEvent, QObject, QThreadPool, QTime
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -173,15 +173,30 @@ class BackupsTab(QWidget):
         layout.addStretch(1)
         self.show_plan(self.saved_plan())
         self._enable()
-        self._looked = False
+        self._looking = False
+        self._look_again = False
+        self._watched_window: QWidget | None = None
 
     def showEvent(self, event: QShowEvent) -> None:
-        """Ask the system about the schedule the first time the tab is shown, not before:
-        a Keep configuration opened for another tab needn't wait on it."""
+        """Ask the system about the schedule and read the last run each time the tab is
+        shown (not before: a Keep configuration opened for another tab needn't wait on
+        it), and whenever its window becomes active again while the tab shows, as after
+        running the task from the system's scheduler."""
         super().showEvent(event)
-        if not self._looked:
-            self._looked = True
+        window = self.window()
+        if window is not self._watched_window:
+            window.installEventFilter(self)
+            self._watched_window = window
+        self.refresh()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (
+            watched is self._watched_window
+            and event.type() == QEvent.Type.WindowActivate
+            and self.isVisible()
+        ):
             self.refresh()
+        return super().eventFilter(watched, event)
 
     # --- the choices ---
 
@@ -232,7 +247,12 @@ class BackupsTab(QWidget):
     # --- what is there ---
 
     def refresh(self) -> None:
-        """Ask the system whether the keep has a schedule, and read the last run."""
+        """Ask the system whether the keep has a schedule, and read the last run; one
+        asking at a time (a refresh asked for meanwhile follows it)."""
+        if self._looking:
+            self._look_again = True
+            return
+        self._looking = True
         keep_id, keep_dir = self.session.keep.config.id, self.session.keep.dir
         plan = self.saved_plan()
         scheduler = self.scheduler
@@ -244,14 +264,28 @@ class BackupsTab(QWidget):
             if shiboken6.isValid(self):
                 self.scheduled = found[0]
                 self._show(found[1])
+                self._looked()
 
         def failed(error: BaseException) -> None:
             if shiboken6.isValid(self):
                 logger.warning("Couldn't ask the scheduler about backups", exc_info=error)
                 self.status.setText(f"Couldn't ask {scheduler.name}: {error}")
+                self._looked()
 
-        self.status.setText(f"Asking {scheduler.name}…")
+        if self.scheduled is None:  # the first time; later, what's shown stays until then
+            self.status.setText(f"Asking {scheduler.name}…")
         run_in_pool(look, on_done=done, on_error=failed, pool=self._pool)
+
+    @property
+    def asking(self) -> bool:
+        """A refresh is under way."""
+        return self._looking
+
+    def _looked(self) -> None:
+        self._looking = False
+        if self._look_again:
+            self._look_again = False
+            self.refresh()
 
     def _show(self, last: LastRun | None) -> None:
         plan = self.saved_plan()

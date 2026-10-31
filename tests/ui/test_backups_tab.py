@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QTime
+from PySide6.QtCore import QEvent, QTime
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
@@ -45,12 +45,12 @@ def _tab(
     assert system.calls == []  # nothing asked before the tab is shown
     config.show()
     config.tabs.setCurrentIndex(config.tabs.count() - 1)
-    qtbot.waitUntil(lambda: tab.scheduled is not None, timeout=5000)
+    qtbot.waitUntil(lambda: tab.scheduled is not None and not tab.asking, timeout=5000)
     return config, tab, system
 
 
 def _settle(qtbot: QtBot, tab: BackupsTab) -> None:
-    qtbot.waitUntil(lambda: tab.busy == 0 and "Asking" not in tab.status.text(), timeout=10000)
+    qtbot.waitUntil(lambda: tab.busy == 0 and not tab.asking, timeout=10000)
 
 
 def test_scheduling_changing_and_removing(
@@ -165,3 +165,25 @@ def test_back_up_now_and_copy_command(qtbot: QtBot, session: KeepSession, tmp_pa
     assert "--backup" in copied
     assert str(session.keep.dir) in copied
     assert messages[-1] == "Copied the backup command."
+
+
+def test_the_last_backup_is_read_again(
+    qtbot: QtBot, session: KeepSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, tab, _ = _tab(qtbot, session, tmp_path)
+    folder = tmp_path / "backups"
+    tab.folder.setText(str(folder))
+    tab.back_up_now()
+    _settle(qtbot, tab)
+    run = folder / "Demo last run.txt"
+    line = "2026-11-02 03:00:01  ok  Demo.keep -> 2026-11-02_0300 (480.0 KB)"
+    run.write_text(line + "\n", encoding="utf-8")  # a scheduled run, while the tab was open
+    config.tabs.setCurrentIndex(0)
+    config.tabs.setCurrentIndex(config.tabs.count() - 1)  # back to the tab: read again
+    qtbot.waitUntil(lambda: tab.last.text().endswith("(480.0 KB)"), timeout=5000)
+    _settle(qtbot, tab)
+    run.write_text("error: something went wrong\n", encoding="utf-8")
+    QApplication.sendEvent(config, QEvent(QEvent.Type.WindowActivate))  # back to the window
+    qtbot.waitUntil(lambda: tab.last.text().startswith("Failed: "), timeout=5000)
+    assert tab.last.text().endswith("error: something went wrong")
+    _settle(qtbot, tab)
