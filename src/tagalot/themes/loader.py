@@ -281,6 +281,13 @@ def validate_theme(theme: type[Theme]) -> list[str]:
             "a theme with an online source's token_env or titles must set api_version = 23 "
             "(or later)"
         )
+    elif (
+        any(getattr(o, "titles_with", None) for o in sources)
+        and getattr(theme, "api_version", API_VERSION) < 28
+    ):
+        problems.append(
+            "a theme with an online source's titles_with must set api_version = 28 (or later)"
+        )
     for entity in entities:
         if getattr(entity, "full_text", False):
             if not any(getattr(r, "primary", False) for r in entity.roles):

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 27
+API_VERSION = 28
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -55,7 +55,8 @@ added services' tokens and finding items by title (:class:`OnlineSource`'s
 online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added icons
 (:attr:`Entity.icon`, :attr:`Theme.icon`); version 26 added color schemes
 (:class:`ColorScheme`, :attr:`Theme.color_schemes`); version 27 added suggested fonts
-(:attr:`Theme.fonts`, :attr:`Theme.text_size`)."""
+(:attr:`Theme.fonts`, :attr:`Theme.text_size`); version 28 added what a title is sent
+with (:class:`OnlineSource`'s ``titles_with``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -1311,7 +1312,9 @@ class OnlineSource:
     sends it as ``Authorization: Bearer`` to that service only. While it isn't set, the
     service isn't used or asked about. ``titles`` says the theme may find items on the
     service by title (:class:`OnlineRequest`'s ``by``), when the keep allows it (API version
-    23); the consent question then says titles may be sent too.
+    23); the consent question then says titles may be sent too. ``titles_with`` names
+    what else a title is sent with, besides its year, as a plural (``"authors"``,
+    API version 28): the question then says "titles with their authors and years".
     """
 
     name: str
@@ -1320,6 +1323,7 @@ class OnlineSource:
     interval: float = 1.0
     token_env: str | None = None
     titles: bool = False
+    titles_with: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip() or not self.sends.strip():
@@ -1336,6 +1340,11 @@ class OnlineSource:
             )
         if self.interval < 0:
             raise ThemeDeclarationError(f"OnlineSource {self.name!r}: interval can't be negative")
+        if self.titles_with is not None and (not self.titles or not self.titles_with.strip()):
+            raise ThemeDeclarationError(
+                f"OnlineSource {self.name!r}: titles_with needs titles=True, and says what "
+                "a title is sent with, such as 'authors'"
+            )
 
 
 FindBy = Literal["id", "title-year", "title"]

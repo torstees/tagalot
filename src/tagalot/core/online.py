@@ -734,8 +734,16 @@ def fetch_pictures(
             report.pictures.append(entity_id)
 
 
-TITLES_SENT = {"title-year": ", or titles with their years,", "title": ", or titles,"}
-"""What a service declared with ``titles`` may be sent besides, by ``[online] find_by``."""
+def titles_sent(source: OnlineSource, find_by: str) -> str:
+    """What a service declared with ``titles`` may be sent besides its IDs, by ``[online]
+    find_by``: ", or titles with their years,"; ", or titles with their authors and
+    years," for one that sends authors too (``titles_with``, #627)."""
+    if not source.titles or find_by not in ("title-year", "title"):
+        return ""
+    with_ = [source.titles_with] if source.titles_with else []
+    if find_by == "title-year":
+        with_.append("years")
+    return f", or titles with their {' and '.join(with_)}," if with_ else ", or titles,"
 
 
 def consent_text(sources: Sequence[OnlineSource], find_by: str = "ids") -> str:
@@ -743,9 +751,7 @@ def consent_text(sources: Sequence[OnlineSource], find_by: str = "ids") -> str:
     would send DOIs to Crossref and arXiv IDs to arXiv. Nothing else about your files leaves
     this computer." A service that finds items by title, when the keep allows it, is sent
     "TMDb IDs, or titles with their years," too (#485)."""
-    parts = [
-        f"{s.sends}{TITLES_SENT.get(find_by, '') if s.titles else ''} to {s.name}" for s in sources
-    ]
+    parts = [f"{s.sends}{titles_sent(s, find_by)} to {s.name}" for s in sources]
     if not parts:
         return "This keep's theme looks nothing up online."
     sent = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]

@@ -60,7 +60,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from tagalot.themes.api import (
     FOLDER_IMAGE_NAMES,
@@ -74,6 +74,7 @@ from tagalot.themes.api import (
     ImageFile,
     IngestContext,
     Kind,
+    OnlineRequest,
     OnlineResponse,
     OnlineSource,
     Record,
@@ -115,7 +116,19 @@ BOOK_EXTENSIONS = (
     | LINK_EXTENSIONS
 )
 COMIC_EXTENSIONS = frozenset({".cbz", ".cbr", ".cb7"})
-OPEN_LIBRARY = OnlineSource("Open Library", "openlibrary.org", "ISBNs and Open Library author IDs")
+OPEN_LIBRARY = OnlineSource(
+    "Open Library",
+    "openlibrary.org",
+    "ISBNs and Open Library IDs",
+    titles=True,
+    titles_with="authors",
+)
+"""Books by ISBN or Open Library ID; a book with neither by its title, first author, and
+year, when the keep allows it (#627); authors by their Open Library ID."""
+OPEN_LIBRARY_SEARCH = f"https://{OPEN_LIBRARY.host}/search.json"
+SEARCH_FIELDS = "key,title,subtitle,author_name,first_publish_year"
+SEARCH_LIMIT = 20
+"""Works a title search asks for: enough for a title several authors used."""
 OPEN_LIBRARY_COVERS = OnlineSource(
     "Open Library Covers",
     "covers.openlibrary.org",
@@ -203,6 +216,9 @@ class Book(Entity):
     publisher: str | None = field("Publisher", search="choice")
     language: str | None = field("Language", search="choice")
     isbn: str | None = field("ISBN", search="text")
+    open_library: str | None = field("Open Library ID")
+    """``OL893415W``: the work in Open Library. Found by the book's title, first author, and
+    year when it has no ISBN (#627), so later lookups go straight to it."""
     description: str | None = field("Description", search="text")
     sources: str | None = field("Sources", search="text", editable=False)
     """Where its files came from (``Humble Bundle, Kobo``)."""
@@ -340,8 +356,9 @@ class Folder(Entity):
 class BooksTheme(Theme):
     """Books and comics, with their people, series, universes, and collections."""
 
-    id, name, version = "books", "Books", 9  # 9: folder images; 8: pictures; 7: ratings;
-    # 6: covers not found; 5: extra; 4: assets; 3: synopsis; 2: authors
+    id, name, version = "books", "Books", 10  # 10: Open Library IDs (#627);
+    # 9: folder images; 8: pictures; 7: ratings; 6: covers not found; 5: extra; 4: assets;
+    # 3: synopsis; 2: authors
     icon = "library"
     # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
     fonts = {
@@ -353,7 +370,7 @@ class BooksTheme(Theme):
     # 15: fields that mirror links; 14: gallery roles;
     # 13: not_found; 12: description_field; 11: extra; 10: TitleCard; 9: assets; 7: mobi;
     # 6: full_text; 5: online
-    api_version = 21  # 21: online pictures (#484)
+    api_version = 28  # 28: titles sent with authors (#627); 21: online pictures (#484)
     write_back = [Book]  # Markdown books' front matter (Write to file…)
     online_sources = [OPEN_LIBRARY, OPEN_LIBRARY_COVERS, INTERNET_ARCHIVE]
     extensions = BOOK_EXTENSIONS | COMIC_EXTENSIONS | PICTURE_EXTENSIONS | ARCHIVE_EXTENSIONS
@@ -573,20 +590,33 @@ class BooksTheme(Theme):
 
     # --- online details ---
 
-    def online_requests(self, entity_type: type[Entity], item: Record) -> Iterable[str]:
-        """A book with an ISBN: its edition in Open Library; an author with an Open Library
-        ID: their record, for their photo (#484)."""
+    def online_requests(
+        self, entity_type: type[Entity], item: Record
+    ) -> Iterable[str | OnlineRequest]:
+        """A book with an ISBN: its edition in Open Library; with an Open Library ID: its
+        work; with neither, a search by its title and first author (#627; the keep decides
+        whether titles may be sent). An author with an Open Library ID: their record, for
+        their photo (#484)."""
         if entity_type is Author:
             key = open_library_author(item.fields.get("open_library"))
             return [f"https://{OPEN_LIBRARY.host}/authors/{key}.json"] if key else ()
-        isbn = isbn_digits(item.fields.get("isbn")) if entity_type is Book else None
-        return [f"https://{OPEN_LIBRARY.host}/isbn/{isbn}.json"] if isbn else ()
+        if entity_type is not Book:
+            return ()
+        isbn = isbn_digits(item.fields.get("isbn"))
+        work = open_library_work(item.fields.get("open_library"))
+        urls: list[str | OnlineRequest] = []
+        if isbn:
+            urls.append(f"https://{OPEN_LIBRARY.host}/isbn/{isbn}.json")
+        if work:
+            urls.append(f"https://{OPEN_LIBRARY.host}/works/{work}.json")
+        return urls or title_search(item)
 
     def online_details(
         self, entity: EntityRef, responses: Mapping[str, OnlineResponse], ctx: IngestContext
     ) -> None:
         """Fill in what the book's files don't say (they always win), name its cover, and
-        give its one author their Open Library ID; an author's photo (#484)."""
+        give its one author their Open Library ID; a search gives the book its work's ID
+        (it is then looked up by it in the same run, #627); an author's photo (#484)."""
         for url, answer in responses.items():
             if not answer.ok:
                 continue  # an ISBN (or an author) Open Library doesn't know
@@ -594,25 +624,54 @@ class BooksTheme(Theme):
                 data = answer.json()
                 if not isinstance(data, Mapping):
                     raise ValueError("not a record")
-                if "/authors/" in url:
+                path = urlsplit(url).path
+                if path.startswith("/authors/"):
                     self._author_photo(entity, data, ctx)
-                    continue
-                found = open_library_values(data)
+                elif path == "/search.json":
+                    self._found(entity, data.get("docs"), ctx)
+                elif path.startswith("/works/"):
+                    self._fill(entity, open_library_work_values(data), data, ctx)
+                else:
+                    self._fill(entity, open_library_values(data), data, ctx)
+                    self._author_ids(entity, data, ctx)
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 ctx.warn(None, f"couldn't read {url}: {e}")
-                continue
-            current = ctx.get(entity).fields
-            empty = {
-                name: value
-                for name, value in found.items()
-                if value not in (None, "") and current.get(name) in (None, "")
-            }
-            if empty:
-                ctx.update(entity, **empty)
-            cover = first_picture(data.get("covers"))
-            if cover is not None:
-                ctx.online_picture(entity, f"https://{OPEN_LIBRARY_COVERS.host}/b/id/{cover}-L.jpg")
-            self._author_ids(entity, data, ctx)
+
+    def _fill(
+        self,
+        book: EntityRef,
+        found: Mapping[str, Any],
+        record: Mapping[str, Any],
+        ctx: IngestContext,
+    ) -> None:
+        """The fields the book has empty, from an edition or a work; its cover."""
+        current = ctx.get(book).fields
+        empty = {
+            name: value
+            for name, value in found.items()
+            if value not in (None, "") and current.get(name) in (None, "")
+        }
+        if empty:
+            ctx.update(book, **empty)
+        cover = first_picture(record.get("covers"))
+        if cover is not None:
+            ctx.online_picture(book, f"https://{OPEN_LIBRARY_COVERS.host}/b/id/{cover}-L.jpg")
+
+    def _found(self, book: EntityRef, docs: Any, ctx: IngestContext) -> None:
+        """The Open Library ID of the one work a search gave with the book's title, author,
+        and year (#627, :func:`matching_work`), and its first publication year if the book
+        has none. Never a guess: no match, or a tie, sets nothing."""
+        record = ctx.get(book)
+        if record.fields.get("open_library"):
+            return
+        match = matching_work(record, docs)
+        if match is None:
+            return
+        key, year = match
+        values: dict[str, Any] = {"open_library": key}
+        if year and not record.fields.get("year"):
+            values["year"] = year
+        ctx.update(book, **values)
 
     def _author_ids(self, book: EntityRef, edition: Mapping[str, Any], ctx: IngestContext) -> None:
         """The edition's author, as Open Library knows them, is the book's when each has one
@@ -1150,6 +1209,7 @@ def first_picture(numbers: Any) -> int | None:
 
 
 _OL_AUTHOR = re.compile(r"(?:/authors/)?(OL\d+A)", re.IGNORECASE)
+_OL_WORK = re.compile(r"(?:/works/)?(OL\d+W)", re.IGNORECASE)
 
 
 def open_library_author(value: Any) -> str | None:
@@ -1157,6 +1217,91 @@ def open_library_author(value: Any) -> str | None:
     address, or the ID itself; ``None`` for anything else."""
     found = _OL_AUTHOR.search(str(value or ""))
     return found.group(1).upper() if found else None
+
+
+def open_library_work(value: Any) -> str | None:
+    """An Open Library work ID (``OL893415W``) from a key (``/works/OL893415W``), an
+    address, or the ID itself; ``None`` for anything else."""
+    found = _OL_WORK.search(str(value or ""))
+    return found.group(1).upper() if found else None
+
+
+def title_search(item: Record) -> list[OnlineRequest]:
+    """Open Library's search for a book by its title and first author (#627), ``by``
+    ``"title-year"`` when it has a year (matched in :func:`matching_work`, not sent: a
+    first edition can be a year off), else ``"title"``. None without a title and an
+    author: a title alone finds too many works."""
+    title = item.title.strip()
+    authors = split(item.fields.get("authors"))
+    if not normalize(title) or not authors:
+        return []
+    query = urlencode(
+        {"title": title, "author": authors[0], "fields": SEARCH_FIELDS, "limit": SEARCH_LIMIT}
+    )
+    url = f"{OPEN_LIBRARY_SEARCH}?{query}"
+    return [OnlineRequest(url, by="title-year" if item.fields.get("year") else "title")]
+
+
+def matching_work(book: Record, docs: Any) -> tuple[str, int | None] | None:
+    """The work, of those a search gave (``docs``), that is the book (#627): its title
+    (or title and subtitle) and one of its authors are the book's title and first author,
+    compared as works are keyed (:func:`normalize`); when the book has a year, its first
+    publication year is that year or one off, the same year winning. Its ID and first
+    publication year; ``None`` for no match, or several equally good."""
+    title = normalize(book.title)
+    authors = split(book.fields.get("authors"))
+    if not title or not authors:
+        return None
+    author = normalize(authors[0])
+    year = book.fields.get("year")
+    year = year if isinstance(year, int) and not isinstance(year, bool) else None
+    found: dict[str, tuple[int, int | None]] = {}
+    for doc in docs if isinstance(docs, list) else []:
+        if not isinstance(doc, Mapping):
+            continue
+        key = open_library_work(doc.get("key"))
+        name, subtitle = doc.get("title"), doc.get("subtitle")
+        names = {normalize(name)} if isinstance(name, str) else set()
+        if names and isinstance(subtitle, str):
+            names.add(normalize(f"{name} {subtitle}"))
+        people = doc.get("author_name") or []
+        if key is None or title not in names:
+            continue
+        if not any(isinstance(p, str) and normalize(p) == author for p in people):
+            continue
+        first = doc.get("first_publish_year")
+        first = first if isinstance(first, int) and not isinstance(first, bool) else None
+        if year is None:
+            score = 1
+        elif first is not None and abs(first - year) <= 1:
+            score = 2 if first == year else 1
+        else:
+            continue
+        if score > found.get(key, (0, None))[0]:
+            found[key] = (score, first)
+    if not found:
+        return None
+    best = max(score for score, _ in found.values())
+    winners = [(key, first) for key, (score, first) in found.items() if score == best]
+    return winners[0] if len(winners) == 1 else None
+
+
+def open_library_work_values(work: Mapping[str, Any]) -> dict[str, Any]:
+    """An Open Library work (``/works/{id}.json``) as a book's details: its description
+    and first publication year. Not a publisher or language: those are an edition's."""
+    year = re.search(r"\b(\d{4})\b", str(work.get("first_publish_date") or ""))
+    return {
+        "year": int(year.group(1)) if year else None,
+        "description": description_text(work.get("description")),
+    }
+
+
+def description_text(description: Any) -> str | None:
+    """Open Library's description, plain or ``{"type": "/type/text", "value": "…"}``, on
+    one line."""
+    if isinstance(description, Mapping):
+        description = description.get("value")
+    return " ".join(description.split()) if isinstance(description, str) else None
 
 
 def open_library_values(edition: Mapping[str, Any]) -> dict[str, Any]:
@@ -1167,14 +1312,11 @@ def open_library_values(edition: Mapping[str, Any]) -> dict[str, Any]:
         OPEN_LIBRARY_LANGUAGES.get(str(lang.get("key", "")).rpartition("/")[2])
         for lang in edition.get("languages") or []
     ]
-    description = edition.get("description")
-    if isinstance(description, Mapping):  # {"type": "/type/text", "value": "…"}
-        description = description.get("value")
     return {
         "year": int(year.group(1)) if year else None,
         "publisher": publishers[0] if publishers and isinstance(publishers[0], str) else None,
         "language": next((lang for lang in languages if lang), None),
-        "description": " ".join(description.split()) if isinstance(description, str) else None,
+        "description": description_text(edition.get("description")),
     }
 
 

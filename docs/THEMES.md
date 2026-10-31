@@ -128,7 +128,7 @@ class MusicTheme(Theme):
 
 - **`id`** is stored in every keep made with the theme: choose it once (lowercase letters, digits, `_`).
 - **`version`**: raise it when `ingest` starts reading something new, or the data changes shape. Keeps made with an older version ask to upgrade (backing up first), then read every file again once at the next scan ([Changing a theme people already use](#changing-a-theme-people-already-use)).
-- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`, 21 for `ctx.online_picture`, 23 for `token_env`, `titles`, and `OnlineRequest`, 24 for `OnlineImage`, 25 for `icon`); left out, it is the installed one.
+- **`api_version`**: the version of `tagalot.themes.api` the theme needs (2 if it defines `migrate_schema`, 3 if it uses `ctx.resource_at` or `write_back`, 4 for ordered relationships, 5 for online details, 6 for `full_text`, 7 for `read_mobi`, 8 for `ctx.note`, 9 for `ctx.resource_at`'s `assets`, 21 for `ctx.online_picture`, 23 for `token_env`, `titles`, and `OnlineRequest`, 24 for `OnlineImage`, 25 for `icon`, 28 for `titles_with`); left out, it is the installed one.
 - **`dirs`**: whether folders become resources you can link (an album's folder). `True`, `False`, or a function of the folder's relative path.
 - **`read_last`** (`api_version = 4`): extensions of files that describe other files, such as a bibliography export: a scan reads them after its other files, and reads them again whenever it read other files of their folder, so they always meet files added later. As a tuple, its extensions are read in that order (`(".bib", ".md")`: bibliographies before the notes that cite them).
 - **`options`**: settings a keep (or one of its folders) can change in its configuration window, read with `ctx.option(name)`. Changing one makes that folder's files be read again.
@@ -370,6 +370,8 @@ To find items that have no ID, by their title, declare the service with `titles=
 ```
 
 When a search finds the item, set its ID in `online_details` (`ctx.update(entity, tmdb_id=...)`); Tagalot then looks it up by that ID in the same run.
+
+If a search sends more than the title and year, say what with `titles_with`, as a plural: `OnlineSource("Open Library", "openlibrary.org", "ISBNs and Open Library IDs", titles=True, titles_with="authors")` (`api_version = 28`). The question Tagalot asks then says "ISBNs and Open Library IDs, or titles with their authors and years". Without it, the question would leave out something you send.
 
 ## Near-duplicates
 
