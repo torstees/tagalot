@@ -8,6 +8,8 @@ A dismissal is stored in ``dedupe_dismissal`` by kind and key:
   deleted), since the user only judged the copies there were.
 - **similar items** (``similar``): keyed by the pair's two item ids. A pair stays hidden;
   an item merged away takes its pairs with it.
+- **linked folders** (``folders``, #601): a suggested pair of folders, keyed by the two
+  folders' roots and paths. It stays hidden.
 
 Dismissing and restoring are each one undo step (:class:`NotDuplicateChange`).
 """
@@ -18,10 +20,12 @@ from dataclasses import dataclass
 from sqlalchemy import Connection, delete, insert, select, tuple_
 
 from tagalot.core.dedupe import DuplicateGroup, NearPair
+from tagalot.core.linked_folders import FolderPair
 from tagalot.core.models import DedupeDismissal
 
 EXACT = "exact"
 SIMILAR = "similar"
+FOLDERS = "folders"
 
 Entry = tuple[str, str, str]
 """(kind, key, marker)."""
@@ -37,6 +41,12 @@ def pair_entry(pair: NearPair) -> Entry:
     """How a similar pair is dismissed: by its two items, in either order."""
     low, high = sorted((pair.a[0], pair.b[0]))
     return SIMILAR, f"{low}:{high}", ""
+
+
+def folder_entry(pair: FolderPair) -> Entry:
+    """How a suggested pair of folders is dismissed: by the two folders."""
+    first, other = pair.first, pair.other
+    return FOLDERS, f"{first.root_id}:{first.relpath}\n{other.root_id}:{other.relpath}", ""
 
 
 @dataclass(frozen=True)

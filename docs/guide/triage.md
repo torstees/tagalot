@@ -73,4 +73,8 @@ Files scans leave out, grouped by the rule that leaves them out, with how many f
 
 Select a rule to list its files and see where the rule lives. To read the files again, change it there, then scan.
 
+## Links
+
+Files in [linked folders](dedupe.md#linked-folders) that differ from the file at the same path in the folder they're linked with, so they aren't linked: one may have been edited, or be a copy. **Open file** and **Show in file manager** act on the file, **Open the other** on the one it differs from. Make them the same on disk (or remove the one you don't want), and the next scan links them.
+
 Dismissing and deleting are steps you can undo. The lists update after every scan, tagging, or change.

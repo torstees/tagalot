@@ -8,7 +8,7 @@ import logging
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -74,6 +74,7 @@ from tagalot.core.keep_settings import (
     with_type_icon,
 )
 from tagalot.core.keywords import any_keywords
+from tagalot.core.linked_folders import Folder, link_folders
 from tagalot.core.links import link_files, unlink_file
 from tagalot.core.merge import MergePlan, merge_items, plan_merge
 from tagalot.core.models import Entity, EntityResource, Resource, ResourceStatus, Root
@@ -988,6 +989,17 @@ class KeepSession:
         item; one undo step. Returns its label. Raises ``PlaceError``. Runs in a worker."""
         schema = self.schema
         change = self.writer.run(lambda conn: link_as_one(conn, schema, resource_ids))
+        self.tags.record(change)
+        return change.label
+
+    def link_folders(
+        self, first: Folder, other: Folder, confirmed: Collection[tuple[int, int]] = ()
+    ) -> str:
+        """**Link folders** (#601): ``other`` becomes one with ``first``, what's inside
+        paired by path; one undo step. Returns its label. Raises ``PlaceError`` (files
+        differ, except those ``confirmed`` the same). Runs in a worker."""
+        schema = self.schema
+        change = self.writer.run(lambda conn: link_folders(conn, schema, first, other, confirmed))
         self.tags.record(change)
         return change.label
 

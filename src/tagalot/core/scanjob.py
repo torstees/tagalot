@@ -52,6 +52,7 @@ from tagalot.core.gallery_fill import (
 from tagalot.core.ingest import IngestSession, IngestWarning, forget_not_found
 from tagalot.core.item_pictures import fill_note_pictures
 from tagalot.core.keep import RootConfig
+from tagalot.core.linked_folders import sync_linked_folders
 from tagalot.core.markdown_check import (
     check_markdown,
     doesnt_parse,
@@ -143,7 +144,8 @@ class ScanReport:
     members: MemberCounts = field(default_factory=MemberCounts)
     """What happened to files inside archives the user chose to look inside (#391)."""
     linked: int = 0
-    """Paths linked as places of others, or unlinked, because of real links (#599)."""
+    """Paths linked as places of others, or unlinked, because of real links (#599) or
+    because they turned up in linked folders (#601)."""
 
 
 def scan_root(
@@ -282,6 +284,15 @@ def scan_root(
                 facts=link_facts(entries),
                 walked=frozenset(e.relpath for e in entries),
                 roots={k: v for k, v in keep_roots.items() if v},
+            )
+        )
+        # New files in linked folders, linked when they match (#601).
+        report.linked += writer.run(
+            partial(
+                sync_linked_folders,
+                schema=schema,
+                root_id=root.id,
+                resource_ids=[*applied.new_ids.values(), *applied.changed_ids],
             )
         )
     _sync_members(writer, reader, root, path, extensions, when, report, say)

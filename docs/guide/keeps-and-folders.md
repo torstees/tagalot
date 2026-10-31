@@ -48,7 +48,7 @@ If you file things in several places with links, Tagalot treats each linked file
 - A link to a folder brings everything in that folder along. A link back to a folder it's inside isn't followed, so a scan can't go round in circles.
 - A link to something outside the keep's folders is left out for now.
 
-Some shares (a Linux server's links seen from Windows, for example) show links as ordinary files and folders, so Tagalot can't tell they're links: they show up as identical files in [Duplicates](dedupe.md), where **Link as one** makes them one item. **Unlink this place**, on an item's page, separates a place again.
+Some shares (a Linux server's links seen from Windows, for example) show links as ordinary files and folders, so Tagalot can't tell they're links: they show up as identical files in [Duplicates](dedupe.md), where **Link as one** makes them one item, and **Linked folders** links two folders as one, with files that turn up in both later. **Unlink this place**, on an item's page, separates a place again.
 
 ### Offline folders
 
