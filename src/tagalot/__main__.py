@@ -16,6 +16,10 @@ def main() -> int:
     copies a keep and ``--export-tags KEEP --to FILE`` exports its tags (``backup_tool``).
     With ``--output FILE`` they write to the file instead (a windowed Windows build has no
     console)."""
+    if is_console_twin() and not any(c in sys.argv[1:] for c in COMMANDS):
+        # tagalot-cli.exe only runs commands; the window is tagalot.exe (#610).
+        print(CLI_USAGE)
+        return 2
     if "--version" in sys.argv[1:]:
         import tagalot
 
@@ -54,6 +58,28 @@ def main() -> int:
     from tagalot.ui import app
 
     return app.run(sys.argv)
+
+
+COMMANDS = (
+    "--version",
+    "--check",
+    "--new-theme",
+    "--check-theme",
+    "--backup",
+    "--export-tags",
+)
+CLI_USAGE = """usage: tagalot-cli --backup KEEP --to FOLDER [--keep-last N]
+       tagalot-cli --export-tags KEEP --to FILE.yaml [--items] [--allow-watched]
+       tagalot-cli --check | --version
+tagalot-cli runs Tagalot's commands in a console, for scheduled tasks; tagalot.exe opens
+the window. See https://torstees.github.io/tagalot/#/guide/backups"""
+
+
+def is_console_twin() -> bool:
+    """Running as ``tagalot-cli``, the packaged Windows build's console executable."""
+    return bool(getattr(sys, "frozen", False)) and Path(sys.executable).stem.lower() == (
+        "tagalot-cli"
+    )
 
 
 def _output(args: list[str]) -> Callable[[str], None]:

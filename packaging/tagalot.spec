@@ -52,7 +52,27 @@ exe = EXE(  # noqa: F821
     disable_windowed_traceback=False,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="tagalot", upx=False)  # noqa: F821
+# A console twin for scheduled runs on Windows (#610): tagalot.exe is windowed, so it shows
+# no output and a scheduler waiting on it learns little. tagalot-cli.exe runs the same code
+# (__main__), prints, and returns the exit code. macOS and Linux need none: the usual
+# command prints and returns its code there.
+cli = (
+    [
+        EXE(  # noqa: F821
+            pyz,
+            a.scripts,
+            [],
+            exclude_binaries=True,
+            name="tagalot-cli",
+            console=True,
+            icon=str(PACKAGING / "tagalot.ico"),
+            upx=False,
+        )
+    ]
+    if sys.platform == "win32"
+    else []
+)
+coll = COLLECT(exe, *cli, a.binaries, a.datas, name="tagalot", upx=False)  # noqa: F821
 
 if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821

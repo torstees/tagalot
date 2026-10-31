@@ -66,6 +66,11 @@ jobs:
           status=0
           "$app" --check --output check.txt || status=$?
           cat check.txt
+          if [ "$RUNNER_OS" = Windows ]; then
+            # The console twin prints to the console itself, for scheduled runs (#610).
+            dist/tagalot/tagalot-cli.exe --version | tee cli.txt
+            grep -q "^Tagalot " cli.txt || status=1
+          fi
           exit $status
       - name: Install Inno Setup (Windows)
         if: runner.os == 'Windows'
@@ -101,6 +106,10 @@ jobs:
           status=0
           "$app" --check --output installed-check.txt || status=$?
           cat installed-check.txt
+          if [ "$RUNNER_OS" = Windows ]; then
+            "$dir/tagalot-cli.exe" --version | tee installed-cli.txt
+            grep -q "^Tagalot " installed-cli.txt || status=1
+          fi
           [ "$RUNNER_OS" != macOS ] || hdiutil detach /tmp/tagalot-dmg
           exit $status
       - name: Archive

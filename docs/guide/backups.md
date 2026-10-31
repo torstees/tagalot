@@ -2,6 +2,11 @@
 
 Your tags, notes, and everything else you did by hand live in the keep's `keep.db`. Your files are never changed, but the keep is worth backing up, ideally on a schedule.
 
+Two commands do it, made for a scheduler to run ([below](#running-on-a-schedule)):
+
+- **`tagalot --backup`:** a complete copy of the keep, to restore from.
+- **`tagalot --export-tags`:** your tags, in a file you can read, edit, and load into any keep.
+
 ## tagalot --backup
 
 ```bash
@@ -32,7 +37,7 @@ E:\Backups\Tagalot\
 
 Thumbnails and the text read from documents aren't copied: Tagalot makes them again as needed.
 
-From source, run `uv run tagalot --backup …`. Packaged Windows builds have no console, so add `--output backup.txt` to read what it printed. The log is written either way.
+On Windows, run `tagalot-cli.exe` rather than `tagalot.exe` ([below](#running-on-a-schedule)), so you see what it prints. From source, run `uv run tagalot --backup …`.
 
 ## tagalot --export-tags
 
@@ -48,6 +53,51 @@ writes the same file as **Tag manager → Export tags…**, which **Import tags�
 - **Replacing:** each run replaces the file, and a run that fails leaves the last one whole.
 - **The keep isn't changed,** and it can be open in Tagalot meanwhile. A keep that needs upgrading after you updated Tagalot isn't exported: open it in Tagalot once.
 - **Watched folders:** saving inside a folder the keep watches is refused, since no one is there to confirm as the window asks. Add `--allow-watched` to save there anyway. Even then, a file already there is never replaced, and scans will read the new file unless you add it to the folder's Skip list.
+
+## Running on a schedule
+
+Which command to run depends on how you installed Tagalot:
+
+| | The command |
+|---|---|
+| **Windows** | `tagalot-cli.exe`, beside `tagalot.exe`: installed, `%LOCALAPPDATA%\Programs\Tagalot\tagalot-cli.exe` (or `C:\Program Files\Tagalot\` when installed for everyone). |
+| **macOS** | `/Applications/Tagalot.app/Contents/MacOS/tagalot` |
+| **Linux** | The `.AppImage` itself, or `tagalot` in the unpacked folder. |
+| **From source** | `uv run --project /path/to/tagalot tagalot` |
+
+On Windows, use **`tagalot-cli.exe`**, not `tagalot.exe`. `tagalot.exe` opens a window and has no console, so a scheduled run would print nothing and its exit code would be hard to see. `tagalot-cli.exe` runs the same commands in a console and returns their exit codes. It only runs commands: started on its own, it lists them.
+
+### Windows Task Scheduler
+
+In PowerShell, this backs the keep up every night at 3:00 and keeps two weeks of copies, then exports the tags beside them:
+
+```powershell
+$cli = "$env:LOCALAPPDATA\Programs\Tagalot\tagalot-cli.exe"
+$backup = New-ScheduledTaskAction -Execute $cli `
+    -Argument '--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14'
+$tags = New-ScheduledTaskAction -Execute $cli `
+    -Argument '--export-tags "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot\Movies tags.yaml" --items'
+$trigger = New-ScheduledTaskTrigger -Daily -At 3am
+Register-ScheduledTask -TaskName "Tagalot backup" -Action $backup, $tags -Trigger $trigger
+```
+
+Or set it up in the **Task Scheduler** app:
+
+1. Choose **Create Basic Task…**, name it, and choose **Daily** and a time.
+2. Choose **Start a program**: the program is `tagalot-cli.exe` (Browse to it), and the arguments are `--backup "D:\Keeps\Movies.keep" --to "E:\Backups\Tagalot" --keep-last 14`.
+
+- **The console window:** it flashes up while the task runs, if you're signed in. In the task's **Properties**, **Run whether user is logged on or not** runs it out of sight.
+- **Did it work?** The task's **Last Run Result** is the exit code: `(0x0)` is success, `(0x1)` a failed or damaged copy, and `(0x2)` a mistake in the command. `backup.log` in the backup folder has a line for each run.
+
+### cron (Linux and macOS)
+
+`crontab -e`, then a line like this one, for every night at 3:00:
+
+```
+0 3 * * * "$HOME/Applications/Tagalot.AppImage" --backup "$HOME/Keeps/Movies.keep" --to /mnt/backup/Tagalot --keep-last 14
+```
+
+cron mails or logs what a command prints, and `backup.log` has a line for each run. On macOS, use the path in the table above. cron may need **Full Disk Access** (System Settings → Privacy & Security) to reach other disks.
 
 ## Exit codes
 
