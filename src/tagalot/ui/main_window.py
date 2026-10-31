@@ -2705,6 +2705,58 @@ class MainWindow(QMainWindow):
             page.refresh()
         # A scan can change items' tags (their files' keywords): count them again (#504).
         self._schedule_summary()
+        self._ask_outside_links(reports)
+
+    def _ask_outside_links(self, reports: list[ScanReport]) -> None:
+        """The first scan that finds links to places outside the keep's folders asks
+        once whether to read them (#603); included, they're read at a scan right away."""
+        session = self.session
+        if session is None or session.keep.config.outside_links is not None:
+            return
+        found = [path for report in reports for path in report.outside_links]
+        if not found:
+            return
+        include = self.confirm_outside_links(found)
+        self.statusBar().showMessage(
+            "Reading the links outside the keep's folders\u2026"
+            if include
+            else "Links outside the keep's folders are left out (Keep configuration \u2192 Keep)."
+        )
+        run_in_pool(
+            lambda: session.set_outside_links(include),
+            on_done=lambda _: self._outside_links_set(include),
+        )
+
+    def _outside_links_set(self, include: bool) -> None:
+        if not shiboken6.isValid(self):
+            return
+        if self.keep_config is not None:
+            self.keep_config.reload()
+        if include:
+            self.scan_now()
+
+    def confirm_outside_links(self, paths: list[str]) -> bool:
+        """Ask whether to read links that lead outside the keep's folders (tests stand
+        in)."""
+        n = len(paths)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Links outside the keep")
+        box.setText(
+            f"{n:,} {'link points' if n == 1 else 'links point'} outside the keep's folders. "
+            "Include them?"
+        )
+        box.setInformativeText(
+            "Included, what they lead to is read as if it were where the link is. Left out, "
+            "they're skipped. You can change this in Keep configuration \u2192 Keep."
+        )
+        box.setDetailedText("\n".join(sorted(paths)[:200]))
+        include = box.addButton("Include", QMessageBox.ButtonRole.AcceptRole)
+        leave = box.addButton("Leave out", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(leave)
+        box.setEscapeButton(leave)
+        box.exec()
+        return box.clickedButton() is include
 
     def _queue_thumbnails(self) -> None:
         """After a scan: make its thumbnails in the background (§6 step 7)."""

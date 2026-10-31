@@ -128,6 +128,13 @@ STATS_INTERVAL_MS = 3000
 """How often the stored-thumbnail count is read while the Thumbnails tab is in view."""
 
 _ROOT_ID = Qt.ItemDataRole.UserRole
+OUTSIDE_LINKS: tuple[tuple[str, bool | None], ...] = (
+    ("Ask at the next scan that finds some", None),
+    ("Include them", True),
+    ("Leave them out", False),
+)
+"""Keep → Links outside (#603): what to do with links outside the watched folders."""
+
 ASSETS_TIP = (
     "Where Markdown files' pictures and links are looked for when they aren't beside the "
     "file (an attachments folder): a folder from the top of the watched folder, or "
@@ -465,6 +472,17 @@ class KeepConfigWindow(QWidget):
         )
         self.see_through.installEventFilter(self)
         form.addRow("See-through folders:", self.see_through)
+        self.outside_links = QComboBox()
+        self.outside_links.setObjectName("outside_links")
+        for text, include in OUTSIDE_LINKS:
+            self.outside_links.addItem(text, include)
+        self.outside_links.setToolTip(
+            "Symbolic links and shortcuts that lead outside every watched folder: read what "
+            "they lead to as if it were where the link is, or skip them. The next scan (F5) "
+            "applies it."
+        )
+        self.outside_links.activated.connect(lambda _: self._set_outside_links())
+        form.addRow("Links outside:", self.outside_links)
         self.keep_options = QGroupBox("Theme options")
         self.keep_options.setToolTip(
             "The theme's settings for this keep; a folder can override them (Folders tab). "
@@ -1394,6 +1412,9 @@ class KeepConfigWindow(QWidget):
         self.keep_assets.setText(config.markdown_assets)
         if not self.see_through.hasFocus():
             self.see_through.setPlainText("\n".join(config.see_through))
+        self.outside_links.setCurrentIndex(
+            next(i for i, (_, v) in enumerate(OUTSIDE_LINKS) if v == config.outside_links)
+        )
         self.setWindowTitle(f"Configure {config.name}")
         self.theme_size.blockSignals(True)
         self.theme_size.setChecked(config.thumbnail_max is None)
@@ -1982,6 +2003,17 @@ class KeepConfigWindow(QWidget):
         self._run(
             lambda: session.set_note_ignore_keys(keys),
             "Saved the keys this keep ignores in notes; they apply at the next scan (F5).",
+        )
+
+    def _set_outside_links(self) -> None:
+        """Read links outside the watched folders, skip them, or ask (#603)."""
+        value = self.outside_links.currentData()
+        session = self.session
+        if value == session.keep.config.outside_links:
+            return
+        self._run(
+            lambda: session.set_outside_links(value),
+            "Saved how links outside the keep's folders are read; the next scan (F5) applies it.",
         )
 
     def set_see_through(self, lines: list[str]) -> None:

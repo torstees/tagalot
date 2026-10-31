@@ -136,6 +136,12 @@ def with_see_through(config: KeepConfig, names: Iterable[str]) -> KeepConfig:
     return replace(config, see_through=clean_names(names), roots=copy.deepcopy(config.roots))
 
 
+def with_outside_links(config: KeepConfig, include: bool | None) -> KeepConfig:
+    """``config`` with links outside the watched folders read (``True``), skipped
+    (``False``), or asked about at the next scan that finds them (``None``; #603)."""
+    return replace(config, outside_links=include, roots=copy.deepcopy(config.roots))
+
+
 def with_note_ignore_keys(config: KeepConfig, keys: Iterable[str]) -> KeepConfig:
     """``config`` with these front-matter keys ignored in its notes (``[notes]
     ignore_keys``), each once (case aside), in order; ``tagalot-…`` keys are refused."""

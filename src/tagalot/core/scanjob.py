@@ -147,6 +147,9 @@ class ScanReport:
     linked: int = 0
     """Paths linked as places of others, or unlinked, because of real links (#599) or
     because they turned up in linked folders (#601)."""
+    outside_links: list[str] = field(default_factory=list)
+    """Links and shortcuts the walk found to places outside every watched folder (#603),
+    read or skipped as ``outside_links`` said."""
 
 
 def scan_root(
@@ -170,6 +173,7 @@ def scan_root(
     see_through: frozenset[str] = frozenset(),
     own_fields: OwnFields | None = None,
     roots: Mapping[str, str] | None = None,
+    outside_links: bool = False,
 ) -> ScanReport:
     """Scan one root. ``path`` is this machine's path for it (after per-user overrides).
 
@@ -200,7 +204,8 @@ def scan_root(
 
     ``roots`` are this computer's paths of the keep's roots, by id (this root's alone if
     ``None``): links to folders in them are walked, and links to paths in them become
-    linked places (#599).
+    linked places (#599). Links outside them are read with ``outside_links`` and skipped
+    without (#603); either way the report lists them (``ScanReport.outside_links``).
     """
     if (theme is None) != (schema is None):
         raise ValueError("pass both theme and schema, or neither")
@@ -240,6 +245,8 @@ def scan_root(
             see_through=see_through,
             link_roots=[os.path.realpath(p) for p in keep_roots.values() if p],
             hard_links=os.name != "nt" or not is_network_path(Path(path)),
+            outside_links=outside_links,
+            on_outside=report.outside_links.append,
         )
     )
     with reader.connect() as conn:
