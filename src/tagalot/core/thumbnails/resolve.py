@@ -13,7 +13,7 @@ import logging
 import tempfile
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +34,10 @@ from tagalot.core.models import (
     ResourceKind,
     ResourceStatus,
 )
+from tagalot.core.places import places_of
 from tagalot.core.roots import local_path
 from tagalot.core.see_through import counts_in
+from tagalot.core.shortcuts import on_disk
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.thumbnails.archive import ArchiveError, read_member, read_pictures
 from tagalot.core.thumbnails.cache import ThumbCache, online_key, thumb_key
@@ -483,13 +485,16 @@ class _Resolution:
         cached = self.owner.cache.get(key)
         if cached is not None:
             return cached
-        if self._status.get(resource.id) != ResourceStatus.OK or self.owner.failed(key):
+        source: ResourceInfo | None = resource
+        if self._status.get(resource.id) != ResourceStatus.OK:
+            source = self._reachable_place(resource.id)  # the same file elsewhere (#616)
+        if source is None or self.owner.failed(key):
             return None
         try:
-            if resource.archive is not None and resource.archive_path:
-                image = _member_image(resource, renderer, size)
+            if source.archive is not None and source.archive_path:
+                image = _member_image(source, renderer, size)
             else:
-                image = renderer.load(resource.path, size)
+                image = renderer.load(source.path, size)
             picture = None if image is None else make_thumbnail(image, size)
         except Exception as e:  # unreadable, corrupt, or unsupported: try the next one
             where = _where(resource)
@@ -505,6 +510,20 @@ class _Resolution:
         if self.conn.scalar(failed) is not None:  # it was drawn after all
             self.owner.record_failure(resource, None)
         return picture
+
+    def _reachable_place(self, resource_id: int) -> ResourceInfo | None:
+        """Another place of the same file that can be read now, when the file's own
+        place can't (its folder is offline; #616), with its path read through shortcuts."""
+        for place in places_of(self.conn, [resource_id]).get(resource_id, []):
+            info = self.resource(place)
+            if info is None or self._status.get(place) != ResourceStatus.OK:
+                continue
+            return replace(
+                info,
+                path=on_disk(info.path) if info.path else info.path,
+                archive_path=on_disk(info.archive_path) if info.archive_path else None,
+            )
+        return None
 
     # --- ThumbnailContext ---
 
