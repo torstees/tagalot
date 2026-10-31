@@ -110,7 +110,12 @@ jobs:
             "$dir/tagalot-cli.exe" --version | tee installed-cli.txt
             grep -q "^Tagalot " installed-cli.txt || status=1
           fi
-          [ "$RUNNER_OS" != macOS ] || hdiutil detach /tmp/tagalot-dmg
+          if [ "$RUNNER_OS" = macOS ]; then
+            # Spotlight or the exiting app can hold the image a moment ("Resource busy"),
+            # which failed builds whose check had passed; the runner is discarded anyway.
+            hdiutil detach /tmp/tagalot-dmg || hdiutil detach -force /tmp/tagalot-dmg \
+              || echo "::warning::Couldn't unmount the installer's disk image"
+          fi
           exit $status
       - name: Archive
         shell: bash
