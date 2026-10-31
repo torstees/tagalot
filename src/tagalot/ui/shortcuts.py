@@ -29,6 +29,7 @@ IN_PLACE: list[tuple[str, list[tuple[str, str]]]] = [
             ("Ctrl+Enter", "The other one: the file, or the page"),
             ("Double-click", "Same as Enter"),
             ("Ctrl+F", "Find: the cursor to the search box"),
+            ("Type", "Go to the next item whose title starts with what's typed"),
             ("Ctrl+wheel", "In a grid: bigger or smaller thumbnails"),
         ],
     ),

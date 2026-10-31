@@ -21,6 +21,7 @@ from tagalot.ui.gc_guard import collect_on_gui_thread
 from tagalot.ui.launcher import LauncherDialog
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.opening import open_keep_async
+from tagalot.ui.type_ahead import TYPING_PAUSE_MS
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ def run(argv: Sequence[str]) -> int:
     if not isinstance(app, QApplication):
         app = QApplication(list(argv))
     app.setApplicationName("Tagalot")
+    app.setKeyboardInputInterval(TYPING_PAUSE_MS)  # type to find in lists and trees (#633)
     app.setApplicationVersion(tagalot.__version__)
     app.setDesktopFileName("tagalot")  # Linux: matches the AppImage's tagalot.desktop
     app.setWindowIcon(app_icon())

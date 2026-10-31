@@ -40,6 +40,7 @@ What can't: scans, changing Keep configuration, online lookups, and **Write to f
 | Enter, double-click | Open the item's page (or its file, for items that open as files) |
 | Ctrl+Enter | The other one: the file, or the page |
 | Ctrl+F | The cursor to the search box |
+| Type | Go to the next item whose title starts with what you typed: *B*, *Bo*, *Bob* ends on the first *Bob…*. A pause of a second starts again; one letter repeated steps through the items starting with it |
 | Ctrl+wheel | In a grid: bigger or smaller thumbnails |
 
 **In the Add tag… box**

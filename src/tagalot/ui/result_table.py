@@ -49,8 +49,10 @@ from tagalot.ui.models.results import (
     MATCH_HTML_ROLE,
     TAGS,
     ResultColumn,
+    ResultsModel,
 )
 from tagalot.ui.selection import selected_text_color
+from tagalot.ui.type_ahead import TypeAhead
 
 TITLE_MIN_WIDTH = 200
 TITLE_MAX_WIDTH = 480
@@ -210,6 +212,18 @@ class ResultTable(QTableView):
         header.customContextMenuRequested.connect(self._header_menu)
         header.sectionResized.connect(self._section_resized)
         self.hover = outline_hover(self)
+        self.type_ahead = TypeAhead(
+            self,
+            lambda: model if isinstance(model := self.model(), ResultsModel) else None,
+            lambda row, current: self.model().index(
+                row, current.column() if current.isValid() else 0
+            ),
+            lambda index: index.row(),
+        )
+
+    def keyboardSearch(self, search: str) -> None:
+        if not self.type_ahead.search(search):
+            super().keyboardSearch(search)
 
     def selectionCommand(
         self, index: QModelIndex | QPersistentModelIndex, event: QEvent | None = None
