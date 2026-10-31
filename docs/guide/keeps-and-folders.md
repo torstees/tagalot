@@ -41,12 +41,12 @@ Large folders and slow shares are fine: Tagalot reads in the background, and the
 
 If you file things in several places with links, Tagalot treats each linked file or folder as **one item** that is in each place:
 
-- **Symbolic links** (to a file or a folder), Windows **junctions**, and **hard links** are found by the scan and linked for you.
+- **Symbolic links** (to a file or a folder), Windows **junctions** and **shortcuts** (`.lnk` files), and **hard links** are found by the scan and linked for you. A shortcut isn't listed as a file of its own: it's another place of the file or folder it leads to.
 - The item is listed under each place's folder (an artist's, an author's), as it would be without the link, but only once in a search.
 - Its tags, your edits, and its notes are shared, since it's one item.
 - Its page lists the other places as **Also at …**, and opening it uses whichever place is there.
 - A link to a folder brings everything in that folder along. A link back to a folder it's inside isn't followed, so a scan can't go round in circles.
-- A link to something outside the keep's folders is left out for now.
+- A link to something outside the keep's folders is left out for now, and so is one whose target is gone.
 
 Some shares (a Linux server's links seen from Windows, for example) show links as ordinary files and folders, so Tagalot can't tell they're links: they show up as identical files in [Duplicates](dedupe.md), where **Link as one** makes them one item, and **Linked folders** links two folders as one, with files that turn up in both later. **Unlink this place**, on an item's page, separates a place again.
 

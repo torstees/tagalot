@@ -26,6 +26,7 @@ from tagalot.core.models import (
 )
 from tagalot.core.notes import NOTE_EXTENSIONS, note_rank
 from tagalot.core.see_through import logical
+from tagalot.core.shortcuts import is_shortcut_name, read_shortcut, shortcut_target
 from tagalot.themes.api import KIND_EXTENSIONS, Kind
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,8 @@ class WalkEntry:
     """Reached through a link (#599): the real path this is (a symbolic link's or a
     junction's target, or the path a linked folder's entry really has), else ``None``."""
     how: str | None = None
-    """How it was reached through a link: ``symlink``, ``junction``, or ``inside`` (in a
-    linked folder)."""
+    """How it was reached through a link: ``symlink``, ``junction``, ``shortcut`` (a
+    Windows shortcut, #602), or ``inside`` (in a linked folder)."""
     file_id: tuple[int, int] | None = None
     """``(device, file number)`` of a file with more than one hard link, when the walk
     asked and the disk says (#599)."""
@@ -134,6 +135,11 @@ def walk_root(
       own by default) is walked, its entries listed with the real paths they have
       (``inside``); one to a folder elsewhere, or to a folder it is inside (a loop), is
       not walked. A link whose target is gone is left out.
+    - Windows shortcuts (#602, ``core.shortcuts``): a ``.lnk`` file is read as a link to its
+      target, as a symbolic link is (``shortcut``): one to a file is listed at the
+      shortcut's path with the target's extension, size, and time; one to a folder is
+      walked as a linked folder, its entries' paths going through the shortcut
+      (``Jane/Book.lnk/x.pdf``). A file that isn't a shortcut is listed as any file.
     - ``hard_links``: also ask each file how many names it has (a second ``stat`` on
       Windows), so a file with several gets its :attr:`WalkEntry.file_id`.
     - Unreadable folders and files go to ``on_error`` and the walk continues.
@@ -145,20 +151,21 @@ def walk_root(
     report = on_error or _log_error
     real_root = os.path.realpath(root_path)
     allowed = [_norm(p) for p in (link_roots if link_roots is not None else [real_root])]
-    # Each folder to walk: its real path, whether it is in a linked folder, and the real
-    # paths of the folders it is in (a link back to one of them is a loop).
-    stack: list[tuple[str, str, bool, tuple[str, ...]]] = [
-        ("", real_root, False, (_norm(real_root),))
+    # Each folder to walk: its real path, whether it is in a linked folder, the real
+    # paths of the folders it is in (a link back to one of them is a loop), and the path
+    # it is listed at (through a folder shortcut, its target).
+    stack: list[tuple[str, str, bool, tuple[str, ...], str]] = [
+        ("", real_root, False, (_norm(real_root),), root_path)
     ]
     while stack:
-        rel_dir, real_dir, linked, chain = stack.pop()
+        rel_dir, real_dir, linked, chain, listing = stack.pop()
         try:
-            with os.scandir(os.path.join(root_path, rel_dir) if rel_dir else root_path) as it:
+            with os.scandir(listing) as it:
                 entries = sorted(it, key=lambda e: e.name)
         except OSError as e:
             report(rel_dir, e)
             continue
-        subdirs: list[tuple[str, str, bool, tuple[str, ...]]] = []
+        subdirs: list[tuple[str, str, bool, tuple[str, ...], str]] = []
         for entry in entries:
             relpath = f"{rel_dir}/{entry.name}" if rel_dir else entry.name
             if excluded is not None and excluded.match(relpath):
@@ -166,7 +173,17 @@ def walk_root(
             real = os.path.join(real_dir, entry.name)
             target, how = (real, "inside") if linked else (None, None)
             try:
-                if entry.is_symlink() or entry.is_junction():
+                shortcut = _shortcut(entry)
+                if shortcut is not None:  # a Windows shortcut, read as a link (#602)
+                    if not shortcut:
+                        continue  # its target is gone
+                    target, how = os.path.realpath(shortcut), "shortcut"
+                    is_dir = os.path.isdir(target)
+                    if is_dir:
+                        if not _may_walk(target, chain, allowed):
+                            continue  # outside the keep's folders, or a loop
+                        real = target
+                elif entry.is_symlink() or entry.is_junction():
                     target = os.path.realpath(entry.path)
                     how = "junction" if entry.is_junction() else "symlink"
                     if os.path.isdir(target):
@@ -191,9 +208,13 @@ def walk_root(
                             target=target,
                             how=how,
                         )
-                    subdirs.append((relpath, real, target is not None, (*chain, _norm(real))))
+                    inside = real if how == "shortcut" else os.path.join(listing, entry.name)
+                    subdirs.append(
+                        (relpath, real, target is not None, (*chain, _norm(real)), inside)
+                    )
                 elif entry.is_file():
-                    ext = os.path.splitext(entry.name)[1].lower()
+                    named = target if how == "shortcut" and target else entry.name
+                    ext = os.path.splitext(named)[1].lower()
                     if in_notes(relpath, notes):
                         if ext not in NOTES_FOLDER_EXTENSIONS:
                             continue
@@ -203,7 +224,7 @@ def walk_root(
                         and not is_folder_note(relpath, dirs, see_through)
                     ):
                         continue
-                    st = entry.stat()
+                    st = os.stat(target) if how == "shortcut" and target else entry.stat()
                     yield WalkEntry(
                         relpath=relpath,
                         kind=ResourceKind.FILE,
@@ -217,6 +238,17 @@ def walk_root(
             except OSError as e:
                 report(relpath, e)
         stack.extend(reversed(subdirs))  # pop in name order: depth-first, sorted
+
+
+def _shortcut(entry: os.DirEntry[str]) -> str | None:
+    """For a Windows shortcut (#602): where it leads here, or ``""`` when that is gone.
+    ``None`` for anything else, a ``.lnk`` file that isn't a shortcut included."""
+    if not is_shortcut_name(entry.name) or not entry.is_file(follow_symlinks=False):
+        return None
+    found = read_shortcut(entry.path)
+    if found is None:
+        return None
+    return shortcut_target(entry.path, found) or ""
 
 
 def _norm(path: str) -> str:
