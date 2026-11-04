@@ -17,6 +17,7 @@ from tagalot.core.triage import (
     UNLINKED,
     UNTAGGED,
     count_unlinked,
+    count_unlinked_by_kind,
     dismiss,
     exact_pattern,
     restore_dismissals,
@@ -145,3 +146,18 @@ def test_exact_exclude_patterns(relpath: str) -> None:
     assert not pattern.match(relpath + "x")
     assert not pattern.match("other/" + relpath)
     assert Path(relpath).name  # a file name, as the triage list gives
+
+
+def test_unlinked_files_by_kind(env: Env) -> None:
+    write_image(env.files / "Miles Davis/Kind of Blue/back.png", (8, 8))
+    write_image(env.files / "Miles Davis/Kind of Blue/inlay.jpeg", (8, 8))  # counts as .jpg
+    env.scan()
+    with env.reader.connect() as conn:
+        assert count_unlinked_by_kind(conn) == {".jpg": 2, ".png": 1}
+        assert [f.relpath for f in unlinked_files(conn, hidden_kinds={".jpg"})] == [
+            "Miles Davis/Kind of Blue/back.png"
+        ]
+        assert [f.relpath for f in unlinked_files(conn, hidden_kinds={".png"})] == [
+            COVER,
+            "Miles Davis/Kind of Blue/inlay.jpeg",
+        ]

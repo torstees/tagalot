@@ -693,6 +693,10 @@ class MainWindow(QMainWindow):
                 session,
                 lambda title, spec, key: self._search_page(title, spec, key),
                 self.files,
+                recall_kinds=self._recall_kinds,
+            )
+            triage.hidden_kinds_changed.connect(
+                lambda key, kinds: self._save_view_state("hidden_kinds", key, kinds or None)
             )
             triage.archive_actions = self.archives
             triage.dismiss_requested.connect(self.tag_actions.dismiss)
@@ -980,7 +984,7 @@ class MainWindow(QMainWindow):
         return found if isinstance(found, str) else None
 
     def _recall_kinds(self, key: str) -> list[str]:
-        """The kinds hidden under ``key`` (a gallery tab's, #514)."""
+        """The kinds hidden under ``key`` (a gallery tab's, #514, or a Triage list's, #640)."""
         found = self._ui_state.get("hidden_kinds", {}).get(key)
         if not isinstance(found, list):
             return []

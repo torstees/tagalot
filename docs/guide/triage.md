@@ -4,6 +4,8 @@ TOOLS → **Triage** gathers what needs attention, in tabs with counts.
 
 ![Triage: a cover picture that no item uses](../images/screens/triage.png)
 
+**Hiding file types:** when a tab lists files of two types or more, a row of chips above the list names each with how many there are (`JPG 12`, `PNG 3`), as on [search pages](searching.md#hiding-kinds-of-items). Click a chip to hide that type, and again to bring it back; **Ctrl+click** shows only that type, and again shows them all. The tab's count then says how many are shown, `Unlinked files (12 of 15)`. Each tab remembers what you hid. The chips are on **Unlinked files**, **Pictures** (the picture's type), **New in archives** (the archive's type), **Skipped** (over a rule's files), and **Links**; the item tabs (Untagged items, Missing files, Unmatched keywords) have the search pages' chips.
+
 ## Unlinked files
 
 Files no item uses: a kind the theme doesn't recognize, extras (a movie's trailer), or a picture the theme read from its folder without linking. Select some, then:

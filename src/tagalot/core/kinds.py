@@ -7,6 +7,8 @@ its extension, lowercase with the dot, with well-known aliases as one (``.jpeg``
 starts with a dot, so the two never clash.
 """
 
+from pathlib import PurePosixPath
+
 from sqlalchemy import ColumnElement, case
 
 from tagalot.core.models import Resource
@@ -35,6 +37,11 @@ def file_kind(ext: str) -> str:
     if not ext:
         return NO_EXTENSION
     return ALIASES.get(ext, ext)
+
+
+def path_kind(path: str) -> str:
+    """The kind of the file at ``path`` (or named ``path``), by its extension."""
+    return file_kind(PurePosixPath(path).suffix.lower())
 
 
 def is_file_kind(kind: str) -> bool:

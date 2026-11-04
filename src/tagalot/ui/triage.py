@@ -30,12 +30,19 @@ Tabs, each with how many it holds:
   the file at the same path in the folder they're linked with, so they aren't linked;
   with Open file and Open the other (for a file that differs) and Show in file manager.
 
+**Kind chips** (#640, ``KindChips``) over the lists of files (Unlinked files, Pictures,
+New in archives, Skipped's files, Links) hide and show file types, as the search tabs'
+do; what's hidden is remembered per tab (``triage:<list>``). Unlinked files are counted
+and left out in the query, since only the first :data:`MAX_FILES` are listed; the
+others are loaded whole and filtered here.
+
 The window builds the search pages (``make_search``), so they work like any other, and
 handles the requests: dismissing and deleting are undo steps (``TagActions``).
 """
 
 import os
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -61,6 +68,7 @@ from sqlalchemy import Connection
 from tagalot.core.broken_links import Broken, broken_links
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL, FileToOpen, files_to_open
+from tagalot.core.kinds import path_kind
 from tagalot.core.linked_folders import FolderDifference, folder_differences
 from tagalot.core.markdown_check import MarkdownFileProblem, markdown_problems
 from tagalot.core.models import ResourceStatus
@@ -87,7 +95,7 @@ from tagalot.core.triage import (
     UNTAGGED,
     NoteProblem,
     UnlinkedFile,
-    count_unlinked,
+    count_unlinked_by_kind,
     note_problems,
     unlinked_files,
 )
@@ -95,6 +103,7 @@ from tagalot.themes.api import entity_label
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import run_in_pool
 
@@ -125,6 +134,24 @@ _TITLES = {
 }
 PICTURES_HINT = "Select a row to see where Tagalot looked."
 SKIPPED_HINT = "Select a rule to see its files and where it lives."
+ALL_HIDDEN = ("All kinds are hidden", "Switch a kind back on above.")
+UNLINKED_EMPTY = ("Nothing to tidy here", "Every file is used by an item.")
+NOTES_EMPTY = (
+    "Nothing to fix in your Markdown",
+    "Every note found its item, and every file's front matter reads cleanly.",
+)
+PICTURES_EMPTY = (
+    "Every picture is in place",
+    "Pictures items' files name were found and can be drawn.",
+)
+NEW_EMPTY = (
+    "Nothing new inside archives",
+    "Every file inside the archives read file by file has been decided on.",
+)
+LINKS_EMPTY = (
+    "Every link works",
+    "No link or shortcut is broken, and every file in a linked folder matches its other place.",
+)
 IGNORED_AS = {
     ITEM: "ignored for this item",
     VALUE: "ignored in every file",
@@ -160,6 +187,7 @@ Loaded = tuple[
     SkippedReport,
     list[NewInArchive],
     list["LinkRow"],
+    dict[str, int],
 ]
 """What :meth:`TriagePage.refresh` loads in its worker."""
 
@@ -526,6 +554,9 @@ class TriagePage(QWidget):
     """(Pictures rows, scope, label): leave them off the list (#426)."""
     stop_ignoring_requested = Signal(object, str)
     """(a Pictures row, label): list it again."""
+    hidden_kinds_changed = Signal(str, list)
+    """(the ui_state key, ``triage:<list>``; the kinds now hidden): a list's kind chips
+    changed (#640)."""
 
     def __init__(
         self,
@@ -533,6 +564,7 @@ class TriagePage(QWidget):
         make_search: Callable[[str, SearchSpec, str], SearchPage],
         file_opener: FileOpener | None = None,
         parent: QWidget | None = None,
+        recall_kinds: Callable[[str], list[str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
@@ -542,6 +574,12 @@ class TriagePage(QWidget):
         self.counts: Counts | None = None
         self._refreshes = 0
         """How many refreshes have started; a result shows only if it is the latest's."""
+        self._recall_kinds = recall_kinds or (lambda key: [])
+        self.kind_chips: dict[str, KindChips] = {}
+        """Each list of files' kind chips, by its key (``unlinked``, ``pictures``, ``new``,
+        ``skipped``, ``links``)."""
+        self._show_again: Callable[[], None] | None = None
+        """What :meth:`_show` last showed, to show again when chips change."""
 
         self.files = UnlinkedModel()
         self.table = QTableView()
@@ -570,7 +608,7 @@ class TriagePage(QWidget):
         dismiss_files = QPushButton("Dismiss")
         dismiss_files.setToolTip("Hide the selected files here until they change")
         dismiss_files.clicked.connect(self._dismiss_files)
-        self.files_empty = EmptyState("Nothing to tidy here", "Every file is used by an item.")
+        self.files_empty = EmptyState(*UNLINKED_EMPTY)
         self.files_stack = QStackedWidget()
         self.files_stack.addWidget(self.table)
         self.files_stack.addWidget(self.files_empty)
@@ -578,6 +616,7 @@ class TriagePage(QWidget):
             self.files_stack,
             [open_file, reveal, link, self.skip_button, dismiss_files],
             self.files_note,
+            self._chips("unlinked"),
         )
 
         self.untagged = make_search(
@@ -631,10 +670,7 @@ class TriagePage(QWidget):
             "Markdown files whose front matter gives a key twice or doesn't parse."
         )
         self.notes_note.setWordWrap(True)
-        self.notes_empty = EmptyState(
-            "Nothing to fix in your Markdown",
-            "Every note found its item, and every file's front matter reads cleanly.",
-        )
+        self.notes_empty = EmptyState(*NOTES_EMPTY)
         self.notes_stack = QStackedWidget()
         self.notes_stack.addWidget(self.notes_table)
         self.notes_stack.addWidget(self.notes_empty)
@@ -700,9 +736,7 @@ class TriagePage(QWidget):
             "Pictures items' files name that weren't found, and pictures that can't be drawn."
         )
         self.pictures_note.setWordWrap(True)
-        self.pictures_empty = EmptyState(
-            "Every picture is in place", "Pictures items' files name were found and can be drawn."
-        )
+        self.pictures_empty = EmptyState(*PICTURES_EMPTY)
         self.pictures_stack = QStackedWidget()
         self.pictures_stack.addWidget(listed)
         self.pictures_stack.addWidget(self.pictures_empty)
@@ -717,6 +751,7 @@ class TriagePage(QWidget):
                 self.stop_ignoring_button,
             ],
             self.pictures_note,
+            self._chips("pictures"),
         )
         self._picture_selection_changed()
 
@@ -755,6 +790,7 @@ class TriagePage(QWidget):
         rules_layout.setContentsMargins(0, 0, 0, 0)
         rules_layout.addWidget(self.skip_rules_table, 1)
         rules_layout.addWidget(self.skip_details)
+        rules_layout.addWidget(self._chips("skipped"))
         rules_layout.addWidget(self.skipped_files_table, 2)
         self.skipped_note = QLabel(
             "Files scans leave out, by the rule that leaves them out. An item whose files are "
@@ -798,14 +834,11 @@ class TriagePage(QWidget):
             "them, or hide them all."
         )
         self.new_note.setWordWrap(True)
-        self.new_empty = EmptyState(
-            "Nothing new inside archives",
-            "Every file inside the archives read file by file has been decided on.",
-        )
+        self.new_empty = EmptyState(*NEW_EMPTY)
         self.new_stack = QStackedWidget()
         self.new_stack.addWidget(self.new_table)
         self.new_stack.addWidget(self.new_empty)
-        new_tab = _tab(self.new_stack, [review, hide_new], self.new_note)
+        new_tab = _tab(self.new_stack, [review, hide_new], self.new_note, self._chips("new"))
 
         self.links = LinksModel()
         self.links_table = QTableView()
@@ -833,15 +866,16 @@ class TriagePage(QWidget):
             "so they aren't linked: make them the same, and the next scan links them."
         )
         self.links_note.setWordWrap(True)
-        self.links_empty = EmptyState(
-            "Every link works",
-            "No link or shortcut is broken, and every file in a linked folder matches its "
-            "other place.",
-        )
+        self.links_empty = EmptyState(*LINKS_EMPTY)
         self.links_stack = QStackedWidget()
         self.links_stack.addWidget(self.links_table)
         self.links_stack.addWidget(self.links_empty)
-        links_tab = _tab(self.links_stack, [open_link, open_first, reveal_link], self.links_note)
+        links_tab = _tab(
+            self.links_stack,
+            [open_link, open_first, reveal_link],
+            self.links_note,
+            self._chips("links"),
+        )
 
         self.tabs = QTabWidget()
         self.tabs.addTab(files_tab, _TITLES[UNLINKED_TAB])
@@ -870,6 +904,7 @@ class TriagePage(QWidget):
         roots = list(config.roots)
         theme = session.theme
         scope = ThemeScope(theme.extensions or None, theme.dirs, session.see_through)
+        hidden = self.kind_chips["unlinked"].hidden
 
         def job() -> Loaded:
             tree = session.tag_cache.get()
@@ -877,8 +912,9 @@ class TriagePage(QWidget):
                 pictures = picture_problems(conn, known, ignored=show_ignored)
                 skipped = skip_reasons(conn, roots, scope, notes)
                 links: list[LinkRow] = [*broken_links(conn), *folder_differences(conn)]
+                kinds = count_unlinked_by_kind(conn, notes)
                 counts = Counts(
-                    count_unlinked(conn, notes),
+                    sum(kinds.values()),
                     count_matches(conn, SearchSpec(triage=UNTAGGED), tree),
                     count_matches(conn, SearchSpec(triage=MISSING), tree),
                     count_matches(conn, SearchSpec(triage=KEYWORDS), tree),
@@ -888,9 +924,9 @@ class TriagePage(QWidget):
                     count_new_in_archives(conn),
                     len(links),
                 )
-                files = unlinked_files(conn, MAX_FILES, notes)
+                files = unlinked_files(conn, MAX_FILES, notes, hidden)
                 new = new_in_archives(conn)
-                return counts, files, markdown, pictures, skipped, new, links
+                return counts, files, markdown, pictures, skipped, new, links, kinds
 
         # Refreshes overlap (a change, then Show ignored): only the latest is shown, or an
         # older one finishing last would put back what it saw (#406).
@@ -912,8 +948,26 @@ class TriagePage(QWidget):
         skipped: SkippedReport | None = None,
         new: list[NewInArchive] | None = None,
         links: list[LinkRow] | None = None,
+        unlinked_kinds: Mapping[str, int] | None = None,
     ) -> None:
         self.counts = counts
+        self._show_again = lambda: self._show(
+            counts, files, notes, pictures, skipped, new, links, unlinked_kinds
+        )
+        if unlinked_kinds is None:  # the files listed are all there are
+            unlinked_kinds = Counter(path_kind(f.relpath) for f in files)
+        self._set_kinds("unlinked", unlinked_kinds)
+        unlinked_hidden = set(self.kind_chips["unlinked"].hidden)
+        unlinked = sum(n for k, n in unlinked_kinds.items() if k not in unlinked_hidden)
+        pictures_shown = self._shown("pictures", pictures or [], _picture_kind)
+        new_shown = self._shown("new", new or [], lambda a: path_kind(a.relpath))
+        links_shown = self._shown("links", links or [], lambda r: path_kind(r.relpath))
+        shown = {
+            UNLINKED_TAB: unlinked,
+            PICTURES_TAB: sum(1 for p in pictures_shown if not p.ignored),
+            NEW_TAB: len(new_shown),
+            LINKS_TAB: len(links_shown),
+        }
         for tab, n in (
             (UNLINKED_TAB, counts.unlinked),
             (UNTAGGED_TAB, counts.untagged),
@@ -925,29 +979,67 @@ class TriagePage(QWidget):
             (SKIPPED_TAB, counts.skipped),
             (LINKS_TAB, counts.links),
         ):
-            self.tabs.setTabText(tab, f"{_TITLES[tab]} ({n:,})")
+            m = shown.get(tab, n)
+            self.tabs.setTabText(
+                tab, f"{_TITLES[tab]} ({m:,} of {n:,})" if m != n else f"{_TITLES[tab]} ({n:,})"
+            )
         names = {r.id: r.name for r in self.session.keep.config.roots}
-        self.links.set_rows(links or [])
-        self.links_stack.setCurrentWidget(self.links_table if links else self.links_empty)
-        self.new_archives.set_archives(new or [], names)
-        self.new_stack.setCurrentWidget(self.new_table if new else self.new_empty)
+        self.links.set_rows(links_shown)
+        _fill(self.links_stack, self.links_empty, links_shown, links, LINKS_EMPTY)
+        self.new_archives.set_archives(new_shown, names)
+        _fill(self.new_stack, self.new_empty, new_shown, new, NEW_EMPTY)
         self._show_skipped(skipped.rules if skipped is not None else [])
-        self.pictures.set_problems(pictures or [])
-        self.pictures_stack.setCurrentIndex(0 if pictures else 1)
+        self.pictures.set_problems(pictures_shown)
+        _fill(self.pictures_stack, self.pictures_empty, pictures_shown, pictures, PICTURES_EMPTY)
         self._picture_selection_changed()
         self.notes.set_notes(notes or [])
         self.notes_stack.setCurrentWidget(self.notes_table if notes else self.notes_empty)
         self.files.set_files(files)
-        self.files_stack.setCurrentWidget(self.table if files else self.files_empty)
-        if counts.unlinked > len(files):
-            self.files_note.setText(f"Showing the first {len(files):,} of {counts.unlinked:,}.")
-        elif not files:
+        _fill(self.files_stack, self.files_empty, files, counts.unlinked, UNLINKED_EMPTY)
+        if unlinked > len(files):
+            self.files_note.setText(f"Showing the first {len(files):,} of {unlinked:,}.")
+        elif not counts.unlinked:
             self.files_note.setText("Every file is used by an item.")
         else:
             self.files_note.setText(
                 "Files no item uses: the theme didn't recognize them, or they're extras "
                 "(a cover image is read from its folder without being linked)."
             )
+
+    # --- kind chips (#640) ---
+
+    def _chips(self, key: str) -> KindChips:
+        """A list's kind chips, hiding what was hidden there before."""
+        chips = KindChips()
+        chips.setObjectName(f"kind_chips_{key}")
+        chips.set_hidden(self._recall_kinds(f"triage:{key}"))
+        chips.changed.connect(lambda hidden, k=key: self._kinds_changed(k, hidden))
+        self.kind_chips[key] = chips
+        return chips
+
+    def _set_kinds(self, key: str, counts: Mapping[str, int]) -> None:
+        labels = {k: kind_label(k, {}) for k in counts}
+        tips = {
+            k: (kind_tip(k, labels[k], {}, True), kind_tip(k, labels[k], {}, False)) for k in counts
+        }
+        self.kind_chips[key].set_kinds(counts, labels, tips)
+
+    def _shown[T](self, key: str, rows: list[T], kind: Callable[[T], str]) -> list[T]:
+        """``rows`` without those of the kinds hidden by ``key``'s chips, which count them
+        all."""
+        kinds = [kind(r) for r in rows]
+        self._set_kinds(key, Counter(kinds))
+        hidden = set(self.kind_chips[key].hidden)
+        return [r for r, k in zip(rows, kinds, strict=True) if k not in hidden]
+
+    def _kinds_changed(self, key: str, hidden: list[str]) -> None:
+        self.hidden_kinds_changed.emit(f"triage:{key}", hidden)
+        if key == "unlinked":
+            self.refresh()  # left out in the query
+        elif key == "skipped":
+            self._skip_rule_selected()
+        elif self._show_again is not None:
+            self._show_again()
 
     def _show_skipped(self, rules: list[SkipRule]) -> None:
         """Show the rules, keeping the one selected when it's still there."""
@@ -968,7 +1060,10 @@ class TriagePage(QWidget):
     def _skip_rule_selected(self) -> None:
         rule = self.selected_skip_rule()
         names = {r.id: r.name for r in self.session.keep.config.roots}
-        self.skipped_files.set_files(rule.files if rule is not None else [], names)
+        files = rule.files if rule is not None else []
+        self.skipped_files.set_files(
+            self._shown("skipped", files, lambda f: path_kind(f.relpath)), names
+        )
         self.skip_details.setText(SKIPPED_HINT if rule is None else skip_rule_details(rule))
 
     def selected_new(self) -> list[NewInArchive]:
@@ -1205,6 +1300,29 @@ class TriagePage(QWidget):
             self.file_opener.act(FileToOpen(0, folder, True), OPEN)
 
 
+def _picture_kind(problem: PictureProblem) -> str:
+    """A Pictures row's kind: the picture's file type, as written when it wasn't found."""
+    if problem.kind == NOT_FOUND and problem.written:
+        return path_kind(problem.written.strip())
+    return path_kind(problem.relpath)
+
+
+def _fill(
+    stack: QStackedWidget,
+    empty: EmptyState,
+    shown: object,
+    listed: object,
+    nothing: tuple[str, str],
+) -> None:
+    """Show a tab's list when it has rows ``shown``, else its empty state: all kinds
+    hidden when there were rows ``listed`` (a list, or a count), else ``nothing``."""
+    if shown:
+        stack.setCurrentIndex(0)
+        return
+    empty.show_text(*(ALL_HIDDEN if listed else nothing))
+    stack.setCurrentWidget(empty)
+
+
 def _values(problems: list[PictureProblem]) -> list[str]:
     """The values these not-found rows name, each once (case aside), as first written."""
     found: dict[str, str] = {}
@@ -1230,7 +1348,12 @@ def _known(session: KeepSession) -> Callable[[str], str | None]:
     return path
 
 
-def _tab(main: QWidget, buttons: list[QWidget], note: QLabel | None = None) -> QWidget:
+def _tab(
+    main: QWidget,
+    buttons: list[QWidget],
+    note: QLabel | None = None,
+    chips: KindChips | None = None,
+) -> QWidget:
     row = QHBoxLayout()
     if note is not None:
         row.addWidget(note, 1)
@@ -1241,6 +1364,8 @@ def _tab(main: QWidget, buttons: list[QWidget], note: QLabel | None = None) -> Q
     tab = QWidget()
     column = QVBoxLayout(tab)
     column.addLayout(row)
+    if chips is not None:
+        column.addWidget(chips)
     column.addWidget(main, 1)
     return tab
 
