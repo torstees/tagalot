@@ -101,6 +101,19 @@ class KindChips(QWidget):
             self.chips[kind] = chip
         self._update()
 
+    def show_counts(
+        self, counts: Mapping[str, int], plurals: Mapping[str, str] | None = None
+    ) -> None:
+        """:meth:`set_kinds` with the usual labels and tooltips: a file type by its
+        extension, a type by its plural in ``plurals``."""
+        plurals = plurals or {}
+        labels = {k: kind_label(k, plurals) for k in counts}
+        tips = {
+            k: (kind_tip(k, labels[k], plurals, True), kind_tip(k, labels[k], plurals, False))
+            for k in counts
+        }
+        self.set_kinds(counts, labels, tips)
+
     def toggle(self, kind: str, *, only: bool = False) -> None:
         """What a click on ``kind``'s chip does (``only``: a Ctrl+click), emitting
         :attr:`changed`."""

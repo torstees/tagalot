@@ -27,8 +27,14 @@ selected pair's preview lists the files that match, those that differ, and those
 side only. **Link folders** links them as one; files that differ block it, with a
 warning, until **Check again** (reading them whole) finds them the same. **Not the same
 folder** hides a pair, as Not a duplicate does.
+
+**Kind chips** (#642, ``KindChips``) hide and show file types over Identical files (a
+group stays while any copy's type is shown) and types of items over Similar items,
+remembered as ``dedupe:identical`` and ``dedupe:similar``.
 """
 
+from collections import Counter
+from collections.abc import Callable
 from functools import partial
 
 import shiboken6
@@ -61,6 +67,7 @@ from tagalot.core.dedupe import (
 )
 from tagalot.core.formats import format_bytes
 from tagalot.core.handlers import OPEN, REVEAL
+from tagalot.core.kinds import path_kind
 from tagalot.core.linked_folders import FolderPair, PairedPath, confirm_same, suggest_linked_folders
 from tagalot.core.not_duplicates import (
     EXACT,
@@ -71,11 +78,12 @@ from tagalot.core.not_duplicates import (
     load_dismissals,
     pair_entry,
 )
-from tagalot.core.search_fields import type_labels
+from tagalot.core.search_fields import type_labels, type_plurals
 from tagalot.core.session import KeepSession
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.compare_view import ComparePane, known_root
 from tagalot.ui.file_actions import FileOpener
+from tagalot.ui.kind_chips import KindChips
 from tagalot.ui.thumbnails import ThumbnailLoader
 from tagalot.ui.workers import run_in_pool
 
@@ -83,6 +91,7 @@ COLUMNS = ("Name", "Where", "Size", "Items", "Check")
 SIMILAR_COLUMNS = ("Alike", "Type", "Item", "And")
 FOLDER_COLUMNS = ("Folder", "And", "Match", "Differ", "One side only")
 FOLDERS_TAB = 2
+ALL_HIDDEN = "All kinds are hidden: switch one back on above."
 MAX_PREVIEW = 500
 """Paths a preview section lists at most (its count says how many there are)."""
 NAME, WHERE, SIZE, ITEMS, CHECK = range(5)
@@ -105,6 +114,9 @@ class DedupePage(QWidget):
     link_folders_requested = Signal(object, object, object)
     """Link folders (#601): the first folder, the other, and the ``(first id, other id)``
     pairs that differed but were found the same on a full read."""
+    hidden_kinds_changed = Signal(str, list)
+    """(the ui_state key, ``dedupe:identical`` or ``dedupe:similar``; the kinds now
+    hidden): a tab's kind chips changed (#642)."""
 
     def __init__(
         self,
@@ -113,6 +125,7 @@ class DedupePage(QWidget):
         parent: QWidget | None = None,
         *,
         thumbnails: ThumbnailLoader | None = None,
+        recall_kinds: Callable[[str], list[str]] | None = None,
     ) -> None:
         super().__init__(parent)
         self.session = session
@@ -134,6 +147,19 @@ class DedupePage(QWidget):
         self.checks: dict[bytes, Verification] = {}
         self.checking = 0
         self._generation = 0
+        recall = recall_kinds or (lambda key: [])
+        self.identical_chips = KindChips()
+        """File types over Identical files (#642)."""
+        self.identical_chips.set_hidden(recall("dedupe:identical"))
+        self.identical_chips.changed.connect(
+            lambda hidden: self._kinds_changed("dedupe:identical", hidden)
+        )
+        self.similar_chips = KindChips()
+        """Types of items over Similar items (#642)."""
+        self.similar_chips.set_hidden(recall("dedupe:similar"))
+        self.similar_chips.changed.connect(
+            lambda hidden: self._kinds_changed("dedupe:similar", hidden)
+        )
 
         self.summary = QLabel()
         self.summary.setObjectName("summary")
@@ -169,6 +195,7 @@ class DedupePage(QWidget):
         identical = QWidget()
         column = QVBoxLayout(identical)
         column.addLayout(header)
+        column.addWidget(self.identical_chips)
         column.addWidget(self.tree, 1)
 
         self.similar_summary = QLabel()
@@ -197,6 +224,7 @@ class DedupePage(QWidget):
         similar = QWidget()
         column = QVBoxLayout(similar)
         column.addWidget(self.similar_summary)
+        column.addWidget(self.similar_chips)
         column.addWidget(self.similar_table, 1)
 
         self.tabs = QTabWidget()
@@ -296,6 +324,11 @@ class DedupePage(QWidget):
             if self.show_dismissed.isChecked()
             else [p for p in everything.pairs if p not in hidden]
         )
+        self.similar_chips.show_counts(
+            Counter(p.type_id for p in shown), type_plurals(self.session.schema)
+        )
+        off = set(self.similar_chips.hidden)
+        shown = [p for p in shown if p.type_id not in off]
         found = NearDuplicates(shown, everything.skipped_keys)
         self.pairs = found
         self.similar.removeRows(0, self.similar.rowCount())
@@ -310,12 +343,17 @@ class DedupePage(QWidget):
             if pair in hidden:
                 _grey(cells)
             self.similar.appendRow(cells)
-        n = len(everything.pairs) - len(hidden)
+        everyone = len(everything.pairs) - len(hidden)
+        n = sum(1 for p in found.pairs if p not in hidden)
         text = (
             f"{n:,} {'pair' if n == 1 else 'pairs'} of items that look alike, most alike first."
             if n
+            else ALL_HIDDEN
+            if everyone
             else "No similar items found."
         )
+        if n and n < everyone:
+            text += f" {everyone - n:,} more of the kinds hidden."
         if hidden:
             text += f" {len(hidden):,} marked as not duplicates."
         self._hidden_pairs = len(hidden)
@@ -326,7 +364,14 @@ class DedupePage(QWidget):
                 "(the theme's keys are too loose for them)."
             )
         self.similar_summary.setText(text)
-        self.tabs.setTabText(1, f"Similar items ({n:,})" if n else "Similar items")
+        self.tabs.setTabText(
+            1,
+            f"Similar items ({n:,} of {everyone:,})"
+            if n < everyone
+            else f"Similar items ({n:,})"
+            if n
+            else "Similar items",
+        )
         if current is not None:  # the same pair stays current (after tagging one, say)
             ids = (current.a[0], current.b[0])  # (gone when it was just dismissed)
             row = next((i for i, p in enumerate(found.pairs) if (p.a[0], p.b[0]) == ids), None)
@@ -432,6 +477,13 @@ class DedupePage(QWidget):
         self._show(self.all_groups)
         self._show_pairs(self.all_pairs)
         self._show_folders(self.all_folders)
+
+    def _kinds_changed(self, key: str, hidden: list[str]) -> None:
+        self.hidden_kinds_changed.emit(key, hidden)
+        if key == "dedupe:identical":
+            self._show(self.all_groups)
+        else:
+            self._show_pairs(self.all_pairs)
 
     def _count_dismissed(self) -> None:
         n = self._hidden_groups + self._hidden_pairs + self._hidden_folders
@@ -677,6 +729,12 @@ class DedupePage(QWidget):
         hidden = [g for g in everything if self.dismissals.hides(group_entry(g))]
         listed = [g for g in everything if g not in hidden]
         groups = everything if self.show_dismissed.isChecked() else listed
+        kinds = {g.fingerprint: {path_kind(f.relpath) for f in g.files} for g in groups}
+        self.identical_chips.show_counts(Counter(k for ks in kinds.values() for k in ks))
+        off = set(self.identical_chips.hidden)
+        everyone = len(listed)
+        groups = [g for g in groups if kinds[g.fingerprint] - off]
+        listed = [g for g in listed if kinds.get(g.fingerprint, set()) - off]
         self.groups = groups
         self.model.removeRows(0, self.model.rowCount())
         for group in groups:
@@ -693,8 +751,12 @@ class DedupePage(QWidget):
             "files; the extra copies take "
             f"{format_bytes(wasted)}."
             if listed
+            else ALL_HIDDEN
+            if everyone
             else "No duplicate files found."
         )
+        if listed and len(listed) < everyone:
+            text += f" {everyone - len(listed):,} more of the kinds hidden."
         if hidden:
             text += f" {len(hidden):,} marked as not duplicates."
         self.summary.setText(text)

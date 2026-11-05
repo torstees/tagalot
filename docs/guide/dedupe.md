@@ -2,6 +2,8 @@
 
 TOOLS → **Dedupe** finds files that are the same, and items that look alike. It never deletes files.
 
+**Hiding kinds:** as on [search pages](searching.md#hiding-kinds-of-items), chips above **Identical files** name each file type with how many groups have it (`MP3 4`, `JPG 2`), and chips above **Similar items** name each type of item (`Songs 3`, `Albums 1`). Click a chip to hide that kind, and again to bring it back; **Ctrl+click** shows only that kind, and again shows them all. A group stays while any of its copies is a type that's shown. Each tab remembers what you hid.
+
 ## Identical files
 
 Files with the same fingerprint, grouped, the most space wasted first ("3 groups of identical files; the extra copies take 12.4 MB"). Each group expands to its copies: where each is, its size, and its items.

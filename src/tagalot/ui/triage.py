@@ -103,7 +103,7 @@ from tagalot.themes.api import entity_label
 from tagalot.ui.archive_actions import ArchiveActions
 from tagalot.ui.empty_state import EmptyState
 from tagalot.ui.file_actions import FileOpener
-from tagalot.ui.kind_chips import KindChips, kind_label, kind_tip
+from tagalot.ui.kind_chips import KindChips
 from tagalot.ui.search_view import SearchPage
 from tagalot.ui.workers import run_in_pool
 
@@ -956,7 +956,7 @@ class TriagePage(QWidget):
         )
         if unlinked_kinds is None:  # the files listed are all there are
             unlinked_kinds = Counter(path_kind(f.relpath) for f in files)
-        self._set_kinds("unlinked", unlinked_kinds)
+        self.kind_chips["unlinked"].show_counts(unlinked_kinds)
         unlinked_hidden = set(self.kind_chips["unlinked"].hidden)
         unlinked = sum(n for k, n in unlinked_kinds.items() if k not in unlinked_hidden)
         pictures_shown = self._shown("pictures", pictures or [], _picture_kind)
@@ -1017,18 +1017,11 @@ class TriagePage(QWidget):
         self.kind_chips[key] = chips
         return chips
 
-    def _set_kinds(self, key: str, counts: Mapping[str, int]) -> None:
-        labels = {k: kind_label(k, {}) for k in counts}
-        tips = {
-            k: (kind_tip(k, labels[k], {}, True), kind_tip(k, labels[k], {}, False)) for k in counts
-        }
-        self.kind_chips[key].set_kinds(counts, labels, tips)
-
     def _shown[T](self, key: str, rows: list[T], kind: Callable[[T], str]) -> list[T]:
         """``rows`` without those of the kinds hidden by ``key``'s chips, which count them
         all."""
         kinds = [kind(r) for r in rows]
-        self._set_kinds(key, Counter(kinds))
+        self.kind_chips[key].show_counts(Counter(kinds))
         hidden = set(self.kind_chips[key].hidden)
         return [r for r, k in zip(rows, kinds, strict=True) if k not in hidden]
 
