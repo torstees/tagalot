@@ -677,7 +677,12 @@ class MainWindow(QMainWindow):
             dashboard.scan_requested.connect(self.scan_now)
             return dashboard
         if target.kind == "dedupe":
-            dedupe = DedupePage(session, self.files, thumbnails=self.thumbnails)
+            dedupe = DedupePage(
+                session, self.files, thumbnails=self.thumbnails, recall_kinds=self._recall_kinds
+            )
+            dedupe.hidden_kinds_changed.connect(
+                lambda key, kinds: self._save_view_state("hidden_kinds", key, kinds or None)
+            )
             dedupe.archive_actions = self.archives
             dedupe.open_entity.connect(self.open_entity)
             dedupe.merge_requested.connect(self.merge_items)
@@ -693,6 +698,10 @@ class MainWindow(QMainWindow):
                 session,
                 lambda title, spec, key: self._search_page(title, spec, key),
                 self.files,
+                recall_kinds=self._recall_kinds,
+            )
+            triage.hidden_kinds_changed.connect(
+                lambda key, kinds: self._save_view_state("hidden_kinds", key, kinds or None)
             )
             triage.archive_actions = self.archives
             triage.dismiss_requested.connect(self.tag_actions.dismiss)
@@ -980,7 +989,8 @@ class MainWindow(QMainWindow):
         return found if isinstance(found, str) else None
 
     def _recall_kinds(self, key: str) -> list[str]:
-        """The kinds hidden under ``key`` (a gallery tab's, #514)."""
+        """The kinds hidden under ``key``: a gallery tab's (#514), a Triage list's (#640), or
+        a Dedupe tab's (#642)."""
         found = self._ui_state.get("hidden_kinds", {}).get(key)
         if not isinstance(found, list):
             return []

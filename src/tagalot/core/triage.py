@@ -15,7 +15,7 @@ stored), and the lists leave out only rows whose marker still matches. It is one
 step, through the same whole-entity snapshots theme actions use.
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import (
@@ -34,6 +34,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import InstrumentedAttribute, aliased
 
 from tagalot.core.keywords import keyword_index
+from tagalot.core.kinds import kind_column
 from tagalot.core.member_paths import shown_path
 from tagalot.core.models import (
     Entity,
@@ -192,9 +193,13 @@ def _unlinked_where(notes: NotesFolder = None) -> list[ColumnElement[bool]]:
 
 
 def unlinked_files(
-    conn: Connection, limit: int | None = None, notes: NotesFolder = None
+    conn: Connection,
+    limit: int | None = None,
+    notes: NotesFolder = None,
+    hidden_kinds: Collection[str] = (),
 ) -> list[UnlinkedFile]:
-    """Files no item uses, by folder and path; not those in the notes folder."""
+    """Files no item uses, by folder and path; not those in the notes folder, nor
+    those whose file type is in ``hidden_kinds`` (Triage's kind chips, #640)."""
     archive = aliased(Resource)
     query = (
         select(
@@ -209,6 +214,7 @@ def unlinked_files(
         .join(Root, Root.id == Resource.root_id)
         .outerjoin(archive, archive.id == Resource.parent_resource_id)
         .where(*_unlinked_where(notes))
+        .where(*([kind_column().not_in(hidden_kinds)] if hidden_kinds else []))
         .order_by(Root.name, Resource.relpath)
         .limit(limit)
     )
@@ -218,6 +224,18 @@ def unlinked_files(
 def count_unlinked(conn: Connection, notes: NotesFolder = None) -> int:
     query = select(func.count()).select_from(Resource).where(*_unlinked_where(notes))
     return int(conn.scalar(query) or 0)
+
+
+def count_unlinked_by_kind(conn: Connection, notes: NotesFolder = None) -> dict[str, int]:
+    """How many unlinked files there are of each file type (``core.kinds``)."""
+    kind = kind_column()
+    query = (
+        select(kind, func.count())
+        .select_from(Resource)
+        .where(*_unlinked_where(notes))
+        .group_by(kind)
+    )
+    return {str(k): int(n) for k, n in conn.execute(query)}
 
 
 # --- the notes folder's notes (#382) ---
