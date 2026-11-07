@@ -380,6 +380,10 @@ class Movie(Entity):
     """``tt0113277``, from the .nfo (#486); editable, so a movie can be looked up by it."""
     tmdb_id: str | None = field("TMDb ID", search="text")
     """``949``, from the .nfo (#486)."""
+    cast: str | None = field("Cast", search="text", mirrors="cast", from_notes=True)
+    """Who's in it (#645): an .nfo's actors, a note's ``cast``, or TMDb's top billed."""
+    collection: str | None = field("Set", search="text", mirrors=Collection, from_notes=True)
+    """The set it's in (#645): an .nfo's ``<set>``, or a note's ``set``."""
     quality: str | None = field("Quality", card=True, search="choice", editable=False)
     """``4K``, ``1440p``, ``1080p``, ``720p``, or ``SD``, from the best version's picture."""
     resolution: str | None = field("Resolution", editable=False)
@@ -485,13 +489,15 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 8  # 8: loose videos' notes (#644)
-    # 7: IDs from .nfo files (#486); 6: folder images; 5: pictures; 4: notes
+    id, name, version = "movies", "Movies", 9  # 9: Cast and Set fields (#645)
+    # 8: loose videos' notes (#644); 7: IDs from .nfo files (#486); 6: folder images;
+    # 5: pictures; 4: notes
     icon = "clapperboard"
     # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
     # Oswald, not Bebas Neue (all capitals), which read poorly in small titles (#567).
     fonts = {"titles": ("Oswald", "Arial Narrow", "sans-serif")}
-    api_version = 29  # notes that are files (#644); 24: TMDb's OnlineImage (#487)
+    api_version = 30  # links from notes (#645); 29: notes that are files (#644)
+    # 24: TMDb's OnlineImage (#487)
     # 23: tokens and titles (21: online pictures; 20: see-through folders; 18: folders;
     # 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
@@ -578,6 +584,9 @@ class MoviesTheme(Theme):
         if entity_type is Person and normalize(name):
             found = ctx.find(Person, ingest_key=f"actor:{normalize(name)}")
             return found[0] if found else actor_ref(name, ctx)  # as named before, kept
+        if entity_type is Collection and normalize(name):  # a set, as an .nfo's (#645)
+            found = ctx.find(Collection, ingest_key=f"set:{normalize(name)}")
+            return found[0] if found else set_ref(name, ctx)
         return super().item_named(entity_type, name, ctx)
 
     # --- online details: TMDb (#487) ---
@@ -693,6 +702,7 @@ class MoviesTheme(Theme):
                 ctx.relate("cast", person, movie)
                 if person not in people:
                     people.append(person)
+            ctx.update(movie, cast=", ".join(top) or None)  # the Cast field (#645)
         photos: dict[str, str] = {}
         for c in billed:
             path = c.get("profile_path")
@@ -899,11 +909,17 @@ class MoviesTheme(Theme):
         for name in ("year", "runtime"):  # else what the file name or the videos say
             if nfo.get(name):
                 values[name] = nfo[name]
+        actors: list[str] = nfo.get("actors") or []
+        values["cast"] = ", ".join(actors) or None
+        values["collection"] = nfo.get("set")
         ctx.update(movie, title=nfo.get("title") or None, **values)
         # Its genres can become the user's tags (DESIGN.md §7 "File keywords").
         ctx.keywords(movie, resource, nfo.get("genres") or [])
-        self._set_cast(movie, nfo.get("actors") or [], ctx)
-        self._set_collection(movie, nfo.get("set"), ctx)
+        # Where it names no cast or set, the Cast and Set fields may be a note's (or the
+        # user's): those links stay (#645).
+        fields = ctx.get(movie).fields
+        self._set_cast(movie, actors or names_of(fields.get("cast")), ctx)
+        self._set_collection(movie, nfo.get("set") or fields.get("collection"), ctx)
 
     def _set_cast(self, movie: EntityRef, names: Sequence[str], ctx: IngestContext) -> None:
         """The .nfo's actors are the movie's cast: those it no longer names leave it."""
@@ -926,11 +942,7 @@ class MoviesTheme(Theme):
     def _set_collection(self, movie: EntityRef, name: str | None, ctx: IngestContext) -> None:
         """The .nfo's ``<set>`` is a collection (titled by it) holding the movie; a set it no
         longer names lets go of it. Folder collections are the folders' business."""
-        target = (
-            ctx.upsert(Collection, f"set:{normalize(name)}", title=name)
-            if name and normalize(name)
-            else None
-        )
+        target = set_ref(name, ctx) if name and normalize(name) else None
         for collection in ctx.find(Collection):
             if collection == target or ctx.linked(collection, "folder"):
                 continue
@@ -1123,6 +1135,19 @@ def _picture_base(stem: str) -> str:
 def _picture_kind(stem: str) -> str:
     match = PICTURE_SUFFIX.match(stem)
     return match["kind"].casefold() if match else "poster"
+
+
+def set_ref(name: str, ctx: IngestContext) -> EntityRef:
+    """The set of this name (ignoring case and punctuation), made if new (#645)."""
+    return ctx.upsert(Collection, f"set:{normalize(name)}", title=name.strip())
+
+
+def names_of(text: str | None) -> list[str]:
+    """The names a Cast field gives: ``;``-separated when it has one, else by commas."""
+    if not text:
+        return []
+    parts = text.split(";") if ";" in text else text.split(",")
+    return [p.strip() for p in parts if p.strip()]
 
 
 def actor_ref(name: str, ctx: IngestContext) -> EntityRef:

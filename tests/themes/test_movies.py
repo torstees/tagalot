@@ -561,8 +561,9 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 8  # 2: video details; 3: genres; 4: notes; 5: pictures
-    # 6: folder images; 7: IDs from .nfo files (#486); 8: loose videos' notes (#644)
+    assert MoviesTheme.version == 9  # 2: video details; 3: genres; 4: notes; 5: pictures
+    # 6: folder images; 7: IDs from .nfo files (#486); 8: loose videos' notes (#644);
+    # 9: Cast and Set (#645)
 
 
 def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:
@@ -612,6 +613,79 @@ def test_a_loose_videos_note(env: Env) -> None:
     (env.files / "Heat (1995).md").unlink()
     env.scan(T0 + timedelta(minutes=2))
     assert _note(env, "Heat") == (None, {}, None)
+
+
+def _set(env: Env, title: str) -> list[str]:
+    """The sets (collections not of a folder) holding the movie."""
+    return [
+        c
+        for c, movies in env.contents().items()
+        if title in movies and c != "The Lord of the Rings"
+    ]
+
+
+def _cast_fields(env: Env, title: str) -> tuple[object, object]:
+    table = env.schema.entities[Movie].table
+    with env.reader.connect() as conn:
+        row = conn.execute(
+            select(table.c.cast, table.c.collection)
+            .join(Entity, Entity.id == table.c.id)
+            .where(Entity.title == title)
+        ).one()
+    return row.cast, row.collection
+
+
+def test_a_notes_cast_and_set(env: Env) -> None:
+    # A note's cast and set link the movie (#645), as an .nfo's do.
+    note = env.files / "Heat (1995).md"
+    note.write_text(
+        "---\ncast: [Al Pacino, Robert De Niro]\nset: Heist Films\n---\n", encoding="utf-8"
+    )
+    env.scan()
+    assert _cast(env, "Heat") == ["Al Pacino", "Robert De Niro"]
+    assert _set(env, "Heat") == ["Heist Films"]
+    assert _cast_fields(env, "Heat") == ("Al Pacino, Robert De Niro", "Heist Films")
+
+    # Changed: who it drops leaves the cast, and the movie moves to the new set.
+    note.write_text("---\ncast: Al Pacino; Val Kilmer\nset: Michael Mann\n---\n", encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=1))
+    assert _cast(env, "Heat") == ["Al Pacino", "Val Kilmer"]
+    assert _set(env, "Heat") == ["Michael Mann"]
+
+    # Gone: so are its links.
+    note.unlink()
+    env.scan(T0 + timedelta(minutes=2))
+    assert _cast(env, "Heat") == []
+    assert _set(env, "Heat") == []
+    assert _cast_fields(env, "Heat") == (None, None)
+
+
+def test_an_nfo_without_a_cast_keeps_the_notes(env: Env) -> None:
+    nfo = env.files / "Alien (1979).nfo"
+    nfo.write_text("<movie><title>Alien</title></movie>", encoding="utf-8")
+    (env.files / "Alien (1979).md").write_text(
+        "---\ncast: [Sigourney Weaver]\nset: Alien\n---\n", encoding="utf-8"
+    )
+    env.scan()
+    assert _cast(env, "Alien") == ["Sigourney Weaver"]
+    nfo.write_text("<movie><title>Alien</title><plot>In space.</plot></movie>", encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=1))  # the .nfo read again: the note's links stay
+    assert _cast(env, "Alien") == ["Sigourney Weaver"]
+    assert _set(env, "Alien") == ["Alien"]
+
+
+def test_an_nfos_cast_and_set_win_over_a_notes(env: Env) -> None:
+    (env.files / "Heat (1995).nfo").write_text(
+        "<movie><title>Heat</title><set>Mann</set><actor><name>Al Pacino</name></actor></movie>",
+        encoding="utf-8",
+    )
+    (env.files / "Heat (1995).md").write_text(
+        "---\ncast: [Somebody Else]\nset: Other\n---\n", encoding="utf-8"
+    )
+    env.scan()
+    assert _cast(env, "Heat") == ["Al Pacino"]
+    assert _set(env, "Heat") == ["Mann"]
+    assert _cast_fields(env, "Heat") == ("Al Pacino", "Mann")
 
 
 def test_a_note_named_like_a_video_in_a_movies_folder_isnt_its_note(env: Env) -> None:

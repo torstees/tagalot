@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 29
+API_VERSION = 30
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -57,7 +57,8 @@ online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added ico
 (:class:`ColorScheme`, :attr:`Theme.color_schemes`); version 27 added suggested fonts
 (:attr:`Theme.fonts`, :attr:`Theme.text_size`); version 28 added what a title is sent
 with (:class:`OnlineSource`'s ``titles_with``); version 29 added notes that are files
-(:meth:`IngestContext.note` with a Markdown file)."""
+(:meth:`IngestContext.note` with a Markdown file); version 30 added links from notes
+(:func:`field`'s ``from_notes``)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -135,6 +136,8 @@ class FieldSpec:
     many: bool = False
     """A mirrored containment field lists several containers, comma-separated (a book's
     collections); a relationship's own ``many`` says so for it."""
+    from_notes: bool = False
+    """A note's value for this mirrored field changes the links too (API version 30)."""
     name: str = ""
 
     def __set_name__(self, owner: type, name: str) -> None:
@@ -152,6 +155,7 @@ def field(
     mirrors: "type[Entity] | str | None" = None,
     many: bool = False,
     rating: int | None = None,
+    from_notes: bool = False,
 ) -> Any:
     """Declare a field: ``year: int | None = field("Year", card=True, search="range")``.
 
@@ -172,6 +176,16 @@ def field(
     through another container (a book's universe through its series, when the theme
     declares ``contains(Universe, Series)``) can't be edited on the item: it follows the
     container.
+
+    ``from_notes`` (API version 30) has a note's value for a mirrored field change the
+    links as well as the text: a movie note's ``cast: [Al Pacino, Robert De Niro]``
+    relates them. The core changes them by difference, when the note's value changes:
+    names it adds are found or made with :meth:`Theme.item_named` and linked, names it
+    drops are unlinked, and links it never named are left alone. A note's value only
+    counts where no file gave the field, so when your ``ingest`` syncs these links
+    from a file that names none, keep the ones the field names (read it with
+    ``ctx.get``), or the note's links go at the next read. Without it, a note fills
+    only the field's text.
 
     ``rating`` makes a ``float`` field a rating out of 5 or 10 (API version 16):
     ``rating: float | None = field("Rating", search="range", rating=5)``. It shows as five
@@ -207,6 +221,7 @@ def field(
         mirrors=mirrors,
         many=many,
         rating=rating,
+        from_notes=from_notes,
     )
 
 

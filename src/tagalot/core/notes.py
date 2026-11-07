@@ -56,6 +56,7 @@ from tagalot.core.models import (
     ResourceStatus,
     utcnow,
 )
+from tagalot.core.note_links import link_note_names
 from tagalot.core.own_fields import OwnField
 from tagalot.core.own_notes import (
     absorb_extras,
@@ -330,6 +331,10 @@ def apply_note(
     if dropped:
         _drop_source(conn, entity.id, dropped)
         reread = True
+    infos = {f.name: f for f in entity_table.fields}
+    for name, value in writes.items():  # what mirrored fields name, linked (#645)
+        if infos[name].spec.mirrors is not None and infos[name].spec.from_notes:
+            link_note_names(ctx, entity, infos[name], current.get(name), value)
     if writes:
         conn.execute(update(table).where(table.c.id == entity.id).values(**writes))
         changed = True
