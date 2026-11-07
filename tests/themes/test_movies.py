@@ -34,6 +34,7 @@ from tagalot.core.models import Entity, EntityContains, EntityNote, EntityResour
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.triage import unlinked_files
 from tagalot.core.writer import DbWriter
 from tagalot.themes.loader import validate_theme
 from tests.core.media_files import write_image, write_mkv
@@ -560,8 +561,8 @@ def test_videos_give_details_and_the_best_version_wins(env: Env) -> None:
 
 
 def test_the_theme_reads_files_again_after_its_changes() -> None:
-    assert MoviesTheme.version == 7  # 2: video details; 3: genres; 4: notes; 5: pictures
-    # 6: folder images; 7: IDs from .nfo files (#486)
+    assert MoviesTheme.version == 8  # 2: video details; 3: genres; 4: notes; 5: pictures
+    # 6: folder images; 7: IDs from .nfo files (#486); 8: loose videos' notes (#644)
 
 
 def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]:
@@ -574,6 +575,53 @@ def _note(env: Env, title: str) -> tuple[str | None, dict[str, str], str | None]
         body = conn.scalar(select(EntityNote.body).where(EntityNote.entity_id == entity_id))
         director = conn.scalar(select(table.c.director).where(table.c.id == entity_id))
     return body, dict(extra or {}), director
+
+
+def test_a_loose_videos_note(env: Env) -> None:
+    # Beside loose videos, a note named like one is that movie's (#644), as an .nfo can be.
+    (env.files / "Heat (1995).md").write_text(
+        "---\ntitle: Heat (Director's Cut)\ndirector: Michael Mann\nstudio: Forward Pass\n"
+        "tags: [Crime]\n---\nA crew of thieves and the detective after them.\n",
+        encoding="utf-8",
+    )
+    (env.files / "Misc" / "birthday.md").write_text("Grandma's 80th.\n", encoding="utf-8")
+    (env.files / "Misc" / "list.md").write_text("Not any movie's.\n", encoding="utf-8")
+    env.scan()
+    assert _note(env, "Heat (Director's Cut)") == (  # its title names the movie
+        "A crew of thieves and the detective after them.",
+        {"studio": "Forward Pass"},
+        "Michael Mann",
+    )
+    assert env.year("Heat (Director's Cut)") == 1995  # from the file name, as before
+    assert _note(env, "birthday")[0] == "Grandma's 80th."
+    with env.reader.connect() as conn:
+        unlinked = {f.relpath for f in unlinked_files(conn)}
+        notes = set(
+            conn.scalars(
+                select(Resource.relpath).join(EntityNote, EntityNote.resource_id == Resource.id)
+            )
+        )
+    assert notes == {"Heat (1995).md", "Misc/birthday.md"}
+    assert "Misc/list.md" in unlinked  # named for no movie: left unlinked, as an .nfo is
+    assert not notes & unlinked
+
+    # Changed, then gone: what it gave goes with it.
+    (env.files / "Heat (1995).md").write_text("---\ndirector: M. Mann\n---\n", encoding="utf-8")
+    env.scan(T0 + timedelta(minutes=1))
+    assert _note(env, "Heat") == (None, {}, "M. Mann")  # no title: the file name's again
+    (env.files / "Heat (1995).md").unlink()
+    env.scan(T0 + timedelta(minutes=2))
+    assert _note(env, "Heat") == (None, {}, None)
+
+
+def test_a_note_named_like_a_video_in_a_movies_folder_isnt_its_note(env: Env) -> None:
+    # In a movie's own folder, the folder's note is the movie's (#384), not one named like
+    # a video (#644).
+    (env.files / "Inception (2010)" / "Inception.md").write_text(
+        "---\ndirector: Not Read\n---\n", encoding="utf-8"
+    )
+    env.scan()
+    assert _note(env, "Inception") == (None, {}, None)
 
 
 def test_a_movies_folder_note(env: Env) -> None:

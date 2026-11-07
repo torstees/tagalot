@@ -50,7 +50,9 @@ is deleted. Cast added by hand comes with #260.
 
 **Notes** (#384, DESIGN.md §9 *Notes*): a movie's folder's note (``Inception (2010).md``,
 ``index.md``, or ``README.md`` inside it) describes the movie (``ctx.note``); an .nfo's
-values rank above a note's. A collection's folder note describes the collection, and
+values rank above a note's. Beside loose videos, a Markdown file named like one (as an
+``.nfo`` can be: ``Heat (1995).md``) is that movie's note (#644, theme version 8), and
+its ``title`` names the movie. A collection's folder note describes the collection, and
 actors' notes live in the keep's notes folder.
 
 **Video details** (#259, theme version 2): each video is read with MediaInfo (pymediainfo)
@@ -168,6 +170,8 @@ TMDB_API = f"https://{TMDB.host}/3"
 TMDB_IMAGES_URL = f"https://{TMDB_IMAGES.host}/t/p"
 """Kodi's folder of actors' photos (``First_Last.jpg``)."""
 NFO = ".nfo"
+MARKDOWN = (".md", ".markdown")
+"""A loose video's note (#644)."""
 NFO_LIMIT = 1_000_000
 """Bytes of an .nfo read at most (they're a few KB; anything bigger isn't one)."""
 POSTER_NAMES = ("poster", "folder", "cover", "movie", "default")
@@ -481,19 +485,19 @@ class ContentsThumbnail(ThumbnailProvider):
 class MoviesTheme(Theme):
     """Movies in folders (Plex and Kodi layouts), their collections, and their casts."""
 
-    id, name, version = "movies", "Movies", 7  # 7: IDs from .nfo files (#486)
-    # 6: folder images; 5: pictures; 4: notes
+    id, name, version = "movies", "Movies", 8  # 8: loose videos' notes (#644)
+    # 7: IDs from .nfo files (#486); 6: folder images; 5: pictures; 4: notes
     icon = "clapperboard"
     # Suggested fonts (#567): the first that's here shows; the keep's own choice wins.
     # Oswald, not Bebas Neue (all capitals), which read poorly in small titles (#567).
     fonts = {"titles": ("Oswald", "Arial Narrow", "sans-serif")}
-    api_version = (
-        24  # TMDb (#487): OnlineImage; 23: tokens and titles (21: online pictures; 20: see-through
-    )
-    # folders; 18: folders; 17: pictures; 16: ratings; …)
+    api_version = 29  # notes that are files (#644); 24: TMDb's OnlineImage (#487)
+    # 23: tokens and titles (21: online pictures; 20: see-through folders; 18: folders;
+    # 17: pictures; 16: ratings; …)
     # 3: genres as keywords; 2: videos' details (runtime, resolution, codec, audio);
     # keeps read every file once.
-    extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO})  # galleries
+    # Archives for galleries; Markdown for loose videos' notes (#644).
+    extensions = frozenset(VIDEO | IMAGE | KIND_EXTENSIONS[Kind.ARCHIVE] | {NFO, *MARKDOWN})
     dirs = True
     entities = [Person, Collection, Movie, Picture, Archive, Folder]
     online_sources = [TMDB, TMDB_IMAGES]
@@ -744,6 +748,8 @@ class MoviesTheme(Theme):
                     found[resource.id] = {"own": own_details(read_archive, resource.path)}
                 elif resource.relpath.lower().endswith(NFO):
                     found[resource.id] = self._nfo(resource, videos)
+                elif resource.relpath.lower().endswith(MARKDOWN):
+                    found[resource.id] = self._loose_note(resource, videos)
             except Exception as e:  # a folder we can't list: the file is still a movie
                 logger.warning("Couldn't look around %s: %s", resource.relpath, e)
         return found
@@ -831,6 +837,22 @@ class MoviesTheme(Theme):
             details["error"] = f"{type(e).__name__}: {e}"
         return details
 
+    def _loose_note(
+        self, resource: ResourceInfo, videos: Callable[[str], list[str]]
+    ) -> dict[str, Any]:
+        """Which loose movie a Markdown file is the note of (#644): the one whose video
+        beside it it's named like, as an .nfo is (``Heat (1995).md``), else nothing. In a
+        movie's folder, the folder's note is the movie's (``ctx.note`` on the folder)."""
+        folder_path, folder = resource.folder_path, resource.folder  # see-through: #459
+        found = videos(folder_path)
+        if not found or (folder and is_movie_folder(folder.rpartition("/")[2], found)):
+            return {}
+        key = movie_name(stem_of(resource.relpath.rpartition("/")[2])).key
+        video = next((v for v in found if movie_name(stem_of(v)).key == key), None)
+        if video is None:
+            return {}
+        return _movie_picture(movie_identity(folder, False, stem_of(video)), False)
+
     # --- ingest (the DB writer) ---
 
     def ingest(self, batch: Sequence[ResourceInfo], ctx: IngestContext) -> None:
@@ -846,6 +868,18 @@ class MoviesTheme(Theme):
                 own_item(Archive, "archive", resource, ctx)
             elif resource.relpath.lower().endswith(NFO):
                 self._ingest_nfo(resource, ctx)
+            elif resource.relpath.lower().endswith(MARKDOWN):
+                self._ingest_note(resource, ctx)
+
+    def _ingest_note(self, resource: ResourceInfo, ctx: IngestContext) -> None:
+        """A loose video's note (#644): the core reads it, as a folder's note."""
+        details = ctx.prepared(resource) or {}
+        if not details.get("movie"):
+            return  # not named for a loose movie: left unlinked
+        identity = Identity(
+            details["movie"], MovieName(details["title"], details["year"]), details["folder"]
+        )
+        ctx.note(find_movie(identity, ctx), resource)
 
     def _ingest_nfo(self, resource: ResourceInfo, ctx: IngestContext) -> None:
         details = ctx.prepared(resource) or {}
