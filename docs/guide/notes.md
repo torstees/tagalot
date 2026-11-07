@@ -17,6 +17,8 @@ Aurora Studio/
 
 This works for items that *are* folders: an artist in the [2D assets](../themes/assets2d.md) theme, an album in [Music](../themes/music.md), a collection or a Folder in [Movies](../themes/movies.md). Notes are read at the next scan, and read again whenever you change them.
 
+A theme can take a note beside an item too: in [Movies](../themes/movies.md#notes), a loose video's note is the Markdown file named like it (`Heat (1995).md` beside `Heat (1995).mkv`).
+
 > **A note inside a folder always describes that folder's item, never anything else.** Its title, fields, and body belong to the folder's item, even when the note is about someone or something else. `tagalot-type` is ignored there; it is read only in the [notes folder](#the-notes-folder).
 >
 > For example, in the [Movies](../themes/movies.md#people) theme, `Home Movies/Alice/Alice.md` describes the **Folder** "Alice", not the person Alice. Its `people: [Alice]` *links* the person to the folder, and that's all it does for her. A `born:` date there becomes an Extra field of the folder. Alice's own details go in her note in the notes folder:

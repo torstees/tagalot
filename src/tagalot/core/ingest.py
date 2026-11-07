@@ -32,6 +32,7 @@ from tagalot.core import closure, fts
 from tagalot.core.assets import assets_folders, in_assets
 from tagalot.core.extra_keys import (
     EXTRA,
+    NOTE_EXTENSIONS,
     aliased_fields,
     applied_aliases,
     convert,
@@ -740,13 +741,19 @@ class IngestSession:
     # --- reporting ---
 
     def note(self, entity: EntityRef, folder: ResourceInfo | int) -> None:
-        """The note inside ``folder`` is ``entity``'s (§9 *Notes*, API version 8): it is
-        read after this scan's files, and at later scans when it changes."""
+        """The note inside ``folder`` is ``entity``'s (§9 *Notes*, API version 8), or
+        ``folder`` is a Markdown file that is its note (API version 29, #644): it is read
+        after this scan's files, and at later scans when it changes."""
         self._table_of(entity)
         folder_id = folder.id if isinstance(folder, ResourceInfo) else folder
-        kind = self.conn.scalar(select(Resource.kind).where(Resource.id == folder_id))
-        if kind is not ResourceKind.DIR:
-            raise IngestError(f"ctx.note needs a folder, not resource {folder_id}")
+        row = self.conn.execute(
+            select(Resource.kind, Resource.ext).where(Resource.id == folder_id)
+        ).first()
+        markdown = row is not None and row.kind is ResourceKind.FILE and row.ext in NOTE_EXTENSIONS
+        if row is None or (row.kind is not ResourceKind.DIR and not markdown):
+            raise IngestError(
+                f"ctx.note needs a folder or a Markdown file, not resource {folder_id}"
+            )
         if self._gone(entity) or self._held(entity.id):
             return
         stored = self.conn.scalar(

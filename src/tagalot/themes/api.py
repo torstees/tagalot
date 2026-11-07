@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, ClassVar, Literal, Protocol, TypeVar
 
-API_VERSION = 28
+API_VERSION = 29
 """The version of this contract. It changes only with a DESIGN.md §9 update. Version 2
 added :meth:`Theme.migrate_schema`; version 3 added :meth:`IngestContext.resource_at` and
 the file readers (:func:`read_pdf_info`, :func:`read_front_matter`, …), the
@@ -56,7 +56,8 @@ online picture in a thumbnail chain (:class:`OnlineImage`); version 25 added ico
 (:attr:`Entity.icon`, :attr:`Theme.icon`); version 26 added color schemes
 (:class:`ColorScheme`, :attr:`Theme.color_schemes`); version 27 added suggested fonts
 (:attr:`Theme.fonts`, :attr:`Theme.text_size`); version 28 added what a title is sent
-with (:class:`OnlineSource`'s ``titles_with``)."""
+with (:class:`OnlineSource`'s ``titles_with``); version 29 added notes that are files
+(:meth:`IngestContext.note` with a Markdown file)."""
 
 FIELD_TYPES: tuple[type, ...] = (str, int, float, bool, date, datetime)
 """Python types a field may have, each optionally ``| None``."""
@@ -846,7 +847,12 @@ class IngestContext(Protocol):
         no file gave, the rest become Extra fields, its tags are file keywords, and its body
         is shown on the item's page. For an item whose primary file isn't a folder (a movie
         and its folder); an item whose primary file is a folder takes that folder's note
-        without asking. ``folder`` must be a folder resource. Needs ``api_version = 8``."""
+        without asking. ``folder`` must be a folder resource (``api_version = 8``), or a
+        Markdown file (``.md``, ``.markdown``) that is the item's own note, such as a loose
+        movie's ``Heat (1995).md`` beside ``Heat (1995).mkv`` (``api_version = 29``): its
+        ``title`` then names the item, as a folder note's names a folder item. A theme that
+        takes Markdown files gets them in ``ingest``; one that doesn't never sees them, so
+        it can only name folders."""
         ...
 
     def extra(self, entity: EntityRef, values: Mapping[str, Any]) -> None:

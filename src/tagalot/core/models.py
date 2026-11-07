@@ -595,7 +595,8 @@ class DedupeDismissal(Base):
 
 class EntityNote(Base):
     """An item's note (§9 *Notes*, #379): where it is looked for (``folder_id``: the item's
-    folder, or the one a theme named with ``ctx.note``), the file last read
+    folder, or the folder a theme named with ``ctx.note``, or the Markdown file it named:
+    a loose movie's ``Heat (1995).md``, #644), the file last read
     (``resource_id``, with its size and time then, so an unchanged note isn't read again),
     and its body. Re-read from the file at scans; a note with no file (``resource_id`` and
     ``folder_id`` both ``NULL``) is one typed in Tagalot (#383)."""

@@ -447,14 +447,17 @@ def _differs(typed: str, body: str | None, title: str | None) -> bool:
 
 @dataclass(frozen=True)
 class NoteSite:
-    """An item whose note is looked for in a folder."""
+    """An item whose note is looked for in a folder, or is a Markdown file (#644)."""
 
     entity: EntityRef
     folder_id: int
     folder: str
-    """The folder's root-relative path."""
+    """The folder's root-relative path (the file's, for a note file)."""
     folder_note: bool
-    """The folder is the item's own (its primary file), so the note's title wins."""
+    """The note is the item's own: its primary file's folder's, or a file named for
+    it, so the note's title wins."""
+    file: bool = False
+    """``folder_id`` is the note file itself (``ctx.note`` with a Markdown file)."""
 
 
 @dataclass(frozen=True)
@@ -468,7 +471,8 @@ class NoteChange:
 
 def note_sites(conn: Connection, schema: ThemeSchema, root_id: str) -> list[NoteSite]:
     """The root's items that take a note: those whose primary file is a folder, and those
-    a theme named a folder for (``ctx.note``)."""
+    a theme named a folder or a note file for (``ctx.note``). A note file is a site
+    whatever its status, so a note gone missing stops giving what it gave."""
     sites: dict[int, NoteSite] = {}
     for entity_table in schema.entities.values():
         primary = next((r for r in entity_table.entity.roles if r.primary), None)
@@ -490,14 +494,19 @@ def note_sites(conn: Connection, schema: ThemeSchema, root_id: str) -> list[Note
             ref = EntityRef(entity_id, entity_table.type_id)
             sites[entity_id] = NoteSite(ref, folder_id, folder, True)
     named = conn.execute(
-        select(EntityNote.entity_id, Entity.type, Resource.id, Resource.relpath)
+        select(EntityNote.entity_id, Entity.type, Resource.id, Resource.relpath, Resource.kind)
         .join(Resource, Resource.id == EntityNote.folder_id)
         .join(Entity, Entity.id == EntityNote.entity_id)
-        .where(Resource.root_id == root_id, Resource.status == ResourceStatus.OK)
+        .where(
+            Resource.root_id == root_id,
+            (Resource.status == ResourceStatus.OK) | (Resource.kind == ResourceKind.FILE),
+        )
     )
-    for entity_id, type_id, folder_id, folder in named:
+    for entity_id, type_id, folder_id, folder, kind in named:
         if entity_id not in sites:
-            sites[entity_id] = NoteSite(EntityRef(entity_id, type_id), folder_id, folder, False)
+            file = kind == ResourceKind.FILE
+            ref = EntityRef(entity_id, type_id)
+            sites[entity_id] = NoteSite(ref, folder_id, folder, file, file=file)
     return list(sites.values())
 
 
@@ -562,10 +571,20 @@ def read_notes(
             )
         }
         from_notes_folder = set(conn.scalars(select(NotesFolderNote.resource_id)))
+        note_files_named = {  # the note files themes named (#644), when they're there
+            resource_id: NoteFile(resource_id, relpath, size, mtime)
+            for resource_id, relpath, size, mtime in conn.execute(
+                select(Resource.id, Resource.relpath, Resource.size, Resource.mtime_ns).where(
+                    Resource.id.in_([s.folder_id for s in sites if s.file]),
+                    Resource.status == ResourceStatus.OK,
+                    Resource.skipped.is_(False),
+                )
+            )
+        }
     changes: list[NoteChange] = []
     warnings: list[IngestWarning] = []
     for site in sites:
-        file = files.get(site.folder)
+        file = note_files_named.get(site.folder_id) if site.file else files.get(site.folder)
         was = stored.get(site.entity.id)
         if file is None:
             if was is not None and was[0] in from_notes_folder:
