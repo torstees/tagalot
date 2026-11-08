@@ -8,8 +8,8 @@ For video files named the way Plex, Kodi, and Jellyfin like them: **collections*
 - **Extras aren't movies:** names ending `-trailer`, `-sample`, `-featurette`, `-behindthescenes`, `-deleted`, `-interview`, `-scene`, `-short`, `-other`, and videos in `Extras`, `Featurettes`, `Trailers`, `Behind The Scenes`, and similar folders. [Triage](../guide/triage.md) lists them; **Skip in scans** hides them.
 - **Video details** (read with MediaInfo): length, resolution, quality (`4K`, `1440p`, `1080p`, `720p`, `SD`), video codec, and audio languages. A movie with several versions shows its best.
 - **`.nfo` files** (`movie.nfo`, or named like the video): title, year, plot, genre, director, length, and rating (out of 10, shown as five stars: 7 is ★★★½☆), which win over the file name; the **IMDb ID** and **TMDb ID** (from `<uniqueid>`, `<imdbid>`, `<tmdbid>`, or `<id>`; you can type them in too); the **cast** in order; and a **set**, which becomes a collection.
-- **Collection:** a folder holding two or more movies' folders, or an `.nfo`'s set.
-- **Person:** actors from `.nfo` casts, and anyone you add by hand or a folder's note names, such as the family in your home videos (see [People](#people)). Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
+- **Collection:** a folder holding two or more movies' folders, or a set, from an `.nfo`'s `<set>` or a note's `set`.
+- **Person:** actors from `.nfo` casts or a note's `cast`, and anyone you add by hand or a folder's note names, such as the family in your home videos (see [People](#people)). Their photo is Kodi's `.actors/First_Last.jpg`; without one, a **title card** with their name.
 - **Folder:** a folder with pictures or archives in it, or below it, holds what's there: movies, pictures, archives, and the folders inside. Tag `Home Movies/Alice`, and her videos and photos all count as tagged (see [Folders](#folders)).
 - **Picture** and **Archive:** every other picture, and every zip, 7z, or rar archive, is an item of its own that you can tag and search, such as the family pictures beside your home videos (see [Pictures](#pictures)).
 
@@ -37,6 +37,10 @@ Home Movies/
   birthday.mp4
   birthday.md           ← birthday's note
 ```
+
+**Cast and set from a note:** a movie's note (either kind) can give `cast: [Al Pacino, Robert De Niro]` and `set: Heist Films`, as an `.nfo`'s `<actor>`s and `<set>` do. The people are found or made (one person per name, shared with `.nfo` casts), and the movie goes into that set. Change the note and the cast and set follow: a name you remove leaves the cast, and a new set takes the movie from the old one. An `.nfo` that names a cast or a set wins over the note's; one that names none leaves the note's alone. Separate names with `;` instead when a name has a comma in it.
+
+A movie's page shows them as **Cast** and **Set** among its details, and you can type there too: names you type become the cast, or the set, by hand. Typing a **Set** takes the movie out of every other collection, a folder's included.
 
 In a movie's own folder, its note is the folder's (`Inception (2010)/Inception (2010).md`), not one named like a video there, and it doesn't rename the movie: the folder's note also describes the Folder.
 

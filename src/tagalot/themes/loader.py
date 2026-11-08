@@ -467,7 +467,7 @@ def _mirror_problems(
     """Fields that mirror links (``mirrors``, API version 15): a text field, of a
     containment the theme declares for that type, or a relationship it is part of."""
     problems: list[str] = []
-    mirrored = False
+    mirrored = from_notes = False
     relationships = {r.name: r for r in theme.relationships}
     for entity in entities:
         for info in _safe_fields(entity):
@@ -475,7 +475,10 @@ def _mirror_problems(
             if mirror is None:
                 if info.spec.many:
                     problems.append(f"{names[entity]}.{info.name}: many needs mirrors")
+                if getattr(info.spec, "from_notes", False):
+                    problems.append(f"{names[entity]}.{info.name}: from_notes needs mirrors")
                 continue
+            from_notes = from_notes or bool(getattr(info.spec, "from_notes", False))
             mirrored = True
             where = f"{names[entity]}.{info.name}"
             if info.type is not str:
@@ -502,6 +505,8 @@ def _mirror_problems(
         problems.append(
             "a theme with fields that mirror links must set api_version = 15 (or later)"
         )
+    elif from_notes and getattr(theme, "api_version", API_VERSION) < 30:
+        problems.append("a theme with a field's from_notes must set api_version = 30 (or later)")
     return problems
 
 

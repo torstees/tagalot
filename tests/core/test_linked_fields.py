@@ -152,3 +152,26 @@ def test_the_loader_checks_mirrors() -> None:
         "Tome.plain: many needs mirrors",
         "a theme with fields that mirror links must set api_version = 15 (or later)",
     ]
+
+
+def test_the_loader_checks_from_notes() -> None:
+    from tagalot.themes.api import Entity as ThemeEntity
+    from tagalot.themes.api import Theme, contains, field
+    from tagalot.themes.loader import validate_theme
+
+    class Shelf(ThemeEntity):
+        pass
+
+    class Tome(ThemeEntity):
+        shelf: str | None = field("Shelf", mirrors=Shelf, from_notes=True)
+        plain: str | None = field("Plain", from_notes=True)
+
+    class Tomes(Theme):
+        id, name, api_version = "tomes", "Tomes", 29
+        entities = [Shelf, Tome]
+        containment = [contains(Shelf, Tome)]
+
+    assert validate_theme(Tomes) == [
+        "Tome.plain: from_notes needs mirrors",
+        "a theme with a field's from_notes must set api_version = 30 (or later)",
+    ]
