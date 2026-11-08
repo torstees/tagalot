@@ -41,6 +41,7 @@ from tagalot.core.extra_keys import (
     loose_key,
 )
 from tagalot.core.extra_keys import NOTE_EXTENSIONS as NOTE_EXTENSIONS  # its home
+from tagalot.core.formats import parse_duration
 from tagalot.core.ingest import TITLE, IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
@@ -136,6 +137,15 @@ class NoteValues:
     """The picture it names, as written (``cover``, else ``image``; #439)."""
 
 
+def _field_value(value: Any, target: FieldInfo) -> Any:
+    """A note's value as the field's: a duration as a length of time (``1:23:45``,
+    ``2h 3m``, or minutes; #646). ``ValueError`` when it isn't one."""
+    if target.spec.display == "duration" and target.type in (int, float):
+        seconds = parse_duration(value)
+        value = round(seconds) if target.type is int else seconds
+    return convert(value, target.type)
+
+
 def map_note(
     note: NoteText,
     fields: Sequence[FieldInfo],
@@ -176,7 +186,7 @@ def map_note(
             found.keywords += split_keywords(value)
         elif (target := by_key.get(loose_key(key))) is not None:
             try:
-                found.fields[target.name] = convert(value, target.type)
+                found.fields[target.name] = _field_value(value, target)
             except ValueError as e:
                 found.problems.append(f"{key}: {e}")
         elif (mine := own_keys.get(loose_key(key))) is not None:
@@ -193,7 +203,7 @@ def map_note(
     for key, target, value in later:  # after the fields' own keys, which win
         if target.name not in found.fields:
             try:
-                found.fields[target.name] = convert(value, target.type)
+                found.fields[target.name] = _field_value(value, target)
                 continue
             except ValueError as e:
                 found.problems.append(f"{key}: {e}")

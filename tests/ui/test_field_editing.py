@@ -279,3 +279,14 @@ def test_a_url_field_shows_a_link_that_opens_the_browser(
     assert value.label.text() == "not a web address"
     value.show_value("<b>plain</b>", False)  # other fields never render markup
     assert value.label.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_a_duration_is_typed_as_a_length_of_time() -> None:
+    assert editor_text(5025.0, "duration") == "1:23:45"
+    assert parse_value("1:23:45", float, "duration") == 5025
+    assert parse_value("1h 35m", float, "duration") == 5700
+    assert parse_value("95", int, "duration") == 5700  # minutes
+    assert parse_value(editor_text(170 * 60.0, "duration"), float, "duration") == 170 * 60
+    with pytest.raises(ParseError, match="Type a length"):
+        parse_value("soon", float, "duration")
+    assert parse_value("95", float) == 95  # not a duration: a number

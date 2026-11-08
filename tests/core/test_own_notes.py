@@ -257,3 +257,11 @@ def test_an_extra_field_the_user_typed_stays(keep: tuple[KeepSession, Path]) -> 
     session.scan_all()
     assert _values(session, "Ann Writer") == {"born": 1951}
     assert _extra(session, "Ann Writer") == {"Born": "long ago"}
+
+
+def test_an_own_duration_reads_as_a_length_of_time() -> None:
+    length = OwnField("books.book", "length", "Length", kind="integer", display="duration")
+    mine, _, problems = take_own({"length": "1:23:45", "other": 1}, [length])
+    assert (mine, problems) == ({"length": 5025}, [])
+    mine, _, _ = take_own({"length": 95}, [length])
+    assert mine == {"length": 5700}  # minutes

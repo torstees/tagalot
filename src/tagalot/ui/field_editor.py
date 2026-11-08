@@ -35,9 +35,11 @@ from PySide6.QtWidgets import (
 )
 
 from tagalot.core.formats import (
+    format_duration,
     format_rating_number,
     half_stars,
     is_web_address,
+    parse_duration,
     rating_of,
     rating_scale,
 )
@@ -57,11 +59,18 @@ class ParseError(ValueError):
     """What the user typed doesn't fit the field; the message says what would."""
 
 
-def parse_value(text: str, kind: type) -> Any:
-    """The typed value for what the user typed (``None`` for nothing)."""
+def parse_value(text: str, kind: type, display: str | None = None) -> Any:
+    """The typed value for what the user typed (``None`` for nothing). A duration is
+    typed as a length of time (``1:35:00``, ``1h 35m``, or minutes; #646)."""
     text = text.strip()
     if not text:
         return None
+    if display == "duration" and kind in (int, float):
+        try:
+            seconds = parse_duration(text)
+        except ValueError:
+            raise ParseError("Type a length: 1:35:00, 1h 35m, or minutes") from None
+        return round(seconds) if kind is int else seconds
     try:
         if kind is int:
             return int(text.replace(",", ""))
@@ -76,8 +85,10 @@ def parse_value(text: str, kind: type) -> Any:
     return text
 
 
-def editor_text(value: Any) -> str:
+def editor_text(value: Any, display: str | None = None) -> str:
     """How a value reads in the text box (the form :func:`parse_value` reads back)."""
+    if display == "duration" and isinstance(value, int | float) and not isinstance(value, bool):
+        return format_duration(value)
     match value:
         case None:
             return ""
@@ -276,7 +287,7 @@ class EditableValue(QWidget):
     def start_editing(self) -> None:
         if not self.editable or self.check is not None or self.stars is not None:
             return
-        self.box.setText(editor_text(self.value))
+        self.box.setText(editor_text(self.value, self.display))
         self.box.setPlaceholderText(_expected(self.kind) if self.kind is not str else "")
         self.stack.setCurrentWidget(self.box)
         self.box.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -290,7 +301,7 @@ class EditableValue(QWidget):
         if not self.editing():
             return
         try:
-            value = parse_value(self.box.text(), self.kind)
+            value = parse_value(self.box.text(), self.kind, self.display)
         except ParseError as e:
             self.box.setStyleSheet(f"border: 1px solid {css(ERROR)};")
             self.box.setToolTip(str(e))

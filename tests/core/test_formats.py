@@ -4,7 +4,13 @@ from datetime import date
 
 import pytest
 
-from tagalot.core.formats import format_bytes, format_duration, format_value, is_web_address
+from tagalot.core.formats import (
+    format_bytes,
+    format_duration,
+    format_value,
+    is_web_address,
+    parse_duration,
+)
 from tagalot.themes.api import Entity, Theme, ThemeDeclarationError, field
 from tagalot.themes.loader import validate_theme
 
@@ -110,3 +116,33 @@ def test_url_needs_a_text_field() -> None:
 def test_is_web_address(value: object, web: bool) -> None:
     assert is_web_address(value) is web
     assert format_value(value, "url") is None  # read as the text itself
+
+
+@pytest.mark.parametrize(
+    ("value", "seconds"),
+    [
+        ("1:23:45", 5025),  # hours, minutes, seconds
+        ("01:05:00", 3900),
+        ("23:45", 1425),  # minutes and seconds, as format_duration shows them
+        ("2h 3m", 7380),
+        ("2h", 7200),
+        ("1h 23m 45s", 5025),
+        ("95 min", 5700),
+        ("95 minutes", 5700),
+        ("1.5 hours", 5400),
+        ("45s", 45),
+        ("95", 5700),  # a plain number is minutes, as an .nfo's runtime
+        (95, 5700),
+        (1.5, 90),
+    ],
+)
+def test_parse_duration(value: object, seconds: float) -> None:
+    assert parse_duration(value) == seconds
+
+
+@pytest.mark.parametrize(
+    "value", ["soon", "", "1:75", "1:2:3:4", "2h 2h", "x2h", "2 parsecs", True]
+)
+def test_what_isnt_a_duration(value: object) -> None:
+    with pytest.raises(ValueError, match="isn't a length of time"):
+        parse_duration(value)

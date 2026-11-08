@@ -725,3 +725,29 @@ def test_a_movies_folder_note(env: Env) -> None:
         {"studio": "Syncopy"},
         "Christopher Nolan",
     )
+
+
+@pytest.mark.parametrize(
+    ("written", "seconds"),
+    [("1:35:00", 5700), ("1h 35m", 5700), ("95", 5700), ("95 min", 5700), ('"1:35:00"', 5700)],
+)
+def test_a_notes_runtime(env: Env, written: str, seconds: float) -> None:
+    # A note's runtime reads as people write it (#646): not as seconds.
+    (env.files / "Alien (1979).md").write_text(f"---\nruntime: {written}\n---\n", encoding="utf-8")
+    env.scan()
+    table = env.schema.entities[Movie].table
+    with env.reader.connect() as conn:
+        runtime = conn.scalar(
+            select(table.c.runtime)
+            .join(Entity, Entity.id == table.c.id)
+            .where(Entity.title == "Alien")
+        )
+    assert runtime == seconds
+
+
+def test_a_runtime_that_isnt_one_is_reported(env: Env) -> None:
+    (env.files / "Alien (1979).md").write_text("---\nruntime: soon\n---\n", encoding="utf-8")
+    report = env.scan()
+    assert any("runtime: isn't a length of time" in w.message for w in report.ingest_warnings), (
+        report.ingest_warnings
+    )

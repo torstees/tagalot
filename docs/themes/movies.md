@@ -40,6 +40,8 @@ Home Movies/
 
 **Cast and set from a note:** a movie's note (either kind) can give `cast: [Al Pacino, Robert De Niro]` and `set: Heist Films`, as an `.nfo`'s `<actor>`s and `<set>` do. The people are found or made (one person per name, shared with `.nfo` casts), and the movie goes into that set. Change the note and the cast and set follow: a name you remove leaves the cast, and a new set takes the movie from the old one. An `.nfo` that names a cast or a set wins over the note's; one that names none leaves the note's alone. Separate names with `;` instead when a name has a comma in it.
 
+**Runtime in a note** reads as people write it: `runtime: 1:35:00` (hours, minutes, seconds), `1h 35m`, `95 min`, or just `95`, which is minutes, as in an `.nfo`. `23:45` is 23 minutes 45 seconds. Typing a Runtime on the movie's page works the same way.
+
 A movie's page shows them as **Cast** and **Set** among its details, and you can type there too: names you type become the cast, or the set, by hand. Typing a **Set** takes the movie out of every other collection, a folder's included.
 
 In a movie's own folder, its note is the folder's (`Inception (2010)/Inception (2010).md`), not one named like a video there, and it doesn't rename the movie: the folder's note also describes the Folder.
