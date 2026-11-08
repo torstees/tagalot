@@ -3,7 +3,8 @@
 
 A theme field can declare ``display="bytes"`` or ``display="duration"``; lists, cards,
 detail pages, and filter chips show it this way, while sorting, filtering, and editing keep
-using the stored number. ``display="url"`` on a text field makes an item's page show a web
+using the stored number (a duration is typed as a length of time,
+:func:`parse_duration`). ``display="url"`` on a text field makes an item's page show a web
 address as a link (:func:`is_web_address`); elsewhere it reads as the address. A rating
 (``field(..., rating=5)``, display ``"stars/5"`` or ``"stars/10"``) reads as five stars in
 half-star steps (:func:`format_stars`).
@@ -35,6 +36,48 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{sign}{hours}:{minutes:02d}:{secs:02d}"
     return f"{sign}{minutes}:{secs:02d}"
+
+
+_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_DURATION_PART = re.compile(r"\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*")
+_DURATION_UNITS = {
+    **dict.fromkeys(("h", "hr", "hrs", "hour", "hours"), 3600),
+    **dict.fromkeys(("m", "min", "mins", "minute", "minutes"), 60),
+    **dict.fromkeys(("s", "sec", "secs", "second", "seconds"), 1),
+}
+
+
+def parse_duration(value: Any) -> float:
+    """Seconds, from a length of time as people write it (#646): ``1:23:45`` (hours,
+    minutes, seconds), ``3:25`` (minutes and seconds, as :func:`format_duration` shows
+    one), ``2h 3m``, ``95 min``, ``1.5 hours``, ``45s``, or a plain number, which is
+    **minutes**, as an ``.nfo``'s runtime is. ``ValueError`` when it isn't one."""
+    if isinstance(value, bool):
+        raise ValueError("isn't a length of time")
+    if isinstance(value, int | float):
+        return float(value) * 60
+    text = str(value).strip().lower().replace(",", "")
+    if _NUMBER.fullmatch(text):
+        return float(text) * 60
+    if ":" in text:
+        parts = text.split(":")
+        if len(parts) in (2, 3) and all(_NUMBER.fullmatch(p) for p in parts):
+            *whole, seconds = (float(p) for p in parts)
+            if all(n.is_integer() for n in whole) and all(n < 60 for n in [*whole[1:], seconds]):
+                if len(whole) == 2:
+                    return whole[0] * 3600 + whole[1] * 60 + seconds
+                return whole[0] * 60 + seconds
+        raise ValueError("isn't a length of time (1:23:45, or 23:45 for minutes and seconds)")
+    total, at, units = 0.0, 0, set()
+    for match in _DURATION_PART.finditer(text):
+        unit = _DURATION_UNITS.get(match[2])
+        if match.start() != at or unit is None or unit in units:
+            break
+        total, at = total + float(match[1]) * unit, match.end()
+        units.add(unit)
+    if not units or at != len(text):
+        raise ValueError("isn't a length of time (2h 3m, 95 min, 1:23:45, or minutes)")
+    return total
 
 
 FORMATTERS = {"bytes": format_bytes, "duration": format_duration}

@@ -60,7 +60,7 @@ Fields of your own for a kind of item, beside the ones its theme gives it: a boo
 - **Label:** its name on pages. It can't be the name of one of the theme's fields; to fill one of those from your notes, add a key to **Keys to read as fields** (Notes tab) instead.
 - **Kind:** text, a whole number (integer), a number, a date, yes/no, a link (a web address that opens in your browser), or a rating (five stars, in half stars). A kind of item has one rating at most, and none of yours when its theme rates it already.
 - **Searched:** by its words, by a range, by picking values, or not at all, as the kind allows.
-- **Shown:** a number can show as a size (3.0 MB) or a time (3:25).
+- **Shown:** a number can show as a size (3.0 MB) or a time (3:25). A time is typed, and written in notes, as `1:23:45`, `23:45`, `2h 3m`, `95 min`, or a number of minutes.
 - Whether it's on grid cards (and in the preview under a list), and a column in lists.
 
 Your fields work like the theme's in lists: sort by their column, show or hide it from the header's menu, pick them as card lines, and filter by them with **+ Field** (see [Searching](searching.md#fields)), unless **Searched** is **Not searched**.

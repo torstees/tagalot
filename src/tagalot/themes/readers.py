@@ -522,7 +522,7 @@ def _front_matter(text: str) -> tuple[dict[str, Any] | None, str]:
     import yaml
 
     try:
-        data = yaml.safe_load(block)
+        data = yaml.load(block, Loader=_yaml_loader())
     except yaml.YAMLError as e:
         raise ValueError(f"YAML front matter: {e}") from e
     if data is None:
@@ -556,7 +556,7 @@ def front_matter_problems(text: str) -> list[str]:
 
     found: list[str] = []
 
-    class Checking(yaml.SafeLoader):
+    class Checking(_yaml_loader()):  # type: ignore[misc]
         """Notes keys a mapping gives twice, ignoring case, as Tagalot reads them."""
 
         def construct_mapping(self, node: Any, deep: bool = False) -> Any:
@@ -569,6 +569,48 @@ def front_matter_problems(text: str) -> list[str]:
     except yaml.YAMLError as e:
         return [f"The YAML front matter doesn't parse: {_yaml_problem(e)}"]
     return found
+
+
+_LOADER: Any = None
+
+
+def _yaml_loader() -> Any:
+    """PyYAML's safe loader without YAML 1.1's base-60 numbers (#646): ``1:23:45`` and
+    ``23:45`` stay text, as in YAML 1.2 (and the Markdown editors that write front
+    matter), rather than becoming 5025 and 1425."""
+    global _LOADER
+    if _LOADER is None:
+        import yaml
+
+        class Loader(yaml.SafeLoader):
+            pass
+
+        numbers = {"tag:yaml.org,2002:int", "tag:yaml.org,2002:float"}
+        Loader.yaml_implicit_resolvers = {
+            first: [(tag, rx) for tag, rx in resolvers if tag not in numbers]
+            for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+        Loader.add_implicit_resolver(
+            "tag:yaml.org,2002:int",
+            re.compile(
+                r"""^(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)"""
+                r"""|[-+]?0x[0-9a-fA-F_]+)$""",
+                re.X,
+            ),
+            list("-+0123456789"),
+        )
+        Loader.add_implicit_resolver(
+            "tag:yaml.org,2002:float",
+            re.compile(
+                r"""^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?"""
+                r"""|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?"""
+                r"""|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$""",
+                re.X,
+            ),
+            list("-+0123456789."),
+        )
+        _LOADER = Loader
+    return _LOADER
 
 
 def _twice(loader: Any, node: Any) -> list[str]:

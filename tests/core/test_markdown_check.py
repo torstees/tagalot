@@ -3,7 +3,7 @@ which Tagalot reads as one key), and front matter that doesn't parse; found in s
 kept for Triage → Markdown, and replaced when the file is read again."""
 
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,7 +14,7 @@ from tagalot.core.keep import KEEP_FORMAT_VERSION, open_keep, save_keep_config
 from tagalot.core.markdown_check import markdown_problems
 from tagalot.core.models import Resource, ResourceKind, Root, SchemaVersion
 from tagalot.core.writeback import WriteBackError, edit_front_matter
-from tagalot.themes.readers import front_matter_problems
+from tagalot.themes.readers import front_matter_problems, split_front_matter
 from tests.core.book_files import write_markdown
 from tests.core.test_schema_version import _keep
 from tests.themes.test_books import T0, Env, env
@@ -137,3 +137,25 @@ def test_write_to_file_says_which_key_is_given_twice() -> None:
         "its front matter gives a key twice: `universe` is given twice (lines 2 and 3); "
         "the last, '', is used. Remove one first"
     )
+
+
+def test_front_matter_keeps_times_as_text() -> None:
+    # YAML 1.1 reads 1:23:45 as a base-60 number (5025); front matter keeps it as written
+    # (#646), as YAML 1.2 does, and every other number reads as before.
+    front, _ = split_front_matter(
+        "---\nruntime: 1:23:45\nshort: 23:45\nyear: 1995\nrating: 7.5\nn: -3\n"
+        "hex: 0x1F\nbig: 1.5e+3\nwhen: 2024-07-04\n---\n"
+    )
+    assert front == {
+        "runtime": "1:23:45",
+        "short": "23:45",
+        "year": 1995,
+        "rating": 7.5,
+        "n": -3,
+        "hex": 31,
+        "big": 1500.0,
+        "when": date(2024, 7, 4),
+    }
+    assert front_matter_problems("---\nruntime: 1:23:45\nruntime: 2h\n---\n") == [
+        "`runtime` is given twice (lines 2 and 3); the last, '2h', is used."
+    ]
