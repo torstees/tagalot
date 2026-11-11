@@ -4,9 +4,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QEvent
-from PySide6.QtGui import QFocusEvent
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtCore import QEvent, QThreadPool
+from PySide6.QtGui import QAction, QFocusEvent, QKeySequence
+from PySide6.QtWidgets import QApplication, QLabel, QMenu, QPushButton
 from pytestqt.qtbot import QtBot
 from sqlalchemy import func, select
 
@@ -15,8 +15,11 @@ from tagalot.core.models import Entity, Resource, ResourceStatus
 from tagalot.core.root_admin import RemovalCounts
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import load_settings
+from tagalot.ui import main_window
 from tagalot.ui.keep_config import DELETE, KEEP, KeepConfigWindow
 from tagalot.ui.main_window import MainWindow
+from tagalot.ui.shortcuts import menu_shortcuts
+from tagalot.ui.workers import ScanController
 from tests.core.media_files import write_mp3
 from tests.ui.test_music_views import session, window
 
@@ -267,3 +270,40 @@ def test_show_your_tagalot_folder(
     window.user_folder_action.trigger()
     qtbot.waitUntil(lambda: bool(nothing_is_launched), timeout=5000)
     assert nothing_is_launched == [("reveal", str(themes))]
+
+
+@pytest.mark.parametrize("mac", [True, False])
+def test_configure_keep_is_in_the_keep_menu_and_a_macs_app_menu(
+    qtbot: QtBot, session: KeepSession, monkeypatch: pytest.MonkeyPatch, mac: bool
+) -> None:
+    """#653: Configure keep… stays in the Keep menu; a Mac's app menu gets the standard
+    Preferences... with ⌘,, and elsewhere Ctrl+, is on the Keep menu's command."""
+    monkeypatch.setattr(main_window, "uses_app_menu", lambda: mac)
+    window = MainWindow(session, scans=ScanController(QThreadPool()))
+    qtbot.addWidget(window)
+    keep_menu = window.menuBar().actions()[0].menu()
+    assert isinstance(keep_menu, QMenu)
+    assert window.configure_action in keep_menu.actions()
+    assert window.configure_action.menuRole() == QAction.MenuRole.NoRole
+    app_menu = window.app_menu_configure_action
+    if mac:
+        assert app_menu is not None
+        assert app_menu.text() == "Preferences\u2026"
+        assert app_menu.menuRole() == QAction.MenuRole.PreferencesRole
+        assert app_menu.shortcut() == QKeySequence("Ctrl+,")
+        assert window.configure_action.shortcut().isEmpty()
+        shortcut_owner = app_menu
+    else:
+        assert app_menu is None
+        assert window.configure_action.shortcut() == QKeySequence("Ctrl+,")
+        shortcut_owner = window.configure_action
+    keep_rows = dict(menu_shortcuts(window))["Keep"]
+    native = QKeySequence("Ctrl+,").toString(QKeySequence.SequenceFormat.NativeText)
+    command = "Preferences" if mac else "Configure keep"
+    assert [row for row in keep_rows if row[0] == native] == [(native, command)]
+    shortcut_owner.trigger()
+    config = window.keep_config
+    assert config is not None
+    qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+    window.thumbnails.clear()
+    window.thumbnails.wait()
