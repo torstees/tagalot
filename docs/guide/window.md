@@ -13,7 +13,7 @@ Each keep opens in a window of its own. Closing the window closes the keep (Keep
 - **Go:** Back, Forward.
 - **View:** the Tags panel, the Details panel, the Preview, the Activity panel (Ctrl+Shift+A), and Thumbnail size.
 - **Help:** Keyboard shortcuts (F1), and **About Tagalot**: the version, links to these docs and the project, and **Copy check report** (what `tagalot --check` says, for a bug report).
-- **On a Mac,** the Tagalot menu has **About Tagalot** and **Configure keep…** (⌘,), as Mac apps keep their settings there; Configure keep… is in the Keep menu too.
+- **On a Mac,** the Tagalot menu has **About Tagalot** and **Preferences…** (⌘,), which opens Configure keep…; Configure keep… is in the Keep menu too.
 
 ## The navigation
 

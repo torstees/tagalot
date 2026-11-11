@@ -1,6 +1,6 @@
 # Keep configuration
 
-**Keep → Configure keep…** (Ctrl+,; on a Mac also in the Tagalot menu, ⌘,) opens a window of seven tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
+**Keep → Configure keep…** (Ctrl+,; on a Mac also **Tagalot → Preferences…**, ⌘,) opens a window of seven tabs. Every change is saved as you make it (to `keep.toml`, or to your own settings for **On this computer** and **In all your keeps**); a value that can't be used is explained under the form.
 
 ![Keep configuration's Keep tab, for a research keep](../images/screens/keep-configuration.png)
 

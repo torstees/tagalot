@@ -276,8 +276,8 @@ def test_show_your_tagalot_folder(
 def test_configure_keep_is_in_the_keep_menu_and_a_macs_app_menu(
     qtbot: QtBot, session: KeepSession, monkeypatch: pytest.MonkeyPatch, mac: bool
 ) -> None:
-    """#653: Qt's heuristic no longer turns it into a bare "Preferences..."; a Mac gets
-    its own app-menu command with ⌘,, and elsewhere Ctrl+, is on the Keep menu's."""
+    """#653: Configure keep… stays in the Keep menu; a Mac's app menu gets the standard
+    Preferences... with ⌘,, and elsewhere Ctrl+, is on the Keep menu's command."""
     monkeypatch.setattr(main_window, "uses_app_menu", lambda: mac)
     window = MainWindow(session, scans=ScanController(QThreadPool()))
     qtbot.addWidget(window)
@@ -288,8 +288,8 @@ def test_configure_keep_is_in_the_keep_menu_and_a_macs_app_menu(
     app_menu = window.app_menu_configure_action
     if mac:
         assert app_menu is not None
-        assert app_menu.text() == "Configure keep\u2026"
-        assert app_menu.menuRole() == QAction.MenuRole.ApplicationSpecificRole
+        assert app_menu.text() == "Preferences\u2026"
+        assert app_menu.menuRole() == QAction.MenuRole.PreferencesRole
         assert app_menu.shortcut() == QKeySequence("Ctrl+,")
         assert window.configure_action.shortcut().isEmpty()
         shortcut_owner = app_menu
@@ -299,7 +299,8 @@ def test_configure_keep_is_in_the_keep_menu_and_a_macs_app_menu(
         shortcut_owner = window.configure_action
     keep_rows = dict(menu_shortcuts(window))["Keep"]
     native = QKeySequence("Ctrl+,").toString(QKeySequence.SequenceFormat.NativeText)
-    assert [row for row in keep_rows if row[1] == "Configure keep"] == [(native, "Configure keep")]
+    command = "Preferences" if mac else "Configure keep"
+    assert [row for row in keep_rows if row[0] == native] == [(native, command)]
     shortcut_owner.trigger()
     config = window.keep_config
     assert config is not None

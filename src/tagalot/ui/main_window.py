@@ -154,7 +154,7 @@ logger = logging.getLogger(__name__)
 WINDOW_TITLE = "Tagalot"
 
 CONFIGURE_SHORTCUT = QKeySequence("Ctrl+,")
-"""Configure keep…: ⌘, on a Mac (in the app menu), Ctrl+, elsewhere (#653)."""
+"""Configure keep…: ⌘, on a Mac (the app menu's Preferences...), Ctrl+, elsewhere (#653)."""
 
 
 def uses_app_menu() -> bool:
@@ -258,12 +258,12 @@ class MainWindow(QMainWindow):
         # app menu as a bare "Preferences..." (#653).
         self.configure_action.setMenuRole(QAction.MenuRole.NoRole)
         keep_menu.addAction(self.configure_action)
-        # A Mac's settings live in the app menu, under ⌘,; elsewhere Ctrl+, is on the Keep
-        # menu's command (#653).
+        # A Mac's settings live in the app menu as Preferences..., under ⌘, (Qt titles
+        # that item itself); elsewhere Ctrl+, is on the Keep menu's command (#653).
         self.app_menu_configure_action: QAction | None = None
         if uses_app_menu():
-            self.app_menu_configure_action = QAction("Configure keep…", self)
-            self.app_menu_configure_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+            self.app_menu_configure_action = QAction("Preferences\u2026", self)
+            self.app_menu_configure_action.setMenuRole(QAction.MenuRole.PreferencesRole)
             self.app_menu_configure_action.setShortcut(CONFIGURE_SHORTCUT)
             self.app_menu_configure_action.setToolTip(self.configure_action.toolTip())
             self.app_menu_configure_action.triggered.connect(self.configure_keep)
