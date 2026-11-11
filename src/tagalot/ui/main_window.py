@@ -8,6 +8,7 @@ scan progress. Views that arrive in later milestones show a labelled placeholder
 import logging
 import os
 import posixpath
+import sys
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -152,6 +153,15 @@ logger = logging.getLogger(__name__)
 
 WINDOW_TITLE = "Tagalot"
 
+CONFIGURE_SHORTCUT = QKeySequence("Ctrl+,")
+"""Configure keep…: ⌘, on a Mac (in the app menu), Ctrl+, elsewhere (#653)."""
+
+
+def uses_app_menu() -> bool:
+    """Whether settings belong in the app menu, as on a Mac (#653)."""
+    return sys.platform == "darwin"
+
+
 SUMMARY_DELAY_MS = 150
 """How long the Tags panel's selection summary waits for the selection to settle."""
 
@@ -244,7 +254,22 @@ class MainWindow(QMainWindow):
         self.configure_action = QAction("Configure keep\u2026", self)
         self.configure_action.setToolTip("The folders this keep watches, and their status")
         self.configure_action.triggered.connect(self.configure_keep)
+        # Kept in the Keep menu: Qt's text heuristic would otherwise move it into a Mac's
+        # app menu as a bare "Preferences..." (#653).
+        self.configure_action.setMenuRole(QAction.MenuRole.NoRole)
         keep_menu.addAction(self.configure_action)
+        # A Mac's settings live in the app menu, under ⌘,; elsewhere Ctrl+, is on the Keep
+        # menu's command (#653).
+        self.app_menu_configure_action: QAction | None = None
+        if uses_app_menu():
+            self.app_menu_configure_action = QAction("Configure keep…", self)
+            self.app_menu_configure_action.setMenuRole(QAction.MenuRole.ApplicationSpecificRole)
+            self.app_menu_configure_action.setShortcut(CONFIGURE_SHORTCUT)
+            self.app_menu_configure_action.setToolTip(self.configure_action.toolTip())
+            self.app_menu_configure_action.triggered.connect(self.configure_keep)
+            keep_menu.addAction(self.app_menu_configure_action)  # Qt moves it to the app menu
+        else:
+            self.configure_action.setShortcut(CONFIGURE_SHORTCUT)
         self.keep_config: KeepConfigWindow | None = None
         self.export_keep_action = QAction("Export keep\u2026", self)
         self.export_keep_action.setToolTip(
