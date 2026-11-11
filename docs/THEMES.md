@@ -20,6 +20,8 @@ A theme is **one Python file** with **one `Theme` subclass**, importing only `ta
    | macOS | `~/Library/Application Support/tagalot/themes` |
    | Linux | `~/.local/share/tagalot/themes` |
 
+   To get there, choose **Keep → Show your Tagalot folder** in any keep: it opens the folder in your file manager with `themes` selected (made if there isn't one yet).
+
    The template ([`src/tagalot/themes/template.py`](../src/tagalot/themes/template.py)) already works: it makes a **Group** of each folder under a root and an **Item** of each file in it, and reads text files' first lines as headlines. Every place to change is marked `TODO`.
 
 2. **Check it** as you edit, without opening a window:

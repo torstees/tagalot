@@ -56,6 +56,7 @@ from tagalot.core.handlers import (
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import HandlerOverride, save_settings
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.themes import loader
 from tagalot.ui.workers import run_in_pool
 
 logger = logging.getLogger(__name__)
@@ -417,6 +418,26 @@ class FileOpener(QObject):
 
         run_in_pool(lambda: os.path.exists(file.path), on_done=shown, pool=self._pool)
 
+    def show_user_folder(self) -> None:
+        """Show the user's Tagalot folder (:func:`user_folder`) in the file manager, its
+        themes folder selected, made first if there's none yet (#651)."""
+        themes = loader.default_user_themes_dir()
+
+        def made(_: None) -> None:
+            if shiboken6.isValid(self):
+                self.reveal(FileToOpen(0, str(themes), True))
+
+        def failed(error: BaseException) -> None:
+            if shiboken6.isValid(self):
+                self.message.emit(f"Couldn't make {themes}: {error}")
+
+        run_in_pool(
+            lambda: themes.mkdir(parents=True, exist_ok=True),
+            on_done=made,
+            on_error=failed,
+            pool=self._pool,
+        )
+
     def open_with(self, file: FileToOpen) -> None:
         """A program chosen this once: Windows' own dialog, else a program to pick."""
         if PLATFORM == "win32":
@@ -434,6 +455,12 @@ class FileOpener(QObject):
             logger.warning("Couldn't start %s %s", command.program, command.args)
             self.message.emit(f"Couldn't start {command.program}.")
         return bool(started)
+
+
+def user_folder() -> Path:
+    """The user's Tagalot folder: their themes, color schemes, and (except on Linux, where
+    it's under ``~/.config``) ``settings.toml``; ``%LOCALAPPDATA%\\tagalot`` on Windows."""
+    return loader.default_user_themes_dir().parent
 
 
 def _windows_open_with(path: str, hwnd: int) -> bool:

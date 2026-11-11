@@ -261,6 +261,13 @@ class MainWindow(QMainWindow):
         self.import_keep_action.triggered.connect(self.import_keep_file)
         keep_menu.addAction(self.import_keep_action)
         keep_menu.addSeparator()
+        self.user_folder_action = QAction("Show your Tagalot folder", self)
+        self.user_folder_action.setToolTip(
+            "Your themes, color schemes, and settings, in the file manager: add or edit "
+            "a theme there (#651)"
+        )
+        keep_menu.addAction(self.user_folder_action)
+        keep_menu.addSeparator()
         if on_open_other is not None:
             self.open_other_action = QAction("Open another keep…", self)
             self.open_other_action.setShortcut(QKeySequence.StandardKey.Open)
@@ -272,6 +279,7 @@ class MainWindow(QMainWindow):
         self.tag_actions = TagActions(session, self)
         self.files = FileOpener(session, None, self)
         self.files.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
+        self.user_folder_action.triggered.connect(self.files.show_user_folder)
         self.archives = ArchiveActions(session, None, self)
         self.archives.message.connect(lambda text: self.statusBar().showMessage(text, 8000))
         self.archives.changed.connect(self._tags_changed)  # items may hide or come back
@@ -2716,6 +2724,7 @@ class MainWindow(QMainWindow):
             if self.lookups is not None:
                 window.online_allowed.connect(self.lookups.everything)
             window.contents_changed.connect(self.update_contents)
+            window.show_user_folder.connect(self.files.show_user_folder)
             self.keep_config = window
         self.keep_config.show()
         self.keep_config.raise_()

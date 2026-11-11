@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QFocusEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 from pytestqt.qtbot import QtBot
 from sqlalchemy import func, select
 
@@ -237,3 +237,33 @@ def test_scan_now_waits_for_the_edit_it_ends(
     with session.reader.connect() as conn:
         skipped = conn.scalars(select(Resource.relpath).where(Resource.skipped.is_(True))).all()
     assert sorted(skipped) == ["Untagged", "Untagged/03 - Lonely Road.mp3"]
+
+
+# --- your Tagalot folder (#651) ---
+
+
+def test_show_your_tagalot_folder(
+    qtbot: QtBot,
+    window: MainWindow,
+    config: KeepConfigWindow,
+    private_user_folders: Path,
+    nothing_is_launched: list[tuple[str, str]],
+) -> None:
+    # The Keep tab says where it is, and its button (or the Keep menu's command) shows it in
+    # the file manager with the themes folder selected, made first when there's none.
+    themes = private_user_folders / "themes"
+    label = config.findChild(QLabel, "user_folder")
+    button = config.findChild(QPushButton, "show_user_folder")
+    assert label is not None
+    assert button is not None
+    assert label.text() == str(private_user_folders)
+    assert not themes.exists()
+    button.click()
+    qtbot.waitUntil(lambda: bool(nothing_is_launched), timeout=5000)
+    assert nothing_is_launched == [("reveal", str(themes))]
+    assert themes.is_dir()
+
+    nothing_is_launched.clear()
+    window.user_folder_action.trigger()
+    qtbot.waitUntil(lambda: bool(nothing_is_launched), timeout=5000)
+    assert nothing_is_launched == [("reveal", str(themes))]
