@@ -129,6 +129,8 @@ Where Tagalot looks for themes of your own (see [the theme guide](../THEMES.md))
 | macOS | `~/Library/Application Support/tagalot/themes` |
 | Linux | `~/.local/share/tagalot/themes` |
 
+**Keep → Show your Tagalot folder** (or **Show** on Keep configuration's Keep tab) opens the folder holding it in the file manager, making `themes` first if there isn't one yet.
+
 ## Upgrading
 
 A keep records its format (`format_version`). A newer Tagalot that needs a newer format asks before upgrading a keep, and first copies `keep.db` to `keep.db.v<old format>-<date and time>.bak` beside it. An older Tagalot can't open a keep a newer one upgraded: keep the backup if you might go back. A theme whose version changed may read every file again once after the upgrade.

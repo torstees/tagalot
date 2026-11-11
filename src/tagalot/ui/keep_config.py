@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import select
 
+from tagalot.core import settings as settings_file
 from tagalot.core.color_schemes import (
     BUILT_IN,
     CUSTOM,
@@ -112,6 +113,7 @@ from tagalot.themes.loader import MAX_THUMBNAIL_SIZE
 from tagalot.ui.appearance import apply_colors, starting_colors
 from tagalot.ui.backups_tab import BackupsTab
 from tagalot.ui.colors import ERROR, css
+from tagalot.ui.file_actions import user_folder
 from tagalot.ui.folder_picker import choose_folder
 from tagalot.ui.font_picker import FontChoice, FontPicker
 from tagalot.ui.fonts import PlaceFont, apply_fonts, look_of
@@ -220,6 +222,8 @@ class KeepConfigWindow(QWidget):
     clear_thumbnails_requested = Signal()
     online_allowed = Signal()
     contents_changed = Signal()
+    show_user_folder = Signal()
+    """Show your Tagalot folder in the file manager (#651)."""
     """Contents search was turned on, off, or switched: the window builds the index and
     reads what it hasn't."""
     """Online lookups were just turned on: the window looks up what it hasn't yet."""
@@ -386,6 +390,31 @@ class KeepConfigWindow(QWidget):
 
     # --- tabs ---
 
+    def _user_folder_row(self) -> QWidget:
+        """Where the user's themes, color schemes, and settings are, with a button that
+        shows it in the file manager (#651). It's every keep's, not this one's."""
+        folder = user_folder()
+        path = QLabel(str(folder))
+        path.setObjectName("user_folder")
+        path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.user_folder_button = QPushButton("Show")
+        self.user_folder_button.setObjectName("show_user_folder")
+        self.user_folder_button.setToolTip(
+            "Show it in the file manager. Your themes (themes), color schemes (color_schemes), "
+            "and settings (settings.toml) are here, for every keep: add or edit a theme file "
+            "in themes, then open the keep again."
+        )
+        self.user_folder_button.clicked.connect(self.show_user_folder.emit)
+        row = QWidget()
+        line = QHBoxLayout(row)
+        line.setContentsMargins(0, 0, 0, 0)
+        line.addWidget(path, 1)
+        line.addWidget(self.user_folder_button)
+        settings = settings_file.default_settings_path()
+        if settings.parent != folder:  # Linux: settings are under ~/.config
+            path.setText(f"{folder}\nSettings: {settings}")
+        return row
+
     def _thumbnails_tab(self) -> QWidget:
         theme_size = self.session.theme.thumbnail_max
         self.theme_size = QCheckBox(f"The theme's size ({theme_size} px)")
@@ -454,6 +483,7 @@ class KeepConfigWindow(QWidget):
         form.addRow("Holds:", types)
         if about.text():
             form.addRow("", about)
+        form.addRow("Your Tagalot folder:", self._user_folder_row())
         self.keep_assets = QLineEdit()
         self.keep_assets.setObjectName("keep_assets")
         self.keep_assets.setPlaceholderText("None: only beside each file")
