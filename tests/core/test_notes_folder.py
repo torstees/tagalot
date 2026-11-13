@@ -218,9 +218,11 @@ def test_typing_a_note(env: Env) -> None:
     assert note_type(names, "actors", "Clips") == (actor, None)  # the key wins
     assert note_type(names, None, "Notes/ACTORS") == (actor, None)
     assert note_type(names, None, "") == (None, None)  # any type
-    # The nearest folder naming a type (#656): a type's notes can be sorted into subfolders.
+    # The outermost folder naming a type (#656): everything in a type's folder is that
+    # type's, however deep, even in a subfolder named like another type.
     assert note_type(names, None, "Actors/Family/1970s") == (actor, None)
-    assert note_type(names, None, "Old/Studios/Actors/Family") == (actor, None)
+    assert note_type(names, None, "Actors/Studios/Family") == (actor, None)
+    assert note_type(names, None, "Old/Actors/Family") == (actor, None)
     assert note_type(names, None, "Family/Friends") == (None, None)
     found, problem = note_type(names, "Directors", "Actors")
     assert found == actor

@@ -8,9 +8,9 @@ to an item, and :func:`apply_folder_notes` (a DB writer job) gives each matched 
 note, with the same rules as a folder note's (``core.notes.apply_note``).
 
 - **Type** (:func:`note_type`): ``tagalot-type`` (a type's name or label, singular or
-  plural, ignoring case and accents), else the nearest folder above the note (inside the
-  notes folder) named the same way, so a type's notes can be sorted into subfolders
-  (``People/Family/Alice.md``, #656), else any type. The key wins.
+  plural, ignoring case and accents), else the outermost folder above the note (inside
+  the notes folder) named the same way, so everything in a type's folder is that type's,
+  however deep (``People/Family/Alice.md``, #656), else any type. The key wins.
 - **Item:** the note's title (``title``, else its file name) or one of its ``aliases``
   equals an item's title, ignoring case and accents. A note matching one item is its note,
   unless the item has a folder note (which wins) or an earlier note, by path, matched it
@@ -86,7 +86,7 @@ def type_names(schema: ThemeSchema) -> dict[str, str]:
 def note_type(
     names: Mapping[str, str], value: object, folder: str
 ) -> tuple[str | None, str | None]:
-    """The type a note is for, from its ``tagalot-type`` ``value`` (if any), else the nearest
+    """The type a note is for, from its ``tagalot-type`` ``value`` (if any), else the outermost
     of its ``folder``'s folders (inside the notes folder; ``""``: the notes folder itself)
     that names a type (``People/Family``: People, #656); with a problem to report when the
     key names no type."""
@@ -100,9 +100,9 @@ def note_type(
 
 
 def folder_type(names: Mapping[str, str], folder: str) -> str | None:
-    """The type the nearest of ``folder``'s folders names (``"People/Family"``: People;
-    ``""`` or none naming one: ``None``, any type)."""
-    for part in reversed(folder.split("/")):
+    """The type the outermost of ``folder``'s folders names (``"People/Family"`` and
+    ``"People/Movies"``: People; ``""`` or none naming one: ``None``, any type)."""
+    for part in folder.split("/"):
         if part and (found := names.get(search_key(part))) is not None:
             return found
     return None
