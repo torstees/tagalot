@@ -8,8 +8,9 @@ to an item, and :func:`apply_folder_notes` (a DB writer job) gives each matched 
 note, with the same rules as a folder note's (``core.notes.apply_note``).
 
 - **Type** (:func:`note_type`): ``tagalot-type`` (a type's name or label, singular or
-  plural, ignoring case and accents), else the note's folder's name the same way, else any
-  type. The key wins.
+  plural, ignoring case and accents), else the nearest folder above the note (inside the
+  notes folder) named the same way, so a type's notes can be sorted into subfolders
+  (``People/Family/Alice.md``, #656), else any type. The key wins.
 - **Item:** the note's title (``title``, else its file name) or one of its ``aliases``
   equals an item's title, ignoring case and accents. A note matching one item is its note,
   unless the item has a folder note (which wins) or an earlier note, by path, matched it
@@ -21,6 +22,7 @@ import logging
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import Connection, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -84,18 +86,32 @@ def type_names(schema: ThemeSchema) -> dict[str, str]:
 def note_type(
     names: Mapping[str, str], value: object, folder: str
 ) -> tuple[str | None, str | None]:
-    """The type a note is for, from its ``tagalot-type`` ``value`` (if any), else the name of
-    its ``folder`` (``""``: the notes folder itself); with a problem to report when the key
-    names no type."""
+    """The type a note is for, from its ``tagalot-type`` ``value`` (if any), else the nearest
+    of its ``folder``'s folders (inside the notes folder; ``""``: the notes folder itself)
+    that names a type (``People/Family``: People, #656); with a problem to report when the
+    key names no type."""
     problem = None
     if value is not None:
         text = as_text(value)
         if text and (found := names.get(search_key(text))) is not None:
             return found, None
         problem = f"{TYPE_KEY}: {text!r} is no type of this keep"
-    if folder:
-        return names.get(search_key(folder.rpartition("/")[2])), problem
-    return None, problem
+    return folder_type(names, folder), problem
+
+
+def folder_type(names: Mapping[str, str], folder: str) -> str | None:
+    """The type the nearest of ``folder``'s folders names (``"People/Family"``: People;
+    ``""`` or none naming one: ``None``, any type)."""
+    for part in reversed(folder.split("/")):
+        if part and (found := names.get(search_key(part))) is not None:
+            return found
+    return None
+
+
+def _inside(relpath: str, notes_path: str) -> str:
+    """The folder a note at ``relpath`` is in, inside the notes folder at ``notes_path``."""
+    folder = posixpath.dirname(relpath)
+    return folder[len(notes_path) :].strip("/") if notes_path else folder
 
 
 def note_meta(
@@ -108,9 +124,7 @@ def note_meta(
     title = as_text(front.get("title")) or stem
     raw = front.get("aliases")
     aliases = raw if isinstance(raw, list | tuple) else [raw] if raw is not None else []
-    folder = posixpath.dirname(relpath)
-    inside = folder[len(notes_path) :].strip("/") if notes_path else folder
-    type_id, problem = note_type(names, front.get(TYPE_KEY), inside)
+    type_id, problem = note_type(names, front.get(TYPE_KEY), _inside(relpath, notes_path))
     meta = FolderNoteMeta(
         title, tuple(a for x in aliases if (a := as_text(x)) is not None), type_id
     )
@@ -210,6 +224,12 @@ def plan_folder_notes(
             logger.warning("Cannot read note %s in root %s: %s", file.relpath, root_id, e)
             return None
 
+    def stored_meta(row: Any, relpath: str) -> FolderNoteMeta:
+        # No type stored: no tagalot-type named one, so its folders give it, as they are
+        # now (a note stored before #656 finds a type folder above its own, unread).
+        type_id = row.type or folder_type(names, _inside(relpath, notes_path))
+        return FolderNoteMeta(row.title, tuple(row.aliases), type_id)
+
     for file, status in files:
         if status == ResourceStatus.MISSING:
             continue  # gone: its item lets it go
@@ -217,14 +237,14 @@ def plan_folder_notes(
         if row is not None and (
             status != ResourceStatus.OK or (row.size, row.mtime_ns) == (file.size, file.mtime_ns)
         ):
-            metas[file.resource_id] = FolderNoteMeta(row.title, tuple(row.aliases), row.type)
+            metas[file.resource_id] = stored_meta(row, file.relpath)
             continue
         if status != ResourceStatus.OK:
             continue
         text = read(file)
         if text is None:
             if row is not None:
-                metas[file.resource_id] = FolderNoteMeta(row.title, tuple(row.aliases), row.type)
+                metas[file.resource_id] = stored_meta(row, file.relpath)
             continue
         texts[file.resource_id] = text
         metas[file.resource_id], problems = note_meta(text, file.relpath, notes_path, names)
