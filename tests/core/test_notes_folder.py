@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Connection, Engine, select, update
 
 from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import (
@@ -218,6 +218,12 @@ def test_typing_a_note(env: Env) -> None:
     assert note_type(names, "actors", "Clips") == (actor, None)  # the key wins
     assert note_type(names, None, "Notes/ACTORS") == (actor, None)
     assert note_type(names, None, "") == (None, None)  # any type
+    # The outermost folder naming a type (#656): everything in a type's folder is that
+    # type's, however deep, even in a subfolder named like another type.
+    assert note_type(names, None, "Actors/Family/1970s") == (actor, None)
+    assert note_type(names, None, "Actors/Studios/Family") == (actor, None)
+    assert note_type(names, None, "Old/Actors/Family") == (actor, None)
+    assert note_type(names, None, "Family/Friends") == (None, None)
     found, problem = note_type(names, "Directors", "Actors")
     assert found == actor
     assert problem == "tagalot-type: 'Directors' is no type of this keep"
@@ -365,3 +371,30 @@ def test_keep_toml_and_the_notes_folder(tmp_path: Path) -> None:
     assert without_root(config, "n").notes_root == "films"
     assert with_notes_folder(config, None).notes_root is None
     assert clean_relpath("./Notes//Actors/") == "Notes/Actors"
+
+
+def test_a_types_notes_in_subfolders(env: Env) -> None:
+    # Notes/Studios/Iceland/Aurora.md is a studio's note (#656): the clip with an "Aurora"
+    # alias matches only when the type is any.
+    env.write("Notes/Studios/Iceland/Aurora.md", "---\naliases: [Heat]\n---\nA studio.\n")
+    env.write("Notes/Actors/Family/Al Pacino.md", PACINO)
+    env.scan()
+    assert env.rows() == {
+        "Notes/Studios/Iceland/Aurora.md": (1, True, "Aurora"),
+        "Notes/Actors/Family/Al Pacino.md": (1, True, "Al Pacino"),
+    }
+    assert env.item("Aurora")["body"] == "A studio."
+
+
+def test_notes_stored_before_subfolders_had_a_type(env: Env) -> None:
+    # A note stored with no type (as before #656, its folder naming none) takes the type its
+    # folders name at the next scan, without being read again.
+    env.write("Notes/Studios/Iceland/Aurora.md", "---\naliases: [Heat]\n---\nA studio.\n")
+    env.scan()
+
+    def forget_types(conn: Connection) -> None:
+        conn.execute(update(NotesFolderNote).values(type=None, matches=2, item_id=None))
+
+    env.writer.submit(forget_types).result()
+    env.scan()
+    assert env.rows()["Notes/Studios/Iceland/Aurora.md"] == (1, True, "Aurora")

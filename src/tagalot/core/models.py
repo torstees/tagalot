@@ -729,8 +729,8 @@ class NotesFolderNote(Base):
     """The note's ``title``, else its file name without the extension."""
     aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     type: Mapped[str | None]
-    """The entity type the note is for (``tagalot-type``, else its subfolder); ``None``:
-    any."""
+    """The entity type the note is for (``tagalot-type``, else the outermost of its folders
+    naming one, #656); ``None``: any."""
     matches: Mapped[int] = mapped_column(default=0)
     """How many items it matched when last matched."""
     item_id: Mapped[int | None] = mapped_column(

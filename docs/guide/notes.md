@@ -42,11 +42,13 @@ Items with no folder of their own (a person, an author, a music artist) take the
 Notes/
   Actors/
     Al Pacino.md        ← the note for the actor "Al Pacino"
+    Family/
+      Alice.md          ← still an actor's note: everything in Actors/ is, however deep
   Keanu.md              ← tagalot-type: actor, aliases: [Keanu Reeves]
 ```
 
 - **Which item:** the note's `title`, else its file name, or one of its `aliases`, matches the item's title. Case and accents don't matter (`Leon.md` finds "Léon").
-- **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the name of the folder it's in (`Actors/`), else any kind. The key wins, so a note in the wrong folder can say what it's for. The key is read only in the notes folder: it can't turn a note inside an item's folder into a note for something else.
+- **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the outermost folder it's in whose name is a kind (`Actors/`), else any kind. Everything in a kind's folder is that kind's, however deep, so its notes can be sorted into subfolders of your own: `Actors/Family/Al Pacino.md` and `Actors/1970s/Movies/Al Pacino.md` are actors' notes. The key wins, so a note in the wrong folder can say what it's for. The key is read only in the notes folder: it can't turn a note inside an item's folder into a note for something else.
 - **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.
 
