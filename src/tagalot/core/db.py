@@ -346,6 +346,17 @@ def _v35_note_paths(conn: Connection) -> None:
     )
 
 
+def _v36_note_titles(conn: Connection) -> None:
+    """Format 37: a notes-folder note that finds its item by path or aliases names it with
+    its title (#662). Notes-folder notes are given to their items again at the next scan."""
+    conn.execute(
+        text(
+            "UPDATE entity_note SET size = NULL "
+            "WHERE resource_id IN (SELECT resource_id FROM notes_folder_note)"
+        )
+    )
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -382,6 +393,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     33: _v33_linked_folders,
     34: _v34_broken_links,
     35: _v35_note_paths,
+    36: _v36_note_titles,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

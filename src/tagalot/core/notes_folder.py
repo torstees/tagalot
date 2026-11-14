@@ -17,6 +17,9 @@ note, with the same rules as a folder note's (``core.notes.apply_note``).
   title aside. A note matching one item is its note,
   unless the item has a folder note (which wins) or an earlier note, by path, matched it
   first. The rest are listed in Triage (``notes_folder_note``).
+- **Renaming** (#662): a note that can find its item another way, by ``path`` or one
+  of its ``aliases``, names it with its ``title`` (as a folder note does; never over
+  the user's). Without either, the title only finds the item.
 - **Offline isn't gone:** an offline note keeps its item; a missing one lets it go.
 """
 
@@ -48,7 +51,7 @@ from tagalot.core.notes import (
     NoteText,
     apply_note,
     map_note,
-    primary_files,
+    naming_files,
     read_note,
 )
 from tagalot.core.own_notes import applied_own_fields
@@ -195,6 +198,8 @@ class FolderNotesPlan:
     """Notes no longer there (missing, skipped, outside the folder): their rows go."""
     give: dict[int, tuple[NoteFile, NoteText]] = field(default_factory=dict)
     """Item -> the note it now has, read."""
+    renames: set[int] = field(default_factory=set)
+    """Items whose note names them with its ``title`` (#662): it has a path or aliases."""
     take: list[int] = field(default_factory=list)
     """Items whose notes-folder note goes."""
     warnings: list[IngestWarning] = field(default_factory=list)
@@ -336,6 +341,9 @@ def plan_folder_notes(
         text = texts.get(rid) or read(file)
         if text is not None:
             plan.give[item] = (file, text)
+            meta = metas[rid]
+            if meta.path is not None or meta.aliases:  # it finds the item otherwise
+                plan.renames.add(item)
     plan.take = [item for item, rid in current.items() if item not in owner]
     return plan
 
@@ -415,9 +423,16 @@ def apply_folder_notes(
             ]
         folder = folders.get(item)
         if apply_note(
-            ctx, entity, values, file, folder_id=folder, folder_note=False, root_id=plan.root_id
+            ctx,
+            entity,
+            values,
+            file,
+            folder_id=folder,
+            folder_note=False,
+            root_id=plan.root_id,
+            renames=item in plan.renames,
         ):
-            reread += primary_files(conn, schema, entity)
+            reread += naming_files(conn, schema, entity)
     ctx.flush()
     return reread, warnings + ctx.warnings
 

@@ -58,6 +58,16 @@ Notes/
   ```
 
   That's the Folder `Home Movies/Holidays/Alice`, not `Home Movies/Alice`. A file works the same way (`path: Crime/Heat (1995).mkv` picks one of two movies called Heat), and a leading `/` means from the top of the watched folder (`path: /Alice`). Folder and file names are matched whole, ignoring case, and `\` works as well as `/`. A `path:` that ends no item's path, or several, is listed in Triage → Markdown. Only notes in the notes folder read `path:`; elsewhere it's an Extra field as before.
+- **Renaming an item:** a note that finds its item by `path:` or by one of its `aliases` gives the item its `title`, as a note inside a folder does. That's how to rename a collection from an `.nfo`'s `<set>`, which has no folder of its own:
+
+  ```markdown
+  ---
+  title: Alien
+  aliases: [Alien Collection]
+  ---
+  ```
+
+  The collection "Alien Collection" is then called **Alien**, and stays that way at later scans. A note with neither only *finds* its item by its `title` or file name, and never renames it. A title you typed in Tagalot wins over a note's, and taking the `title` out of the note gives the item back the name its files give.
 - **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the outermost folder it's in whose name is a kind (`Actors/`), else any kind. Everything in a kind's folder is that kind's, however deep, so its notes can be sorted into subfolders of your own: `Actors/Family/Al Pacino.md` and `Actors/1970s/Movies/Al Pacino.md` are actors' notes. The key wins, so a note in the wrong folder can say what it's for. The key is read only in the notes folder: it can't turn a note inside an item's folder into a note for something else.
 - **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.

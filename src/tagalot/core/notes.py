@@ -45,6 +45,7 @@ from tagalot.core.formats import parse_duration
 from tagalot.core.ingest import TITLE, IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
+    EntityContains,
     EntityNote,
     EntityResource,
     FieldProvenance,
@@ -270,12 +271,14 @@ def apply_note(
     folder_id: int | None,
     folder_note: bool,
     root_id: str | None = None,
+    renames: bool = False,
 ) -> bool:
     """Give ``entity`` what its note says (``None``: it has none now), replacing what an
     earlier note gave; returns whether its files should be read again, because the note no
     longer gives a title or field it gave before. A note typed in Tagalot (#383) gives way
     to a note file, reported (with the file's ``root_id``) when its text differs, and is
-    kept while there is none."""
+    kept while there is none. ``renames``: its title names the item, as a folder note's
+    does (a notes-folder note that finds its item by path or aliases, #662)."""
     conn = ctx.conn
     entity_table = ctx.schema.by_type_id(entity.type)
     if values is not None and values.own:  # Extra fields now under own fields' keys (#584)
@@ -300,7 +303,7 @@ def apply_note(
     changed = False
 
     # The title: a folder note's wins over the folder's name, never over the user's.
-    if folder_note and given.title and sources.get(TITLE) != FieldSource.USER:
+    if (folder_note or renames) and given.title and sources.get(TITLE) != FieldSource.USER:
         if title != given.title:
             conn.execute(update(Entity).where(Entity.id == entity.id).values(title=given.title))
             title, changed = given.title, True
@@ -669,6 +672,30 @@ def primary_files(conn: Connection, schema: ThemeSchema, entity: EntityRef) -> l
         conn.scalars(
             select(EntityResource.resource_id).where(
                 EntityResource.entity_id == entity.id, EntityResource.role == primary.name
+            )
+        )
+    )
+
+
+def naming_files(conn: Connection, schema: ThemeSchema, entity: EntityRef) -> list[int]:
+    """The files to read again to restore what a notes-folder note gave an item: its own
+    (:func:`primary_files`), else, for an item with none (a set's collection, an actor),
+    every file of the items it holds or is linked to, one of which made it (a movie's
+    ``.nfo`` names its set; #662)."""
+    own = primary_files(conn, schema, entity)
+    if own:
+        return own
+    linked = set(
+        conn.scalars(select(EntityContains.child_id).where(EntityContains.parent_id == entity.id))
+    )
+    for rel in schema.relationships.values():
+        a, b = rel.table.c.a_id, rel.table.c.b_id
+        linked |= set(conn.scalars(select(b).where(a == entity.id)))
+        linked |= set(conn.scalars(select(a).where(b == entity.id)))
+    return sorted(
+        set(
+            conn.scalars(
+                select(EntityResource.resource_id).where(EntityResource.entity_id.in_(linked))
             )
         )
     )
