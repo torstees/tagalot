@@ -8,10 +8,11 @@
 └────────┘  Show more · Open note
 ```
 
-The body is rendered Markdown (``ui/markdown_doc.py``, #553). Collapsed, it shows only its
-main text (no headings, pictures, tables, or code blocks), capped at the room beside the
-picture; **Show more** shows all of it, styled, up to half the window's height, past
-which it scrolls. **Show more** shows whenever the collapsed note leaves something out.
+The body is rendered Markdown (``ui/markdown_doc.py``, #553). Collapsed, it shows styled,
+cut to the room beside the picture (#664); or, with ``[notes] collapsed = "plain"``,
+only its main text (no headings, pictures, tables, or code blocks), capped the same way.
+**Show more** shows all of it, styled, up to half the window's height, past which it
+scrolls. **Show more** shows whenever the collapsed note leaves something out.
 Its pictures are only those read in a worker
 (:func:`~tagalot.core.note_markdown.read_pictures`): the document never loads anything
 itself, so the GUI thread never touches a disk or a share. Links open in the browser, or,
@@ -208,10 +209,12 @@ class NoteView(QWidget):
         """Whether the note is typed here (the item has no note file)."""
         self.cap = MIN_CAP
         self.expanded = False
+        self.plain_collapsed = False
+        """Collapsed, only the main text (``[notes] collapsed = "plain"``, #664)."""
         self.full = QTextDocument(self.body)
         """The note, all of it, styled (shown expanded)."""
         self.short = QTextDocument(self.body)
-        """Its main text only (shown collapsed)."""
+        """Shown collapsed: the note itself, or its main text only."""
         self.hidden = Hidden()
         """What the collapsed note leaves out."""
         self._window: QWidget | None = None
@@ -329,8 +332,11 @@ class NoteView(QWidget):
         old = (self.full, self.short)
         palette = self.palette()
         self.full = render(renderable(self.text), palette, self.body, self.body.font())
-        self.short, self.hidden = collapsed(self.full, palette)
-        if not self.hidden:
+        if self.plain_collapsed:
+            self.short, self.hidden = collapsed(self.full, palette)
+        else:  # styled, cut to the room it has (#664)
+            self.short, self.hidden = self.full, Hidden()
+        if not self.hidden and self.short is not self.full:
             self.short.deleteLater()
             self.short = self.full
         self._pictures_width = -1
@@ -340,6 +346,12 @@ class NoteView(QWidget):
             if document not in (self.full, self.short):
                 document.deleteLater()
         self._fit()
+
+    def set_plain_collapsed(self, plain: bool) -> None:
+        """Show the collapsed note as its main text only (``True``), or styled."""
+        if plain != self.plain_collapsed:
+            self.plain_collapsed = plain
+            self._render()
 
     def set_cap(self, cap: int) -> None:
         """How tall the body may be before **Show more**."""

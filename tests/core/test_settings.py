@@ -257,6 +257,26 @@ def test_file_manager(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     assert "must be a string" in caplog.text
 
 
+def test_collapsed_notes(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """``[notes] collapsed`` (#664): styled unless "plain"; written only when plain, beside
+    the other notes settings."""
+    assert "collapsed" not in dump_settings(Settings())
+    path = tmp_path / "settings.toml"
+    save_settings(Settings(note_plain_collapsed=True, note_ignore_keys=["mood"]), path)
+    with path.open("rb") as f:
+        assert tomllib.load(f)["notes"] == {"ignore_keys": ["mood"], "collapsed": "plain"}
+    loaded = load_settings(path)
+    assert loaded.note_plain_collapsed
+    assert loaded.note_ignore_keys == ["mood"]
+    path.write_text('[notes]\ncollapsed = "styled"\n', encoding="utf-8")
+    assert not load_settings(path).note_plain_collapsed
+    path.write_text('[notes]\ncollapsed = "tiny"\n', encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        assert not load_settings(path).note_plain_collapsed
+    assert "collapsed must be" in caplog.text
+    assert "unknown key" not in caplog.text
+
+
 def test_last_save_folder(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     assert "last_save_folder" not in dump_settings(Settings())
     path = tmp_path / "settings.toml"

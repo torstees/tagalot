@@ -91,6 +91,9 @@ def test_the_note_is_shown_under_the_title(
 ) -> None:
     page = _page(qtbot, window, session)
     note = page.note_view
+    assert "\N{OBJECT REPLACEMENT CHARACTER}" in note.body.toPlainText()  # styled (#664)
+    window.plain_notes_action.setChecked(True)  # Short Notes as Plain Text
+    assert session.settings.note_plain_collapsed
     text = note.body.toPlainText()
     assert text.startswith("Painted skies and dusk light, since 2009.")  # no title heading
     assert "Paragraph 29" in text
