@@ -44,7 +44,7 @@ Under the navigation on the left, the **preview** shows the selected item: its t
 
 On the right: the tag tree, with a check for each tag showing whether the selected items have it (all, some, or none). See [Tags](tags.md). It's a panel you can move, float, or close (**View → Tags**).
 
-Beside it, the **Details** tab shows the selected item's fields, or on an item's page that item's ([The Details tab](item-pages.md#the-details-tab)).
+Beside it, the **Details** tab shows the selected item's fields, or on an item's page that item's, unless one item is selected below it ([The Details tab](item-pages.md#the-details-tab)).
 
 ## The status bar
 

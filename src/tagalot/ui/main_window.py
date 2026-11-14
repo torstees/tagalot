@@ -962,21 +962,39 @@ class MainWindow(QMainWindow):
     # --- the Details tab (#468) ---
 
     def _show_details_of(self, page: QWidget | None, ids: list[int] | None) -> None:
-        """Show in the Details tab the current item page's sections, or, on a search, the
-        one selected item's (``ids``: what is selected there)."""
+        """Show in the Details tab the one item selected (``ids``: what is selected on
+        ``page``), on a search or in an item page's contents (#665); else, on an item's
+        page, its sections."""
         if isinstance(page, DetailPage):
-            self.details_dock.show_panel(page, page.details)
+            if ids is not None and len(ids) == 1 and ids[0] != page.entity_id:
+                selected = self._selected_for(ids[0])
+                selected.set_back_to(page.detail.title if page.detail else None)
+                self.details_dock.show_panel(selected, selected.details)
+            else:  # its own, or several selected there
+                self.details_dock.show_panel(page, page.details)
         elif page is None or ids is None:
             self.details_dock.show_message(NOTHING_OPEN)
         elif len(ids) == 1:
-            selected = self._selected_detail
-            if selected is None or selected.requested_id != ids[0]:
-                selected = self._new_selected_detail(ids[0])
+            selected = self._selected_for(ids[0])
+            selected.set_back_to(None)
             self.details_dock.show_panel(selected, selected.details)
         elif ids:
             self.details_dock.show_message(several_selected(len(ids)))
         else:
             self.details_dock.show_message(NOTHING_SELECTED)
+
+    def _selected_for(self, entity_id: int) -> DetailPage:
+        """The details of the one item selected, made if they're another's."""
+        selected = self._selected_detail
+        if selected is None or selected.requested_id != entity_id:
+            selected = self._new_selected_detail(entity_id)
+        return selected
+
+    def _details_back(self) -> None:
+        """**Back to …'s details**: select nothing in the item page's contents (#665)."""
+        page = self.stack.currentWidget()
+        if isinstance(page, DetailPage):
+            page.clear_selection()
 
     def _new_selected_detail(self, entity_id: int) -> DetailPage:
         """The details of the item selected in a search: a page that isn't shown, whose
@@ -987,6 +1005,7 @@ class MainWindow(QMainWindow):
         detail.hide()
         detail.title_in_details = True
         self._wire_detail(detail)
+        detail.back_requested.connect(self._details_back)
         self._selected_detail = detail
         if old is not None and shiboken6.isValid(old):
             if self.details_dock.panel is old.details:
