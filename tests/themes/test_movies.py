@@ -31,11 +31,13 @@ from tagalot.core.db import create_keep_engine, open_keep_database
 from tagalot.core.keep import RootConfig, ThemeRef, create_keep
 from tagalot.core.keywords import keywords_of
 from tagalot.core.models import Entity, EntityContains, EntityNote, EntityResource, Resource
+from tagalot.core.notes import naming_files
 from tagalot.core.scanjob import ScanReport, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
 from tagalot.core.triage import unlinked_files
 from tagalot.core.writer import DbWriter
+from tagalot.themes.api import EntityRef
 from tagalot.themes.loader import validate_theme
 from tests.core.media_files import write_image, write_mkv
 
@@ -400,6 +402,22 @@ def _cast(env: Env, title: str) -> list[str]:
                 .where(Entity.title == title)
             )
         )
+
+
+def test_a_sets_collection_is_named_by_its_movies_files(env: Env) -> None:
+    # A set's collection has no files of its own: what to read again when a notes-folder
+    # note stops naming it is its movies' files, the .nfo naming the set among them (#662).
+    (env.files / "Heat (1995).nfo").write_text(
+        "<movie><set>Michael Mann</set></movie>", encoding="utf-8"
+    )
+    env.scan()
+    with env.reader.connect() as conn:
+        collection = conn.execute(
+            select(Entity.id, Entity.type).where(Entity.title == "Michael Mann")
+        ).one()
+        files = naming_files(conn, env.schema, EntityRef(collection.id, collection.type))
+        read = set(conn.scalars(select(Resource.relpath).where(Resource.id.in_(files))))
+    assert {"Heat (1995).nfo", "Heat (1995).mkv", "Heat (1995) - 720p.mkv"} <= read
 
 
 def test_nfo_files_give_details_cast_and_sets(env: Env) -> None:

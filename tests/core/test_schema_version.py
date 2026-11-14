@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import Connection, Engine, inspect, select, text, update
+from sqlalchemy.orm import Session
 
 from tagalot.core.db import (
     CORE,
@@ -23,7 +24,16 @@ from tagalot.core.keep import (
     open_keep,
     save_keep_config,
 )
-from tagalot.core.models import Base, SchemaVersion
+from tagalot.core.models import (
+    Base,
+    Entity,
+    EntityNote,
+    NotesFolderNote,
+    Resource,
+    ResourceKind,
+    Root,
+    SchemaVersion,
+)
 
 
 def _keep(tmp_path: Path) -> Keep:
@@ -280,7 +290,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 36)
+    assert (info.value.stored, info.value.current) == (1, 37)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -336,7 +346,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 36
+    assert migrated.config.format_version == 37
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]
 
 
@@ -374,7 +384,7 @@ def test_format_19_keeps_get_the_picture_ignore_table(tmp_path: Path, has_ignore
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
-        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 36
+        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 37
         assert "picture_ignore" in inspect(engine).get_table_names()
     finally:
         engine.dispose()
@@ -393,7 +403,37 @@ def test_format_35_keeps_get_note_paths(tmp_path: Path) -> None:
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
-        assert migrated.config.format_version == 36
+        assert migrated.config.format_version == 37
         assert "path" in {c["name"] for c in inspect(engine).get_columns("notes_folder_note")}
+    finally:
+        engine.dispose()
+
+
+def test_format_36_keeps_give_notes_folder_notes_again(tmp_path: Path) -> None:
+    """Format 37: notes-folder notes are given to their items again, so a title renames an
+    item its note finds by path or aliases (#662); folder notes aren't touched."""
+    keep = _keep(tmp_path)
+    _, engine = open_keep_database(keep)
+    with Session(engine) as session, session.begin():
+        session.add(Root(id="r", name="Files"))
+        session.flush()
+        for n, rel in [(1, "Notes/Alien.md"), (2, "Alien/Alien.md")]:
+            session.add(Resource(id=n, root_id="r", relpath=rel, kind=ResourceKind.FILE))
+            session.add(Entity(id=n, type="generic.file", title="Alien"))
+            session.flush()
+            session.add(EntityNote(entity_id=n, resource_id=n, size=10, mtime_ns=5, body=""))
+        session.add(NotesFolderNote(resource_id=1, size=10, mtime_ns=5, title="Alien", matches=1))
+    with engine.begin() as conn:
+        conn.execute(update(SchemaVersion).values(version=36))
+    engine.dispose()
+    keep.config.format_version = 36
+    save_keep_config(keep.config, keep.toml_path)
+
+    migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
+    try:
+        assert migrated.config.format_version == 37
+        with engine.connect() as conn:
+            sizes = conn.execute(select(EntityNote.entity_id, EntityNote.size)).all()
+        assert sorted(tuple(r) for r in sizes) == [(1, None), (2, 10)]
     finally:
         engine.dispose()

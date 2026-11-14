@@ -26,7 +26,7 @@ Everything fetched is kept in the keep, never put in your folders.
 
 ## Notes
 
-A [note](../guide/notes.md) inside a movie's own folder (`Inception (2010)/Inception (2010).md`, or `index.md`, or `README.md`) describes the movie: fields an `.nfo` doesn't give (the `.nfo` wins when it does), `tags`, anything else as Extra fields, and a description shown on its page. A collection's folder note describes the collection.
+A [note](../guide/notes.md) inside a movie's own folder (`Inception (2010)/Inception (2010).md`, or `index.md`, or `README.md`) describes the movie: fields an `.nfo` doesn't give (the `.nfo` wins when it does), `tags`, anything else as Extra fields, and a description shown on its page. A collection's folder note describes the collection, and its `title` renames it. A collection from a `<set>` has no folder: rename it from the [notes folder](../guide/notes.md#the-notes-folder) with a note giving its new `title` and its old name in `aliases`.
 
 **Loose videos** (several movies side by side in one folder) take a note named like the video, as an `.nfo` can be: `Heat (1995).md` beside `Heat (1995).mkv` (or `Heat (1995) - 720p.mkv`, any of its versions). It works as a folder's note does, and its `title` also renames the movie. A Markdown file named for no video there is left alone, listed under [Triage → Unlinked files](../guide/triage.md#unlinked-files) like a stray `.nfo`; the folder's own note (`Misc/Misc.md`) still describes the Folder.
 

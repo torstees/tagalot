@@ -239,11 +239,11 @@ def test_typing_a_note(env: Env) -> None:
 
 def test_matching_by_title_file_name_and_aliases(env: Env) -> None:
     env.write("Notes/Robert De Niro.md", "---\nborn: 1943\n---\n")  # its file name
-    env.write("Notes/jean.md", "---\ntitle: Jean\naliases: [JEAN RENO]\n---\n")
+    env.write("Notes/jean.md", "---\naliases: [JEAN RENO]\n---\n")
     env.write("Notes/Leon.md", "---\ntagalot-type: clip\n---\nThe professional.\n")  # accents
     env.scan()
     assert env.item("Robert De Niro")["born"] == 1943
-    assert env.item("Jean Reno")["note"] == "Notes/jean.md"
+    assert env.item("Jean Reno")["note"] == "Notes/jean.md"  # its file name doesn't rename
     assert env.item("Léon")["body"] == "The professional."
     assert env.rows()["Notes/Leon.md"] == (1, True, "Léon")
 
@@ -491,4 +491,24 @@ def test_a_path_names_a_folder_item(env: Env) -> None:
     env.write("Notes/Studios/About.md", "---\npath: /Aurora\n---\nA studio.\n")
     env.scan()
     assert env.rows()["Notes/Studios/About.md"] == (1, True, "Aurora")
+    assert env.item("Aurora")["body"] == "A studio."
+
+
+# --- renaming an item (#662) ---
+
+
+def test_a_note_found_by_path_or_alias_renames_its_item(env: Env) -> None:
+    # A note that finds its item by path or an alias names it with its title; without
+    # either, the title only finds the item. Taking the title away gives the files' back.
+    env.write("Notes/Studios/About.md", "---\npath: /Aurora\ntitle: Aurora Pictures\n---\n")
+    env.write("Notes/Jean.md", "---\ntitle: Jean\naliases: [Jean Reno]\n---\nFrench.\n")
+    env.scan()
+    assert env.item("Aurora Pictures")["note"] == "Notes/Studios/About.md"
+    assert env.item("Jean")["body"] == "French."
+    env.scan()  # and it stays: the note still finds it, by path and by its title
+    assert env.item("Aurora Pictures")["note"] == "Notes/Studios/About.md"
+    assert env.item("Jean")["body"] == "French."
+
+    env.write("Notes/Studios/About.md", "---\npath: /Aurora\n---\nA studio.\n")
+    env.scan()
     assert env.item("Aurora")["body"] == "A studio."
