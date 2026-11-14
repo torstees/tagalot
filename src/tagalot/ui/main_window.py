@@ -132,6 +132,7 @@ from tagalot.ui.lookups import OnlineLookups, lookup_summary
 from tagalot.ui.merge_dialog import MergeDialog
 from tagalot.ui.models.results import KEYWORDS
 from tagalot.ui.navigation import NavigationPane, NavTarget
+from tagalot.ui.note_view import NoteView
 from tagalot.ui.own_fields import PromoteDialog, schema_types
 from tagalot.ui.preview import PreviewStrip
 from tagalot.ui.relate_dialog import RelateDialog
@@ -479,6 +480,15 @@ class MainWindow(QMainWindow):
         self.preview_action.setToolTip("Show the selected item under the navigation pane")
         self.preview_action.toggled.connect(self._preview_toggled)
         view_menu.addAction(self.preview_action)
+        self.plain_notes_action = QAction("Short Notes as Plain Text", self)
+        self.plain_notes_action.setCheckable(True)
+        self.plain_notes_action.setChecked(session.settings.note_plain_collapsed)
+        self.plain_notes_action.setToolTip(
+            "Show a collapsed note as its main text only, without headings, pictures, "
+            "or styles; Show more still shows all of it. For every keep."
+        )
+        self.plain_notes_action.toggled.connect(self._plain_notes_toggled)
+        view_menu.addAction(self.plain_notes_action)
         # The activity panel: hidden until asked for (View menu or the problem badge).
         self.activity = ActivityPanel(
             lambda: session.keep.config.roots,
@@ -901,6 +911,15 @@ class MainWindow(QMainWindow):
             self._schedule_summary()  # it shows what is selected now
         self._ui_state["preview"] = visible
         save_ui_state(self.session.keep.ui_state_path, self._ui_state)
+
+    def _plain_notes_toggled(self, plain: bool) -> None:
+        """Collapsed notes as their main text only, or styled (#664): for every keep, so
+        kept in settings.toml; the notes shown follow at once."""
+        assert self.session is not None
+        self.session.settings.note_plain_collapsed = plain
+        for view in self.findChildren(NoteView):
+            view.set_plain_collapsed(plain)
+        self.files.save_settings()
 
     def _contents_search(self, key: str, spec: SearchSpec, title: str) -> SearchPage:
         """A search embedded in a detail page: a container's contents, or a related section

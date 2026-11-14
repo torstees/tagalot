@@ -317,7 +317,7 @@ class FileOpener(QObject):
         if not program:
             return
         rule = self.session.settings.set_handler(file.ext, program_command(program, PLATFORM))
-        self._save()
+        self.save_settings()
         self.message.emit(
             f"Open file now uses {program_name(rule.command)} for {rule.ext} files. "
             "Open with \u2192 Stop using\u2026 undoes it."
@@ -328,7 +328,7 @@ class FileOpener(QObject):
         if rule is None:
             return
         self.session.settings.remove_handler(rule)
-        self._save()
+        self.save_settings()
         self.message.emit(f"Open file uses the usual program for {rule.ext} files again.")
 
     # --- the file manager (#457) ---
@@ -347,7 +347,7 @@ class FileOpener(QObject):
             return
         command = file_manager_command(program, PLATFORM)
         self.session.settings.file_manager = command
-        self._save()
+        self.save_settings()
         self.message.emit(
             f"Files are now shown in {file_manager_name(command)}. File manager \u2192 Use "
             "the system file manager undoes it."
@@ -357,10 +357,11 @@ class FileOpener(QObject):
         if not self.session.settings.file_manager:
             return
         self.session.settings.file_manager = ""
-        self._save()
+        self.save_settings()
         self.message.emit("Files are shown in the system's file manager again.")
 
-    def _save(self) -> None:
+    def save_settings(self) -> None:
+        """Save the session's settings to settings.toml, in a worker; a failure is reported."""
         settings, path = self.session.settings, self.settings_path
 
         def failed(error: BaseException) -> None:

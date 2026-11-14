@@ -356,6 +356,7 @@ class DetailPage(QWidget):
         type_row.addWidget(self.type_label, 1)
         titles.addLayout(type_row)
         self.note_view = NoteView()
+        self.note_view.plain_collapsed = session.settings.note_plain_collapsed
         self.note_view.open_note.connect(self.open_note)
         self.note_view.edited.connect(lambda text: self.note_edited.emit(self.entity_id, text))
         self.note_view.resized.connect(lambda: QTimer.singleShot(0, self._fit_header))

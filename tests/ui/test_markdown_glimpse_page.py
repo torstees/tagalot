@@ -60,7 +60,9 @@ def test_a_files_table_of_contents(qtbot: QtBot, window: MainWindow) -> None:
         "- [Chapter 1: Morning](#chapter-1-morning)\n"
         "- [Chapter 2: The Stair](#chapter-2-the-stair)"
     )
-    # Collapsed, the heading is left out: just the chapters.
+    # Collapsed, styled as it is (#664); as plain text, the heading is left out.
+    assert note.body.toPlainText() == "Contents\nChapter 1: Morning\nChapter 2: The Stair"
+    note.set_plain_collapsed(True)
     assert note.body.toPlainText() == "Chapter 1: Morning\nChapter 2: The Stair"
     assert note.open_button.isVisible()
     assert note.open_button.text() == "Open file"
@@ -73,6 +75,10 @@ def test_a_files_opening(qtbot: QtBot, window: MainWindow) -> None:
     note = _page(qtbot, window, "The Lighthouse Keeper").note_view
     qtbot.waitUntil(lambda: note.glimpse, timeout=5000)
     assert note.text == ("Written on a train.\n\n# The Lighthouse Keeper\n\nIt was a dark night.")
+    assert note.body.toPlainText() == (
+        "Written on a train.\nThe Lighthouse Keeper\nIt was a dark night."
+    )  # styled (#664)
+    note.set_plain_collapsed(True)
     assert note.body.toPlainText() == "Written on a train.\nIt was a dark night."
 
 

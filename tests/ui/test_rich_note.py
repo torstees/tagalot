@@ -205,8 +205,14 @@ def window(qtbot: QtBot) -> QWidget:
     return window
 
 
-def _note(window: QWidget, text: str, pictures: dict[str, QImage] | None = None) -> NoteView:
+def _note(
+    window: QWidget,
+    text: str,
+    pictures: dict[str, QImage] | None = None,
+    plain: bool = False,
+) -> NoteView:
     note = NoteView()
+    note.plain_collapsed = plain
     layout = window.layout()
     assert isinstance(layout, QVBoxLayout)
     layout.addWidget(note)
@@ -218,7 +224,8 @@ def _note(window: QWidget, text: str, pictures: dict[str, QImage] | None = None)
 
 
 def test_a_short_note_with_a_table_has_show_more(qtbot: QtBot, window: QWidget) -> None:
-    note = _note(window, "A line.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+    # Collapsed as plain text ([notes] collapsed = "plain", #664): the table is left out.
+    note = _note(window, "A line.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n", plain=True)
     qtbot.waitUntil(note.more.isVisible, timeout=5000)
     assert note.body.toPlainText() == "A line."
     assert note.body.height() < note.cap
@@ -228,6 +235,25 @@ def test_a_short_note_with_a_table_has_show_more(qtbot: QtBot, window: QWidget) 
     assert len(_tables(note.body.document())) == 1
     note.more.click()
     assert note.body.document() is note.short
+
+
+def test_a_collapsed_note_is_styled(qtbot: QtBot, window: QWidget) -> None:
+    # #664: collapsed, the note shows as it is, headings and tables too, cut to its cap;
+    # Show more only when it's taller than that.
+    note = _note(window, "# Cast\n\nA line.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n")
+    qtbot.waitUntil(note.body.isVisible, timeout=5000)
+    assert note.body.document() is note.full
+    assert len(_tables(note.body.document())) == 1
+    assert note.body.toPlainText().startswith("Cast")
+    tall = _height_now(note) > note.cap
+    assert note.more.isVisible() is tall
+    assert note.body.height() == min(_height_now(note), note.cap)
+
+    note.set_plain_collapsed(True)  # the View menu's Short Notes as Plain Text
+    qtbot.waitUntil(lambda: note.body.toPlainText() == "A line.", timeout=5000)
+    assert note.more.isVisible()  # the heading and table are left out
+    note.set_plain_collapsed(False)
+    qtbot.waitUntil(lambda: note.body.document() is note.full, timeout=5000)
 
 
 def test_a_short_plain_note_has_no_show_more(qtbot: QtBot, window: QWidget) -> None:
@@ -274,3 +300,10 @@ def test_show_more_and_less_say_the_note_resized(qtbot: QtBot, window: QWidget) 
         note.more.click()
     with qtbot.waitSignal(note.resized, timeout=1000):
         note.more.click()
+
+
+def _height_now(note: NoteView) -> int:
+    """The collapsed document's height at the body's width."""
+    document = note.short
+    document.setTextWidth(note.body.width())
+    return int(document.size().height())

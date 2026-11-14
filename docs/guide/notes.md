@@ -101,7 +101,9 @@ Your own edits always win: a name or field you changed by hand is never replaced
 
 ## On the item's page
 
-The note's body shows in the page's header, beside the picture. At first it shows just the note's text: its paragraphs and lists, with their bold, italics, and links, cut short at the picture's height. **Show more** shows all of it, as Markdown is meant to look: headings, tables, pictures, code, and quotes, up to half the window's height (scroll for the rest). **Show less** goes back. **Show more** is there whenever something is left out, even in a short note with a table; a note that is only a table or pictures says so ("A table and 2 pictures").
+The note's body shows in the page's header, beside the picture, as Markdown is meant to look: headings, tables, pictures, code, and quotes, cut short at the picture's height. **Show more** shows all of it, up to half the window's height (scroll for the rest), and **Show less** goes back. **Show more** is there whenever the note is taller than its room.
+
+If you'd rather the short version were plain, choose **View → Short Notes as Plain Text**. It's for every keep. The note then starts as just its text: its paragraphs and lists, with their bold, italics, and links. **Show more** still shows all of it, styled. In this mode, **Show more** is there whenever something is left out, even in a short note with a table, and a note that is only a table or pictures says so ("A table and 2 pictures"). In `settings.toml` it's `collapsed = "plain"` under `[notes]`.
 
 Notes are read as [GitHub-flavoured Markdown](https://github.github.com/gfm/): tables, task lists (`- [x]`), ~~strikethrough~~, and bare web addresses work. Footnotes, math, and diagrams don't, and Obsidian's callouts (`> [!note]`) show as quotes. Pictures and links in the note are found from the note's folder (`![](studio.png)`, `[prices](Prices/list.txt)`); web links open in your browser. Obsidian's `![[picture.png]]` and `[[links]]` work too.
 
