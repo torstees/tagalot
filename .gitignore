@@ -225,3 +225,6 @@ __marimo__/
 
 # Tagalot: local scratch space for demo keeps, sample files, and experimental themes
 /scratch/
+
+# Desktop dev
+.zed
