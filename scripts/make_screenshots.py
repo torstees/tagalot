@@ -67,16 +67,23 @@ def settle(app: QApplication, seconds: float = 1.5) -> None:
 SHOWN_FOLDER = r"D:\Keeps"
 """Shown instead of the temporary folder the demos are built in: the pictures are
 published, and that folder's path names this computer's user."""
+SHOWN_HOME = r"C:\Users\you"
+"""Shown instead of this computer's home folder (in Your Tagalot folder, #651): it names
+this computer's user too."""
 built_in: Path | None = None
 
 
 def save(widget: QWidget, name: str) -> None:
     """Save a picture of ``widget``, any label naming the demos' temporary folder showing
-    :data:`SHOWN_FOLDER` instead."""
-    if built_in is not None:
-        for label in widget.findChildren(QLabel):
-            if str(built_in) in label.text():
-                label.setText(label.text().replace(str(built_in), SHOWN_FOLDER))
+    :data:`SHOWN_FOLDER` instead, and the home folder :data:`SHOWN_HOME`."""
+    home = str(Path.home())
+    for label in widget.findChildren(QLabel):
+        text = label.text()
+        if built_in is not None:
+            text = text.replace(str(built_in), SHOWN_FOLDER)
+        text = text.replace(home, SHOWN_HOME)
+        if text != label.text():
+            label.setText(text)
     widget.grab().save(str(SCREENS / f"{name}.png"))
     print(f"docs/images/screens/{name}.png")
 
