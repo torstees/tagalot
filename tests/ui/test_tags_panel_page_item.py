@@ -1,6 +1,6 @@
-"""The Tags panel on an item's page (#504): it counts again after a scan, says whose tags
-it shows, and goes back to the page's item from a selection in its contents. On the books
-demo."""
+"""The Tags and Details panels on an item's page (#504, #665): Tags counts again after a
+scan and says whose tags it shows; Details follows a selection in the page's contents; both
+go back to the page's item. On the books demo."""
 
 import importlib.util
 from collections.abc import Iterator
@@ -126,3 +126,47 @@ def test_scans_and_lookups_count_the_selections_tags_again(
     else:
         window._lookups_finished(LookupReport(items=1), by_user=True)
     assert counted
+
+
+def _select(contents: SearchPage, *rows: int) -> None:
+    selection = contents.table.selectionModel()
+    selection.clearSelection()
+    for row in rows:
+        selection.select(
+            contents.model.index(row, 0),
+            QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+        )
+
+
+def test_details_follow_the_selection_and_go_back_to_the_pages_item(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    """#665: one item selected in an item page's contents shows its details, with a link
+    back to the page's item; several selected, or none, show the page's item's."""
+    page = _author_page(qtbot, window, "Terry Pratchett")
+    dock = window.details_dock
+    qtbot.waitUntil(lambda: dock.panel is page.details, timeout=5000)
+    contents = _shown(page)
+    qtbot.waitUntil(lambda: contents.model.hit(1) is not None, timeout=5000)
+    first = contents.model.hit(0)
+    assert first is not None
+
+    _select(contents, 0)
+    qtbot.waitUntil(lambda: dock.panel is not page.details, timeout=5000)
+    selected = window._selected_detail
+    assert selected is not None
+    assert dock.panel is selected.details
+    qtbot.waitUntil(lambda: selected.detail is not None, timeout=5000)
+    assert selected.entity_id == first.id
+    title = selected.details_title
+    assert title.isVisible()
+    assert "Back to Terry Pratchett's details" in title.text()
+
+    _select(contents, 0, 1)  # several: the page's item's again
+    qtbot.waitUntil(lambda: dock.panel is page.details, timeout=5000)
+
+    _select(contents, 0)
+    qtbot.waitUntil(lambda: dock.panel is selected.details, timeout=5000)
+    title.linkActivated.emit("back")
+    qtbot.waitUntil(lambda: dock.panel is page.details, timeout=5000)
+    assert not contents.table.selectionModel().hasSelection()

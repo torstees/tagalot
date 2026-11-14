@@ -23,7 +23,7 @@ Tagging on a page applies to the page's item, or to the items selected in its co
 
 ## The Details tab
 
-**Details** sits beside **Tags** on the right; click either tab to switch, and the one you chose stays chosen next time. On an item's page it shows that item's details. In a search, it shows the selected item's, with its name at the top (click it to open its page), so you can read and change an item's fields without leaving the search; with several selected, it says how many. Drag the panel's edge to make it wider; it keeps its width. **View → Details** hides or shows it.
+**Details** sits beside **Tags** on the right; click either tab to switch, and the one you chose stays chosen next time. On an item's page it shows that item's details, until you select one item in what the page shows below (its books, its movies…): then it shows that one's, with **Back to …'s details** under its name to go back to the page's item (selecting nothing there does the same; with several selected, it shows the page's item's). In a search, it shows the selected item's, with its name at the top (click it to open its page), so you can read and change an item's fields without leaving the search; with several selected, it says how many. Drag the panel's edge to make it wider; it keeps its width. **View → Details** hides or shows it.
 
 ## Galleries
 
