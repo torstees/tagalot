@@ -9,7 +9,7 @@ from pytestqt.qtbot import QtBot
 
 from tagalot.core.models import Entity
 from tagalot.core.session import KeepSession
-from tagalot.ui.detail_view import DetailPage
+from tagalot.ui.detail_view import WIDE_FIELDS, DetailPage, FieldForm
 from tagalot.ui.details_dock import NOTHING_SELECTED, several_selected
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.navigation import NavTarget
@@ -66,12 +66,21 @@ def test_an_item_pages_sections_are_in_the_details_tab(qtbot: QtBot, session: Ke
     assert detail.title.text() == "glacier.jpg"
     # Not named again in the tab: the page shows it.
     assert not detail.details_title.isVisible()
-    # Labels above their values: the tab is narrow.
+    # Bold labels, above their values or beside them as the tab's width allows (#663).
     fields = _shown(window, "section_fields")
     assert fields is not None
-    forms = fields.findChildren(QFormLayout)
+    forms = fields.findChildren(FieldForm)
     assert forms
-    assert all(f.rowWrapPolicy() == QFormLayout.RowWrapPolicy.WrapAllRows for f in forms)
+    wide = fields.width() >= WIDE_FIELDS
+    assert all(
+        f.rowWrapPolicy()
+        == (
+            QFormLayout.RowWrapPolicy.DontWrapRows
+            if wide
+            else QFormLayout.RowWrapPolicy.WrapAllRows
+        )
+        for f in forms
+    )
 
     window.back()  # Search all, where glacier.jpg is still selected
     qtbot.waitUntil(lambda: window.details_dock.panel is not detail.details, timeout=5000)
@@ -175,3 +184,29 @@ def test_the_tag_manager_hides_the_side_panel(qtbot: QtBot, session: KeepSession
     assert not window.tags_dock.toggleViewAction().isChecked()  # still closed
     assert window.details_dock.toggleViewAction().isChecked()
     _close(window)
+
+
+def test_field_labels_are_bold_and_beside_values_when_wide(qtbot: QtBot) -> None:
+    # #663: label above value while narrow, beside it from WIDE_FIELDS, always bold.
+    body = QWidget()
+    qtbot.addWidget(body)
+    form = FieldForm(body)
+    value = QLabel("1957")
+    form.addRow("Year:", value)
+    label = form.labelForField(value)
+    assert isinstance(label, QLabel)
+    assert label.text() == "Year:"
+    assert label.font().bold()
+    body.resize(WIDE_FIELDS - 100, 100)
+    body.show()
+    qtbot.waitUntil(
+        lambda: form.rowWrapPolicy() == QFormLayout.RowWrapPolicy.WrapAllRows, timeout=5000
+    )
+    body.resize(WIDE_FIELDS + 100, 100)
+    qtbot.waitUntil(
+        lambda: form.rowWrapPolicy() == QFormLayout.RowWrapPolicy.DontWrapRows, timeout=5000
+    )
+    body.resize(WIDE_FIELDS - 1, 100)
+    qtbot.waitUntil(
+        lambda: form.rowWrapPolicy() == QFormLayout.RowWrapPolicy.WrapAllRows, timeout=5000
+    )
