@@ -12,7 +12,9 @@ note, with the same rules as a folder note's (``core.notes.apply_note``).
   the notes folder) named the same way, so everything in a type's folder is that type's,
   however deep (``People/Family/Alice.md``, #656), else any type. The key wins.
 - **Item:** the note's title (``title``, else its file name) or one of its ``aliases``
-  equals an item's title, ignoring case and accents. A note matching one item is its note,
+  equals an item's title, ignoring case and accents; or, when it gives a ``path``
+  (#658), the item's folder or file path ends in that path (:func:`path_matches`), its
+  title aside. A note matching one item is its note,
   unless the item has a folder note (which wins) or an earlier note, by path, matched it
   first. The rest are listed in Triage (``notes_folder_note``).
 - **Offline isn't gone:** an offline note keeps its item; a missing one lets it go.
@@ -33,6 +35,7 @@ from tagalot.core.ingest import IngestSession, IngestWarning
 from tagalot.core.models import (
     Entity,
     EntityNote,
+    EntityResource,
     NoteIgnoredKey,
     NotesFolderNote,
     Resource,
@@ -58,6 +61,8 @@ from tagalot.themes.api import EntityRef, entity_label, entity_plural, plural_of
 logger = logging.getLogger(__name__)
 
 TYPE_KEY = "tagalot-type"
+PATH_KEY = "path"
+"""A notes-folder note's key naming its item by the end of its path (#658)."""
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,9 @@ class FolderNoteMeta:
     title: str
     aliases: tuple[str, ...] = ()
     type: str | None = None
+    path: str | None = None
+    """``path``, cleaned (:func:`clean_path`): the item is the one whose folder or file
+    path ends in it (#658)."""
 
 
 def type_names(schema: ThemeSchema) -> dict[str, str]:
@@ -108,6 +116,34 @@ def folder_type(names: Mapping[str, str], folder: str) -> str | None:
     return None
 
 
+def clean_path(value: object) -> str | None:
+    """A note's ``path`` as matched: ``/`` between folders (``\\`` too, as Windows writes
+    them), no empty or ``.`` parts; a leading ``/`` (from the top of the watched folder)
+    is kept. ``None`` for none."""
+    text = as_text(value) if not isinstance(value, list | tuple) else None
+    if not text:
+        return None
+    text = text.replace("\\", "/")
+    parts = [p.strip() for p in text.split("/")]
+    parts = [p for p in parts if p and p != "."]
+    if not parts:
+        return None
+    return ("/" if text.startswith("/") else "") + "/".join(parts)
+
+
+def path_matches(path: str, relpath: str) -> bool:
+    """Whether an item's root-relative ``relpath`` ends in a note's cleaned ``path``, by whole
+    folder and file names, case aside (``Holidays/Alice`` matches ``Home Movies/Holidays/
+    Alice``, not ``Home Movies/Alice`` or ``Old Holidays/Alice``); a leading ``/`` matches
+    from the top of the watched folder."""
+    anchored = path.startswith("/")
+    wanted = path.strip("/").casefold().split("/")
+    parts = relpath.casefold().split("/")
+    if anchored:
+        return parts == wanted
+    return len(parts) >= len(wanted) and parts[len(parts) - len(wanted) :] == wanted
+
+
 def _inside(relpath: str, notes_path: str) -> str:
     """The folder a note at ``relpath`` is in, inside the notes folder at ``notes_path``."""
     folder = posixpath.dirname(relpath)
@@ -126,7 +162,10 @@ def note_meta(
     aliases = raw if isinstance(raw, list | tuple) else [raw] if raw is not None else []
     type_id, problem = note_type(names, front.get(TYPE_KEY), _inside(relpath, notes_path))
     meta = FolderNoteMeta(
-        title, tuple(a for x in aliases if (a := as_text(x)) is not None), type_id
+        title,
+        tuple(a for x in aliases if (a := as_text(x)) is not None),
+        type_id,
+        clean_path(front.get(PATH_KEY)),
     )
     return meta, [problem] if problem else []
 
@@ -228,7 +267,7 @@ def plan_folder_notes(
         # No type stored: no tagalot-type named one, so its folders give it, as they are
         # now (a note stored before #656 finds a type folder above its own, unread).
         type_id = row.type or folder_type(names, _inside(relpath, notes_path))
-        return FolderNoteMeta(row.title, tuple(row.aliases), type_id)
+        return FolderNoteMeta(row.title, tuple(row.aliases), type_id, row.path)
 
     for file, status in files:
         if status == ResourceStatus.MISSING:
@@ -257,14 +296,22 @@ def plan_folder_notes(
     ours = set(stored) | set(by_id)  # notes from the notes folder, as it is or was
     folder_notes = {e for e, (rid, _, _) in notes.items() if rid not in ours}
     current = {e: rid for e, (rid, _, _) in notes.items() if rid in ours}
+    places = _item_paths(reader, schema) if any(m.path for m in metas.values()) else []
     matched: dict[int, list[int]] = {}
     for rid, meta in metas.items():
-        hits = {
-            entity_id
-            for key in _keys(meta)
-            for entity_id, type_id in index.get(key, ())
-            if meta.type is None or type_id == meta.type
-        }
+        if meta.path is not None:  # the item whose path ends in it, title aside (#658)
+            hits = {
+                entity_id
+                for entity_id, type_id, relpath in places
+                if (meta.type is None or type_id == meta.type) and path_matches(meta.path, relpath)
+            }
+        else:
+            hits = {
+                entity_id
+                for key in _keys(meta)
+                for entity_id, type_id in index.get(key, ())
+                if meta.type is None or type_id == meta.type
+            }
         matched[rid] = sorted(hits)
     # An offline note keeps its item; otherwise the first note (by path) matching an item
     # that has no folder note is its note.
@@ -293,6 +340,25 @@ def plan_folder_notes(
     return plan
 
 
+def _item_paths(reader: Engine, schema: ThemeSchema) -> list[tuple[int, str, str]]:
+    """Each item's folder or files (those in its type's primary role) as (item, type, the
+    root-relative path), for notes that give a ``path`` (#658)."""
+    primary = {
+        table.type_id: role.name
+        for entity, table in schema.entities.items()
+        for role in entity.roles
+        if role.primary
+    }
+    with reader.connect() as conn:
+        rows = conn.execute(
+            select(EntityResource.entity_id, Entity.type, EntityResource.role, Resource.relpath)
+            .join(Entity, Entity.id == EntityResource.entity_id)
+            .join(Resource, Resource.id == EntityResource.resource_id)
+            .where(Resource.status != ResourceStatus.MISSING)
+        ).all()
+    return [(e, t, rel) for e, t, role, rel in rows if primary.get(t) == role]
+
+
 def apply_folder_notes(
     conn: Connection, schema: ThemeSchema, plan: FolderNotesPlan
 ) -> tuple[list[int], list[IngestWarning]]:
@@ -309,6 +375,7 @@ def apply_folder_notes(
             "title": row.meta.title,
             "aliases": list(row.meta.aliases),
             "type": row.meta.type,
+            "path": row.meta.path,
             "matches": row.matches,
             "item_id": row.item_id,
             "applied": row.applied,
@@ -340,7 +407,8 @@ def apply_folder_notes(
         if given is not None:
             file, text = given
             infos = schema.by_type_id(type_id).fields
-            values = map_note(text, infos, ignored, aliases, own.get(type_id, ()))
+            # path names the item (#658): never a field or an Extra field.
+            values = map_note(text, infos, {*ignored, PATH_KEY}, aliases, own.get(type_id, ()))
             warnings += [
                 IngestWarning(plan.root_id, file.relpath, f"A note's value was left out: {p}")
                 for p in values.problems

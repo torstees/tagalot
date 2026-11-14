@@ -48,6 +48,16 @@ Notes/
 ```
 
 - **Which item:** the note's `title`, else its file name, or one of its `aliases`, matches the item's title. Case and accents don't matter (`Leon.md` finds "Léon").
+- **Two items with the same name:** give the note a `path:`, the end of the item's folder or file path inside its watched folder, and it goes to the item whose path ends that way, whatever the note's title or file name. Give as much of the path as tells them apart:
+
+  ```markdown
+  ---
+  tagalot-type: folder
+  path: Holidays/Alice
+  ---
+  ```
+
+  That's the Folder `Home Movies/Holidays/Alice`, not `Home Movies/Alice`. A file works the same way (`path: Crime/Heat (1995).mkv` picks one of two movies called Heat), and a leading `/` means from the top of the watched folder (`path: /Alice`). Folder and file names are matched whole, ignoring case, and `\` works as well as `/`. A `path:` that ends no item's path, or several, is listed in Triage → Markdown. Only notes in the notes folder read `path:`; elsewhere it's an Extra field as before.
 - **Which kind of item:** the note's `tagalot-type` key (`actor`, `Actors`, a type's name or label, singular or plural; a type keeps its old name when the theme renames it, so the movies theme's `Actors/` still finds its People), else the outermost folder it's in whose name is a kind (`Actors/`), else any kind. Everything in a kind's folder is that kind's, however deep, so its notes can be sorted into subfolders of your own: `Actors/Family/Al Pacino.md` and `Actors/1970s/Movies/Al Pacino.md` are actors' notes. The key wins, so a note in the wrong folder can say what it's for. The key is read only in the notes folder: it can't turn a note inside an item's folder into a note for something else.
 - **Nothing else is read there:** pictures and other files in the notes folder aren't items. Its Markdown files are read as notes, and its pictures only for galleries: a folder or archive named like a note, beside it (`Actors/Al Pacino/`, `Al Pacino.zip`), is that item's gallery of photos or covers ([Galleries](item-pages.md#galleries)).
 - **One note per item.** A note in the item's own folder wins over one in the notes folder.
@@ -141,7 +151,7 @@ Born in Greenwich Village.
 ```
 
 - **Where:** in a folder for each kind of item (`Actors/`), or all in the notes folder with a `tagalot-type` key, as Keep configuration says.
-- **What:** the item's title and its tags (as full paths), then the note.
+- **What:** the item's title and its tags (as full paths), then the note. When another item of its kind has the same title, a `path:` too, with as much of the item's path as tells them apart, and that folder in the file name (`Alice (Holidays).md`), so each note finds its own item.
 - **Never over a file, never a second note:** if a file of that name is there, or one where the other layout would put it (`Actors/Robert De Niro.md` or `Robert De Niro.md`), nothing is written and Tagalot says so. Characters some systems don't allow in file names (`:` `?` `*` `/` `\` `"` `<` `>` `|`) become `_`.
 - **Afterwards** Tagalot scans the folder, and the item's note is the file's: **Open note** edits it from then on.
 

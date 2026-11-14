@@ -253,13 +253,26 @@ class NoteProblem:
     matches: int
     item_title: str | None
     """The item it matched, when it matched one (which has another note)."""
+    path: str | None = None
+    """The note's ``path``, when it names its item by one (#658)."""
 
     @property
     def reason(self) -> str:
+        if self.path is not None:
+            if self.matches == 0:
+                return f"No item's folder or file path ends in {self.path}"
+            if self.matches > 1:
+                return (
+                    f"{self.matches} items' paths end in {self.path}; give more of the "
+                    "path, or add tagalot-type"
+                )
         if self.matches == 0:
             return "No item has this title or one of its aliases"
         if self.matches > 1:
-            return f"{self.matches} items match; add tagalot-type, or an alias only one of them has"
+            return (
+                f"{self.matches} items match; add tagalot-type, a path: their folder or "
+                "file path ends in, or an alias only one of them has"
+            )
         return f"{self.item_title!r} has another note"
 
 
@@ -280,6 +293,7 @@ def note_problems(conn: Connection) -> list[NoteProblem]:
             Resource.status,
             NotesFolderNote.matches,
             Entity.title,
+            NotesFolderNote.path,
         )
         .join(Resource, Resource.id == NotesFolderNote.resource_id)
         .join(Entity, Entity.id == NotesFolderNote.item_id, isouter=True)

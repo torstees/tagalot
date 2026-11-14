@@ -24,8 +24,15 @@ from tagalot.core.keep import (
     load_keep_config,
     save_keep_config,
 )
-from tagalot.core.models import Entity, EntityNote, NotesFolderNote, Resource, ResourceStatus
-from tagalot.core.notes_folder import note_type, type_names
+from tagalot.core.models import (
+    Entity,
+    EntityNote,
+    EntityResource,
+    NotesFolderNote,
+    Resource,
+    ResourceStatus,
+)
+from tagalot.core.notes_folder import clean_path, note_type, path_matches, type_names
 from tagalot.core.root_admin import (
     folder_in_root,
     notes_folder_for,
@@ -35,6 +42,7 @@ from tagalot.core.root_admin import (
 from tagalot.core.scanjob import ScanReport, scan_notes_folder, scan_root
 from tagalot.core.theme_db import open_theme
 from tagalot.core.theme_schema import ThemeSchema
+from tagalot.core.triage import note_problems
 from tagalot.core.writer import DbWriter
 from tagalot.themes.api import Entity as ThemeEntity
 from tagalot.themes.api import IngestContext, Theme, field, role
@@ -398,3 +406,89 @@ def test_notes_stored_before_subfolders_had_a_type(env: Env) -> None:
     env.writer.submit(forget_types).result()
     env.scan()
     assert env.rows()["Notes/Studios/Iceland/Aurora.md"] == (1, True, "Aurora")
+
+
+# --- naming an item by its path (#658) ---
+
+
+@pytest.mark.parametrize(
+    ("value", "cleaned"),
+    [
+        ("Holidays/Alice", "Holidays/Alice"),
+        ("Holidays\\Alice\\", "Holidays/Alice"),  # as Windows writes it
+        (" Holidays / ./Alice ", "Holidays/Alice"),
+        ("/Home Movies/Alice", "/Home Movies/Alice"),  # from the top
+        ("", None),
+        ("/", None),
+        (None, None),
+        (["a", "b"], None),
+    ],
+)
+def test_clean_path(value: object, cleaned: str | None) -> None:
+    assert clean_path(value) == cleaned
+
+
+@pytest.mark.parametrize(
+    ("path", "relpath", "matches"),
+    [
+        ("Holidays/Alice", "Home Movies/Holidays/Alice", True),
+        ("holidays/ALICE", "Home Movies/Holidays/Alice", True),  # case aside
+        ("Holidays/Alice", "Home Movies/Alice", False),
+        ("Holidays/Alice", "Home Movies/Old Holidays/Alice", False),  # whole names
+        ("Alice", "Alice", True),
+        ("Heat (1995).mkv", "Crime/Heat (1995).mkv", True),
+        ("/Home Movies/Alice", "Home Movies/Alice", True),
+        ("/Alice", "Home Movies/Alice", False),  # from the top only
+        ("Home Movies/Holidays/Alice", "Holidays/Alice", False),
+    ],
+)
+def test_path_matches(path: str, relpath: str, matches: bool) -> None:
+    assert path_matches(path, relpath) is matches
+
+
+def test_a_note_names_its_item_by_path(env: Env) -> None:
+    # Two clips called Heat: by title the note matches both; its path picks one, whatever
+    # the note's own name. The path is never an Extra field.
+    (env.files / "Lobby").mkdir()
+    (env.files / "Lobby" / "Heat.mp4").write_bytes(b"mp4")
+    env.write("Notes/Heat.md", "---\nseen: twice\n---\nThe bank job.\n")
+    env.scan()
+    assert env.rows()["Notes/Heat.md"] == (2, False, None)
+    with env.reader.connect() as conn:
+        (problem,) = note_problems(conn)
+    assert "a path: their folder or file path ends in" in problem.reason
+
+    env.write("Notes/Heat.md", "---\npath: lobby/heat.mp4\nseen: twice\n---\nThe bank job.\n")
+    env.scan()
+    assert env.rows()["Notes/Heat.md"] == (1, True, "Heat")
+    with env.reader.connect() as conn:
+        lobby = conn.scalar(
+            select(EntityResource.entity_id)
+            .join(Resource, Resource.id == EntityResource.resource_id)
+            .where(Resource.relpath == "Lobby/Heat.mp4")
+        )
+        given = conn.execute(
+            select(EntityNote.entity_id, EntityNote.body, Entity.extra)
+            .join(Resource, Resource.id == EntityNote.resource_id)
+            .join(Entity, Entity.id == EntityNote.entity_id)
+            .where(Resource.relpath == "Notes/Heat.md")
+        ).one()
+    assert given.entity_id == lobby
+    assert given.body == "The bank job."
+    assert given.extra == {"seen": "twice"}
+
+    env.write("Notes/Heat.md", "---\npath: Nowhere/Heat.mp4\n---\n")
+    env.scan()
+    assert env.rows()["Notes/Heat.md"] == (0, False, None)
+    with env.reader.connect() as conn:
+        (problem,) = note_problems(conn)
+    assert problem.reason == "No item's folder or file path ends in Nowhere/Heat.mp4"
+
+
+def test_a_path_names_a_folder_item(env: Env) -> None:
+    # A studio is its folder: path: /Aurora picks the studio, not the clips in it, whose
+    # paths end in their own names; the note's name doesn't matter.
+    env.write("Notes/Studios/About.md", "---\npath: /Aurora\n---\nA studio.\n")
+    env.scan()
+    assert env.rows()["Notes/Studios/About.md"] == (1, True, "Aurora")
+    assert env.item("Aurora")["body"] == "A studio."

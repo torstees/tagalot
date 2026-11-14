@@ -280,7 +280,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
 
     with pytest.raises(KeepNeedsMigration) as info:
         open_keep_database(open_keep(keep.dir))
-    assert (info.value.stored, info.value.current) == (1, 35)
+    assert (info.value.stored, info.value.current) == (1, 36)
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
@@ -322,6 +322,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert {"linked_place", "place_contains"} <= set(tables)  # 33 (#598)
         assert "linked_folder" in tables  # 34 (#601)
         assert "broken_link" in tables  # 35 (#604)
+        assert "path" in {c["name"] for c in inspect(engine).get_columns("notes_folder_note")}  # 36
         with engine.begin() as conn:  # the rebuilt table kept its row and takes notes
             kept = conn.exec_driver_sql("SELECT entity_id, field, source FROM field_provenance")
             assert [tuple(r) for r in kept] == [(1, "title", "user")]
@@ -335,7 +336,7 @@ def test_format_1_keeps_upgrade_through_every_step(tmp_path: Path) -> None:
         assert [tuple(r) for r in roots] == [("r", "Photos", None)]
     finally:
         engine.dispose()
-    assert migrated.config.format_version == 35
+    assert migrated.config.format_version == 36
     assert [b.name.startswith("keep.db.v1-") for b in _backups(keep)] == [True]
 
 
@@ -373,7 +374,26 @@ def test_format_19_keeps_get_the_picture_ignore_table(tmp_path: Path, has_ignore
 
     migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
     try:
-        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 35
+        assert migrated.config.format_version == KEEP_FORMAT_VERSION == 36
         assert "picture_ignore" in inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+
+def test_format_35_keeps_get_note_paths(tmp_path: Path) -> None:
+    """Format 36: a notes-folder note's path (#658), and its notes read again."""
+    keep = _keep(tmp_path)
+    _, engine = open_keep_database(keep)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE notes_folder_note DROP COLUMN path")
+        conn.execute(update(SchemaVersion).values(version=35))
+    engine.dispose()
+    keep.config.format_version = 35
+    save_keep_config(keep.config, keep.toml_path)
+
+    migrated, engine = open_keep_database(open_keep(keep.dir), allow_migration=True)
+    try:
+        assert migrated.config.format_version == 36
+        assert "path" in {c["name"] for c in inspect(engine).get_columns("notes_folder_note")}
     finally:
         engine.dispose()
