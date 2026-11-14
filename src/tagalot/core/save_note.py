@@ -16,7 +16,9 @@ on purpose:
 - file names are made safe for every system (:func:`safe_name`).
 
 The note has front matter with ``title``, ``tagalot-type`` (in the one-folder layout, or
-when the type's folder name could mean another type), and the item's tags as full paths
+when the type's folder name could mean another type), ``path`` when another item of its
+type has its title (#658: as much of its path as tells it apart, which its file name
+gives too, ``Alice (Holidays).md``), and the item's tags as full paths
 (``Genre/Fantasy``, as Write to file… writes them), then the typed body. The next scan
 reads it, and the item's note is the file's from then on.
 """
@@ -31,9 +33,9 @@ from dataclasses import dataclass
 from sqlalchemy import Connection, select
 
 from tagalot.core.keep import KeepConfig
-from tagalot.core.models import Entity, EntityNote, EntityTag, Resource
+from tagalot.core.models import Entity, EntityNote, EntityResource, EntityTag, Resource
 from tagalot.core.notes import NOTE_EXTENSIONS
-from tagalot.core.notes_folder import TYPE_KEY, type_names
+from tagalot.core.notes_folder import PATH_KEY, TYPE_KEY, path_matches, type_names
 from tagalot.core.own_values import item_values
 from tagalot.core.roots import local_path
 from tagalot.core.tags import TagTree, search_key
@@ -118,7 +120,8 @@ def plan_note(
     names = type_names(schema)
     folder = _type_folder(conn, config, names, row.type) or safe_name(entity_plural(entity))
     typed = config.new_notes == "one-folder" or names.get(search_key(folder)) != row.type
-    name = safe_name(row.title) + NOTE_EXTENSIONS[0]
+    twin = _twin_path(conn, schema, entity_id, row.type, row.title)
+    name = safe_name(_twin_name(row.title, twin) if twin else row.title) + NOTE_EXTENSIONS[0]
     in_folders = _join(config.notes_path, folder, name)
     in_one = _join(config.notes_path, name)
     relpath, other = (
@@ -127,6 +130,8 @@ def plan_note(
     front: dict[str, object] = {"title": row.title}
     if typed:
         front[TYPE_KEY] = entity_label(entity)
+    if twin:
+        front[PATH_KEY] = twin
     mine = list(config.fields.get(row.type, {}).values())  # the keep's own (#584)
     given = item_values(conn, entity_id, mine)
     front.update({f.name: given[f.name] for f in mine if f.name in given})
@@ -141,6 +146,52 @@ def plan_note(
     return NewNote(
         entity_id, row.title, config.notes_root, relpath, path, notes_folder, text, elsewhere
     )
+
+
+def _twin_path(
+    conn: Connection, schema: ThemeSchema, entity_id: int, type_id: str, title: str
+) -> str | None:
+    """When another item of the type has this title (case and accents aside), the end of
+    the item's folder or file path that tells it apart from theirs (#658), else ``None``:
+    the title is enough. ``None`` too for an item with no files, which no path can name."""
+    key = search_key(title)
+    rows = conn.execute(select(Entity.id, Entity.title).where(Entity.type == type_id)).all()
+    twins = [e for e, t in rows if e != entity_id and search_key(t) == key]
+    if not twins:
+        return None
+    primary = next((r.name for r in schema.by_type_id(type_id).entity.roles if r.primary), None)
+    if primary is None:
+        return None
+    places: dict[int, list[str]] = {}
+    for item, relpath in conn.execute(
+        select(EntityResource.entity_id, Resource.relpath)
+        .join(Resource, Resource.id == EntityResource.resource_id)
+        .where(
+            EntityResource.entity_id.in_([entity_id, *twins]),
+            EntityResource.role == primary,
+        )
+        .order_by(Resource.relpath)
+    ):
+        places.setdefault(item, []).append(relpath)
+    mine = places.get(entity_id)
+    if not mine:
+        return None
+    theirs = [p for e in twins for p in places.get(e, [])]
+    parts = mine[0].split("/")
+    for n in range(1, len(parts) + 1):
+        tail = "/".join(parts[-n:])
+        if not any(path_matches(tail, p) for p in theirs):
+            return tail
+    return "/" + mine[0]
+
+
+def _twin_name(title: str, path: str) -> str:
+    """A note's file name for an item sharing its title (#658): the title, then the folders
+    its ``path`` gives (``Alice (Holidays)``), or its file's name without the extension."""
+    parts = path.strip("/").split("/")
+    if len(parts) > 1:
+        return f"{title} ({' - '.join(parts[:-1])})"
+    return posixpath.splitext(parts[0])[0] or title
 
 
 def _type_folder(

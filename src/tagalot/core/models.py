@@ -731,6 +731,9 @@ class NotesFolderNote(Base):
     type: Mapped[str | None]
     """The entity type the note is for (``tagalot-type``, else the outermost of its folders
     naming one, #656); ``None``: any."""
+    path: Mapped[str | None]
+    """The note's ``path`` (#658), cleaned: its item is the one whose folder or file path
+    ends in it; ``None``: matched by title and aliases."""
     matches: Mapped[int] = mapped_column(default=0)
     """How many items it matched when last matched."""
     item_id: Mapped[int | None] = mapped_column(

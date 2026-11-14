@@ -331,6 +331,21 @@ def _v34_broken_links(conn: Connection) -> None:
     Base.metadata.tables["broken_link"].create(conn, checkfirst=True)
 
 
+def _v35_note_paths(conn: Connection) -> None:
+    """Format 36: a notes-folder note can name its item by path (#658). Notes-folder notes
+    are read again at the next scan: a ``path`` key was an Extra field until now."""
+    columns = {row[1] for row in conn.execute(text("PRAGMA table_info(notes_folder_note)"))}
+    if "path" not in columns:
+        conn.execute(text("ALTER TABLE notes_folder_note ADD COLUMN path VARCHAR"))
+    conn.execute(text("UPDATE notes_folder_note SET size = NULL"))
+    conn.execute(
+        text(
+            "UPDATE entity_note SET size = NULL "
+            "WHERE resource_id IN (SELECT resource_id FROM notes_folder_note)"
+        )
+    )
+
+
 CORE_MIGRATIONS: Mapping[int, Migration] = {
     1: _v1_tag_descriptions,
     2: _v2_root_ingest_options,
@@ -366,6 +381,7 @@ CORE_MIGRATIONS: Mapping[int, Migration] = {
     32: _v32_linked_places,
     33: _v33_linked_folders,
     34: _v34_broken_links,
+    35: _v35_note_paths,
 }
 """Core migration steps keyed by the version they upgrade *from*."""
 

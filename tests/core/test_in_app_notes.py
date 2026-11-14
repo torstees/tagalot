@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from tagalot.core.fields import FieldEditError
 from tagalot.core.keep import KeepConfig, KeepError, load_keep_config, save_keep_config
-from tagalot.core.models import Entity, EntityNote, entity_fts
+from tagalot.core.models import Entity, EntityNote, EntityResource, Resource, entity_fts
 from tagalot.core.root_admin import with_notes_folder, with_notes_writing
 from tagalot.core.roots import local_path
 from tagalot.core.save_note import SaveNoteError, plan_note, safe_name, write_note
@@ -207,6 +207,60 @@ def test_save_as_note_in_one_folder(env: Env) -> None:
     write_note(note)
     env.scan()
     assert env.item("Robert De Niro")["note"] == "Notes/Robert De Niro.md"
+
+
+def test_save_as_note_names_one_of_two_items_by_path(env: Env) -> None:
+    # Two clips called Heat (#658): each saved note gives as much of its clip's path as tells
+    # them apart, and its file name follows, so the scan gives each clip its own note.
+    (env.files / "Old" / "Lobby").mkdir(parents=True)
+    (env.files / "Old" / "Lobby" / "Heat.mp4").write_bytes(b"mp4")
+    (env.files / "Lobby").mkdir()
+    (env.files / "Lobby" / "Heat.mp4").write_bytes(b"mp4")
+    env.scan()
+    service = _service(env)
+    with env.reader.connect() as conn:
+        heats = dict(
+            conn.execute(
+                select(Resource.relpath, EntityResource.entity_id)
+                .join(EntityResource, EntityResource.resource_id == Resource.id)
+                .where(Resource.relpath.in_(["Lobby/Heat.mp4", "Old/Lobby/Heat.mp4"]))
+            ).all()
+        )
+    config = _config_for(env, writable=True)
+    (env.files / "Notes").mkdir()
+    for relpath, body in [("Lobby/Heat.mp4", "New."), ("Old/Lobby/Heat.mp4", "Old.")]:
+        service.edit_note(heats[relpath], body)
+        with env.reader.connect() as conn:
+            note = plan_note(
+                conn,
+                env.schema,
+                service.cache.get(),
+                config,
+                lambda _: str(env.files),
+                heats[relpath],
+            )
+        write_note(note)
+    assert sorted(p.name for p in (env.files / "Notes" / "Clips").iterdir()) == [
+        "Heat (Lobby).md",
+        "Heat (Old - Lobby).md",
+    ]
+    assert (env.files / "Notes" / "Clips" / "Heat (Lobby).md").read_text("utf-8") == (
+        "---\ntitle: Heat\npath: /Lobby/Heat.mp4\n---\n\nNew.\n"
+    )
+    assert "path: Old/Lobby/Heat.mp4\n" in (
+        env.files / "Notes" / "Clips" / "Heat (Old - Lobby).md"
+    ).read_text("utf-8")
+    env.scan()
+    with env.reader.connect() as conn:
+        bodies = dict(
+            conn.execute(
+                select(EntityNote.entity_id, EntityNote.body).where(
+                    EntityNote.entity_id.in_(heats.values())
+                )
+            ).all()
+        )
+    assert bodies == {heats["Lobby/Heat.mp4"]: "New.", heats["Old/Lobby/Heat.mp4"]: "Old."}
+    assert env.rows()["Notes/Clips/Heat (Lobby).md"] == (1, True, "Heat")
 
 
 def test_save_as_note_needs_a_writable_notes_folder_that_is_there(env: Env) -> None:
