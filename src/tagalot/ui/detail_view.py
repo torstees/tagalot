@@ -203,6 +203,8 @@ class DetailPage(QWidget):
     related entity's link is clicked."""
 
     open_entity = Signal(int)
+    back_requested = Signal()
+    """**Back to …'s details** was clicked: show the page's own item's again (#665)."""
     field_edited = Signal(int, str, object)
     """The user set a field (or ``"title"``) by hand: entity id, field name, new value."""
     extra_edited = Signal(int, str, object, bool)
@@ -307,6 +309,9 @@ class DetailPage(QWidget):
         self.title_in_details = False
         """Name the item at the top of :attr:`details`: for a search's selected item, whose
         page isn't shown (#468)."""
+        self.back_to: str | None = None
+        """The item page this is shown on, by its item's title, when this item is selected
+        in that page's contents (#665): the name above the details links back to it."""
         self._pool = pool
         self._generation = 0
         self.detail: EntityDetail | None = None
@@ -429,7 +434,7 @@ class DetailPage(QWidget):
         self.details_title.setObjectName("details_title")
         self.details_title.setWordWrap(True)
         self.details_title.setTextFormat(Qt.TextFormat.RichText)
-        self.details_title.linkActivated.connect(lambda _: self.open_entity.emit(self.entity_id))
+        self.details_title.linkActivated.connect(self._details_link)
         self.details_title.setVisible(False)
         panel = QWidget()
         panel_column = QVBoxLayout(panel)
@@ -587,15 +592,33 @@ class DetailPage(QWidget):
         self.loaded.emit()
 
     def _show_details_title(self, detail: EntityDetail | None) -> None:
-        """The item's name and type above its details, when its page isn't shown."""
+        """The item's name and type above its details, when its page isn't shown; and,
+        selected on another item's page, a link back to that item's details (#665)."""
         self.details_title.setVisible(self.title_in_details and detail is not None)
         if detail is not None:
+            back = (
+                f'<br><a href="back">Back to {html.escape(self.back_to)}\'s details</a>'
+                if self.back_to
+                else ""
+            )
             self.details_title.setText(
                 f'<b><a href="open" style="text-decoration: none">{html.escape(detail.title)}'
                 f"</a></b><br><span style='color: {dimmed_css()}'>"
-                f"{html.escape(detail.type_label)}</span>"
+                f"{html.escape(detail.type_label)}</span>{back}"
             )
             self.details_title.setToolTip("Open its page")
+
+    def set_back_to(self, title: str | None) -> None:
+        """Link back to the item page this is selected on (its item's ``title``), or not."""
+        if title != self.back_to:
+            self.back_to = title
+            self._show_details_title(self.detail)
+
+    def _details_link(self, link: str) -> None:
+        if link == "back":
+            self.back_requested.emit()
+        else:
+            self.open_entity.emit(self.entity_id)
 
     @property
     def contents(self) -> SearchPage | None:
