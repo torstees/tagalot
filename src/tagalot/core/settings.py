@@ -107,6 +107,9 @@ class Settings:
     note_key_aliases: dict[str, str] = field(default_factory=dict)
     """``[notes.key_aliases]``: front-matter keys read as fields in every keep (#411), key ->
     the field's name or label; a keep's own alias for the same key wins."""
+    note_plain_collapsed: bool = False
+    """``[notes] collapsed = "plain"``: a collapsed note on an item's page shows only its
+    main text, unstyled (#664); by default it shows styled, cut to its room."""
     file_manager: str = ""
     """``[file_manager] command``: the command template Show in file manager runs (#457,
     DESIGN.md §11), with ``{path}``, ``{dir}``, ``{name}``; ``""``, the system's."""
@@ -255,8 +258,13 @@ def dump_settings(settings: Settings) -> str:
         if handler.role is not None:
             lines.append(f"role = {toml_str(handler.role)}")
         lines.append(f"command = {toml_str(handler.command)}")
+    notes = []
     if settings.note_ignore_keys:
-        lines += ["", "[notes]", f"ignore_keys = {toml_list(settings.note_ignore_keys)}"]
+        notes.append(f"ignore_keys = {toml_list(settings.note_ignore_keys)}")
+    if settings.note_plain_collapsed:
+        notes.append('collapsed = "plain"')
+    if notes:
+        lines += ["", "[notes]", *notes]
     if settings.note_key_aliases:
         lines += ["", "[notes.key_aliases]"]
         lines += [f"{toml_key(k)} = {toml_str(v)}" for k, v in settings.note_key_aliases.items()]
@@ -388,8 +396,13 @@ def _parse(path: Path, data: Mapping[str, Any]) -> Settings:
     if not isinstance(notes, dict):
         logger.warning("%s: notes must be a table; ignoring it", path)
         notes = {}
-    for key in sorted(set(notes) - {"ignore_keys", "key_aliases"}):
+    for key in sorted(set(notes) - {"ignore_keys", "key_aliases", "collapsed"}):
         logger.warning("%s: ignoring unknown key %r in [notes]", path, key)
+    collapsed = notes.get("collapsed", "styled")
+    if collapsed in ("plain", "styled"):
+        settings.note_plain_collapsed = collapsed == "plain"
+    else:
+        logger.warning('%s: [notes] collapsed must be "plain" or "styled"', path)
     keys = _string_list(path, notes, "ignore_keys")
     settings.note_ignore_keys = [k.strip() for k in keys if k.strip()]
     aliases = notes.get("key_aliases", {})
