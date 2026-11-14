@@ -25,6 +25,7 @@ import logging
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
@@ -1463,12 +1464,49 @@ class DetailPage(QWidget):
         shown.selected_entity_ids(lambda ids: on_done(ids or own))
 
 
-def _form(body: QWidget) -> QFormLayout:
-    """A section's fields: each label above its value, as the Details tab is narrow (#468)."""
-    form = QFormLayout(body)
-    form.setContentsMargins(12, 0, 0, 0)
-    form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-    return form
+WIDE_FIELDS = 360
+"""How wide a section's fields must be for each label to sit beside its value (#663)."""
+
+
+class FieldForm(QFormLayout):
+    """A section's fields, each label bold (#663): above its value while the Details tab is
+    narrow (#468), beside it once the fields are :data:`WIDE_FIELDS` wide."""
+
+    def __init__(self, body: QWidget) -> None:
+        super().__init__(body)
+        self.setContentsMargins(12, 0, 0, 0)
+        self.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        body.installEventFilter(self)
+
+    def addRow(self, *args: Any) -> None:
+        """As :meth:`QFormLayout.addRow`, with a text label made bold."""
+        if len(args) == 2 and isinstance(args[0], str):
+            label = QLabel(args[0])
+            font = QFont(label.font())
+            font.setBold(True)
+            label.setFont(font)
+            args = (label, args[1])
+        super().addRow(*args)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.Resize and isinstance(watched, QWidget):
+            self.follow_width(watched.width())
+        return False
+
+    def follow_width(self, width: int) -> None:
+        """Labels beside their values when ``width`` is wide enough, else above them."""
+        policy = (
+            QFormLayout.RowWrapPolicy.DontWrapRows
+            if width >= WIDE_FIELDS
+            else QFormLayout.RowWrapPolicy.WrapAllRows
+        )
+        if self.rowWrapPolicy() != policy:
+            self.setRowWrapPolicy(policy)
+
+
+def _form(body: QWidget) -> FieldForm:
+    """A section's fields (:class:`FieldForm`)."""
+    return FieldForm(body)
 
 
 def _file_label(file: FileRow) -> QLabel:
