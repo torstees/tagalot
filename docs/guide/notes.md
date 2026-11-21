@@ -107,6 +107,13 @@ If you'd rather the short version were plain, choose **View → Short Notes as P
 
 Notes are read as [GitHub-flavoured Markdown](https://github.github.com/gfm/): tables, task lists (`- [x]`), ~~strikethrough~~, and bare web addresses work. Footnotes, math, and diagrams don't, and Obsidian's callouts (`> [!note]`) show as quotes. Pictures and links in the note are found from the note's folder (`![](studio.png)`, `[prices](Prices/list.txt)`); web links open in your browser. Obsidian's `![[picture.png]]` and `[[links]]` work too.
 
+**Links to other items.** A link in a note can open another item's page:
+
+- **A wiki link,** `[[Kenji Sato]]` or `[[Kenji Sato|Kenji]]`: the item whose note is called `Kenji Sato.md`, else the item titled *Kenji Sato*. Case doesn't matter, and `[[People/Kenji Sato]]` picks the note in that folder when several share a name.
+- **A link to a note file,** `[Kenji](<../Kenji Sato/Kenji Sato.md>)`: that note's item, rather than opening the file in your editor.
+
+When several items match (a folder and a person both called Kenji Sato), Tagalot asks which, with each one's type. A wiki link that names no item is shown as plain text, and a link to a file that isn't a note opens the file as before.
+
 ### An item's own Markdown file
 
 An item whose own file is Markdown (a story you're writing, a book's `.md`) and that has no note shows a glimpse of that file in the same place, read each time you open its page:

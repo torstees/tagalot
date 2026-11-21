@@ -17,7 +17,8 @@ Its pictures are only those read in a worker
 (:func:`~tagalot.core.note_markdown.read_pictures`): the document never loads anything
 itself, so the GUI thread never touches a disk or a share. Links open in the browser, or,
 relative to the note's folder (or found in an assets folder by the worker, #418), with the
-file's own program.
+file's own program. A wiki link (``[[Alice]]``) or a link to a note file that names an
+item opens that item's page instead (#671, ``core/note_items.py``; found by the worker).
 
 An item without a note whose own file is Markdown shows a glimpse of that file instead
 (#554, ``core/markdown_glimpse.py``): its table of contents or its opening, with **Open
@@ -55,6 +56,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from tagalot.core.note_items import LinkedItem, link_wiki_items, url_key
 from tagalot.core.note_markdown import renderable, resolve_link
 from tagalot.ui import field_editor
 from tagalot.ui.fonts import follow, place_font, signals
@@ -119,6 +121,8 @@ class NoteView(QWidget):
 
     open_note = Signal()
     """Open the note's file with its program."""
+    items_followed = Signal(list)
+    """A link that names items was followed (#671): the ``LinkedItem`` s it names."""
     edited = Signal(str)
     resized = Signal()
     """The note took another height (Show more, Show less, a new note): the page fits
@@ -201,6 +205,10 @@ class NoteView(QWidget):
         self.folder: str | None = None
         self.links: dict[str, str] = {}
         """Links found in an assets folder: ``{path beside the note: path there}``."""
+        self.items: dict[str, list[LinkedItem]] = {}
+        """The items the note's wiki links name, by ``wiki_key`` (#671)."""
+        self.file_items: dict[str, list[LinkedItem]] = {}
+        """The items of the note files its links name, by the path followed (#671)."""
         self.text = ""
         """The note's Markdown, as shown."""
         self.glimpse = False
@@ -239,15 +247,20 @@ class NoteView(QWidget):
         editable: bool = False,
         links: dict[str, str] | None = None,
         glimpse: bool = False,
+        items: dict[str, list[LinkedItem]] | None = None,
+        file_items: dict[str, list[LinkedItem]] | None = None,
     ) -> None:
         """Show a note's Markdown ``body``; ``folder`` (this computer's path) resolves its
         links (``links``: those found in an assets folder instead), ``pictures`` are its
         pictures by the name written, read in a worker. ``editable``: the note is typed
         here. ``glimpse``: ``body`` is a glimpse of the item's own Markdown file (#554),
-        opened with **Open file**; a note can still be typed (``editable``). A note being
-        typed stays open."""
+        opened with **Open file**; a note can still be typed (``editable``). ``items``:
+        the items its wiki links name, by ``wiki_key``; ``file_items``: those of the note
+        files its links name, by the path followed (#671). A note being typed stays open."""
         self.folder = folder
         self.links = links or {}
+        self.items = items or {}
+        self.file_items = file_items or {}
         self.text = body
         self.glimpse = glimpse
         self.editable = editable and (glimpse or not has_file)
@@ -331,7 +344,9 @@ class NoteView(QWidget):
         """Make the full and collapsed documents from the note, in the current colors."""
         old = (self.full, self.short)
         palette = self.palette()
-        self.full = render(renderable(self.text), palette, self.body, self.body.font())
+        self.full = render(
+            renderable(link_wiki_items(self.text, self.items)), palette, self.body, self.body.font()
+        )
         if self.plain_collapsed:
             self.short, self.hidden = collapsed(self.full, palette)
         else:  # styled, cut to the room it has (#664)
@@ -452,6 +467,11 @@ class NoteView(QWidget):
         its program; one to a heading of the file (``#chapter-1``, as a table of contents
         has) opens the file."""
         text = url.toString()
+        key = url_key(text)
+        if key is not None:
+            if key in self.items:
+                self.items_followed.emit(self.items[key])
+            return
         if text.startswith("#"):
             if self.open_button.isVisibleTo(self):
                 self.open_note.emit()
@@ -460,7 +480,11 @@ class NoteView(QWidget):
             field_editor.open_web_address(text)  # looked up now, so tests can stand in
             return
         if self.folder is not None and (path := resolve_link(self.folder, text)) is not None:
-            self.open_file(self.links.get(path, path))
+            target = self.links.get(path, path)
+            if target in self.file_items:  # a note's file: its item's page (#671)
+                self.items_followed.emit(self.file_items[target])
+            else:
+                self.open_file(target)
 
 
 def _height_at(document: QTextDocument, width: int) -> int:
