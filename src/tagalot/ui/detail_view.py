@@ -29,7 +29,7 @@ from typing import Any
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon, QImage, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCursor, QFont, QIcon, QImage, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy import Connection
 
 from tagalot.core.actions import actions_for
 from tagalot.core.archive_choices import is_archive
@@ -61,12 +62,23 @@ from tagalot.core.keep import KeepConfig
 from tagalot.core.keywords import ItemKeyword, KeywordInfo
 from tagalot.core.markdown_glimpse import glimpse
 from tagalot.core.models import FieldSource, ResourceStatus
+from tagalot.core.note_items import (
+    LinkedItem,
+    find_note_file_items,
+    find_wiki_items,
+    wiki_names,
+)
 from tagalot.core.note_markdown import find_links, read_pictures, renderable
 from tagalot.core.notes import read_note
 from tagalot.core.own_fields import OWN
 from tagalot.core.roots import local_path
 from tagalot.core.search import POSITION
-from tagalot.core.search_fields import contained_types, contents_order, type_contents_order
+from tagalot.core.search_fields import (
+    contained_types,
+    contents_order,
+    type_contents_order,
+    type_labels,
+)
 from tagalot.core.search_spec import SearchSpec, SortKey
 from tagalot.core.session import KeepSession
 from tagalot.core.tags import entity_tags
@@ -125,6 +137,10 @@ class _Loaded:
     pictures: dict[str, QImage] = field(default_factory=dict)
     links: dict[str, str] = field(default_factory=dict)
     """Where the note's links are, when in an assets folder rather than beside it."""
+    items: dict[str, list[LinkedItem]] = field(default_factory=dict)
+    """The items the note's wiki links name, by ``wiki_key`` (#671)."""
+    file_items: dict[str, list[LinkedItem]] = field(default_factory=dict)
+    """The items of the note files its links name, by the path followed (#671)."""
     glimpse: str = ""
     """A glimpse of the item's own Markdown file (#554), shown when it has no note."""
     badges: BadgesValue | None = None
@@ -188,6 +204,29 @@ def _read_note(detail: EntityDetail | None, assets: Sequence[str] = ()) -> _Load
             if not image.isNull():
                 pictures[name] = image
     return _Loaded(detail, folder, pictures, links, glimpse=text)
+
+
+def _find_items(
+    conn: Connection,
+    loaded: _Loaded,
+    assets: Sequence[str],
+    config: KeepConfig,
+    root_path: Callable[[str], str | None],
+) -> None:
+    """The items the note's links name (#671): its wiki links' by name, and, while its
+    file is online, its links to note files'. Read here in the worker."""
+    detail = loaded.detail
+    if detail is None:
+        return
+    source = loaded.glimpse or detail.note_body
+    loaded.items = find_wiki_items(conn, wiki_names(source))
+    file = glimpsed_file(detail) or detail.note_file
+    if loaded.note_folder is None or file is None or file.status is not ResourceStatus.OK:
+        return
+    roots = {root.id: root_path(root.id) for root in config.roots}
+    loaded.file_items = find_note_file_items(
+        conn, renderable(source), loaded.note_folder, assets, roots
+    )
 
 
 def related_key(session: KeepSession, name: str, side: str) -> str:
@@ -364,6 +403,7 @@ class DetailPage(QWidget):
         self.note_view = NoteView()
         self.note_view.plain_collapsed = session.settings.note_plain_collapsed
         self.note_view.open_note.connect(self.open_note)
+        self.note_view.items_followed.connect(self.follow_items)
         self.note_view.edited.connect(lambda text: self.note_edited.emit(self.entity_id, text))
         self.note_view.resized.connect(lambda: QTimer.singleShot(0, self._fit_header))
         titles.addWidget(self.note_view)
@@ -496,6 +536,9 @@ class DetailPage(QWidget):
                 own = entity_tags(conn, [detail.id]).get(detail.id, []) if detail else []
             assets = note_assets(detail, config, roots) if detail is not None else []
             loaded = _read_note(detail, assets)
+            if detail is not None:
+                with session.reader.connect() as conn:
+                    _find_items(conn, loaded, assets, config, roots)
             loaded.badges = badges_value(tree, own)
             return loaded
 
@@ -958,6 +1001,8 @@ class DetailPage(QWidget):
             editable=True,
             links=loaded.links,
             glimpse=glimpsed,
+            items=loaded.items,
+            file_items=loaded.file_items,
         )
         self.open_note_action.setVisible(has_file)
         config = self.session.keep.config
@@ -971,6 +1016,24 @@ class DetailPage(QWidget):
             if w.isVisibleTo(self)
         )
         self.note_view.set_cap(HEADER_THUMBNAIL - others - self.note_view.more.sizeHint().height())
+
+    def follow_items(self, items: list[LinkedItem]) -> None:
+        """A link in the note named ``items`` (#671): open the one's page, or, for several
+        (a folder and a person both called Alice), ask which."""
+        if len(items) == 1:
+            self.open_entity.emit(items[0].id)
+        elif items:
+            self.linked_items_menu(items).exec(QCursor.pos())
+
+    def linked_items_menu(self, items: Sequence[LinkedItem]) -> QMenu:
+        """The items a note's link names, each with its type, to choose one to open."""
+        labels = type_labels(self.session.schema)
+        menu = QMenu(self)
+        menu.setObjectName("linked_items")
+        for item in items:
+            action = menu.addAction(f"{item.title}  \u2014  {labels.get(item.type, item.type)}")
+            action.triggered.connect(lambda _c=False, i=item.id: self.open_entity.emit(i))
+        return menu
 
     def open_note(self) -> None:
         """Open the item's note file with its program; or, showing a glimpse of its own

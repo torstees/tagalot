@@ -18,6 +18,7 @@ from sqlalchemy import select
 from tagalot.core.handlers import OPEN, FileToOpen
 from tagalot.core.keep import load_keep_config
 from tagalot.core.models import Entity
+from tagalot.core.note_items import LinkedItem, item_url, wiki_key
 from tagalot.core.session import KeepSession
 from tagalot.core.settings import Settings, load_settings
 from tagalot.ui import field_editor
@@ -26,7 +27,7 @@ from tagalot.ui.field_editor import EditableValue
 from tagalot.ui.file_actions import FileOpener
 from tagalot.ui.main_window import MainWindow
 from tagalot.ui.workers import ScanController
-from tests.ui.test_contents_search import SCRIPT, _open
+from tests.ui.test_contents_search import SCRIPT, _id, _open
 
 pytestmark = pytest.mark.gui
 
@@ -395,3 +396,42 @@ def test_the_aliases_in_keep_configuration(
     config.reload()
     assert config.keep_key_aliases.toPlainText() == "homepage = Website\nmood = Folder"
     qtbot.waitUntil(lambda: config.busy == 0, timeout=5000)
+
+
+def test_links_to_items_open_their_pages(
+    qtbot: QtBot, window: MainWindow, session: KeepSession, files: Path
+) -> None:
+    """#671: a wiki link, or a link to a note file, that names an item opens its page; one
+    that names nothing stays as it was; several are offered to choose from."""
+    (files / "Kenji Sato" / "Kenji Sato.md").write_text("# Kenji Sato\n\nSketches.\n", "utf-8")
+    (files / "Aurora Studio" / "Aurora Studio.md").write_text(
+        "---\ntitle: Aurora Studio (Reykjavík)\n---\nFriends: [[Kenji Sato|Kenji]], "
+        "[his note](<../Kenji Sato/Kenji Sato.md>), and [[Nobody]].\n",
+        encoding="utf-8",
+    )
+    session.scan_all()
+    page = _page(qtbot, window, session)
+    note = page.note_view
+    kenji = _id(session, "Kenji Sato")
+    qtbot.waitUntil(lambda: bool(note.items) and bool(note.file_items), timeout=5000)
+    assert [item.id for item in note.items[wiki_key("Kenji Sato")]] == [kenji]
+    html = note.full.toHtml()
+    assert item_url("Kenji Sato") in html
+    assert "Nobody" in note.full.toPlainText()
+    assert "[[" not in note.full.toPlainText()
+    opened: list[str] = []
+    note.open_file = opened.append
+    with qtbot.waitSignal(page.open_entity, timeout=5000) as wiki:
+        note.body.anchorClicked.emit(QUrl(item_url("Kenji Sato")))
+    assert wiki.args == [kenji]
+    with qtbot.waitSignal(page.open_entity, timeout=5000) as file_link:
+        note.body.anchorClicked.emit(QUrl("../Kenji%20Sato/Kenji%20Sato.md"))
+    assert file_link.args == [kenji]
+    assert opened == []  # the note's item's page, not the editor
+    # Several items: a menu to choose from (its actions called, not shown).
+    two = [LinkedItem(kenji, "Kenji Sato", "assets2d.folder"), LinkedItem(1, "Kenji", "x")]
+    menu = page.linked_items_menu(two)
+    assert menu.actions()[0].text().startswith("Kenji Sato  \u2014  ")
+    with qtbot.waitSignal(page.open_entity, timeout=5000) as chosen:
+        menu.actions()[1].trigger()
+    assert chosen.args == [1]
